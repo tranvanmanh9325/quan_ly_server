@@ -14,7 +14,7 @@ jobs:
       - name: Thực thi script cập nhật Server
         run: |
           # 1. Di chuyển vào thư mục code hiện tại chứa file .env
-          cd ~/quan_ly_server
+          cd ~/my-code/quan_ly_server
           
           # 2. Hủy bỏ mọi thay đổi cục bộ (nếu có lỡ sửa gì đó trực tiếp trên server)
           git reset --hard

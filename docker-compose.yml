@@ -1,0 +1,31 @@
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: dashboard_backend
+    ports:
+      - "8080:8080"
+    env_file:
+      - backend/.env
+    restart: unless-stopped
+    networks:
+      - dashboard-network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: dashboard_frontend
+    ports:
+      - "5173:80" # Map to standard vite dev port, backed by Nginx port 80
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - dashboard-network
+
+networks:
+  dashboard-network:
+    driver: bridge

@@ -1,0 +1,79 @@
+# ==========================================
+# CẤU HÌNH GITIGNORE CHI TIẾT CHO FRONTEND
+# Hệ sinh thái: NodeJS / React / Vite
+# ==========================================
+
+# 1. Các thư mục chứa dependency (KHÔNG BAO GIỜ PUSH)
+node_modules/
+jspm_packages/
+bower_components/
+
+# 2. Các file logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# 3. File môi trường (Chứa thông tin nhạy cảm như API_KEY, mật khẩu)
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.backup
+.env.*
+
+# 4. Thư mục build / output (Kết quả sau khi chạy npm run build)
+dist/
+dist-ssr/
+build/
+out/
+.next/
+.nuxt/
+
+# 5. Testing & Coverage (File báo cáo kết quả test)
+coverage/
+*.lcov
+.nyc_output/
+tests/e2e/videos/
+tests/e2e/screenshots/
+
+# 6. TypeScript Cache files
+*.tsbuildinfo
+
+# 7. Các file cache của linter / package manager
+.npm/
+.eslintcache
+.stylelintcache
+.prettiercache
+.yarn/cache/
+
+# 8. Cấu hình Editor / IDE (Tránh conflict cấu hình cá nhân giữa các Dev)
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+.DS_Store
+Thumbs.db
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+*.viminfo
+*~
+
+# 9. Các file cấu hình hệ điều hành
+.Trashes
+__MACOSX/
+
+# 10. Runtime data & Diagnostic reports
+pids/
+*.pid
+*.seed
+*.pid.lock
+report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
+lib-cov/

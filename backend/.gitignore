@@ -1,0 +1,34 @@
+# ==========================================
+# CẤU HÌNH GITIGNORE CHO BACKEND
+# Hệ sinh thái: Java / Spring Boot / Maven
+# ==========================================
+
+# 1. Các file môi trường (Nơi chứa mật khẩu DB, cấu hình nhạy cảm)
+.env
+.env.*
+
+# 2. Thư mục build của Maven
+target/
+*.class
+*.jar
+*.war
+*.ear
+*.nar
+
+# 3. Cấu hình IDE (IntelliJ IDEA, Eclipse, VSCode)
+.idea/
+*.iml
+*.iws
+*.classpath
+*.project
+*.settings/
+.vscode/
+
+# 4. Logs
+logs/
+*.log
+
+# 5. OS files
+.DS_Store
+Thumbs.db
+__MACOSX/

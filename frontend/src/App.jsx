@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
-import { LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
-import { LayoutDashboard, BarChart2, Folder, Users, Settings, FileText, Search, Bell, User, MoreHorizontal, Activity } from 'lucide-react';
+import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
+import { LayoutDashboard, BarChart2, Folder, Users, Settings, FileText, Search, Bell, User, MoreHorizontal, Activity, HardDrive, Wifi } from 'lucide-react';
 import './index.css';
 import './App.css';
 
@@ -11,31 +11,103 @@ function App() {
   const [processes, setProcesses] = useState([]);
   const [system, setSystem] = useState('');
   const [cpuHistory, setCpuHistory] = useState(Array(15).fill({ name: '', value: 0 }));
-  const [ramData, setRamData] = useState({ total: 0, used: 0, percent: 0 });
-  const [diskData, setDiskData] = useState({ percent: 0, usedStr: '', totalStr: '' });
+  const [ramData, setRamData] = useState({ total: 0, used: 0, free: 0, cached: 0, percent: 0, swapTotal: 0, swapUsed: 0 });
+  const [diskData, setDiskData] = useState([]);
+  const [networkData, setNetworkData] = useState({ rxSpeed: 0, txSpeed: 0, totalRx: 0, totalTx: 0, interfaceName: '' });
+  const lastNetRef = useRef({ rx: 0, tx: 0, time: 0 });
   const [isServerModalOpen, setIsServerModalOpen] = useState(false);
+  const [connections, setConnections] = useState([]);
+  const [selectedConnection, setSelectedConnection] = useState(null);
+  const [temperature, setTemperature] = useState(null);
+
+  const formatSpeed = (bps) => {
+    if (bps > 1024 * 1024) return (bps / (1024 * 1024)).toFixed(1) + ' MB/s';
+    if (bps > 1024) return (bps / 1024).toFixed(1) + ' KB/s';
+    return Math.max(0, bps).toFixed(0) + ' B/s';
+  };
+  
+  const formatBytes = (bytes) => {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  };
+  
+  const [searchTerm, setSearchTerm] = useState('');
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
+
+  const handleRefresh = () => {
+    setRefreshTrigger(prev => prev + 1);
+  };
+
+  const formattedSystem = React.useMemo(() => {
+    if (!system) return { uptime: 'Đang lấy dữ liệu...', load: '' };
+    try {
+      const parts = system.split('load average:');
+      const loadStr = parts[1] ? parts[1].trim() : '';
+      let upPart = parts[0] || system;
+      const upIndex = upPart.indexOf('up ');
+      if (upIndex !== -1) {
+         let timeChunk = upPart.substring(upIndex + 3);
+         const userIndex = timeChunk.indexOf(' user');
+         if (userIndex !== -1) {
+            timeChunk = timeChunk.substring(0, userIndex);
+            const lastComma = timeChunk.lastIndexOf(',');
+            if (lastComma !== -1) {
+               timeChunk = timeChunk.substring(0, lastComma);
+            }
+         }
+         let timeStr = timeChunk.trim();
+         timeStr = timeStr.replace(/days?/g, 'ngày').replace(/mins?/g, 'phút');
+         const timeMatch = timeStr.match(/(\d+):(\d+)/);
+         if (timeMatch) {
+            const hours = parseInt(timeMatch[1], 10);
+            const minutes = parseInt(timeMatch[2], 10);
+            timeStr = timeStr.replace(/\d+:\d+/, `${hours} giờ ${minutes} phút`);
+         }
+         timeStr = timeStr.replace(/,/g, ' ').replace(/\s+/g, ' ').trim();
+         return { uptime: timeStr || system, load: loadStr };
+      }
+      return { uptime: system, load: '' };
+    } catch {
+      return { uptime: system, load: '' };
+    }
+  }, [system]);
+
 
   useEffect(() => {
     let isMounted = true;
 
     const loadData = async () => {
       try {
-        const [pRes, sysRes, cpuRes, ramRes, diskRes] = await Promise.all([
+        const [pRes, sysRes, cpuRes, ramRes, diskRes, netRes, connRes, tempRes] = await Promise.all([
           axios.get(`${API_BASE}/processes`),
           axios.get(`${API_BASE}/system`),
           axios.get(`${API_BASE}/cpu`),
           axios.get(`${API_BASE}/ram`),
-          axios.get(`${API_BASE}/disk`)
+          axios.get(`${API_BASE}/disk`),
+          axios.get(`${API_BASE}/network`),
+          axios.get(`${API_BASE}/connections`),
+          axios.get(`${API_BASE}/temperature`)
         ]);
 
         if (!isMounted) return;
 
+        if (connRes.data && connRes.data.data) {
+          setConnections(connRes.data.data);
+        }
+
         if (pRes.data && pRes.data.data) {
           const lines = pRes.data.data.split('\n');
-          const procs = lines.slice(1).map((line, i) => {
+          const procs = lines.slice(1).map((line) => {
             const parts = line.trim().split(/\s+/);
+            if (parts.length >= 7) {
+              const memMb = (parseInt(parts[5], 10) / 1024).toFixed(1) + ' MB';
+              return { id: parts[0], user: parts[1], cpu: parts[2] + '%', memPercent: parts[3] + '%', threads: parts[4], mem: memMb, name: parts[6], args: parts.slice(7).join(' ') || parts[6] };
+            }
             if (parts.length >= 5) {
-              return { id: 10001 + i, user: parts[1], cpu: parts[2] + '%', mem: parts[3] + '%', name: parts.slice(4).join(' ') };
+              return { id: parts[0], user: parts[1], cpu: parts[2] + '%', memPercent: parts[3] + '%', threads: '-', mem: 'N/A', name: parts[4], args: parts.slice(4).join(' ') };
             }
             return null;
           }).filter(Boolean);
@@ -62,31 +134,92 @@ function App() {
         if (ramRes.data && ramRes.data.data) {
           const lines = ramRes.data.data.split('\n');
           if (lines.length >= 2) {
-             const parts = lines[1].trim().split(/\s+/);
-             if (parts.length >= 3) {
-                const total = parseInt(parts[1], 10);
-                const used = parseInt(parts[2], 10);
-                const percent = total > 0 ? ((used / total) * 100).toFixed(1) : 0;
-                setRamData({ total, used, percent: parseFloat(percent) });
+             const memParts = lines[1].trim().split(/\s+/);
+             let total = 0, used = 0, free = 0, cached = 0, percent = 0;
+             if (memParts.length >= 4) {
+                total = parseInt(memParts[1], 10);
+                used = parseInt(memParts[2], 10);
+                free = parseInt(memParts[3], 10);
+                cached = memParts.length >= 6 ? parseInt(memParts[5], 10) : 0;
+                percent = total > 0 ? ((used / total) * 100).toFixed(1) : 0;
              }
+             let swapTotal = 0, swapUsed = 0;
+             if (lines.length >= 3 && lines[2].startsWith('Swap:')) {
+                const swapParts = lines[2].trim().split(/\s+/);
+                if (swapParts.length >= 3) {
+                    swapTotal = parseInt(swapParts[1], 10);
+                    swapUsed = parseInt(swapParts[2], 10);
+                }
+             }
+             setRamData({ total, used, free, cached, percent: parseFloat(percent), swapTotal, swapUsed });
           }
         }
 
         if (diskRes.data && diskRes.data.data) {
           const lines = diskRes.data.data.split('\n');
+          const disks = [];
           for (let i = 1; i < lines.length; i++) {
-             if (lines[i].includes('/')) {
-                const parts = lines[i].trim().split(/\s+/);
+             const line = lines[i].trim();
+             if (line.startsWith('/dev/')) {
+                const parts = line.split(/\s+/);
                 const percentPartIndex = parts.findIndex(p => p.endsWith('%'));
                 if (percentPartIndex !== -1) {
                    const percent = parseInt(parts[percentPartIndex].replace('%', ''), 10);
                    const usedStr = parts[percentPartIndex - 2];
-                   const totalStr = parts[percentPartIndex - 3];
-                   setDiskData({ percent, usedStr, totalStr });
-                   break;
+                   const totalStr = parts[percentPartIndex - 3]; // Size is actually [percentIndex-3] since -> Size Used Avail Use% Mounted
+                   const mountPoint = parts.slice(percentPartIndex + 1).join(' ');
+                   disks.push({ percent, usedStr, totalStr, mountPoint });
                 }
              }
           }
+          setDiskData(disks);
+        }
+
+        if (netRes.data && netRes.data.data) {
+          const lines = netRes.data.data.split('\n');
+          let totalRx = 0, totalTx = 0;
+          let mainInterfaceName = '';
+          let maxRx = -1;
+          for (let i = 2; i < lines.length; i++) {
+            const line = lines[i].trim();
+            if (line && !line.startsWith('lo:')) {
+               const colonSplit = line.split(':');
+               if (colonSplit.length === 2) {
+                 const currentInterface = colonSplit[0].trim();
+                 const stats = colonSplit[1].trim().split(/\s+/);
+                 const currentRx = parseInt(stats[0], 10) || 0;
+                 const currentTx = parseInt(stats[8], 10) || 0;
+                 totalRx += currentRx;
+                 totalTx += currentTx;
+                 if (currentRx > maxRx) {
+                     maxRx = currentRx;
+                     mainInterfaceName = currentInterface;
+                 }
+               }
+            }
+          }
+          const now = Date.now();
+          const timeDiff = (now - lastNetRef.current.time) / 1000;
+          let rxSpeed = 0, txSpeed = 0;
+          if (timeDiff > 0 && lastNetRef.current.rx > 0) {
+             rxSpeed = (totalRx - lastNetRef.current.rx) / timeDiff;
+             txSpeed = (totalTx - lastNetRef.current.tx) / timeDiff;
+          }
+          lastNetRef.current = { rx: totalRx, tx: totalTx, time: now };
+          setNetworkData({ rxSpeed, txSpeed, totalRx, totalTx, interfaceName: mainInterfaceName });
+        }
+
+        if (tempRes && tempRes.data && tempRes.data.data && tempRes.data.data !== "N/A") {
+          const rawTemp = parseFloat(tempRes.data.data);
+          if (!isNaN(rawTemp)) {
+            // Lọc thông minh: nếu rawTemp > 1000 thì là millidegrees, nếu < 200 coi là độ C thuần
+            const tempC = rawTemp > 1000 ? (rawTemp / 1000).toFixed(1) : rawTemp.toFixed(1);
+            setTemperature(tempC);
+          } else {
+             setTemperature('N/A');
+          }
+        } else if (tempRes && tempRes.data && tempRes.data.data === "N/A") {
+          setTemperature('N/A');
         }
       } catch (error) {
         console.error("Lỗi lấy dữ liệu:", error);
@@ -100,7 +233,7 @@ function App() {
       isMounted = false;
       clearInterval(interval);
     };
-  }, []);
+  }, [refreshTrigger]);
 
   return (
     <div className="app-container">
@@ -112,64 +245,111 @@ function App() {
 
         <div className="dashboard-grid">
           {/* Server Overview (Top Center) */}
-          <section className="glass-panel analytics-section">
+          <section className="analytics-section">
             <div className="section-header">
               <h2>Server Overview</h2>
               <div className="filters">
-                <button className="btn-cyan">Refresh</button>
+                <button className="btn-cyan" onClick={handleRefresh}>Refresh</button>
               </div>
             </div>
             
-            <div className="kpi-row">
-              <div className="kpi">
-                <span className="kpi-label">CPU Usage</span>
-                <span className="kpi-val">{cpuHistory[cpuHistory.length-1]?.value}%</span>
+            <div className="kpi-cards-grid">
+              {/* CPU Card */}
+              <div className="kpi-card glass-panel">
+                <div className="kpi-header">
+                  <span className="kpi-title">CPU Usage</span>
+                  <div className="kpi-stats">
+                    <span className="kpi-value">{cpuHistory[cpuHistory.length-1]?.value}%</span>
+                    {temperature && temperature !== 'N/A' && <span className="kpi-sub" style={{color: 'var(--accent-pink)', marginLeft: '8px', fontSize: '1rem', fontWeight: 'bold'}}>{temperature}°C</span>}
+                  </div>
+                </div>
+                <div className="kpi-chart">
+                  <ResponsiveContainer width="100%" height={100}>
+                    <AreaChart data={cpuHistory} margin={{ top: 5, right: 0, left: 0, bottom: 0 }}>
+                      <defs>
+                        <linearGradient id="colorCpu" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="var(--accent-cyan)" stopOpacity={0.3}/>
+                          <stop offset="95%" stopColor="var(--accent-cyan)" stopOpacity={0}/>
+                        </linearGradient>
+                      </defs>
+                      <Tooltip cursor={{fill: 'transparent'}} contentStyle={{backgroundColor: 'var(--glass-bg)', borderColor: 'var(--glass-border)', color: '#fff'}} />
+                      <Area type="monotone" dataKey="value" stroke="var(--accent-cyan)" fillOpacity={1} fill="url(#colorCpu)" strokeWidth={2} isAnimationActive={false} />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
               </div>
-              <div className="kpi">
-                <span className="kpi-label">RAM Usage</span>
-                <span className="kpi-val">{ramData.percent}% <small className="green">({(ramData.used/1024).toFixed(1)}GB / {(ramData.total/1024).toFixed(1)}GB)</small></span>
-              </div>
-              <div className="kpi">
-                <span className="kpi-label">Disk Space</span>
-                <span className="kpi-val">{diskData.percent}% <small className="green">({diskData.usedStr} / {diskData.totalStr})</small></span>
-              </div>
-            </div>
 
-            <div className="charts-container">
-              <div className="chart line-chart">
-                <h4 style={{textAlign: 'center', margin: 0, fontSize: '12px', color: 'var(--text-secondary)'}}>CPU Usage History</h4>
-                <ResponsiveContainer width="100%" height={150}>
-                  <LineChart data={cpuHistory} margin={{ top: 10, right: 10, left: 0, bottom: 10 }}>
-                    <Tooltip cursor={{fill: 'transparent'}} contentStyle={{backgroundColor: 'var(--glass-bg)', borderColor: 'var(--glass-border)', color: '#fff'}} />
-                    <Line type="monotone" dataKey="value" stroke="var(--accent-cyan)" strokeWidth={3} dot={{r: 0}} activeDot={{r: 4}} isAnimationActive={false} />
-                  </LineChart>
-                </ResponsiveContainer>
+              {/* RAM Card */}
+              <div className="kpi-card glass-panel" style={{ display: 'flex', flexDirection: 'column' }}>
+                <div className="kpi-header">
+                  <span className="kpi-title">RAM Usage</span>
+                  <div className="kpi-stats">
+                    <span className="kpi-value">{ramData.percent}%</span>
+                    <span className="kpi-sub">{(ramData.used/1024).toFixed(1)}GB / {(ramData.total/1024).toFixed(1)}GB</span>
+                  </div>
+                </div>
+                <div className="kpi-chart" style={{ flex: 1, minHeight: '80px' }}>
+                   <ResponsiveContainer width="100%" height={90}>
+                      <PieChart>
+                        <Pie data={[{name: 'Used', value: ramData.percent, color: '#00f0ff'}, {name: 'Free', value: 100 - ramData.percent, color: 'rgba(255,255,255,0.05)'}]} innerRadius={30} outerRadius={40} paddingAngle={0} dataKey="value" stroke="none" startAngle={90} endAngle={-270}>
+                          {[{color: '#00f0ff'}, {color: 'rgba(255,255,255,0.05)'}].map((entry, index) => (
+                            <Cell key={`cell-${index}`} fill={entry.color} />
+                          ))}
+                        </Pie>
+                        <Tooltip contentStyle={{backgroundColor: 'var(--glass-bg)', borderColor: 'var(--glass-border)', color: '#fff'}} />
+                      </PieChart>
+                    </ResponsiveContainer>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', marginTop: '5px', color: 'var(--text-secondary)' }}>
+                  <div>
+                    <span style={{color: '#00f0ff'}}>●</span> Cache: {(ramData.cached/1024).toFixed(1)}G
+                  </div>
+                  <div>
+                    <span style={{color: '#ff79c6'}}>●</span> Swap: {ramData.swapTotal > 0 ? `${(ramData.swapUsed/1024).toFixed(1)}G / ${(ramData.swapTotal/1024).toFixed(1)}G` : '0G / 0G'}
+                  </div>
+                </div>
               </div>
-              <div className="chart pie-chart">
-                <h4 style={{textAlign: 'center', margin: 0, fontSize: '12px', color: 'var(--text-secondary)'}}>RAM Usage</h4>
-                <ResponsiveContainer width="100%" height={150}>
-                  <PieChart>
-                    <Pie data={[{name: 'Used', value: ramData.percent, color: '#00f0ff'}, {name: 'Free', value: 100 - ramData.percent, color: 'rgba(255,255,255,0.1)'}]} innerRadius={30} outerRadius={50} paddingAngle={0} dataKey="value" stroke="none">
-                      {[{color: '#00f0ff'}, {color: 'rgba(255,255,255,0.1)'}].map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={entry.color} />
-                      ))}
-                    </Pie>
-                    <Tooltip contentStyle={{backgroundColor: 'var(--glass-bg)', borderColor: 'var(--glass-border)', color: '#fff'}} />
-                  </PieChart>
-                </ResponsiveContainer>
+
+              {/* Disks Card */}
+              <div className="kpi-card glass-panel" style={{ overflowY: 'auto' }}>
+                <div className="kpi-header" style={{ marginBottom: '10px' }}>
+                  <span className="kpi-title">Disk Space</span>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '15px', zIndex: 1 }}>
+                  {diskData.map((d, idx) => (
+                    <div key={idx}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', color: '#fff', marginBottom: '5px' }}>
+                        <span><HardDrive size={12} style={{marginRight: '5px', verticalAlign: 'middle'}}/>{d.mountPoint}</span>
+                        <span style={{ color: 'var(--accent-purple)' }}>{d.usedStr} / {d.totalStr} ({d.percent}%)</span>
+                      </div>
+                      <div style={{ width: '100%', height: '8px', background: 'rgba(255,255,255,0.1)', borderRadius: '4px', overflow: 'hidden' }}>
+                        <div style={{ width: `${d.percent}%`, height: '100%', background: 'linear-gradient(90deg, #9d4edd, #ff79c6)', borderRadius: '4px' }}></div>
+                      </div>
+                    </div>
+                  ))}
+                  {diskData.length === 0 && <span style={{color: 'var(--text-secondary)', fontSize: '0.85rem'}}>No disk info found</span>}
+                </div>
               </div>
-              <div className="chart pie-chart">
-                <h4 style={{textAlign: 'center', margin: 0, fontSize: '12px', color: 'var(--text-secondary)'}}>Disk Usage</h4>
-                <ResponsiveContainer width="100%" height={150}>
-                  <PieChart>
-                    <Pie data={[{name: 'Used', value: diskData.percent, color: '#9d4edd'}, {name: 'Free', value: 100 - diskData.percent, color: 'rgba(255,255,255,0.1)'}]} innerRadius={30} outerRadius={50} paddingAngle={0} dataKey="value" stroke="none">
-                      {[{color: '#9d4edd'}, {color: 'rgba(255,255,255,0.1)'}].map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={entry.color} />
-                      ))}
-                    </Pie>
-                    <Tooltip contentStyle={{backgroundColor: 'var(--glass-bg)', borderColor: 'var(--glass-border)', color: '#fff'}} />
-                  </PieChart>
-                </ResponsiveContainer>
+
+              {/* Network Card */}
+              <div className="kpi-card glass-panel" style={{ display: 'flex', flexDirection: 'column' }}>
+                <div className="kpi-header">
+                  <span className="kpi-title">Network Traffic <span style={{fontSize: '0.75rem', color: 'var(--accent-purple)', fontWeight: 'normal', marginLeft: '5px'}}>{networkData.interfaceName || 'N/A'}</span></span>
+                  <div className="kpi-stats" style={{ flexDirection: 'column', gap: '8px', alignItems: 'flex-start', marginTop: '15px' }}>
+                    <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                      <Wifi size={18} color="#00f0ff" />
+                      <span className="kpi-value" style={{ fontSize: '1.3rem' }}>{formatSpeed(networkData.rxSpeed)} <span style={{fontSize: '0.8rem', color:'var(--text-secondary)'}}>DN</span></span>
+                    </div>
+                    <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                      <Activity size={18} color="#ff79c6" />
+                      <span className="kpi-value" style={{ fontSize: '1.3rem' }}>{formatSpeed(networkData.txSpeed)} <span style={{fontSize: '0.8rem', color:'var(--text-secondary)'}}>UP</span></span>
+                    </div>
+                  </div>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', marginTop: 'auto', paddingTop: '10px', color: 'var(--text-secondary)', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+                  <div>Total DL: <strong style={{color: '#fff'}}>{formatBytes(networkData.totalRx)}</strong></div>
+                  <div>Total UL: <strong style={{color: '#fff'}}>{formatBytes(networkData.totalTx)}</strong></div>
+                </div>
               </div>
             </div>
           </section>
@@ -184,10 +364,10 @@ function App() {
                 </div>
                 <div className="activity-list">
                   <div className="activity-item">
-                    <User size={16} />
+                    <Activity size={16} color="var(--accent-cyan)" />
                     <div className="act-info">
                       <p>Uptime check</p>
-                      <small>{system.substring(0, 30)}</small>
+                      <small>{formattedSystem.uptime}</small>
                     </div>
                   </div>
                   <div className="activity-item">
@@ -213,12 +393,34 @@ function App() {
                   {system ? (
                     <>
                       <strong style={{ color: 'var(--accent-cyan)' }}>Uptime</strong><br />
-                      {system}
+                      {formattedSystem.uptime}
+                      {formattedSystem.load && <><br /><span style={{fontSize: '0.75rem', opacity: 0.7}}>Load Average: {formattedSystem.load}</span></>}
+                      {temperature && temperature !== 'N/A' && <><br /><span style={{fontSize: '0.85rem', color: 'var(--accent-pink)', fontWeight: 'bold', marginTop: '5px', display: 'inline-block'}}>Nhiệt độ: {temperature}°C</span></>}
                     </>
                   ) : 'Fetching uptime...'}
                 </div>
              </div>
              
+             {/* Active Connections */}
+             <div className="glass-panel team-members" style={{ marginBottom: '20px' }}>
+                <div className="section-header">
+                  <h3>Active Connections</h3>
+                  <MoreHorizontal size={16} />
+                </div>
+                <div className="team-list">
+                    {connections.map((conn, idx) => (
+                      <div className="team-item clickable" key={idx} onClick={() => setSelectedConnection(conn)}>
+                        <div className="avatar" style={{background: 'var(--glass-border)'}}><User size={14}/></div>
+                        <div className="team-info">
+                          <p>{conn.user} <span style={{fontSize: '0.7rem', color: 'var(--accent-purple)'}}>({conn.terminal})</span></p>
+                          <small>{conn.ip}</small>
+                        </div>
+                      </div>
+                    ))}
+                    {connections.length === 0 && <span style={{color: 'var(--text-secondary)', fontSize: '0.85rem'}}>No active connections</span>}
+                </div>
+             </div>
+
              {/* Server Info */}
              <div className="glass-panel team-members clickable" onClick={() => setIsServerModalOpen(true)}>
                 <div className="section-header">
@@ -248,44 +450,70 @@ function App() {
           <section className="glass-panel master-record">
             <div className="section-header">
               <h2>Master Record (Processes)</h2>
-              <button className="btn-cyan">Refresh</button>
+              <button className="btn-cyan" onClick={handleRefresh}>Refresh</button>
             </div>
             <div className="table-controls">
                <div className="search-bar glass-panel">
                   <Search size={16} />
-                  <input type="text" placeholder="Search..." />
-               </div>
-               <div className="filters">
-                  <select className="glass-select"><option>CPU</option></select>
-                  <select className="glass-select"><option>Filter</option></select>
+                  <input 
+                    type="text" 
+                    placeholder="Search..." 
+                    value={searchTerm} 
+                    onChange={(e) => setSearchTerm(e.target.value)} 
+                  />
                </div>
             </div>
             
-            <table className="glass-table">
-              <thead>
-                <tr>
-                  <th>PID</th>
-                  <th>Name/Comm</th>
-                  <th>User</th>
-                  <th>CPU %</th>
-                  <th>MEM %</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {processes.map(p => (
-                  <tr key={p.id}>
-                    <td>{p.id}</td>
-                    <td>{p.name}</td>
-                    <td>{p.user}</td>
-                    <td><span className="status-badge" style={{color: 'var(--accent-cyan)'}}>{p.cpu}</span></td>
-                    <td><span className="status-badge" style={{color: 'var(--accent-purple)'}}>{p.mem}</span></td>
-                    <td><Settings size={14} className="action-icon" /></td>
+            <div style={{ maxHeight: '400px', overflowY: 'auto', paddingRight: '5px' }}>
+              <table className="glass-table">
+                <thead style={{ position: 'sticky', top: 0, background: '#ffffff', color: '#1c1c28', zIndex: 1, boxShadow: '0 2px 5px rgba(0,0,0,0.5)' }}>
+                  <tr>
+                    <th>PID</th>
+                    <th>Name/Comm</th>
+                    <th>User</th>
+                    <th>Threads</th>
+                    <th>CPU %</th>
+                    <th>Memory</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {processes
+                    .filter(p => !searchTerm || p.name.toLowerCase().includes(searchTerm.toLowerCase()) || p.user.toLowerCase().includes(searchTerm.toLowerCase()) || p.id.toString().includes(searchTerm))
+                    .map(p => (
+                    <tr key={p.id}>
+                      <td>{p.id}</td>
+                      <td>
+                        <div style={{ fontWeight: '500' }}>{p.name}</div>
+                        <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', maxWidth: '250px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={p.args}>{p.args}</div>
+                      </td>
+                      <td>{p.user}</td>
+                      <td>{p.threads}</td>
+                      <td><span className="status-badge" style={{color: 'var(--accent-cyan)'}}>{p.cpu}</span></td>
+                      <td><span className="status-badge" style={{color: 'var(--accent-purple)'}}>{p.mem}</span></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </section>
+          {/* Connection Modal */}
+          {selectedConnection && (
+            <div className="modal-overlay" onClick={() => setSelectedConnection(null)}>
+              <div className="modal-content glass-panel" onClick={e => e.stopPropagation()}>
+                <div className="section-header" style={{ marginBottom: '20px' }}>
+                  <h3 style={{ margin: 0 }}>Chi tiết thiết bị truy cập</h3>
+                  <button className="btn-close-modal" onClick={() => setSelectedConnection(null)}>X</button>
+                </div>
+                <div className="server-details-list">
+                  <div className="detail-item"><strong>User:</strong> {selectedConnection.user}</div>
+                  <div className="detail-item"><strong>IP Address:</strong> {selectedConnection.ip}</div>
+                  <div className="detail-item"><strong>Terminal:</strong> {selectedConnection.terminal}</div>
+                  <div className="detail-item"><strong>Login Time:</strong> {selectedConnection.loginTime}</div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Server Modal */}
           {isServerModalOpen && (
             <div className="modal-overlay" onClick={() => setIsServerModalOpen(false)}>
@@ -297,15 +525,34 @@ function App() {
                 <div className="server-details-list">
                   <div className="detail-item"><strong>OS Platform:</strong> Linux Server</div>
                   <div className="detail-item"><strong>Network:</strong> Connected</div>
-                  <div className="detail-item"><strong>Uptime:</strong> {system || 'Đang lấy dữ liệu...'}</div>
+                  <div className="detail-item"><strong>Uptime:</strong> {system ? formattedSystem.uptime : 'Đang lấy dữ liệu...'}</div>
+                  {formattedSystem.load && <div className="detail-item"><strong>Load Average:</strong> {formattedSystem.load}</div>}
                   <div className="detail-item">
                     <strong>CPU Usage:</strong> {cpuHistory.length > 0 ? `${cpuHistory[cpuHistory.length - 1].value}%` : '0%'}
+                    {temperature && temperature !== 'N/A' && <span style={{marginLeft: '10px', color: 'var(--accent-pink)', fontWeight: 'bold'}}>({temperature}°C)</span>}
                   </div>
                   <div className="detail-item">
                     <strong>RAM Usage:</strong> {ramData.percent}% ({(ramData.used/1024).toFixed(1)}GB / {(ramData.total/1024).toFixed(1)}GB)
+                    <div style={{ marginTop: '5px', paddingLeft: '10px', fontSize: '0.85em', color: 'var(--text-secondary)' }}>
+                      <div style={{ marginBottom: '3px' }}>- Cached: {(ramData.cached/1024).toFixed(1)} GB, Free: {(ramData.free/1024).toFixed(1)} GB</div>
+                      <div>- Swap: {(ramData.swapUsed/1024).toFixed(1)} GB / {(ramData.swapTotal/1024).toFixed(1)} GB</div>
+                    </div>
                   </div>
                   <div className="detail-item">
-                    <strong>Disk Space:</strong> {diskData.percent}% ({diskData.usedStr} / {diskData.totalStr})
+                    <strong>Disk Space:</strong> 
+                    <div style={{ marginTop: '5px', paddingLeft: '10px' }}>
+                      {diskData.map((d, i) => (
+                        <div key={i} style={{marginBottom: '5px'}}>- {d.mountPoint}: {d.usedStr} / {d.totalStr} ({d.percent}%)</div>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="detail-item">
+                    <strong>Network Traffic:</strong> {formatSpeed(networkData.rxSpeed)} Down / {formatSpeed(networkData.txSpeed)} Up
+                    <div style={{ marginTop: '5px', paddingLeft: '10px', fontSize: '0.85em', color: 'var(--text-secondary)' }}>
+                      <div style={{ marginBottom: '3px' }}>- Interface Name: <span style={{color: 'var(--accent-cyan)'}}>{networkData.interfaceName || 'N/A'}</span></div>
+                      <div style={{ marginBottom: '3px' }}>- Total Downloaded: {formatBytes(networkData.totalRx)}</div>
+                      <div>- Total Uploaded: {formatBytes(networkData.totalTx)}</div>
+                    </div>
                   </div>
                 </div>
               </div>

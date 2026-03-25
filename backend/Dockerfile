@@ -6,6 +6,8 @@ RUN mvn clean package -DskipTests
 
 FROM eclipse-temurin:21-jre-alpine
 WORKDIR /app
+# wget cần thiết cho healthcheck trong docker-compose (curl không có sẵn trên Alpine)
+RUN apk add --no-cache wget
 COPY --from=builder /app/target/dashboard-0.0.1-SNAPSHOT.jar app.jar
 EXPOSE 8080
 ENTRYPOINT ["java", "-jar", "app.jar"]

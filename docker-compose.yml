@@ -12,13 +12,13 @@ services:
     restart: unless-stopped
     networks:
       - dashboard-network
-    # Dùng endpoint có sẵn vì Actuator không có trong pom.xml
+    # Actuator /health: không phụ thuộc SSH, trả 200 khi Spring Boot sẵn sàng
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/api/metrics/cpu"]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/actuator/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s
+      start_period: 90s
     deploy:
       resources:
         limits:

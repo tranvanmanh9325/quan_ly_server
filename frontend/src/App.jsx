@@ -1,31 +1,59 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import axios from 'axios';
 import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { LayoutDashboard, BarChart2, Folder, Users, Settings, FileText, Search, Bell, User, MoreHorizontal, Activity, HardDrive, Wifi } from 'lucide-react';
 import './index.css';
 import './App.css';
+import { parseCpu, parseRam, parseDisks, parseNetwork, parseProcesses, parseTemperature } from './utils/parsers';
 
 const API_BASE = '/api/metrics';
 
+// Khoảng thời gian polling mặc định (ms)
+const METRICS_INTERVAL_NORMAL = 10_000;
+const METRICS_INTERVAL_SLOW   = 20_000; // Tự động chuyển khi SSH phản hồi chậm (> 5s)
+const PROCESS_INTERVAL        = 30_000;
+const ADAPTIVE_THRESHOLD_MS   = 5_000;  // Ngưỡng để xem SSH là "đang chậm"
+
 function App() {
-  const [processes, setProcesses] = useState([]);
-  const [system, setSystem] = useState('');
+  const [processes, setProcesses]   = useState([]);
+  const [system, setSystem]         = useState('');
   const [cpuHistory, setCpuHistory] = useState(Array(15).fill({ name: '', value: 0 }));
-  const [ramData, setRamData] = useState({ total: 0, used: 0, free: 0, cached: 0, percent: 0, swapTotal: 0, swapUsed: 0 });
-  const [diskData, setDiskData] = useState([]);
+  const [ramData, setRamData]       = useState({ total: 0, used: 0, free: 0, cached: 0, percent: 0, swapTotal: 0, swapUsed: 0 });
+  const [diskData, setDiskData]     = useState([]);
   const [networkData, setNetworkData] = useState({ rxSpeed: 0, txSpeed: 0, totalRx: 0, totalTx: 0, interfaceName: '' });
   const lastNetRef = useRef({ rx: 0, tx: 0, time: 0 });
   const [isServerModalOpen, setIsServerModalOpen] = useState(false);
-  const [connections, setConnections] = useState([]);
+  const [connections, setConnections]   = useState([]);
   const [selectedConnection, setSelectedConnection] = useState(null);
-  const [temperature, setTemperature] = useState(null);
+  const [temperature, setTemperature]   = useState(null);
+
+  // Dùng ref để trigger refresh từ nút bấm mà không gây re-render thêm
+  const refreshCounterRef = useRef(0);
+  const [refreshTick, setRefreshTick] = useState(0);
+
+  // --- Search debounce (300ms) — tránh filter lại 100+ dòng mỗi keystroke ---
+  const [searchInput, setSearchInput]   = useState('');
+  const [searchTerm, setSearchTerm]     = useState('');
+  const searchDebounceRef               = useRef(null);
+
+  const handleSearchChange = useCallback((e) => {
+    const value = e.target.value;
+    setSearchInput(value);
+    clearTimeout(searchDebounceRef.current);
+    searchDebounceRef.current = setTimeout(() => setSearchTerm(value), 300);
+  }, []);
+
+  const handleRefresh = () => {
+    refreshCounterRef.current += 1;
+    setRefreshTick(refreshCounterRef.current);
+  };
 
   const formatSpeed = (bps) => {
     if (bps > 1024 * 1024) return (bps / (1024 * 1024)).toFixed(1) + ' MB/s';
     if (bps > 1024) return (bps / 1024).toFixed(1) + ' KB/s';
     return Math.max(0, bps).toFixed(0) + ' B/s';
   };
-  
+
   const formatBytes = (bytes) => {
     if (bytes === 0) return '0 B';
     const k = 1024;
@@ -33,15 +61,8 @@ function App() {
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   };
-  
-  const [searchTerm, setSearchTerm] = useState('');
-  const [refreshTrigger, setRefreshTrigger] = useState(0);
 
-  const handleRefresh = () => {
-    setRefreshTrigger(prev => prev + 1);
-  };
-
-  const formattedSystem = React.useMemo(() => {
+  const formattedSystem = useMemo(() => {
     if (!system) return { uptime: 'Đang lấy dữ liệu...', load: '' };
     try {
       const parts = system.split('load average:');
@@ -49,25 +70,21 @@ function App() {
       let upPart = parts[0] || system;
       const upIndex = upPart.indexOf('up ');
       if (upIndex !== -1) {
-         let timeChunk = upPart.substring(upIndex + 3);
-         const userIndex = timeChunk.indexOf(' user');
-         if (userIndex !== -1) {
-            timeChunk = timeChunk.substring(0, userIndex);
-            const lastComma = timeChunk.lastIndexOf(',');
-            if (lastComma !== -1) {
-               timeChunk = timeChunk.substring(0, lastComma);
-            }
-         }
-         let timeStr = timeChunk.trim();
-         timeStr = timeStr.replace(/days?/g, 'ngày').replace(/mins?/g, 'phút');
-         const timeMatch = timeStr.match(/(\d+):(\d+)/);
-         if (timeMatch) {
-            const hours = parseInt(timeMatch[1], 10);
-            const minutes = parseInt(timeMatch[2], 10);
-            timeStr = timeStr.replace(/\d+:\d+/, `${hours} giờ ${minutes} phút`);
-         }
-         timeStr = timeStr.replace(/,/g, ' ').replace(/\s+/g, ' ').trim();
-         return { uptime: timeStr || system, load: loadStr };
+        let timeChunk = upPart.substring(upIndex + 3);
+        const userIndex = timeChunk.indexOf(' user');
+        if (userIndex !== -1) {
+          timeChunk = timeChunk.substring(0, userIndex);
+          const lastComma = timeChunk.lastIndexOf(',');
+          if (lastComma !== -1) timeChunk = timeChunk.substring(0, lastComma);
+        }
+        let timeStr = timeChunk.trim();
+        timeStr = timeStr.replace(/days?/g, 'ngày').replace(/mins?/g, 'phút');
+        const timeMatch = timeStr.match(/(\d+):(\d+)/);
+        if (timeMatch) {
+          const h = parseInt(timeMatch[1], 10), m = parseInt(timeMatch[2], 10);
+          timeStr = timeStr.replace(/\d+:\d+/, `${h} giờ ${m} phút`);
+        }
+        return { uptime: timeStr.replace(/,/g, ' ').replace(/\s+/g, ' ').trim() || system, load: loadStr };
       }
       return { uptime: system, load: '' };
     } catch {
@@ -76,164 +93,159 @@ function App() {
   }, [system]);
 
 
+  // ─── Effect 1: Lightweight metrics — poll mỗi 10 giây (adaptive) ────────────
   useEffect(() => {
-    let isMounted = true;
+    let isMounted    = true;
+    let isFetching   = false;
+    // Khoảng interval hiện tại: có thể tự tăng lên 20s khi SSH chậm
+    let currentInterval = METRICS_INTERVAL_NORMAL;
+    let timerId = null;
 
-    const loadData = async () => {
+    const loadMetrics = async () => {
+      if (isFetching) return;
+      isFetching = true;
+      const t0 = Date.now();
+
       try {
-        const [pRes, sysRes, cpuRes, ramRes, diskRes, netRes, connRes, tempRes] = await Promise.all([
-          axios.get(`${API_BASE}/processes`),
+        const [sysRes, cpuRes, ramRes, diskRes, netRes, connRes, tempRes] = await Promise.all([
           axios.get(`${API_BASE}/system`),
           axios.get(`${API_BASE}/cpu`),
           axios.get(`${API_BASE}/ram`),
           axios.get(`${API_BASE}/disk`),
           axios.get(`${API_BASE}/network`),
           axios.get(`${API_BASE}/connections`),
-          axios.get(`${API_BASE}/temperature`)
+          axios.get(`${API_BASE}/temperature`),
         ]);
 
         if (!isMounted) return;
 
-        if (connRes.data && connRes.data.data) {
-          setConnections(connRes.data.data);
+        // --- Adaptive backoff: đo thời gian phản hồi để tự điều chỉnh interval ---
+        const elapsed = Date.now() - t0;
+        const newInterval = elapsed > ADAPTIVE_THRESHOLD_MS ? METRICS_INTERVAL_SLOW : METRICS_INTERVAL_NORMAL;
+        if (newInterval !== currentInterval) {
+          console.info(`[Adaptive] SSH phản hồi ${elapsed}ms → chuyển interval sang ${newInterval / 1000}s`);
+          currentInterval = newInterval;
+          // Khởi động lại timer với interval mới
+          clearTimeout(timerId);
+          timerId = setTimeout(schedule, currentInterval);
         }
 
-        if (pRes.data && pRes.data.data) {
-          const lines = pRes.data.data.split('\n');
-          const procs = lines.slice(1).map((line) => {
-            const parts = line.trim().split(/\s+/);
-            if (parts.length >= 7) {
-              const memMb = (parseInt(parts[5], 10) / 1024).toFixed(1) + ' MB';
-              return { id: parts[0], user: parts[1], cpu: parts[2] + '%', memPercent: parts[3] + '%', threads: parts[4], mem: memMb, name: parts[6], args: parts.slice(7).join(' ') || parts[6] };
-            }
-            if (parts.length >= 5) {
-              return { id: parts[0], user: parts[1], cpu: parts[2] + '%', memPercent: parts[3] + '%', threads: '-', mem: 'N/A', name: parts[4], args: parts.slice(4).join(' ') };
-            }
-            return null;
-          }).filter(Boolean);
-          setProcesses(procs);
-        }
+        if (connRes.data?.data) setConnections(connRes.data.data);
+        if (sysRes.data)        setSystem(sysRes.data.data);
 
-        if (sysRes.data) {
-          setSystem(sysRes.data.data);
-        }
-
-        if (cpuRes.data && cpuRes.data.data) {
-          const match = cpuRes.data.data.match(/(\d+\.\d+)\s+id/);
-          let cpuPercent = 0;
-          if (match && match[1]) {
-             const idle = parseFloat(match[1]);
-             cpuPercent = Math.max(0, 100 - idle).toFixed(1);
-          }
+        if (cpuRes.data?.data) {
+          const cpuPercent = parseCpu(cpuRes.data.data);
           setCpuHistory(prev => {
-            const timeStr = new Date().toLocaleTimeString('en-US', {hour12:false, hour:'2-digit', minute:'2-digit', second:'2-digit'});
-            return [...prev.slice(1), { name: timeStr, value: parseFloat(cpuPercent) }];
+            const timeStr = new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            return [...prev.slice(1), { name: timeStr, value: cpuPercent }];
           });
         }
 
-        if (ramRes.data && ramRes.data.data) {
-          const lines = ramRes.data.data.split('\n');
-          if (lines.length >= 2) {
-             const memParts = lines[1].trim().split(/\s+/);
-             let total = 0, used = 0, free = 0, cached = 0, percent = 0;
-             if (memParts.length >= 4) {
-                total = parseInt(memParts[1], 10);
-                used = parseInt(memParts[2], 10);
-                free = parseInt(memParts[3], 10);
-                cached = memParts.length >= 6 ? parseInt(memParts[5], 10) : 0;
-                percent = total > 0 ? ((used / total) * 100).toFixed(1) : 0;
-             }
-             let swapTotal = 0, swapUsed = 0;
-             if (lines.length >= 3 && lines[2].startsWith('Swap:')) {
-                const swapParts = lines[2].trim().split(/\s+/);
-                if (swapParts.length >= 3) {
-                    swapTotal = parseInt(swapParts[1], 10);
-                    swapUsed = parseInt(swapParts[2], 10);
-                }
-             }
-             setRamData({ total, used, free, cached, percent: parseFloat(percent), swapTotal, swapUsed });
-          }
+        if (ramRes.data?.data)  setRamData(parseRam(ramRes.data.data));
+        if (diskRes.data?.data) setDiskData(parseDisks(diskRes.data.data));
+
+        if (netRes.data?.data) {
+          const result = parseNetwork(netRes.data.data, lastNetRef.current);
+          lastNetRef.current = { rx: result.totalRx, tx: result.totalTx, time: Date.now() };
+          setNetworkData(result);
         }
 
-        if (diskRes.data && diskRes.data.data) {
-          const lines = diskRes.data.data.split('\n');
-          const disks = [];
-          for (let i = 1; i < lines.length; i++) {
-             const line = lines[i].trim();
-             if (line.startsWith('/dev/')) {
-                const parts = line.split(/\s+/);
-                const percentPartIndex = parts.findIndex(p => p.endsWith('%'));
-                if (percentPartIndex !== -1) {
-                   const percent = parseInt(parts[percentPartIndex].replace('%', ''), 10);
-                   const usedStr = parts[percentPartIndex - 2];
-                   const totalStr = parts[percentPartIndex - 3]; // Size is actually [percentIndex-3] since -> Size Used Avail Use% Mounted
-                   const mountPoint = parts.slice(percentPartIndex + 1).join(' ');
-                   disks.push({ percent, usedStr, totalStr, mountPoint });
-                }
-             }
-          }
-          setDiskData(disks);
-        }
+        const temp = parseTemperature(tempRes?.data?.data);
+        if (temp !== null) setTemperature(temp);
 
-        if (netRes.data && netRes.data.data) {
-          const lines = netRes.data.data.split('\n');
-          let totalRx = 0, totalTx = 0;
-          let mainInterfaceName = '';
-          let maxRx = -1;
-          for (let i = 2; i < lines.length; i++) {
-            const line = lines[i].trim();
-            if (line && !line.startsWith('lo:')) {
-               const colonSplit = line.split(':');
-               if (colonSplit.length === 2) {
-                 const currentInterface = colonSplit[0].trim();
-                 const stats = colonSplit[1].trim().split(/\s+/);
-                 const currentRx = parseInt(stats[0], 10) || 0;
-                 const currentTx = parseInt(stats[8], 10) || 0;
-                 totalRx += currentRx;
-                 totalTx += currentTx;
-                 if (currentRx > maxRx) {
-                     maxRx = currentRx;
-                     mainInterfaceName = currentInterface;
-                 }
-               }
-            }
-          }
-          const now = Date.now();
-          const timeDiff = (now - lastNetRef.current.time) / 1000;
-          let rxSpeed = 0, txSpeed = 0;
-          if (timeDiff > 0 && lastNetRef.current.rx > 0) {
-             rxSpeed = (totalRx - lastNetRef.current.rx) / timeDiff;
-             txSpeed = (totalTx - lastNetRef.current.tx) / timeDiff;
-          }
-          lastNetRef.current = { rx: totalRx, tx: totalTx, time: now };
-          setNetworkData({ rxSpeed, txSpeed, totalRx, totalTx, interfaceName: mainInterfaceName });
-        }
-
-        if (tempRes && tempRes.data && tempRes.data.data && tempRes.data.data !== "N/A") {
-          const rawTemp = parseFloat(tempRes.data.data);
-          if (!isNaN(rawTemp)) {
-            // Lọc thông minh: nếu rawTemp > 1000 thì là millidegrees, nếu < 200 coi là độ C thuần
-            const tempC = rawTemp > 1000 ? (rawTemp / 1000).toFixed(1) : rawTemp.toFixed(1);
-            setTemperature(tempC);
-          } else {
-             setTemperature('N/A');
-          }
-        } else if (tempRes && tempRes.data && tempRes.data.data === "N/A") {
-          setTemperature('N/A');
-        }
       } catch (error) {
-        console.error("Lỗi lấy dữ liệu:", error);
+        console.error('Lỗi lấy metrics:', error);
+      } finally {
+        isFetching = false;
       }
     };
 
-    loadData();
-    const interval = setInterval(loadData, 5000);
+    // Dùng setTimeout thay vì setInterval để interval có thể thay đổi động
+    const schedule = () => {
+      // Visibility API: không poll khi tab bị ẩn — tiết kiệm 100% SSH call khi không xem
+      if (document.visibilityState === 'hidden') {
+        timerId = setTimeout(schedule, 1000); // kiểm tra lại sau 1s
+        return;
+      }
+      loadMetrics().finally(() => {
+        if (isMounted) timerId = setTimeout(schedule, currentInterval);
+      });
+    };
+
+    // Chạy ngay lần đầu, sau đó lên lịch
+    loadMetrics().finally(() => {
+      if (isMounted) timerId = setTimeout(schedule, currentInterval);
+    });
+
+    // Resume ngay khi tab được focus lại
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && isMounted) {
+        clearTimeout(timerId);
+        loadMetrics().finally(() => {
+          if (isMounted) timerId = setTimeout(schedule, currentInterval);
+        });
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
 
     return () => {
       isMounted = false;
-      clearInterval(interval);
+      clearTimeout(timerId);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
     };
-  }, [refreshTrigger]);
+  }, [refreshTick]);
+
+
+  // ─── Effect 2: Process list nặng — poll riêng mỗi 30 giây ──────────────────
+  useEffect(() => {
+    let isMounted      = true;
+    let isFetchingProcs = false;
+    let timerId        = null;
+
+    const loadProcesses = async () => {
+      if (isFetchingProcs) return;
+      isFetchingProcs = true;
+      try {
+        const pRes = await axios.get(`${API_BASE}/processes`);
+        if (!isMounted) return;
+        if (pRes.data?.data) setProcesses(parseProcesses(pRes.data.data));
+      } catch (error) {
+        console.error('Lỗi lấy processes:', error);
+      } finally {
+        isFetchingProcs = false;
+      }
+    };
+
+    const schedule = () => {
+      if (document.visibilityState === 'hidden') {
+        timerId = setTimeout(schedule, 1000);
+        return;
+      }
+      loadProcesses().finally(() => {
+        if (isMounted) timerId = setTimeout(schedule, PROCESS_INTERVAL);
+      });
+    };
+
+    loadProcesses().finally(() => {
+      if (isMounted) timerId = setTimeout(schedule, PROCESS_INTERVAL);
+    });
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && isMounted) {
+        clearTimeout(timerId);
+        loadProcesses().finally(() => {
+          if (isMounted) timerId = setTimeout(schedule, PROCESS_INTERVAL);
+        });
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
+    return () => {
+      isMounted = false;
+      clearTimeout(timerId);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [refreshTick]);
 
   return (
     <div className="app-container">
@@ -268,7 +280,7 @@ function App() {
                     <AreaChart data={cpuHistory} margin={{ top: 5, right: 0, left: 0, bottom: 0 }}>
                       <defs>
                         <linearGradient id="colorCpu" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="var(--accent-cyan)" stopOpacity={0.3}/>
+                          <stop offset="5%"  stopColor="var(--accent-cyan)" stopOpacity={0.3}/>
                           <stop offset="95%" stopColor="var(--accent-cyan)" stopOpacity={0}/>
                         </linearGradient>
                       </defs>
@@ -289,24 +301,20 @@ function App() {
                   </div>
                 </div>
                 <div className="kpi-chart" style={{ flex: 1, minHeight: '80px' }}>
-                   <ResponsiveContainer width="100%" height={90}>
-                      <PieChart>
-                        <Pie data={[{name: 'Used', value: ramData.percent, color: '#00f0ff'}, {name: 'Free', value: 100 - ramData.percent, color: 'rgba(255,255,255,0.05)'}]} innerRadius={30} outerRadius={40} paddingAngle={0} dataKey="value" stroke="none" startAngle={90} endAngle={-270}>
-                          {[{color: '#00f0ff'}, {color: 'rgba(255,255,255,0.05)'}].map((entry, index) => (
-                            <Cell key={`cell-${index}`} fill={entry.color} />
-                          ))}
-                        </Pie>
-                        <Tooltip contentStyle={{backgroundColor: 'var(--glass-bg)', borderColor: 'var(--glass-border)', color: '#fff'}} />
-                      </PieChart>
-                    </ResponsiveContainer>
+                  <ResponsiveContainer width="100%" height={90}>
+                    <PieChart>
+                      <Pie data={[{name: 'Used', value: ramData.percent, color: '#00f0ff'}, {name: 'Free', value: 100 - ramData.percent, color: 'rgba(255,255,255,0.05)'}]} innerRadius={30} outerRadius={40} paddingAngle={0} dataKey="value" stroke="none" startAngle={90} endAngle={-270}>
+                        {[{color: '#00f0ff'}, {color: 'rgba(255,255,255,0.05)'}].map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={entry.color} />
+                        ))}
+                      </Pie>
+                      <Tooltip contentStyle={{backgroundColor: 'var(--glass-bg)', borderColor: 'var(--glass-border)', color: '#fff'}} />
+                    </PieChart>
+                  </ResponsiveContainer>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', marginTop: '5px', color: 'var(--text-secondary)' }}>
-                  <div>
-                    <span style={{color: '#00f0ff'}}>●</span> Cache: {(ramData.cached/1024).toFixed(1)}G
-                  </div>
-                  <div>
-                    <span style={{color: '#ff79c6'}}>●</span> Swap: {ramData.swapTotal > 0 ? `${(ramData.swapUsed/1024).toFixed(1)}G / ${(ramData.swapTotal/1024).toFixed(1)}G` : '0G / 0G'}
-                  </div>
+                  <div><span style={{color: '#00f0ff'}}>●</span> Cache: {(ramData.cached/1024).toFixed(1)}G</div>
+                  <div><span style={{color: '#ff79c6'}}>●</span> Swap: {ramData.swapTotal > 0 ? `${(ramData.swapUsed/1024).toFixed(1)}G / ${(ramData.swapTotal/1024).toFixed(1)}G` : '0G / 0G'}</div>
                 </div>
               </div>
 
@@ -356,94 +364,88 @@ function App() {
 
           {/* Right Column */}
           <aside className="right-column">
-             {/* Recent Activity */}
-             <div className="glass-panel recent-activity">
-                <div className="section-header">
-                  <h3>Recent Activity</h3>
-                  <MoreHorizontal size={16} />
-                </div>
-                <div className="activity-list">
-                  <div className="activity-item">
-                    <Activity size={16} color="var(--accent-cyan)" />
-                    <div className="act-info">
-                      <p>Uptime check</p>
-                      <small>{formattedSystem.uptime}</small>
-                    </div>
-                  </div>
-                  <div className="activity-item">
-                    <Activity size={16} color="var(--accent-pink)" />
-                    <div className="act-info">
-                      <p>SSH Connected</p>
-                      <small>Just now</small>
-                    </div>
+            {/* Recent Activity */}
+            <div className="glass-panel recent-activity">
+              <div className="section-header">
+                <h3>Recent Activity</h3>
+                <MoreHorizontal size={16} />
+              </div>
+              <div className="activity-list">
+                <div className="activity-item">
+                  <Activity size={16} color="var(--accent-cyan)" />
+                  <div className="act-info">
+                    <p>Uptime check</p>
+                    <small>{formattedSystem.uptime}</small>
                   </div>
                 </div>
-             </div>
+                <div className="activity-item">
+                  <Activity size={16} color="var(--accent-pink)" />
+                  <div className="act-info">
+                    <p>SSH Connected</p>
+                    <small>Just now</small>
+                  </div>
+                </div>
+              </div>
+            </div>
 
-             {/* System Status Gauge */}
-             <div className="glass-panel status-gauge" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                <div className="section-header" style={{ width: '100%' }}>
-                  <h3>System Status</h3>
-                  <MoreHorizontal size={16} />
-                </div>
-                <div className="gauge-circle">
-                   <div className="gauge-inner">Online</div>
-                </div>
-                <div style={{ color: 'var(--text-secondary)', marginTop: '15px', textAlign: 'center', lineHeight: '1.5', fontSize: '0.8rem' }}>
-                  {system ? (
-                    <>
-                      <strong style={{ color: 'var(--accent-cyan)' }}>Uptime</strong><br />
-                      {formattedSystem.uptime}
-                      {formattedSystem.load && <><br /><span style={{fontSize: '0.75rem', opacity: 0.7}}>Load Average: {formattedSystem.load}</span></>}
-                      {temperature && temperature !== 'N/A' && <><br /><span style={{fontSize: '0.85rem', color: 'var(--accent-pink)', fontWeight: 'bold', marginTop: '5px', display: 'inline-block'}}>Nhiệt độ: {temperature}°C</span></>}
-                    </>
-                  ) : 'Fetching uptime...'}
-                </div>
-             </div>
-             
-             {/* Active Connections */}
-             <div className="glass-panel team-members" style={{ marginBottom: '20px' }}>
-                <div className="section-header">
-                  <h3>Active Connections</h3>
-                  <MoreHorizontal size={16} />
-                </div>
-                <div className="team-list">
-                    {connections.map((conn, idx) => (
-                      <div className="team-item clickable" key={idx} onClick={() => setSelectedConnection(conn)}>
-                        <div className="avatar" style={{background: 'var(--glass-border)'}}><User size={14}/></div>
-                        <div className="team-info">
-                          <p>{conn.user} <span style={{fontSize: '0.7rem', color: 'var(--accent-purple)'}}>({conn.terminal})</span></p>
-                          <small>{conn.ip}</small>
-                        </div>
-                      </div>
-                    ))}
-                    {connections.length === 0 && <span style={{color: 'var(--text-secondary)', fontSize: '0.85rem'}}>No active connections</span>}
-                </div>
-             </div>
+            {/* System Status Gauge */}
+            <div className="glass-panel status-gauge" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+              <div className="section-header" style={{ width: '100%' }}>
+                <h3>System Status</h3>
+                <MoreHorizontal size={16} />
+              </div>
+              <div className="gauge-circle">
+                <div className="gauge-inner">Online</div>
+              </div>
+              <div style={{ color: 'var(--text-secondary)', marginTop: '15px', textAlign: 'center', lineHeight: '1.5', fontSize: '0.8rem' }}>
+                {system ? (
+                  <>
+                    <strong style={{ color: 'var(--accent-cyan)' }}>Uptime</strong><br />
+                    {formattedSystem.uptime}
+                    {formattedSystem.load && <><br /><span style={{fontSize: '0.75rem', opacity: 0.7}}>Load Average: {formattedSystem.load}</span></>}
+                    {temperature && temperature !== 'N/A' && <><br /><span style={{fontSize: '0.85rem', color: 'var(--accent-pink)', fontWeight: 'bold', marginTop: '5px', display: 'inline-block'}}>Nhiệt độ: {temperature}°C</span></>}
+                  </>
+                ) : 'Fetching uptime...'}
+              </div>
+            </div>
 
-             {/* Server Info */}
-             <div className="glass-panel team-members clickable" onClick={() => setIsServerModalOpen(true)}>
-                <div className="section-header">
-                  <h3>Server Info</h3>
-                  <MoreHorizontal size={16} />
-                </div>
-                <div className="team-list">
-                    <div className="team-item">
-                      <div className="avatar"><Activity size={14}/></div>
-                      <div className="team-info">
-                        <p>OS Platform</p>
-                        <small>Linux Server</small>
-                      </div>
+            {/* Active Connections */}
+            <div className="glass-panel team-members" style={{ marginBottom: '20px' }}>
+              <div className="section-header">
+                <h3>Active Connections</h3>
+                <MoreHorizontal size={16} />
+              </div>
+              <div className="team-list">
+                {connections.map((conn, idx) => (
+                  <div className="team-item clickable" key={idx} onClick={() => setSelectedConnection(conn)}>
+                    <div className="avatar" style={{background: 'var(--glass-border)'}}><User size={14}/></div>
+                    <div className="team-info">
+                      <p>{conn.user} <span style={{fontSize: '0.7rem', color: 'var(--accent-purple)'}}>({conn.terminal})</span></p>
+                      <small>{conn.ip}</small>
                     </div>
-                    <div className="team-item">
-                      <div className="avatar"><Settings size={14}/></div>
-                      <div className="team-info">
-                        <p>Network</p>
-                        <small>Connected</small>
-                      </div>
-                    </div>
+                  </div>
+                ))}
+                {connections.length === 0 && <span style={{color: 'var(--text-secondary)', fontSize: '0.85rem'}}>No active connections</span>}
+              </div>
+            </div>
+
+            {/* Server Info */}
+            <div className="glass-panel team-members clickable" onClick={() => setIsServerModalOpen(true)}>
+              <div className="section-header">
+                <h3>Server Info</h3>
+                <MoreHorizontal size={16} />
+              </div>
+              <div className="team-list">
+                <div className="team-item">
+                  <div className="avatar"><Activity size={14}/></div>
+                  <div className="team-info"><p>OS Platform</p><small>Linux Server</small></div>
                 </div>
-             </div>
+                <div className="team-item">
+                  <div className="avatar"><Settings size={14}/></div>
+                  <div className="team-info"><p>Network</p><small>Connected</small></div>
+                </div>
+              </div>
+            </div>
           </aside>
 
           {/* Master Record Table */}
@@ -453,17 +455,18 @@ function App() {
               <button className="btn-cyan" onClick={handleRefresh}>Refresh</button>
             </div>
             <div className="table-controls">
-               <div className="search-bar glass-panel">
-                  <Search size={16} />
-                  <input 
-                    type="text" 
-                    placeholder="Search..." 
-                    value={searchTerm} 
-                    onChange={(e) => setSearchTerm(e.target.value)} 
-                  />
-               </div>
+              <div className="search-bar glass-panel">
+                <Search size={16} />
+                {/* Debounce 300ms: tránh re-filter 100+ rows mỗi keystroke */}
+                <input
+                  type="text"
+                  placeholder="Search..."
+                  value={searchInput}
+                  onChange={handleSearchChange}
+                />
+              </div>
             </div>
-            
+
             <div style={{ maxHeight: '400px', overflowY: 'auto', paddingRight: '5px' }}>
               <table className="glass-table">
                 <thead style={{ position: 'sticky', top: 0, background: '#ffffff', color: '#1c1c28', zIndex: 1, boxShadow: '0 2px 5px rgba(0,0,0,0.5)' }}>
@@ -496,6 +499,7 @@ function App() {
               </table>
             </div>
           </section>
+
           {/* Connection Modal */}
           {selectedConnection && (
             <div className="modal-overlay" onClick={() => setSelectedConnection(null)}>
@@ -539,7 +543,7 @@ function App() {
                     </div>
                   </div>
                   <div className="detail-item">
-                    <strong>Disk Space:</strong> 
+                    <strong>Disk Space:</strong>
                     <div style={{ marginTop: '5px', paddingLeft: '10px' }}>
                       {diskData.map((d, i) => (
                         <div key={i} style={{marginBottom: '5px'}}>- {d.mountPoint}: {d.usedStr} / {d.totalStr} ({d.percent}%)</div>

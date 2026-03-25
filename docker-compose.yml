@@ -12,6 +12,20 @@ services:
     restart: unless-stopped
     networks:
       - dashboard-network
+    # Dùng endpoint có sẵn vì Actuator không có trong pom.xml
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/metrics/cpu"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          cpus: '1.5'   # Spring Boot + SSH crypto cần budget hợp lý
+          memory: 1G
+        reservations:
+          memory: 512M  # OOM killer sẽ nhắm vào process khác trước khi đụng container này
 
   frontend:
     build:
@@ -21,10 +35,24 @@ services:
     ports:
       - "5173:80" # Map to standard vite dev port, backed by Nginx port 80
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy  # Chờ backend healthy trước khi khởi động
     restart: unless-stopped
     networks:
       - dashboard-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'   # Nginx static serving, rất nhẹ
+          memory: 256M
+        reservations:
+          memory: 64M
 
 networks:
   dashboard-network:

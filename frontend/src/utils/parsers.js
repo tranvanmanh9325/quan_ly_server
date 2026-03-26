@@ -24,9 +24,9 @@ export function parseRam(raw) {
   if (lines.length >= 2) {
     const memParts = lines[1].trim().split(/\s+/);
     if (memParts.length >= 4) {
-      total = parseInt(memParts[1], 10);
-      used  = parseInt(memParts[2], 10);
-      free  = parseInt(memParts[3], 10);
+      total  = parseInt(memParts[1], 10);
+      used   = parseInt(memParts[2], 10);
+      free   = parseInt(memParts[3], 10);
       cached = memParts.length >= 6 ? parseInt(memParts[5], 10) : 0;
       percent = total > 0 ? parseFloat(((used / total) * 100).toFixed(1)) : 0;
     }
@@ -132,4 +132,61 @@ export function parseTemperature(raw) {
   if (isNaN(value)) return 'N/A';
   // Nếu > 1000 thì đang là millidegrees Celsius
   return (value > 1000 ? value / 1000 : value).toFixed(1);
+}
+
+/**
+ * Parse output của lệnh `sensors` để lấy các chỉ số điện áp (voltage).
+ * sensors liệt kê theo block chip, mỗi dòng dạng: "Label:  +X.XXX V  (min = ..., max = ...)"
+ *
+ * @param {string} raw - raw text từ `sensors`
+ * @returns {Array<{ label: string, value: string, status: 'ok'|'warn'|'crit' }>}
+ */
+export function parseVoltage(raw) {
+  if (!raw || raw === 'N/A') return [];
+
+  const results = [];
+  const lines = raw.split('\n');
+
+  // Regex khớp dòng có đơn vị V (volt): tên + giá trị dạng +X.XXX V hoặc X.XXX V
+  const voltageRegex = /^(.+?):\s*([+-]?\d+\.\d+)\s*V/i;
+
+  for (const line of lines) {
+    const match = line.match(voltageRegex);
+    if (!match) continue;
+
+    const label = match[1].trim();
+    const value = parseFloat(match[2]);
+
+    // Bỏ qua các dòng không liên quan (temp, fan, power)
+    const lowerLabel = label.toLowerCase();
+    if (lowerLabel.includes('temp') || lowerLabel.includes('fan') ||
+        lowerLabel.includes('rpm')  || lowerLabel.includes('power') ||
+        lowerLabel.includes('watt') || lowerLabel.includes('curr')) continue;
+
+    // Phân loại trạng thái dựa trên tolerance ±10%
+    let status = 'ok';
+    const nominal = guessNominalVoltage(label, value);
+    if (nominal > 0) {
+      const deviation = Math.abs(value - nominal) / nominal;
+      if (deviation > 0.1) status = 'crit';
+      else if (deviation > 0.05) status = 'warn';
+    }
+
+    results.push({ label, value: value.toFixed(3), status });
+  }
+
+  return results;
+}
+
+/**
+ * Đoán điện áp nominal dựa trên tên rail.
+ * Dùng để tính deviation cho màu sắc cảnh báo.
+ */
+function guessNominalVoltage(label, measuredV) {
+  const l = label.toLowerCase();
+  if (l.includes('12') || (measuredV > 10 && measuredV < 14)) return 12;
+  if (l.includes('5')  || (measuredV > 4  && measuredV < 6))  return 5;
+  if (l.includes('3.3')|| (measuredV > 2.8 && measuredV < 3.8)) return 3.3;
+  if (l.includes('vcore') || l.includes('vcpu') || l.includes('vdd') || l.includes('core')) return 1.2;
+  return 0; // không đoán được → không cảnh báo
 }

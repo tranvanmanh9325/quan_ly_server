@@ -61,23 +61,17 @@ public class MetricsController {
 
     @GetMapping("/temperature")
     public Map<String, String> getTemperature() {
-        // Cập nhật nâng cao: Gộp check hwmon và thermal_zone qua một màng lọc chung để chặn dứt điểm
-        // cảm biến nhiệt độ ACPI ảo (thường bị kẹt cứng ở 25000 trên laptop Dell/server).
+        // Gộp check hwmon và thermal_zone để loại bỏ cảm biến ACPI ảo bị kẹt cứng ở 25000
         String cmd = "t=\"\"; if hash sensors 2>/dev/null; then t=$(sensors | awk '/[Cc]ore|[Pp]ackage|[Tt]die|[Tt]ctl/ {match($0, /[0-9.]+/); print int(substr($0, RSTART, RLENGTH) * 1000); exit}'); fi; " +
                      "if [ -n \"$t\" ]; then echo \"$t\"; else " +
                      "cat /sys/class/hwmon/hwmon*/temp*_input /sys/class/thermal/thermal_zone*/temp 2>/dev/null | awk '{if($1 != 25000 && $1 != 26800 && $1 > 0 && $1 < 120000) print $1}' | head -n 1; fi";
-        
+
         String result = sshService.executeCommand(cmd);
         Map<String, String> map = new HashMap<>();
-        if (result != null && !result.trim().isEmpty()) {
-            map.put("data", result.trim());
-        } else {
-            // Fallback nếu không có thermal_zone hợp lệ hoặc là VM/VPS không cung cấp interface cấu hình nhiệt
-            map.put("data", "N/A");
-        }
+        map.put("data", (result != null && !result.trim().isEmpty()) ? result.trim() : "N/A");
         return map;
     }
-    
+
     @GetMapping("/system")
     public Map<String, String> getSystemStatus() {
         String result = sshService.executeCommand("uptime");
@@ -108,5 +102,48 @@ public class MetricsController {
         Map<String, Object> response = new HashMap<>();
         response.put("data", connections);
         return response;
+    }
+
+    @GetMapping("/voltage")
+    public Map<String, String> getVoltage() {
+        // Dùng sensors text output — frontend tự parse; fallback N/A nếu sensors không cài
+        String cmd = "if hash sensors 2>/dev/null; then sensors 2>/dev/null; else echo 'N/A'; fi";
+        String result = sshService.executeCommand(cmd);
+        Map<String, String> map = new HashMap<>();
+        map.put("data", (result != null && !result.trim().isEmpty()) ? result.trim() : "N/A");
+        return map;
+    }
+
+    @GetMapping("/sysinfo")
+    public Map<String, String> getSysInfo() {
+        // Gộp 4 lệnh nhẹ vào 1 SSH call để giảm latency
+        String cmd = "printf 'KERNEL:%s\\n' \"$(uname -r)\" && " +
+                     "printf 'HOSTNAME:%s\\n' \"$(hostname)\" && " +
+                     "printf 'OS:%s\\n' \"$(grep PRETTY_NAME /etc/os-release 2>/dev/null | cut -d= -f2 | tr -d '\"')\" && " +
+                     "printf 'CPU_MODEL:%s\\n' \"$(lscpu 2>/dev/null | grep 'Model name' | sed 's/Model name[[:space:]]*:[[:space:]]*//')\"";
+
+        String raw = sshService.executeCommand(cmd);
+        Map<String, String> result = new HashMap<>();
+        result.put("kernel", "N/A");
+        result.put("hostname", "N/A");
+        result.put("os", "N/A");
+        result.put("cpuModel", "N/A");
+
+        if (raw != null && !raw.trim().isEmpty()) {
+            for (String line : raw.trim().split("\n")) {
+                // Tách theo dấu ':' đầu tiên để không cắt nhầm giá trị có chứa ':'
+                int colonIdx = line.indexOf(':');
+                if (colonIdx < 0) continue;
+                String key = line.substring(0, colonIdx).trim();
+                String val = line.substring(colonIdx + 1).trim();
+                switch (key) {
+                    case "KERNEL"    -> result.put("kernel",   val);
+                    case "HOSTNAME"  -> result.put("hostname", val);
+                    case "OS"        -> result.put("os",       val);
+                    case "CPU_MODEL" -> result.put("cpuModel", val);
+                }
+            }
+        }
+        return result;
     }
 }

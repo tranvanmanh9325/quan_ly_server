@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import axios from 'axios';
 import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
-import { LayoutDashboard, BarChart2, Folder, Users, Settings, FileText, Search, Bell, User, MoreHorizontal, Activity, HardDrive, Wifi } from 'lucide-react';
+import { LayoutDashboard, BarChart2, Folder, Users, Settings, FileText, Search, Bell, User, MoreHorizontal, Activity, HardDrive, Wifi, Zap, Cpu, Server } from 'lucide-react';
 import './index.css';
 import './App.css';
-import { parseCpu, parseRam, parseDisks, parseNetwork, parseProcesses, parseTemperature } from './utils/parsers';
+import { parseCpu, parseRam, parseDisks, parseNetwork, parseProcesses, parseTemperature, parseVoltage } from './utils/parsers';
 
 const API_BASE = '/api/metrics';
 
@@ -26,6 +26,8 @@ function App() {
   const [connections, setConnections]   = useState([]);
   const [selectedConnection, setSelectedConnection] = useState(null);
   const [temperature, setTemperature]   = useState(null);
+  const [voltageData, setVoltageData]   = useState([]); // Array<{ label, value, status }>
+  const [sysInfo, setSysInfo]           = useState({ kernel: 'N/A', hostname: 'N/A', os: 'N/A', cpuModel: 'N/A' });
 
   // Dùng ref để trigger refresh từ nút bấm mà không gây re-render thêm
   const refreshCounterRef = useRef(0);
@@ -107,7 +109,7 @@ function App() {
       const t0 = Date.now();
 
       try {
-        const [sysRes, cpuRes, ramRes, diskRes, netRes, connRes, tempRes] = await Promise.all([
+        const [sysRes, cpuRes, ramRes, diskRes, netRes, connRes, tempRes, voltRes, sysinfoRes] = await Promise.all([
           axios.get(`${API_BASE}/system`),
           axios.get(`${API_BASE}/cpu`),
           axios.get(`${API_BASE}/ram`),
@@ -115,6 +117,8 @@ function App() {
           axios.get(`${API_BASE}/network`),
           axios.get(`${API_BASE}/connections`),
           axios.get(`${API_BASE}/temperature`),
+          axios.get(`${API_BASE}/voltage`),
+          axios.get(`${API_BASE}/sysinfo`),
         ]);
 
         if (!isMounted) return;
@@ -125,7 +129,6 @@ function App() {
         if (newInterval !== currentInterval) {
           console.info(`[Adaptive] SSH phản hồi ${elapsed}ms → chuyển interval sang ${newInterval / 1000}s`);
           currentInterval = newInterval;
-          // Khởi động lại timer với interval mới
           clearTimeout(timerId);
           timerId = setTimeout(schedule, currentInterval);
         }
@@ -152,6 +155,17 @@ function App() {
 
         const temp = parseTemperature(tempRes?.data?.data);
         if (temp !== null) setTemperature(temp);
+
+        // Parse voltage — chỉ update nếu có dữ liệu
+        if (voltRes?.data?.data) {
+          const volts = parseVoltage(voltRes.data.data);
+          setVoltageData(volts);
+        }
+
+        // SysInfo — backend đã parse sẵn thành object
+        if (sysinfoRes?.data) {
+          setSysInfo(prev => ({ ...prev, ...sysinfoRes.data }));
+        }
 
       } catch (error) {
         console.error('Lỗi lấy metrics:', error);
@@ -246,6 +260,13 @@ function App() {
       document.removeEventListener('visibilitychange', onVisibilityChange);
     };
   }, [refreshTick]);
+
+  // Màu sắc cho trạng thái voltage
+  const voltageColor = (status) => {
+    if (status === 'crit') return 'var(--accent-pink)';
+    if (status === 'warn') return '#f0b429';
+    return 'var(--accent-cyan)';
+  };
 
   return (
     <div className="app-container">
@@ -359,6 +380,43 @@ function App() {
                   <div>Total UL: <strong style={{color: '#fff'}}>{formatBytes(networkData.totalTx)}</strong></div>
                 </div>
               </div>
+
+              {/* Voltage Card */}
+              <div className="kpi-card glass-panel" style={{ display: 'flex', flexDirection: 'column' }}>
+                <div className="kpi-header" style={{ marginBottom: '10px' }}>
+                  <span className="kpi-title" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <Zap size={14} color="#f0b429" /> Voltage Rails
+                  </span>
+                </div>
+                {voltageData.length > 0 ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', flex: 1, overflowY: 'auto' }}>
+                    {voltageData.slice(0, 8).map((v, i) => (
+                      <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.8rem' }}>
+                        <span style={{ color: 'var(--text-secondary)', maxWidth: '60%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={v.label}>
+                          {v.label}
+                        </span>
+                        <span style={{
+                          color: voltageColor(v.status),
+                          fontWeight: '700',
+                          fontFamily: 'monospace',
+                          fontSize: '0.85rem',
+                          background: `${voltageColor(v.status)}18`,
+                          padding: '2px 8px',
+                          borderRadius: '8px',
+                        }}>
+                          {v.value} V
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', gap: '8px', color: 'var(--text-secondary)' }}>
+                    <Zap size={28} color="rgba(255,255,255,0.15)" />
+                    <span style={{ fontSize: '0.8rem' }}>N/A — sensors not found</span>
+                  </div>
+                )}
+              </div>
+
             </div>
           </section>
 
@@ -429,7 +487,7 @@ function App() {
               </div>
             </div>
 
-            {/* Server Info */}
+            {/* Server Info — live data */}
             <div className="glass-panel team-members clickable" onClick={() => setIsServerModalOpen(true)}>
               <div className="section-header">
                 <h3>Server Info</h3>
@@ -437,12 +495,25 @@ function App() {
               </div>
               <div className="team-list">
                 <div className="team-item">
-                  <div className="avatar"><Activity size={14}/></div>
-                  <div className="team-info"><p>OS Platform</p><small>Linux Server</small></div>
+                  <div className="avatar"><Server size={14}/></div>
+                  <div className="team-info">
+                    <p>Hostname</p>
+                    <small style={{ color: 'var(--accent-cyan)' }}>{sysInfo.hostname}</small>
+                  </div>
                 </div>
                 <div className="team-item">
-                  <div className="avatar"><Settings size={14}/></div>
-                  <div className="team-info"><p>Network</p><small>Connected</small></div>
+                  <div className="avatar"><Activity size={14}/></div>
+                  <div className="team-info">
+                    <p>OS</p>
+                    <small>{sysInfo.os}</small>
+                  </div>
+                </div>
+                <div className="team-item">
+                  <div className="avatar"><Cpu size={14}/></div>
+                  <div className="team-info">
+                    <p>Kernel</p>
+                    <small>{sysInfo.kernel}</small>
+                  </div>
                 </div>
               </div>
             </div>
@@ -518,19 +589,25 @@ function App() {
             </div>
           )}
 
-          {/* Server Modal */}
+          {/* Server Info Modal — enriched with all live data */}
           {isServerModalOpen && (
             <div className="modal-overlay" onClick={() => setIsServerModalOpen(false)}>
-              <div className="modal-content glass-panel" onClick={e => e.stopPropagation()}>
+              <div className="modal-content glass-panel" style={{ width: '480px' }} onClick={e => e.stopPropagation()}>
                 <div className="section-header" style={{ marginBottom: '20px' }}>
-                  <h3 style={{ margin: 0 }}>Chi tiết thiết bị</h3>
+                  <h3 style={{ margin: 0 }}>Chi tiết Server</h3>
                   <button className="btn-close-modal" onClick={() => setIsServerModalOpen(false)}>X</button>
                 </div>
                 <div className="server-details-list">
-                  <div className="detail-item"><strong>OS Platform:</strong> Linux Server</div>
-                  <div className="detail-item"><strong>Network:</strong> Connected</div>
+
+                  {/* ── System Identity ── */}
+                  <div className="detail-item"><strong>Hostname:</strong> <span style={{color:'var(--accent-cyan)'}}>{sysInfo.hostname}</span></div>
+                  <div className="detail-item"><strong>OS:</strong> {sysInfo.os}</div>
+                  <div className="detail-item"><strong>Kernel:</strong> {sysInfo.kernel}</div>
+                  <div className="detail-item" style={{wordBreak:'break-all'}}><strong>CPU Model:</strong> {sysInfo.cpuModel}</div>
+
+                  {/* ── Runtime ── */}
                   <div className="detail-item"><strong>Uptime:</strong> {system ? formattedSystem.uptime : 'Đang lấy dữ liệu...'}</div>
-                  {formattedSystem.load && <div className="detail-item"><strong>Load Average:</strong> {formattedSystem.load}</div>}
+                  {formattedSystem.load && <div className="detail-item"><strong>Load Avg:</strong> {formattedSystem.load}</div>}
                   <div className="detail-item">
                     <strong>CPU Usage:</strong> {cpuHistory.length > 0 ? `${cpuHistory[cpuHistory.length - 1].value}%` : '0%'}
                     {temperature && temperature !== 'N/A' && <span style={{marginLeft: '10px', color: 'var(--accent-pink)', fontWeight: 'bold'}}>({temperature}°C)</span>}
@@ -551,13 +628,33 @@ function App() {
                     </div>
                   </div>
                   <div className="detail-item">
-                    <strong>Network Traffic:</strong> {formatSpeed(networkData.rxSpeed)} Down / {formatSpeed(networkData.txSpeed)} Up
+                    <strong>Network:</strong> {formatSpeed(networkData.rxSpeed)} Down / {formatSpeed(networkData.txSpeed)} Up
                     <div style={{ marginTop: '5px', paddingLeft: '10px', fontSize: '0.85em', color: 'var(--text-secondary)' }}>
-                      <div style={{ marginBottom: '3px' }}>- Interface Name: <span style={{color: 'var(--accent-cyan)'}}>{networkData.interfaceName || 'N/A'}</span></div>
-                      <div style={{ marginBottom: '3px' }}>- Total Downloaded: {formatBytes(networkData.totalRx)}</div>
-                      <div>- Total Uploaded: {formatBytes(networkData.totalTx)}</div>
+                      <div style={{ marginBottom: '3px' }}>- Interface: <span style={{color: 'var(--accent-cyan)'}}>{networkData.interfaceName || 'N/A'}</span></div>
+                      <div style={{ marginBottom: '3px' }}>- Total DL: {formatBytes(networkData.totalRx)}</div>
+                      <div>- Total UL: {formatBytes(networkData.totalTx)}</div>
                     </div>
                   </div>
+
+                  {/* ── Voltage Rails ── */}
+                  <div className="detail-item">
+                    <strong style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px' }}>
+                      <Zap size={14} color="#f0b429" /> Voltage
+                    </strong>
+                    {voltageData.length > 0 ? (
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px', paddingLeft: '10px' }}>
+                        {voltageData.map((v, i) => (
+                          <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.82rem', background: 'rgba(255,255,255,0.03)', borderRadius: '6px', padding: '4px 8px' }}>
+                            <span style={{ color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '55%' }} title={v.label}>{v.label}</span>
+                            <span style={{ color: voltageColor(v.status), fontWeight: '700', fontFamily: 'monospace' }}>{v.value}V</span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <span style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', paddingLeft: '10px' }}>N/A — sensors not installed</span>
+                    )}
+                  </div>
+
                 </div>
               </div>
             </div>

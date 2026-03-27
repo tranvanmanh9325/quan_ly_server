@@ -27,9 +27,6 @@ body {
   color: var(--text-primary);
   min-height: 100vh;
   overflow-x: hidden;
-  display: flex;
-  justify-content: center;
-  align-items: center;
 }
 
 /* Glassmorphism Panel Base */
@@ -75,16 +72,13 @@ body {
   transition: 0.7s;
 }
 
-/* Base Layout */
 .app-container {
-  display: grid;
-  grid-template-columns: 80px 240px 1fr;
-  gap: 24px;
+  display: flex;
   width: 100vw;
-  max-width: 1800px;
   height: 100vh;
-  padding: 24px;
+  padding: 0;
 }
+
 
 /* Scrollbar */
 ::-webkit-scrollbar {
@@ -111,6 +105,7 @@ h1, h2, h3, h4 {
 .text-gradient-cyan {
   background: linear-gradient(90deg, #fff, var(--accent-cyan));
   -webkit-background-clip: text;
+  background-clip: text;
   -webkit-text-fill-color: transparent;
 }
 

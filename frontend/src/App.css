@@ -1,16 +1,12 @@
-.app-container {
-  display: flex !important;
-  gap: 20px;
-  height: 95vh;
-  padding: 10px;
-}
-
 
 .main-content {
   flex: 1;
   display: flex;
   flex-direction: column;
   gap: 20px;
+  /* Chỉ giữ padding 3 cạnh; cạnh phải để .dashboard-grid tự kéo ra sát mép */
+  padding: 24px 0 24px 24px;
+  overflow: hidden;
 }
 
 .top-header {
@@ -37,6 +33,9 @@
   gap: 20px;
   flex: 1;
   overflow-y: auto;
+  /* Kéo grid sát mép phải để scrollbar nằm flush với viewport */
+  padding-right: 24px;
+  margin-right: 0;
 }
 
 .analytics-section {
@@ -275,10 +274,14 @@
 .modal-content {
   width: 400px;
   max-width: 90%;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
   padding: 30px;
   animation: modalFadeIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
   box-shadow: 0 15px 50px rgba(0, 0, 0, 0.5);
   cursor: default;
+  overflow: hidden; /* conteiner không scroll; body bên trong mới scroll */
 }
 
 @keyframes modalFadeIn {

@@ -123,15 +123,78 @@ export function parseProcesses(raw) {
 }
 
 /**
- * @param {string} raw - giá trị nhiệt độ thô (millidegrees hoặc độ C)
- * @returns {string|null} nhiệt độ định dạng "XX.X" hoặc 'N/A' hoặc null
+ * Parse output của `sensors` (hoặc thermal_zone fallback) thành danh sách nhiệt độ.
+ * Trả về array để Temperature card hiển thị từng core giống Voltage card.
+ *
+ * @param {string} raw - full text output từ `sensors` hoặc "label: millideg" per line
+ * @returns {Array<{ label: string, value: string, status: 'ok'|'warn'|'crit' }>}
  */
 export function parseTemperature(raw) {
-  if (!raw || raw === 'N/A') return 'N/A';
-  const value = parseFloat(raw);
-  if (isNaN(value)) return 'N/A';
-  // Nếu > 1000 thì đang là millidegrees Celsius
-  return (value > 1000 ? value / 1000 : value).toFixed(1);
+  if (!raw || raw === 'N/A') return [];
+
+  const results = [];
+  const lines = raw.split('\n');
+
+  // Regex khớp dòng nhiệt độ của sensors: "Core 0:  +44.0°C  (...)"
+  // hoặc fallback thermal_zone: "thermal_zone0:  25000" (millidegrees)
+  const sensorsRegex = /^(.+?):\s*([+-]?\d+\.?\d*)\s*°?C/i;
+  const thermalZoneRegex = /^(.+?):\s*(\d{4,6})\s*$/; // millidegrees từ thermal_zone
+
+  for (const line of lines) {
+    let label = null;
+    let tempC = null;
+
+    const sm = line.match(sensorsRegex);
+    if (sm) {
+      label  = sm[1].trim();
+      tempC  = parseFloat(sm[2]);
+    } else {
+      const tm = line.match(thermalZoneRegex);
+      if (tm) {
+        label  = tm[1].trim();
+        tempC  = parseInt(tm[2], 10) / 1000;
+        // Bỏ qua cảm biến ACPI ảo kẹt 25°C / 26.8°C
+        if (tempC === 25 || tempC === 26.8) continue;
+      }
+    }
+
+    if (label === null || tempC === null || isNaN(tempC)) continue;
+
+    // Chỉ lấy các dòng nhiệt độ thực — bỏ voltage, fan, power
+    const lowerLabel = label.toLowerCase();
+    if (lowerLabel.includes('fan') || lowerLabel.includes('rpm') ||
+        lowerLabel.includes('volt') || lowerLabel.includes(' v') ||
+        lowerLabel.includes('power') || lowerLabel.includes('watt') ||
+        lowerLabel.includes('curr') || tempC <= 0 || tempC > 120) continue;
+
+    // Phân loại mức nhiệt
+    let status = 'ok';
+    if (tempC >= 85) status = 'crit';
+    else if (tempC >= 70) status = 'warn';
+
+    results.push({ label, value: tempC.toFixed(1), status });
+  }
+
+  return results;
+}
+
+/**
+ * Lấy nhiệt độ tổng quan (Package / Tdie / Tctl hoặc max) từ array parseTemperature.
+ * Dùng để hiển thị inline (CPU card cũ, modal...).
+ *
+ * @param {Array<{ label, value, status }>} temps
+ * @returns {string|null} "XX.X" hoặc null nếu không có dữ liệu
+ */
+export function getMaxTemperature(temps) {
+  if (!temps || temps.length === 0) return null;
+  // Ưu tiên Package / Tdie / Tctl (đại diện cho toàn bộ chip)
+  const pkg = temps.find(t =>
+    /package|tdie|tctl|cpu thermal/i.test(t.label)
+  );
+  if (pkg) return pkg.value;
+  // Fallback: nhiệt độ cao nhất trong danh sách
+  const max = temps.reduce((a, b) => parseFloat(a.value) >= parseFloat(b.value) ? a : b);
+  return max.value;
 }
 
 /**

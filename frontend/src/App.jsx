@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import axios from 'axios';
-import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
-import { LayoutDashboard, BarChart2, Folder, Users, Settings, FileText, Search, Bell, User, MoreHorizontal, Activity, HardDrive, Wifi, Zap, Cpu, Server } from 'lucide-react';
+import { AreaChart, Area, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
+import { Search, User, MoreHorizontal, Activity, HardDrive, Wifi, Zap, Cpu, Server, Thermometer } from 'lucide-react';
 import './index.css';
 import './App.css';
-import { parseCpu, parseRam, parseDisks, parseNetwork, parseProcesses, parseTemperature, parseVoltage } from './utils/parsers';
+import { parseCpu, parseRam, parseDisks, parseNetwork, parseProcesses, parseTemperature, getMaxTemperature, parseVoltage } from './utils/parsers';
 
 const API_BASE = '/api/metrics';
 
@@ -15,6 +15,7 @@ const PROCESS_INTERVAL        = 30_000;
 const ADAPTIVE_THRESHOLD_MS   = 5_000;  // Ngưỡng để xem SSH là "đang chậm"
 
 function App() {
+
   const [processes, setProcesses]   = useState([]);
   const [system, setSystem]         = useState('');
   const [cpuHistory, setCpuHistory] = useState(Array(15).fill({ name: '', value: 0 }));
@@ -25,7 +26,7 @@ function App() {
   const [isServerModalOpen, setIsServerModalOpen] = useState(false);
   const [connections, setConnections]   = useState([]);
   const [selectedConnection, setSelectedConnection] = useState(null);
-  const [temperature, setTemperature]   = useState(null);
+  const [temperatureData, setTemperatureData] = useState([]); // Array<{ label, value, status }>
   const [voltageData, setVoltageData]   = useState([]); // Array<{ label, value, status }>
   const [sysInfo, setSysInfo]           = useState({ kernel: 'N/A', hostname: 'N/A', os: 'N/A', cpuModel: 'N/A' });
 
@@ -153,8 +154,10 @@ function App() {
           setNetworkData(result);
         }
 
-        const temp = parseTemperature(tempRes?.data?.data);
-        if (temp !== null) setTemperature(temp);
+        if (tempRes?.data?.data) {
+          const temps = parseTemperature(tempRes.data.data);
+          setTemperatureData(temps);
+        }
 
         // Parse voltage — chỉ update nếu có dữ liệu
         if (voltRes?.data?.data) {
@@ -268,14 +271,17 @@ function App() {
     return 'var(--accent-cyan)';
   };
 
+
+
   return (
     <div className="app-container">
-      {/* Main Content Area */}
+      {/* ── Main Content Area ── */}
       <main className="main-content">
         <header className="top-header">
           <h1 className="title-glow">Server Dashboard</h1>
         </header>
 
+        {/* ── Dashboard View ── */}
         <div className="dashboard-grid">
           {/* Server Overview (Top Center) */}
           <section className="analytics-section">
@@ -293,7 +299,6 @@ function App() {
                   <span className="kpi-title">CPU Usage</span>
                   <div className="kpi-stats">
                     <span className="kpi-value">{cpuHistory[cpuHistory.length-1]?.value}%</span>
-                    {temperature && temperature !== 'N/A' && <span className="kpi-sub" style={{color: 'var(--accent-pink)', marginLeft: '8px', fontSize: '1rem', fontWeight: 'bold'}}>{temperature}°C</span>}
                   </div>
                 </div>
                 <div className="kpi-chart">
@@ -417,6 +422,56 @@ function App() {
                 )}
               </div>
 
+              {/* Temperature Card */}
+              <div className="kpi-card glass-panel" style={{ display: 'flex', flexDirection: 'column' }}>
+                <div className="kpi-header" style={{ marginBottom: '10px' }}>
+                  <span className="kpi-title" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <Thermometer size={14} color="var(--accent-pink)" /> Temperature
+                  </span>
+                  {(() => {
+                    const maxTemp = getMaxTemperature(temperatureData);
+                    if (!maxTemp) return null;
+                    const t = parseFloat(maxTemp);
+                    const color = t >= 85 ? 'var(--accent-pink)' : t >= 70 ? '#f0b429' : 'var(--accent-cyan)';
+                    return (
+                      <span style={{ fontSize: '1.4rem', fontWeight: '700', color, fontFamily: 'monospace' }}>
+                        {maxTemp}°C
+                      </span>
+                    );
+                  })()}
+                </div>
+                {temperatureData.length > 0 ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', flex: 1, overflowY: 'auto' }}>
+                    {temperatureData.map((t, i) => {
+                      const color = t.status === 'crit' ? 'var(--accent-pink)' : t.status === 'warn' ? '#f0b429' : 'var(--accent-cyan)';
+                      return (
+                        <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.8rem' }}>
+                          <span style={{ color: 'var(--text-secondary)', maxWidth: '60%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={t.label}>
+                            {t.label}
+                          </span>
+                          <span style={{
+                            color,
+                            fontWeight: '700',
+                            fontFamily: 'monospace',
+                            fontSize: '0.85rem',
+                            background: `${color}18`,
+                            padding: '2px 8px',
+                            borderRadius: '8px',
+                          }}>
+                            {t.value}°C
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', gap: '8px', color: 'var(--text-secondary)' }}>
+                    <Thermometer size={28} color="rgba(255,255,255,0.15)" />
+                    <span style={{ fontSize: '0.8rem' }}>N/A — sensors not found</span>
+                  </div>
+                )}
+              </div>
+
             </div>
           </section>
 
@@ -461,7 +516,6 @@ function App() {
                     <strong style={{ color: 'var(--accent-cyan)' }}>Uptime</strong><br />
                     {formattedSystem.uptime}
                     {formattedSystem.load && <><br /><span style={{fontSize: '0.75rem', opacity: 0.7}}>Load Average: {formattedSystem.load}</span></>}
-                    {temperature && temperature !== 'N/A' && <><br /><span style={{fontSize: '0.85rem', color: 'var(--accent-pink)', fontWeight: 'bold', marginTop: '5px', display: 'inline-block'}}>Nhiệt độ: {temperature}°C</span></>}
                   </>
                 ) : 'Fetching uptime...'}
               </div>
@@ -597,7 +651,7 @@ function App() {
                   <h3 style={{ margin: 0 }}>Chi tiết Server</h3>
                   <button className="btn-close-modal" onClick={() => setIsServerModalOpen(false)}>X</button>
                 </div>
-                <div className="server-details-list">
+                <div className="server-details-list" style={{ overflowY: 'auto', flex: 1, paddingRight: '4px' }}>
 
                   {/* ── System Identity ── */}
                   <div className="detail-item"><strong>Hostname:</strong> <span style={{color:'var(--accent-cyan)'}}>{sysInfo.hostname}</span></div>
@@ -610,7 +664,7 @@ function App() {
                   {formattedSystem.load && <div className="detail-item"><strong>Load Avg:</strong> {formattedSystem.load}</div>}
                   <div className="detail-item">
                     <strong>CPU Usage:</strong> {cpuHistory.length > 0 ? `${cpuHistory[cpuHistory.length - 1].value}%` : '0%'}
-                    {temperature && temperature !== 'N/A' && <span style={{marginLeft: '10px', color: 'var(--accent-pink)', fontWeight: 'bold'}}>({temperature}°C)</span>}
+                    {getMaxTemperature(temperatureData) && <span style={{marginLeft: '10px', color: 'var(--accent-pink)', fontWeight: 'bold'}}>({getMaxTemperature(temperatureData)}°C)</span>}
                   </div>
                   <div className="detail-item">
                     <strong>RAM Usage:</strong> {ramData.percent}% ({(ramData.used/1024).toFixed(1)}GB / {(ramData.total/1024).toFixed(1)}GB)

@@ -61,10 +61,18 @@ public class MetricsController {
 
     @GetMapping("/temperature")
     public Map<String, String> getTemperature() {
-        // Gộp check hwmon và thermal_zone để loại bỏ cảm biến ACPI ảo bị kẹt cứng ở 25000
-        String cmd = "t=\"\"; if hash sensors 2>/dev/null; then t=$(sensors | awk '/[Cc]ore|[Pp]ackage|[Tt]die|[Tt]ctl/ {match($0, /[0-9.]+/); print int(substr($0, RSTART, RLENGTH) * 1000); exit}'); fi; " +
-                     "if [ -n \"$t\" ]; then echo \"$t\"; else " +
-                     "cat /sys/class/hwmon/hwmon*/temp*_input /sys/class/thermal/thermal_zone*/temp 2>/dev/null | awk '{if($1 != 25000 && $1 != 26800 && $1 > 0 && $1 < 120000) print $1}' | head -n 1; fi";
+        // Trả về toàn bộ output của sensors để frontend tự parse từng core.
+        // Fallback: đọc thermal_zone nếu sensors không cài, định dạng "Label:Value\n".
+        String cmd =
+            "if hash sensors 2>/dev/null; then " +
+            "  sensors 2>/dev/null; " +
+            "else " +
+            "  for f in /sys/class/thermal/thermal_zone*/temp; do " +
+            "    zone=$(echo $f | grep -oP 'thermal_zone\\d+'); " +
+            "    val=$(cat $f 2>/dev/null); " +
+            "    [ -n \"$val\" ] && echo \"${zone}: ${val}\"; " +
+            "  done; " +
+            "fi";
 
         String result = sshService.executeCommand(cmd);
         Map<String, String> map = new HashMap<>();

@@ -33,6 +33,8 @@
   gap: 20px;
   flex: 1;
   overflow-y: auto;
+  /* Quan trọng: min-height: 0 giúp khối này không bị tràn chiều cao (overflow) so với flex parent */
+  min-height: 0;
   /* Kéo grid sát mép phải để scrollbar nằm flush với viewport */
   padding-right: 24px;
   margin-right: 0;
@@ -328,4 +330,108 @@
 }
 .clickable:active {
   transform: scale(0.98);
+}
+
+/* ── Responsive & Mobile Adjustments ── */
+@media screen and (max-width: 1200px) {
+  /* Bật cuộn toàn trang (full page scroll) cho Tablet và màn hình nhỏ để tăng trải nghiệm cảm ứng */
+  .app-container {
+    height: auto;
+    min-height: 100vh;
+  }
+  .main-content {
+    height: auto;
+    overflow: visible;
+    padding-bottom: 24px;
+    padding-right: 24px;
+  }
+  .dashboard-grid {
+    grid-template-columns: 1fr;
+    overflow-y: visible;
+    padding-right: 0;
+  }
+  .right-column {
+    grid-column: 1;
+    grid-row: auto;
+    display: grid;
+    /* Chia đều các block trên Tablet */
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 20px;
+  }
+  .master-record {
+    grid-column: 1;
+  }
+}
+
+@media screen and (max-width: 768px) {
+  .main-content {
+    padding: 15px; 
+    gap: 15px;
+  }
+  .dashboard-grid {
+    gap: 15px;
+  }
+  .title-glow {
+    font-size: 1.8rem;
+  }
+  .section-header h2, .section-header h3 {
+    font-size: 1.2rem;
+  }
+  .analytics-section {
+    padding: 15px;
+  }
+  .kpi-cards-grid {
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 15px;
+  }
+  .kpi-card {
+    padding: 15px;
+    min-height: 180px;
+  }
+  .table-controls {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 15px;
+  }
+  .search-bar {
+    width: 100%;
+  }
+  .search-bar input {
+    width: 100%;
+  }
+  .glass-table {
+    display: block;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+}
+
+@media screen and (max-width: 480px) {
+  .right-column {
+    grid-template-columns: 1fr; /* Trở về 1 cột dọc trên Mobile */
+    gap: 15px;
+  }
+  .kpi-cards-grid {
+    grid-template-columns: 1fr;
+  }
+  .title-glow {
+    font-size: 1.5rem;
+  }
+  .kpi-title {
+    font-size: 0.85rem;
+  }
+  .kpi-value {
+    font-size: 1.5rem;
+  }
+  .modal-content {
+    padding: 20px 15px;
+    width: 95%;
+  }
+  .btn-cyan {
+    padding: 6px 12px;
+    font-size: 0.85rem;
+  }
+  .master-record, .recent-activity, .status-gauge, .team-members {
+    padding: 15px; /* Ép mỏng padding cho panel dưới */
+  }
 }

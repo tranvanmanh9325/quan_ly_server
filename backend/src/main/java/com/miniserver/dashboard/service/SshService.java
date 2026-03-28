@@ -10,6 +10,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.io.BufferedReader;
+import java.io.ByteArrayOutputStream;
 import java.io.InputStreamReader;
 import java.util.Properties;
 
@@ -35,7 +36,7 @@ public class SshService {
 
     /**
      * Trả về session hiện có nếu còn kết nối, ngược lại tạo mới.
-     * synchronized đảm bảo an toàn khi 8 request đồng thời gọi vào.
+     * synchronized đảm bảo an toàn khi nhiều request đồng thời gọi vào.
      */
     private synchronized Session getOrCreateSession() throws Exception {
         if (sharedSession != null && sharedSession.isConnected()) {
@@ -49,6 +50,9 @@ public class SshService {
         session.setPassword(password);
 
         Properties config = new Properties();
+        // StrictHostKeyChecking=no cần thiết khi kết nối qua Ngrok tunnel vì host key
+        // thay đổi mỗi lần tunnel restart. Rủi ro MITM được chấp nhận trong môi trường
+        // nội bộ / development — KHÔNG dùng setup này trong production.
         config.put("StrictHostKeyChecking", "no");
         session.setConfig(config);
         // Giữ kết nối sống, gửi keepalive mỗi 30s để Ngrok không cắt tunnel
@@ -73,7 +77,11 @@ public class SshService {
                 channel = (ChannelExec) session.openChannel("exec");
                 channel.setCommand(command);
                 channel.setInputStream(null);
-                channel.setErrStream(System.err);
+
+                // Capture stderr qua SLF4J thay vì System.err để không bypass Logback
+                // và đảm bảo log container hoạt động đúng trong môi trường Docker
+                ByteArrayOutputStream errBuffer = new ByteArrayOutputStream();
+                channel.setErrStream(errBuffer);
 
                 // BufferedReader xử lý UTF-8 đúng hơn, tránh lỗi cắt byte giữa chừng
                 BufferedReader reader = new BufferedReader(new InputStreamReader(channel.getInputStream()));
@@ -84,6 +92,13 @@ public class SshService {
                 while ((line = reader.readLine()) != null) {
                     outputBuffer.append(line).append('\n');
                 }
+
+                // Log stderr qua SLF4J nếu lệnh có output lỗi
+                String errOutput = errBuffer.toString().trim();
+                if (!errOutput.isEmpty()) {
+                    log.warn("SSH stderr [{}]: {}", command.substring(0, Math.min(command.length(), 50)), errOutput);
+                }
+
                 return outputBuffer.toString();
 
             } catch (Exception e) {

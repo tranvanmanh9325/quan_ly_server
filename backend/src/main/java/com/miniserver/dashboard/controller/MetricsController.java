@@ -18,45 +18,44 @@ public class MetricsController {
     @Autowired
     private SshService sshService;
 
+    /**
+     * Null-guard cho mọi kết quả SSH trả về dạng chuỗi thô.
+     * Tránh NPE khi SSH thất bại và sshService trả về null hoặc chuỗi rỗng.
+     */
+    private Map<String, String> safeData(String result) {
+        Map<String, String> map = new HashMap<>();
+        if (result == null || result.isBlank()) {
+            map.put("data", "ERROR: no data returned from SSH");
+        } else {
+            map.put("data", result.trim());
+        }
+        return map;
+    }
+
     @GetMapping("/cpu")
     public Map<String, String> getCpu() {
-        String result = sshService.executeCommand("top -b -n 1 | grep 'Cpu(s)'");
-        Map<String, String> map = new HashMap<>();
-        map.put("data", result.trim());
-        return map;
+        return safeData(sshService.executeCommand("top -b -n 1 | grep 'Cpu(s)'"));
     }
 
     @GetMapping("/ram")
     public Map<String, String> getRam() {
-        String result = sshService.executeCommand("free -m");
-        Map<String, String> map = new HashMap<>();
-        map.put("data", result.trim());
-        return map;
+        return safeData(sshService.executeCommand("free -m"));
     }
 
     @GetMapping("/disk")
     public Map<String, String> getDisk() {
-        String result = sshService.executeCommand("df -h -x tmpfs -x devtmpfs");
-        Map<String, String> map = new HashMap<>();
-        map.put("data", result.trim());
-        return map;
+        return safeData(sshService.executeCommand("df -h -x tmpfs -x devtmpfs"));
     }
 
     @GetMapping("/network")
     public Map<String, String> getNetwork() {
-        String result = sshService.executeCommand("cat /proc/net/dev");
-        Map<String, String> map = new HashMap<>();
-        map.put("data", result.trim());
-        return map;
+        return safeData(sshService.executeCommand("cat /proc/net/dev"));
     }
 
     @GetMapping("/processes")
     public Map<String, String> getProcesses() {
-        // Lấy toàn bộ processes thay vì top 5, bổ sung nlwp (threads), rss (dung lượng RAM bằng KB) và args (lệnh đầy đủ)
-        String result = sshService.executeCommand("ps -eo pid,user,%cpu,%mem,nlwp,rss,args --sort=-%cpu");
-        Map<String, String> map = new HashMap<>();
-        map.put("data", result.trim());
-        return map;
+        // Lấy toàn bộ processes, bổ sung nlwp (threads), rss (RAM KB) và args (lệnh đầy đủ)
+        return safeData(sshService.executeCommand("ps -eo pid,user,%cpu,%mem,nlwp,rss,args --sort=-%cpu"));
     }
 
     @GetMapping("/temperature")
@@ -76,23 +75,20 @@ public class MetricsController {
 
         String result = sshService.executeCommand(cmd);
         Map<String, String> map = new HashMap<>();
-        map.put("data", (result != null && !result.trim().isEmpty()) ? result.trim() : "N/A");
+        map.put("data", (result != null && !result.isBlank()) ? result.trim() : "N/A");
         return map;
     }
 
     @GetMapping("/system")
     public Map<String, String> getSystemStatus() {
-        String result = sshService.executeCommand("uptime");
-        Map<String, String> map = new HashMap<>();
-        map.put("data", result.trim());
-        return map;
+        return safeData(sshService.executeCommand("uptime"));
     }
 
     @GetMapping("/connections")
     public Map<String, Object> getConnections() {
         String result = sshService.executeCommand("who");
         List<Map<String, String>> connections = new ArrayList<>();
-        if (result != null && !result.trim().isEmpty()) {
+        if (result != null && !result.isBlank()) {
             String[] lines = result.trim().split("\n");
             for (String line : lines) {
                 String[] parts = line.trim().split("\\s+");
@@ -118,7 +114,7 @@ public class MetricsController {
         String cmd = "if hash sensors 2>/dev/null; then sensors 2>/dev/null; else echo 'N/A'; fi";
         String result = sshService.executeCommand(cmd);
         Map<String, String> map = new HashMap<>();
-        map.put("data", (result != null && !result.trim().isEmpty()) ? result.trim() : "N/A");
+        map.put("data", (result != null && !result.isBlank()) ? result.trim() : "N/A");
         return map;
     }
 
@@ -137,7 +133,7 @@ public class MetricsController {
         result.put("os", "N/A");
         result.put("cpuModel", "N/A");
 
-        if (raw != null && !raw.trim().isEmpty()) {
+        if (raw != null && !raw.isBlank()) {
             for (String line : raw.trim().split("\n")) {
                 // Tách theo dấu ':' đầu tiên để không cắt nhầm giá trị có chứa ':'
                 int colonIdx = line.indexOf(':');

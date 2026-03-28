@@ -52,13 +52,14 @@ export function parseDisks(raw) {
     const line = lines[i].trim();
     if (!line.startsWith('/dev/')) continue;
     const parts = line.split(/\s+/);
-    const pctIdx = parts.findIndex(p => p.endsWith('%'));
-    if (pctIdx === -1) continue;
+    // `df -h` luôn có thứ tự cột cố định: Filesystem Size Used Avail Use% Mounted
+    // Dùng index cố định thay vì pctIdx - 3 để tránh sai khi tên thiết bị có khoảng trắng.
+    if (parts.length < 6) continue;
     disks.push({
-      percent:    parseInt(parts[pctIdx].replace('%', ''), 10),
-      usedStr:    parts[pctIdx - 2],
-      totalStr:   parts[pctIdx - 3],
-      mountPoint: parts.slice(pctIdx + 1).join(' '),
+      totalStr:   parts[1],
+      usedStr:    parts[2],
+      percent:    parseInt(parts[4].replace('%', ''), 10),
+      mountPoint: parts.slice(5).join(' '),
     });
   }
   return disks;
@@ -89,8 +90,12 @@ export function parseNetwork(raw, lastRef) {
 
   const now = Date.now();
   const timeDiff = (now - lastRef.time) / 1000;
-  const rxSpeed = (timeDiff > 0 && lastRef.rx > 0) ? (totalRx - lastRef.rx) / timeDiff : 0;
-  const txSpeed = (timeDiff > 0 && lastRef.tx > 0) ? (totalTx - lastRef.tx) / timeDiff : 0;
+  const rawRxSpeed = (timeDiff > 0 && lastRef.rx > 0) ? (totalRx - lastRef.rx) / timeDiff : 0;
+  const rawTxSpeed = (timeDiff > 0 && lastRef.tx > 0) ? (totalTx - lastRef.tx) / timeDiff : 0;
+
+  // Clamp về 0 khi kernel counter bị wrap hoặc container restart làm giá trị âm
+  const rxSpeed = Math.max(0, rawRxSpeed);
+  const txSpeed = Math.max(0, rawTxSpeed);
 
   return { rxSpeed, txSpeed, totalRx, totalTx, interfaceName: mainInterfaceName };
 }

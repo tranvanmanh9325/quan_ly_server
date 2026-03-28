@@ -1,4 +1,6 @@
 name: Auto Deploy to Ngrok Server
+permissions:
+  contents: read
 
 on:
   push:

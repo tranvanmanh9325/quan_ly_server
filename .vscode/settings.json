@@ -1,4 +1,6 @@
 {
     "java.compile.nullAnalysis.mode": "automatic",
-    "java.configuration.updateBuildConfiguration": "automatic"
+    "java.configuration.updateBuildConfiguration": "automatic",
+    // LICENSE is a plain-text legal document, not a Markdown file — exclude from linting
+    "markdownlint.ignore": ["LICENSE"]
 }

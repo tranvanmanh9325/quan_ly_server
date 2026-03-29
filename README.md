@@ -5,7 +5,7 @@ Connect to any remote Linux host over SSH and visualise live system metrics thro
 
 [![CI/CD](https://github.com/tranvanmanh9325/quan_ly_server/actions/workflows/deploy.yml/badge.svg?branch=main)](https://github.com/tranvanmanh9325/quan_ly_server/actions/workflows/deploy.yml)
 ![Java](https://img.shields.io/badge/Java-21-orange?logo=openjdk&logoColor=white)
-![Spring Boot](https://img.shields.io/badge/Spring_Boot-3.5-6DB33F?logo=springboot&logoColor=white)
+![Spring Boot](https://img.shields.io/badge/Spring_Boot-4.0.5-6DB33F?logo=springboot&logoColor=white)
 ![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)
 ![Docker](https://img.shields.io/badge/Docker-Compose_V2-2496ED?logo=docker&logoColor=white)
 ![License](https://img.shields.io/badge/license-MIT-blue)
@@ -32,6 +32,8 @@ Mini Server Dashboard gives you a single-pane-of-glass view of a remote Linux se
 - [Security Notes](#security-notes)
 - [Automated Dependency Updates](#automated-dependency-updates)
 - [License](#license)
+
+> 📚 For in-depth technical documentation see the **[`/docs`](./docs/README.md)** directory.
 
 ---
 
@@ -75,9 +77,9 @@ Mini Server Dashboard gives you a single-pane-of-glass view of a remote Linux se
 | HTTP Client | Axios | 1 |
 | Icons | Lucide React | latest |
 | Frontend Server | Nginx (Alpine) | latest |
-| Backend Framework | Spring Boot | 3.5 |
+| Backend Framework | Spring Boot | 4.0.5 |
 | Backend Language | Java | 21 |
-| SSH Client | JSch (mwiede fork) | 0.2.16 |
+| SSH Client | JSch (mwiede fork) | 2.27.9 |
 | Health Check | Spring Actuator | — |
 | Containerization | Docker + Compose | V2 |
 | CI/CD | GitHub Actions (self-hosted runner) | — |

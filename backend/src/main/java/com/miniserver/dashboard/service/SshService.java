@@ -47,7 +47,7 @@ public class SshService {
 
         JSch jsch = new JSch();
         Session session = jsch.getSession(user, host, port);
-        session.setPassword(password);
+        session.setPassword(password.getBytes(java.nio.charset.StandardCharsets.UTF_8));
 
         Properties config = new Properties();
         // StrictHostKeyChecking=no cần thiết khi kết nối qua Ngrok tunnel vì host key

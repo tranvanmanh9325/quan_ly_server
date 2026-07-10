@@ -1,7 +1,6 @@
 package com.miniserver.dashboard.controller;
 
 import com.miniserver.dashboard.service.SshService;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -15,8 +14,11 @@ import java.util.Map;
 @RequestMapping("/api/metrics")
 public class MetricsController {
 
-    @Autowired
-    private SshService sshService;
+    private final SshService sshService;
+
+    public MetricsController(SshService sshService) {
+        this.sshService = sshService;
+    }
 
     /**
      * Null-guard cho mọi kết quả SSH trả về dạng chuỗi thô.

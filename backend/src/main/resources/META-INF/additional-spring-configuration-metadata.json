@@ -18,5 +18,10 @@
     "name": "ssh.password",
     "type": "java.lang.String",
     "description": "A description for 'ssh.password'"
+  },
+  {
+    "name": "ssh.strict-host-key-checking",
+    "type": "java.lang.String",
+    "description": "A description for 'ssh.strict-host-key-checking'"
   }
 ]}

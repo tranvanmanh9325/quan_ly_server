@@ -1,16 +1,16 @@
 :root {
-  --bg-dark: #12092a;
-  --bg-gradient: linear-gradient(135deg, #180a33 0%, #291254 100%);
-  --glass-bg: rgba(255, 255, 255, 0.03);
-  --glass-border: rgba(255, 255, 255, 0.08);
-  --glass-highlight: rgba(255, 255, 255, 0.15);
-  --text-primary: #ffffff;
-  --text-secondary: #a098b0;
-  --accent-cyan: #00f0ff;
+  --bg-dark: #090a0f;
+  --bg-gradient: radial-gradient(circle at center, #10131c 0%, #050608 100%);
+  --glass-bg: rgba(9, 10, 15, 0.75);
+  --glass-border: rgba(0, 243, 255, 0.2);
+  --glass-highlight: rgba(0, 243, 255, 0.6);
+  --text-primary: #e0f2fe;
+  --text-secondary: #00f3ff;
+  --accent-cyan: #00f3ff;
   --accent-purple: #9d4edd;
-  --accent-pink: #f72585;
-  --accent-green: #06d6a0;
-  --panel-radius: 20px;
+  --accent-magenta: #ff003c;
+  --accent-green: #00ff66;
+  --panel-radius: 0; /* No radius, using clip-path */
   --transition-speed: 0.3s;
 }
 
@@ -18,58 +18,105 @@
   box-sizing: border-box;
   margin: 0;
   padding: 0;
-  font-family: 'Inter', 'Roboto', sans-serif;
+  font-family: 'Rajdhani', sans-serif;
 }
 
 body {
-  background: var(--bg-gradient);
-  background-attachment: fixed;
+  background: var(--bg-dark);
   color: var(--text-primary);
   min-height: 100vh;
   overflow-x: hidden;
+  position: relative;
 }
 
-/* Glassmorphism Panel Base */
+/* Background Cyber/Tron Grid */
+body::before {
+  content: "";
+  position: fixed;
+  top: 0; left: 0; width: 100vw; height: 100vh;
+  background-image: 
+    linear-gradient(rgba(0, 243, 255, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 243, 255, 0.05) 1px, transparent 1px);
+  background-size: 60px 60px;
+  background-position: center center;
+  z-index: -2;
+  transform: perspective(600px) rotateX(60deg) translateY(-100px) scale(3);
+  animation: gridMove 15s linear infinite;
+}
+
+@keyframes gridMove {
+  0% { transform: perspective(600px) rotateX(60deg) translateY(0) scale(3); }
+  100% { transform: perspective(600px) rotateX(60deg) translateY(60px) scale(3); }
+}
+
+/* Scanline Overlay */
+body::after {
+  content: "";
+  position: fixed;
+  top: 0; left: 0; width: 100vw; height: 100vh;
+  background: linear-gradient(
+    to bottom,
+    rgba(255,255,255,0),
+    rgba(255,255,255,0) 50%,
+    rgba(0,0,0,0.15) 50%,
+    rgba(0,0,0,0.15)
+  );
+  background-size: 100% 4px;
+  z-index: 9999;
+  pointer-events: none;
+  opacity: 0.4;
+}
+
+/* Hologram Scanning Line (sweeps top to bottom) */
+.holo-scan {
+  position: fixed;
+  top: 0; left: 0; width: 100vw; height: 5px;
+  background: rgba(0, 243, 255, 0.3);
+  box-shadow: 0 0 20px rgba(0, 243, 255, 0.5);
+  z-index: 9998;
+  opacity: 0.5;
+  pointer-events: none;
+  animation: holoScan 8s linear infinite;
+}
+
+@keyframes holoScan {
+  0% { top: -10%; }
+  100% { top: 110%; }
+}
+
+/* Glassmorphism Panel Base - Sci-Fi style */
 .glass-panel {
   background: var(--glass-bg);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
   border: 1px solid var(--glass-border);
-  border-radius: var(--panel-radius);
-  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+  box-shadow: 0 0 15px rgba(0, 243, 255, 0.05), inset 0 0 20px rgba(0, 243, 255, 0.05);
   position: relative;
-  overflow: hidden;
-  transition: transform var(--transition-speed) ease, box-shadow var(--transition-speed) ease;
+  transition: transform var(--transition-speed) ease, box-shadow var(--transition-speed) ease, border-color var(--transition-speed) ease;
+  clip-path: polygon(15px 0, 100% 0, 100% calc(100% - 15px), calc(100% - 15px) 100%, 0 100%, 0 15px);
 }
 
 .glass-panel:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 12px 40px 0 rgba(0, 0, 0, 0.4);
   border-color: var(--glass-highlight);
+  box-shadow: 0 0 20px rgba(0, 243, 255, 0.2), inset 0 0 30px rgba(0, 243, 255, 0.1);
 }
 
-/* 3D Bubble Effect Highlights */
+/* Decorative corner accents for panels */
 .glass-panel::before {
   content: '';
   position: absolute;
-  top: 0;
-  left: -100%;
-  width: 50%;
-  height: 100%;
-  background: linear-gradient(
-    to right,
-    rgba(255, 255, 255, 0) 0%,
-    rgba(255, 255, 255, 0.03) 50%,
-    rgba(255, 255, 255, 0) 100%
-  );
-  transform: skewX(-25deg);
-  transition: var(--transition-speed);
-  pointer-events: none;
+  top: 0; left: 0;
+  width: 30px; height: 2px;
+  background: var(--accent-cyan);
+  box-shadow: 0 0 10px var(--accent-cyan);
 }
-
-.glass-panel:hover::before {
-  left: 200%;
-  transition: 0.7s;
+.glass-panel::after {
+  content: '';
+  position: absolute;
+  bottom: 0; right: 0;
+  width: 30px; height: 2px;
+  background: var(--accent-magenta);
+  box-shadow: 0 0 10px var(--accent-magenta);
 }
 
 .app-container {
@@ -77,55 +124,396 @@ body {
   width: 100vw;
   height: 100vh;
   padding: 0;
+  position: relative;
+  z-index: 1;
 }
-
 
 /* Scrollbar */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 4px;
+  height: 4px;
 }
 ::-webkit-scrollbar-track {
-  background: transparent;
+  background: rgba(0,0,0,0.5);
 }
 ::-webkit-scrollbar-thumb {
   background: var(--glass-border);
-  border-radius: 10px;
+  border-radius: 0;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--text-secondary);
+  background: var(--accent-cyan);
+  box-shadow: 0 0 10px var(--accent-cyan);
 }
 
 /* Text styles */
 h1, h2, h3, h4 {
   font-weight: 600;
-  letter-spacing: 0.5px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
 }
 
 .text-gradient-cyan {
-  background: linear-gradient(90deg, #fff, var(--accent-cyan));
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
+  color: #fff;
+  text-shadow: 0 0 5px #fff, 0 0 15px var(--accent-cyan);
 }
 
 .glow-cyan {
-  text-shadow: 0 0 10px rgba(0, 240, 255, 0.5);
+  text-shadow: 0 0 10px var(--accent-cyan), 0 0 20px var(--accent-cyan);
 }
 
+/* Buttons Tactical */
 .btn-cyan {
-  background: linear-gradient(45deg, var(--accent-cyan), #00addd);
-  color: #000;
-  border: none;
-  border-radius: 12px;
-  padding: 8px 16px;
+  background: rgba(10, 16, 28, 0.7);
+  color: rgba(0, 243, 255, 0.5);
+  border: 1px solid rgba(0, 243, 255, 0.3);
+  border-radius: 0;
+  padding: 6px 14px;
   font-weight: 600;
   cursor: pointer;
-  box-shadow: 0 0 15px rgba(0, 240, 255, 0.3);
-  transition: all 0.3s ease;
+  box-shadow: none;
+  transition: all 0.25s ease;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
-.btn-cyan:hover {
-  box-shadow: 0 0 25px rgba(0, 240, 255, 0.6);
-  transform: scale(1.05);
+.btn-cyan:hover:not(.active) {
+  background: rgba(0, 243, 255, 0.15);
+  color: var(--accent-cyan);
+  border-color: rgba(0, 243, 255, 0.6);
+}
+
+.btn-cyan.active {
+  background: linear-gradient(135deg, #00f3ff 0%, #00a6ff 100%);
+  color: #040812;
+  font-weight: 800;
+  border: 1px solid #00f3ff;
+  box-shadow: 0 0 16px rgba(0, 243, 255, 0.6);
+  text-shadow: 0 0 2px rgba(255, 255, 255, 0.4);
+}
+
+.btn-cyan.active::before {
+  content: '●';
+  font-size: 0.65rem;
+  color: #040812;
+  animation: pulseDot 1.2s ease-in-out infinite;
+}
+
+/* Tactical Pink Button */
+.btn-pink {
+  background: rgba(10, 16, 28, 0.7);
+  color: rgba(255, 0, 60, 0.5);
+  border: 1px solid rgba(255, 0, 60, 0.3);
+  border-radius: 0;
+  padding: 6px 14px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: none;
+  transition: all 0.25s ease;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn-pink:hover:not(.active) {
+  background: rgba(255, 0, 60, 0.15);
+  color: var(--accent-magenta);
+  border-color: rgba(255, 0, 60, 0.6);
+}
+
+.btn-pink.active {
+  background: linear-gradient(135deg, #ff003c 0%, #cc0030 100%);
+  color: #ffffff;
+  font-weight: 800;
+  border: 1px solid #ff003c;
+  box-shadow: 0 0 16px rgba(255, 0, 60, 0.7);
+  text-shadow: 0 0 4px rgba(0, 0, 0, 0.5);
+}
+
+.btn-pink.active::before {
+  content: '●';
+  font-size: 0.65rem;
+  color: #ffffff;
+  animation: pulseDot 1.2s ease-in-out infinite;
+}
+
+@keyframes pulseDot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.8); }
+}
+
+/* Sci-fi Slider */
+.sci-fi-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.1);
+  outline: none;
+  position: relative;
+}
+
+.sci-fi-slider::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  background: var(--accent-magenta);
+  box-shadow: 0 0 10px var(--accent-magenta);
+  /* The width of the fill will be managed by a CSS variable --val */
+  width: var(--val, 0%);
+  pointer-events: none;
+}
+
+.sci-fi-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 24px;
+  background: #fff;
+  border: 2px solid var(--accent-magenta);
+  box-shadow: 0 0 15px var(--accent-magenta);
+  cursor: pointer;
+  clip-path: polygon(0 20%, 50% 0, 100% 20%, 100% 80%, 50% 100%, 0 80%);
+}
+
+.sci-fi-slider::-moz-range-thumb {
+  width: 12px;
+  height: 24px;
+  background: #fff;
+  border: 2px solid var(--accent-magenta);
+  box-shadow: 0 0 15px var(--accent-magenta);
+  cursor: pointer;
+  clip-path: polygon(0 20%, 50% 0, 100% 20%, 100% 80%, 50% 100%, 0 80%);
+}
+
+/* Sci-Fi Fan HUD Widget */
+.fan-hud-container {
+  position: relative;
+  width: 130px;
+  height: 130px;
+  margin: 10px auto 15px auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.fan-hud-outer-ring {
+  position: absolute;
+  inset: 0;
+  border: 2px dashed rgba(0, 243, 255, 0.4);
+  border-radius: 50%;
+  animation: rotateClockwise 25s linear infinite;
+  box-shadow: 0 0 15px rgba(0, 243, 255, 0.1);
+}
+
+.fan-hud-inner-ring {
+  position: absolute;
+  inset: 10px;
+  border: 1px solid rgba(255, 0, 60, 0.5);
+  border-top-color: var(--accent-magenta);
+  border-bottom-color: var(--accent-cyan);
+  border-radius: 50%;
+  animation: rotateCounterClockwise 12s linear infinite;
+  box-shadow: 0 0 10px rgba(255, 0, 60, 0.2);
+}
+
+.fan-blades-wrapper {
+  position: absolute;
+  inset: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: fanSpin var(--spin-duration, 0.3s) linear infinite;
+}
+
+/* Static Center Core HUD Readout Plate */
+.fan-hud-center-core {
+  position: absolute;
+  width: 76px;
+  height: 76px;
+  border-radius: 50%;
+  background: radial-gradient(circle at center, #0f192e 0%, #050811 100%);
+  border: 1.5px solid rgba(0, 243, 255, 0.6);
+  box-shadow: 0 0 16px rgba(0, 0, 0, 0.85), inset 0 0 12px rgba(0, 243, 255, 0.25);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 2;
+  pointer-events: none;
+}
+
+@keyframes fanSpin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes rotateClockwise {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes rotateCounterClockwise {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(-360deg); }
+}
+
+/* Thermal Progress Bar & Sensor Gauges */
+.sensor-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  background: rgba(15, 23, 42, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 4px;
+  transition: border-color 0.2s;
+}
+
+.sensor-row:hover {
+  border-color: rgba(0, 243, 255, 0.2);
+}
+
+.thermal-bar-bg {
+  height: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 3px;
+  overflow: hidden;
+  position: relative;
+  box-shadow: inset 0 1px 2px rgba(0,0,0,0.5);
+}
+
+.thermal-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.4s ease;
+  position: relative;
+}
+
+.thermal-bar-fill.normal {
+  background: linear-gradient(90deg, rgba(0,243,255,0.6) 0%, #00f3ff 100%);
+  box-shadow: 0 0 8px rgba(0, 243, 255, 0.4);
+}
+
+.thermal-bar-fill.warn {
+  background: linear-gradient(90deg, #f0b429 0%, #ff8c00 100%);
+  box-shadow: 0 0 8px rgba(240, 180, 41, 0.5);
+}
+
+.thermal-bar-fill.critical {
+  background: linear-gradient(90deg, #ff0055 0%, #ff003c 100%);
+  box-shadow: 0 0 12px rgba(255, 0, 60, 0.8);
+  animation: critPulse 1.2s ease-in-out infinite alternate;
+}
+
+@keyframes critPulse {
+  from { opacity: 0.8; box-shadow: 0 0 6px rgba(255, 0, 60, 0.6); }
+  to { opacity: 1; box-shadow: 0 0 14px rgba(255, 0, 60, 1); }
+}
+
+.sensor-badge {
+  font-size: 0.6rem;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 2px;
+  letter-spacing: 0.5px;
+  font-family: 'Share Tech Mono', monospace;
+  text-transform: uppercase;
+}
+
+.sensor-badge.ok {
+  background: rgba(0, 243, 255, 0.12);
+  color: var(--accent-cyan);
+  border: 1px solid rgba(0, 243, 255, 0.3);
+}
+
+.sensor-badge.warn {
+  background: rgba(240, 180, 41, 0.15);
+  color: #f0b429;
+  border: 1px solid rgba(240, 180, 41, 0.4);
+}
+
+.sensor-badge.crit {
+  background: rgba(255, 0, 60, 0.2);
+  color: var(--accent-pink);
+  border: 1px solid rgba(255, 0, 60, 0.5);
+  animation: critBadgePulse 1s infinite alternate;
+}
+
+@keyframes critBadgePulse {
+  from { opacity: 0.7; }
+  to { opacity: 1; }
+}
+
+/* Voltmeter Sci-Fi HUD Gauge */
+.voltage-hud-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  padding: 8px 0;
+  margin-bottom: 5px;
+}
+
+.voltage-dial-wrapper {
+  position: relative;
+  width: 110px;
+  height: 110px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.voltage-dial-outer {
+  position: absolute;
+  inset: 0;
+  border: 1px dashed rgba(0, 255, 102, 0.4);
+  border-radius: 50%;
+  animation: rotateClockwise 35s linear infinite;
+  box-shadow: 0 0 15px rgba(0, 255, 102, 0.1);
+}
+
+.voltage-dial-center {
+  position: absolute;
+  width: 74px;
+  height: 74px;
+  border-radius: 50%;
+  background: radial-gradient(circle at center, #0a1f14 0%, #030a06 100%);
+  border: 1.5px solid rgba(0, 255, 102, 0.5);
+  box-shadow: 0 0 14px rgba(0, 0, 0, 0.9), inset 0 0 10px rgba(0, 255, 102, 0.2);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.voltage-stats-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  width: 100%;
+  margin-top: 10px;
+}
+
+.voltage-stat-box {
+  background: rgba(0, 255, 102, 0.04);
+  border: 1px solid rgba(0, 255, 102, 0.15);
+  padding: 6px 8px;
+  border-radius: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }

@@ -1,11 +1,11 @@
-# 🖥️ Mini Server Dashboard
+# 🖥️ Mini Server Dashboard (Sci-Fi Cyberpunk Edition)
 
-**A self-hosted, real-time server monitoring dashboard.**
-Connect to any remote Linux host over SSH and visualise live system metrics through a modern, dark-themed web interface.
+**A self-hosted, real-time server monitoring & management dashboard.**
+Connect to any remote Linux host over SSH and control live system metrics, processes, services, containers, and logs through an ultra-sleek, Cyberpunk/Sci-Fi HUD web interface.
 
 [![CI/CD](https://github.com/tranvanmanh9325/quan_ly_server/actions/workflows/deploy.yml/badge.svg?branch=main)](https://github.com/tranvanmanh9325/quan_ly_server/actions/workflows/deploy.yml)
 ![Java](https://img.shields.io/badge/Java-21-orange?logo=openjdk&logoColor=white)
-![Spring Boot](https://img.shields.io/badge/Spring_Boot-4.0.5-6DB33F?logo=springboot&logoColor=white)
+![Spring Boot](https://img.shields.io/badge/Spring_Boot-3.4.1-6DB33F?logo=springboot&logoColor=white)
 ![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)
 ![Docker](https://img.shields.io/badge/Docker-Compose_V2-2496ED?logo=docker&logoColor=white)
 ![License](https://img.shields.io/badge/license-MIT-blue)
@@ -14,7 +14,7 @@ Connect to any remote Linux host over SSH and visualise live system metrics thro
 
 ## Overview
 
-Mini Server Dashboard gives you a single-pane-of-glass view of a remote Linux server without installing any agent software on the target host. The backend holds a **persistent SSH session** (via JSch) and executes standard Linux commands (`top`, `free`, `df`, `sensors`, `ps`, `who`, etc.) to gather metrics. The frontend polls these endpoints and renders the data as live charts and tables. The entire stack ships as two Docker containers orchestrated by Compose, with a self-hosted GitHub Actions runner providing zero-touch continuous deployment.
+Mini Server Dashboard provides a single-pane-of-glass operational center for remote Linux servers without requiring agent installation on target hosts. The Spring Boot backend maintains a **persistent SSH session** (via JSch with root-level command elevation) and executes standard Linux commands (`top`, `free`, `df`, `sensors`, `ps`, `systemctl`, `docker ps`, `ss`, `journalctl`, etc.) to collect metrics. The React frontend renders live charts, gauges, logs, and interactive control panels with custom vector SVG icons and glassmorphism styling.
 
 ---
 
@@ -22,18 +22,11 @@ Mini Server Dashboard gives you a single-pane-of-glass view of a remote Linux se
 
 - [Architecture](#architecture)
 - [Tech Stack](#tech-stack)
-- [Features](#features)
+- [Key Features](#key-features)
 - [Project Structure](#project-structure)
 - [API Reference](#api-reference)
 - [Local Development Setup](#local-development-setup)
-- [Production Deployment](#production-deployment)
-- [CI/CD Pipeline](#cicd-pipeline)
-- [Environment Variables](#environment-variables)
-- [Security Notes](#security-notes)
-- [Automated Dependency Updates](#automated-dependency-updates)
 - [License](#license)
-
-> 📚 For in-depth technical documentation see the **[`/docs`](./docs/README.md)** directory.
 
 ---
 
@@ -45,12 +38,12 @@ Mini Server Dashboard gives you a single-pane-of-glass view of a remote Linux se
 │                                                         │
 │  ┌──────────────────┐   /api/*   ┌───────────────────┐  │
 │  │    Frontend      │ ─────────▶ │      Backend      │  │
-│  │  React + Nginx   │            │  Spring Boot 3.5  │  │
+│  │  React + Nginx   │            │  Spring Boot 3.4  │  │
 │  │   Port 5173:80   │            │    Port 8080      │  │
 │  └──────────────────┘            │  JSch SSH Client  │  │
 │                                  └────────┬──────────┘  │
 └───────────────────────────────────────────│─────────────┘
-                                            │ SSH (port 22 / Ngrok TCP)
+                                            │ SSH (Port 22 / Ngrok TCP)
                                             ▼
                                   ┌──────────────────┐
                                   │  Remote Linux    │
@@ -61,9 +54,9 @@ Mini Server Dashboard gives you a single-pane-of-glass view of a remote Linux se
 **Request flow:**
 
 1. The browser loads the React SPA served by **Nginx**.
-2. All `/api/*` XHR calls are reverse-proxied by Nginx to **Spring Boot**.
-3. Spring Boot forwards each request as a shell command over the **persistent SSH session**.
-4. Raw shell output is returned as JSON; all parsing is done in **`frontend/src/utils/parsers.js`** — keeping the Java layer thin and parsers independently unit-testable.
+2. `/api/*` XHR requests are reverse-proxied by Nginx to **Spring Boot**.
+3. Spring Boot forwards requests as shell commands over the **persistent SSH session** (with `sudo -S` elevation where needed).
+4. Output is returned as JSON; parsing is handled in **`frontend/src/utils/parsers.js`**.
 
 ---
 
@@ -72,49 +65,56 @@ Mini Server Dashboard gives you a single-pane-of-glass view of a remote Linux se
 | Layer | Technology | Version |
 | --- | --- | --- |
 | Frontend Framework | React | 19 |
-| Frontend Build Tool | Vite | 6 |
+| Frontend Build Tool | Vite | 8 |
 | Charts | Recharts | 3 |
 | HTTP Client | Axios | 1 |
-| Icons | Lucide React | latest |
+| Icons | Custom-Designed Sci-Fi SVG Icons (`SciFiIcons.jsx`) | Custom |
 | Frontend Server | Nginx (Alpine) | latest |
-| Backend Framework | Spring Boot | 4.0.5 |
+| Backend Framework | Spring Boot | 3.4.1 |
 | Backend Language | Java | 21 |
+| Database | PostgreSQL | 16 |
 | SSH Client | JSch (mwiede fork) | 2.27.9 |
-| Health Check | Spring Actuator | — |
 | Containerization | Docker + Compose | V2 |
-| CI/CD | GitHub Actions (self-hosted runner) | — |
-| Dependency Updates | Dependabot | — |
+| CI/CD | GitHub Actions | — |
 
 ---
 
-## Features
+## Key Features
 
-### 📊 Real-Time Metrics *(polled every 10 s, adaptive)*
+### 🖥️ Sci-Fi Top Operational Header Bar
 
-| Metric | Details |
-| --- | --- |
-| **CPU Usage** | Live area chart with a 15-data-point scrolling history window |
-| **RAM Usage** | Donut chart with used / cached / swap breakdown |
-| **Disk Space** | Per-partition usage bars; excludes `tmpfs` and `devtmpfs` |
-| **Network Traffic** | Live download/upload speeds derived from `/proc/net/dev` deltas |
-| **Temperature** | Per-core readings from `sensors`; warns at ≥ 70 °C, critical at ≥ 85 °C; falls back to `/sys/class/thermal/thermal_zone*/temp` |
-| **Voltage Rails** | Per-rail values from `sensors` with ±5 % / ±10 % deviation thresholds |
+- **System Health Status Badge**: Real-time `ONLINE / HEALTHY` indicator; automatically triggers a pulsing red `CRITICAL ALERT` banner when CPU > 85%, RAM > 90%, or Disk > 90%.
+- **Live Node & Time**: Displays server hostname, OS kernel info, and live server clock.
+- **Dynamic Auto-Refresh Controller**: Toggle metrics polling frequency between `5s (Fast)`, `10s (Normal)`, `15s (Slow)`, `30s (Eco)`, or `PAUSED`.
 
-### 🔧 System Information
+### 💻 Web Command Terminal Console (`>_`)
 
-| Feature | Details |
-| --- | --- |
-| **Process Table** | Full process list (PID, user, CPU %, memory, threads, args); updated every 30 s with debounced search (300 ms) |
-| **Active Connections** | Live SSH sessions via `who`; clickable to view connection details |
-| **Server Info** | Hostname, OS, kernel, and CPU model fetched in a single SSH round-trip |
-| **Uptime & Load Average** | Parsed from `uptime` output |
+- Embedded web-based SSH command console (`root@server:~#`) for executing server diagnostic commands (`uname -a`, `free -m`, `df -h`, `docker ps`, `uptime`, `whoami`, etc.).
+- **Command History Navigation**: Navigate previous commands seamlessly using **Up / Down arrow keys** (`↑` / `↓`).
+- **Quick Command Chips**: 1-click execution for standard sysadmin diagnostics (`uname -a`, `free -h`, `df -h`, `docker ps`, `ss -tulpn`).
+- **Output Management**: Copy full output to clipboard or clear console with 1-click.
+- Built-in **Security Sandbox** preventing destructive commands (`rm -rf`, `mkfs`, `reboot`, `shutdown`, etc.).
 
-### ⚡ Smart Polling
+### 🛡️ 4-Panel Services & Runtime Center (`/services`)
 
-| Behaviour | Description |
-| --- | --- |
-| **Adaptive interval** | Automatically backs off from 10 s → 20 s when SSH response latency exceeds 5 s |
-| **Visibility API integration** | Suspends all SSH polling when the browser tab is hidden; resumes immediately on focus |
+- **System Services (Systemd)**: List and control 1-click **Start / Stop / Restart** for all host systemd services.
+- **Docker Containers & Log Viewer**: View 100% of containers (`Up` & `Exited`), published port mappings, 1-click **Start / Stop / Restart** controls, and an interactive **Sci-Fi Docker Container Log Viewer Modal** (`docker logs --tail`).
+- **Systemd Timers & Scheduled Jobs**: Monitor active countdown timers (`certbot`, `logrotate`, `apt-daily`...) and next execution timestamps.
+- **Host Runtimes & Server Daemons**: Detect installed programming runtimes (Docker, Node.js, Java, Python) and application servers (Nginx, PostgreSQL, Redis, UFW Firewall).
+
+### 📈 Process Explorer & Smart Filters (`/processes`)
+
+- **Smart Column Sorting**: Sort processes by **Highest CPU %**, **Highest Memory MB**, **PID**, or **Name**.
+- **Quick Filters**: Instant tabs for `ALL`, `HIGH CPU (>20%)`, `HIGH MEM (>100MB)`.
+- **Sci-Fi Confirmation Modal**: Glassmorphic confirmation modal with warning alerts before force-killing processes.
+- **CSV Data Export**: 1-click `EXPORT CSV` button to download filtered process tables.
+
+### 🔒 Security & Logs (`/security`)
+
+- **Listening Ports**: Comprehensive TCP & UDP listening sockets scanning with process ID/name mapping (`ss -tulpn`).
+- **Active SSH Sessions**: Real-time user login tracking (`who`).
+- **Log Level Syntax Highlighting**: Colorized log viewer for `ERROR` / `DENIED` (Pink), `WARN` (Yellow), and `INFO` (Green).
+- **Log Search & Export**: Filter log entries by search keywords or level, and export logs to `.log` text files (`EXPORT LOGS`).
 
 ---
 
@@ -122,250 +122,96 @@ Mini Server Dashboard gives you a single-pane-of-glass view of a remote Linux se
 
 ```text
 quan_ly_server/
-├── backend/                              # Spring Boot service
+├── .env                                  # Consolidated root environment file (SSH & DB credentials)
+├── .gitignore                            # Ignores .env and build artifacts
+├── docker-compose.yml                    # Orchestrates backend, frontend & db containers
+│
+├── backend/                              # Spring Boot REST service
 │   ├── src/main/java/com/miniserver/dashboard/
-│   │   ├── DashboardApplication.java         # Entry point
-│   │   ├── config/
-│   │   │   └── CorsConfig.java               # CORS policy
+│   │   ├── DashboardApplication.java     # Entry point
 │   │   ├── controller/
-│   │   │   ├── MetricsController.java         # /api/metrics/* endpoints
-│   │   │   └── FileManagerController.java     # /api/files/* endpoints
-│   │   └── service/
-│   │       └── SshService.java               # Persistent SSH session + retry logic
-│   ├── src/main/resources/
-│   │   └── application.properties            # Reads credentials from .env
-│   ├── .env                                  # ⚠ Not committed — SSH credentials
-│   ├── Dockerfile                            # Multi-stage: Maven builder → JRE Alpine
+│   │   │   ├── MetricsController.java    # /api/metrics/* REST endpoints
+│   │   │   └── FileManagerController.java
+│   │   ├── service/
+│   │   │   └── SshService.java           # Persistent SSH session + sudo elevation
+│   │   └── job/
+│   │       └── MetricCollectorJob.java   # Scheduled 1-min history data recorder
+│   ├── src/test/java/                    # JUnit 5 & Mockito Unit Tests
+│   ├── Dockerfile
 │   └── pom.xml
 │
-├── frontend/                             # React + Vite SPA
-│   ├── src/
-│   │   ├── App.jsx                           # Root component; all state & polling logic
-│   │   ├── App.css / index.css               # Global styles (dark glassmorphism theme)
-│   │   ├── main.jsx                          # React DOM entry point
-│   │   └── utils/
-│   │       └── parsers.js                    # Pure functions: raw SSH output → typed objects
-│   ├── nginx.conf                            # Static serving + /api/ reverse proxy
-│   ├── vite.config.js                        # Dev proxy: /api → localhost:8080
-│   ├── Dockerfile                            # Multi-stage: Node builder → Nginx Alpine
-│   └── package.json
-│
-├── .github/
-│   ├── dependabot.yml                        # Weekly auto-PRs for npm, Maven, Docker, Actions
-│   └── workflows/
-│       └── deploy.yml                        # Self-hosted runner: pull + compose up
-│
-├── docker-compose.yml                    # Orchestrates backend + frontend with health checks
-└── SECURITY.md                           # Vulnerability reporting policy
+└── frontend/                             # React + Vite SPA
+    ├── src/
+    │   ├── App.jsx                       # Root router & dynamic polling engine
+    │   ├── components/
+    │   │   ├── Layout.jsx                # Sci-Fi Top Header Bar & Sidebar
+    │   │   └── SciFiIcons.jsx            # Custom vector SVG icons library
+    │   ├── pages/
+    │   │   ├── DashboardPage.jsx         # Overview charts, Load Avg card & Fan HUD
+    │   │   ├── ProcessesPage.jsx         # Process Explorer & CSV export
+    │   │   ├── ServicesPage.jsx          # Services grid & Docker Container Log Viewer
+    │   │   └── SecurityPage.jsx         # Ports, SSH sessions, Log highlighter & Web Terminal
+    │   └── utils/
+    │       ├── parsers.js                # Shell output string parsers
+    │       └── parsers.test.js           # Vitest unit tests for parsers
+    ├── nginx.conf                        # Reverse proxy config (/api/* → backend:8080)
+    ├── vite.config.js                    # Rolldown / ManualChunks vendor code splitting
+    └── Dockerfile
 ```
 
 ---
 
 ## API Reference
 
-All endpoints are `GET /api/metrics/<resource>`. The backend returns raw shell output wrapped in a JSON envelope; parsing is intentionally delegated to the frontend.
+All endpoints return raw shell output wrapped in a JSON envelope (`GET /api/metrics/<endpoint>`):
 
-| Endpoint | Shell Command | Response Shape |
+| Endpoint | Method | Description |
 | --- | --- | --- |
-| `/cpu` | `top -bn1 \| grep 'Cpu(s)'` | `{ "data": "<raw top line>" }` |
-| `/ram` | `free -m` | `{ "data": "<raw free output>" }` |
-| `/disk` | `df -h -x tmpfs -x devtmpfs` | `{ "data": "<raw df output>" }` |
-| `/network` | `cat /proc/net/dev` | `{ "data": "<raw proc output>" }` |
-| `/processes` | `ps -eo pid,user,%cpu,%mem,nlwp,rss,args --sort=-%cpu` | `{ "data": "<raw ps output>" }` |
-| `/temperature` | `sensors` (fallback: `/sys/class/thermal/*/temp`) | `{ "data": "<raw sensors output>" }` |
-| `/voltage` | `sensors` | `{ "data": "<raw sensors output>" }` |
-| `/system` | `uptime` | `{ "data": "<raw uptime string>" }` |
-| `/connections` | `who` | `{ "data": [{ "user", "terminal", "loginTime", "ip" }] }` |
-| `/sysinfo` | `uname -r` + `hostname` + `/etc/os-release` + `lscpu` | `{ "kernel", "hostname", "os", "cpuModel" }` |
-
-> **Design decision:** Keeping the Java layer as a thin tunnel (no parsing) means the entire parsing logic lives in `parsers.js`, where it can be unit-tested without a live SSH connection.
+| `/api/metrics/cpu` | GET | Raw top CPU usage data |
+| `/api/metrics/ram` | GET | Memory breakdown via `free -m` |
+| `/api/metrics/disk` | GET | Partition usage via `df -h` |
+| `/api/metrics/network` | GET | Interface deltas via `/proc/net/dev` |
+| `/api/metrics/processes` | GET | Process list via `ps -eo` |
+| `/api/metrics/services` | GET | Systemd unit statuses |
+| `/api/metrics/timers` | GET | Systemd timer schedules |
+| `/api/metrics/runtimes` | GET | Host runtimes and daemons health |
+| `/api/metrics/ports` | GET | Listening sockets via `ss -tulpn` |
+| `/api/metrics/docker/logs` | GET | Stream/tail Docker container logs (`containerId`, `lines`) |
+| `/api/metrics/services/control` | POST | Control systemd service (`action=start\|stop\|restart`) |
+| `/api/metrics/docker/control` | POST | Control Docker container (`action=start\|stop\|restart`) |
+| `/api/metrics/kill-process` | POST | Kill process by PID (`pid=X`) |
+| `/api/metrics/execute-command` | POST | Execute safe command in terminal console |
 
 ---
 
 ## Local Development Setup
 
-### Development Prerequisites
+### 1. Root Environment Configuration
 
-| Tool | Minimum Version |
-| --- | --- |
-| Java | 21 |
-| Maven | 3.9 |
-| Node.js | 20 |
-| Docker Desktop | 24 (for production mode) |
-
-### 1 — Backend
-
-```bash
-# Copy the environment template and fill in your SSH target credentials
-cp backend/.env.example backend/.env
-nano backend/.env
-```
-
-```bash
-cd backend
-mvn spring-boot:run
-# API available at http://localhost:8080
-```
-
-### 2 — Frontend
-
-```bash
-cd frontend
-npm install
-npm run dev
-# UI available at http://localhost:5173
-# Vite automatically proxies /api/* → http://localhost:8080
-```
-
----
-
-## Production Deployment
-
-### Server Prerequisites
-
-- Docker Engine 24+ and Docker Compose V2 installed on the host
-- A target Linux server reachable via SSH (direct or via an Ngrok TCP tunnel)
-
-### Steps
-
-**1. Clone the repository on your server:**
-
-```bash
-git clone https://github.com/<YOUR_USERNAME>/quan_ly_server.git ~/quan_ly_server
-cd ~/quan_ly_server
-```
-
-**2. Create the environment file:**
-
-```bash
-cp backend/.env.example backend/.env
-nano backend/.env   # fill in SSH_HOST, SSH_PORT, SSH_USER, SSH_PASSWORD
-```
-
-**3. Build and start all services:**
-
-```bash
-docker compose up -d --build
-```
-
-**4. Verify health:**
-
-```bash
-docker compose ps
-# Both dashboard_backend and dashboard_frontend should report "healthy"
-```
-
-**5. Access the dashboard:**
-
-| Service | URL |
-| --- | --- |
-| UI | `http://<server-ip>:5173` |
-| Backend health | `http://<server-ip>:8080/actuator/health` |
-
-### Resource Limits
-
-| Container | CPU Limit | Memory Limit | Memory Reservation |
-| --- | --- | --- | --- |
-| `dashboard_backend` | 1.5 cores | 1 GB | 512 MB |
-| `dashboard_frontend` | 0.5 cores | 256 MB | 64 MB |
-
-> The backend health check polls `GET /actuator/health` every **30 s** (3 retries, 90 s start period). The frontend container only starts after the backend is `healthy`.
-
----
-
-## CI/CD Pipeline
-
-The repository uses a **self-hosted GitHub Actions runner** so the workflow executes directly on the production server — no SSH secrets stored in GitHub.
-
-**Trigger:** any push to `main`.
-
-**Workflow (`deploy.yml`):**
-
-```text
-git reset --hard  →  git pull origin main  →  docker compose up -d --build
-```
-
-This achieves a rolling rebuild with minimal downtime: only containers whose images have changed are recreated.
-
-### Setting Up the Self-Hosted Runner
-
-**1. Register a runner in GitHub:**
-
-> Repository → **Settings** → **Actions** → **Runners** → **New self-hosted runner** → Linux / x64
-
-Copy the exact commands GitHub generates (they embed a one-time registration token).
-
-**2. Install the runner agent on the server:**
-
-```bash
-mkdir ~/actions-runner && cd ~/actions-runner
-
-# Download — use the exact URL and filename GitHub provides
-curl -o actions-runner-linux-x64.tar.gz -L \
-  https://github.com/actions/runner/releases/download/vX.X.X/actions-runner-linux-x64-X.X.X.tar.gz
-tar xzf ./actions-runner-linux-x64.tar.gz
-
-# Register — use the token GitHub provides
-./config.sh --url https://github.com/<YOUR_USERNAME>/quan_ly_server --token <YOUR_TOKEN>
-```
-
-**3. Run as a system service (survives reboots):**
-
-```bash
-sudo ./svc.sh install
-sudo ./svc.sh start
-```
-
-**4. Verify:** Navigate to **Settings → Actions → Runners**. The runner should appear as **Idle** (green dot).
-
-From this point, every `git push origin main` triggers an automated rebuild. Monitor progress in the **Actions** tab on GitHub.
-
----
-
-## Environment Variables
-
-Create `backend/.env` by copying the template below. This file is listed in `.gitignore` and must **never** be committed.
+Create `.env` in the root folder (`quan_ly_server/.env`):
 
 ```dotenv
-# backend/.env — SSH target credentials
-SSH_HOST=your.ssh.host.or.ngrok.address
+SSH_HOST=your.target.server.ip
 SSH_PORT=22
-SSH_USER=your_ssh_username
-SSH_PASSWORD=your_ssh_password
+SSH_USER=ubuntu
+SSH_PASSWORD=your_secure_password
+
+POSTGRES_DB=dashboard_db
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=postgres_password
 ```
 
-> **Recommended:** For production, prefer SSH key-based authentication over passwords. JSch supports key-pair authentication via `jsch.addIdentity(privateKeyPath)`. See `SshService.java` for the integration point.
+### 2. Run with Docker Compose
 
----
+```bash
+# Build and start all containers
+docker compose up -d --build
 
-## Security Notes
+# View container logs
+docker compose logs -f
+```
 
-> [!WARNING]
-> Ensure `backend/.env` has **never** been committed to the repository history. If it was committed by mistake, rotate your SSH credentials immediately and purge the file from git history using [`git filter-repo`](https://github.com/newren/git-filter-repo).
->
-> [!CAUTION]
-> The current `CorsConfig.java` whitelists only `localhost:5173`. In production, the frontend and backend share the same Nginx origin, so CORS is not exercised at runtime. However, if you ever expose port `8080` directly, restrict the `allowedOrigins` to your actual domain.
->
-> [!CAUTION]
-> All `/api/**` routes are **unauthenticated** by design — the dashboard is intended to run behind a private network or firewall. **Do not expose ports `8080` or `5173` to the public internet** without adding an authentication layer first.
->
-> [!NOTE]
-> `StrictHostKeyChecking` is disabled (`no`) in `SshService.java` to accommodate Ngrok tunnels, where the remote host key changes on every reconnect. For a stable production environment with a static server IP, enable host key checking and store the known host fingerprint.
-
-For the full security policy and vulnerability reporting process, see [SECURITY.md](./SECURITY.md).
-
----
-
-## Automated Dependency Updates
-
-Dependabot is configured to open weekly pull requests across all four package ecosystems:
-
-| Ecosystem | Directory | Max PRs / week |
-| --- | --- | --- |
-| npm (frontend) | `/frontend` | 10 |
-| Maven (backend) | `/backend` | 10 |
-| Docker base images | `/` | 5 |
-| GitHub Actions | `/` | 5 |
+Access the Web UI at **`http://localhost:5173`** (or backend Actuator at `http://localhost:8080/actuator/health`).
 
 ---
 

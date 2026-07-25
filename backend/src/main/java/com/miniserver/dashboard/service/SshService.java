@@ -13,7 +13,6 @@ import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStreamReader;
 import java.util.Properties;
-
 @Service
 public class SshService {
 
@@ -30,6 +29,9 @@ public class SshService {
 
     @Value("${ssh.password}")
     private String password;
+
+    @Value("${ssh.strict-host-key-checking:no}")
+    private String strictHostKeyChecking;
 
     // Session duy nhất được tái sử dụng cho toàn bộ vòng đời ứng dụng
     private Session sharedSession;
@@ -50,10 +52,8 @@ public class SshService {
         session.setPassword(password.getBytes(java.nio.charset.StandardCharsets.UTF_8));
 
         Properties config = new Properties();
-        // StrictHostKeyChecking=no cần thiết khi kết nối qua Ngrok tunnel vì host key
-        // thay đổi mỗi lần tunnel restart. Rủi ro MITM được chấp nhận trong môi trường
-        // nội bộ / development — KHÔNG dùng setup này trong production.
-        config.put("StrictHostKeyChecking", "no");
+        // Configurable StrictHostKeyChecking (defaults to "no" for ngrok/dev environments)
+        config.put("StrictHostKeyChecking", strictHostKeyChecking);
         session.setConfig(config);
         // Giữ kết nối sống, gửi keepalive mỗi 30s để Ngrok không cắt tunnel
         session.setServerAliveInterval(30_000);
@@ -65,7 +65,25 @@ public class SshService {
         return sharedSession;
     }
 
+    /**
+     * Thực thi lệnh với quyền sudo (dùng password SSH để tự động nhập vào sudo -S qua stdin).
+     */
+    public String executeSudoCommand(String command) {
+        if ("root".equalsIgnoreCase(user)) {
+            return executeCommand(command);
+        }
+        if (password != null && !password.isBlank()) {
+            String sudoCmd = "sudo -S -p '' " + command;
+            return executeCommand(sudoCmd, password + "\n");
+        }
+        return executeCommand("sudo -n " + command + " 2>/dev/null || " + command);
+    }
+
     public String executeCommand(String command) {
+        return executeCommand(command, null);
+    }
+
+    public String executeCommand(String command, String stdinInput) {
         // Exponential backoff: 3 lần thử với delay tăng dần trước khi bỏ cuộc
         int[] retryDelaysMs = {250, 500, 1000};
         Exception lastException = null;
@@ -76,7 +94,12 @@ public class SshService {
                 Session session = getOrCreateSession();
                 channel = (ChannelExec) session.openChannel("exec");
                 channel.setCommand(command);
-                channel.setInputStream(null);
+
+                if (stdinInput != null) {
+                    channel.setInputStream(new java.io.ByteArrayInputStream(stdinInput.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+                } else {
+                    channel.setInputStream(null);
+                }
 
                 // Capture stderr qua SLF4J thay vì System.err để không bypass Logback
                 // và đảm bảo log container hoạt động đúng trong môi trường Docker
@@ -100,7 +123,6 @@ public class SshService {
                 }
 
                 return outputBuffer.toString();
-
             } catch (Exception e) {
                 lastException = e;
                 // Huỷ session lỗi để lần thử tiếp tạo lại
@@ -121,8 +143,9 @@ public class SshService {
             }
         }
 
-        log.error("SSH thất bại sau {} lần thử: {}", retryDelaysMs.length + 1, lastException != null ? lastException.getMessage() : "unknown");
-        return "ERROR: " + (lastException != null ? lastException.getMessage() : "unknown");
+        log.error("SSH command execution failed after retries: {}", lastException != null ? lastException.getMessage() : "Unknown");
+        return "Lỗi SSH (sau " + retryDelaysMs.length + " lần thử): " +
+               (lastException != null ? lastException.getMessage() : "Unknown");
     }
 
     @PreDestroy

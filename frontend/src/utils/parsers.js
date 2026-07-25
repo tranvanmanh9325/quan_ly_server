@@ -258,3 +258,155 @@ function guessNominalVoltage(label, measuredV) {
   if (l.includes('vcore') || l.includes('vcpu') || l.includes('vdd') || l.includes('core')) return 1.2;
   return 0; // không đoán được → không cảnh báo
 }
+
+/**
+ * Format bytes per second into human readable speed
+ */
+export function formatSpeed(bps) {
+  if (bps > 1024 * 1024) return (bps / (1024 * 1024)).toFixed(1) + ' MB/s';
+  if (bps > 1024) return (bps / 1024).toFixed(1) + ' KB/s';
+  return Math.max(0, bps).toFixed(0) + ' B/s';
+}
+
+/**
+ * Format bytes into human readable sizes
+ */
+export function formatBytes(bytes) {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
+/**
+ * @param {string} raw - output của `cat /proc/diskstats`
+ * @param {{ readBytes: number, writeBytes: number, time: number }} lastRef
+ * @returns {{ readSpeed: string, writeSpeed: string, readSpeedRaw: number, writeSpeedRaw: number, totalReadBytes: number, totalWriteBytes: number }}
+ */
+export function parseDiskIo(raw, lastRef) {
+  if (!raw) return { readSpeed: '0 B/s', writeSpeed: '0 B/s', readSpeedRaw: 0, writeSpeedRaw: 0, totalReadBytes: 0, totalWriteBytes: 0 };
+  const safeRef = lastRef || { time: 0, readBytes: 0, writeBytes: 0 };
+  const lines = raw.split('\n');
+  let totalReadSectors = 0;
+  let totalWriteSectors = 0;
+  
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    const parts = line.split('|');
+    if (parts.length >= 3) {
+      totalReadSectors += parseInt(parts[1], 10) || 0;
+      totalWriteSectors += parseInt(parts[2], 10) || 0;
+    }
+  }
+
+  // 1 sector = 512 bytes
+  const currentReadBytes = totalReadSectors * 512;
+  const currentWriteBytes = totalWriteSectors * 512;
+
+  const now = Date.now();
+  const timeDiff = safeRef.time > 0 ? (now - safeRef.time) / 1000 : 0;
+  
+  let readSpeed = 0, writeSpeed = 0;
+  if (timeDiff > 0 && safeRef.readBytes > 0) {
+    readSpeed = Math.max(0, (currentReadBytes - safeRef.readBytes) / timeDiff);
+    writeSpeed = Math.max(0, (currentWriteBytes - safeRef.writeBytes) / timeDiff);
+  }
+
+  return {
+    readSpeed: formatSpeed(readSpeed),
+    writeSpeed: formatSpeed(writeSpeed),
+    readSpeedRaw: readSpeed,
+    writeSpeedRaw: writeSpeed,
+    totalReadBytes: currentReadBytes,
+    totalWriteBytes: currentWriteBytes
+  };
+}
+
+/**
+ * Parse output of nvidia-smi
+ * @param {string} raw
+ * @returns {Array<{ name, temp, memUsed, memTotal, memPercent, utilPercent }>}
+ */
+export function parseGpu(raw) {
+  if (!raw || raw.trim() === 'NO_GPU') return [];
+  const lines = raw.trim().split('\n');
+  return lines.map(line => {
+    const parts = line.split('|');
+    if (parts.length >= 5) {
+      const name = parts[0].trim();
+      const temp = parseInt(parts[1], 10) || 0;
+      const memUsed = parseInt(parts[2], 10) || 0;
+      const memTotal = parseInt(parts[3], 10) || 1;
+      const utilPercent = parseInt(parts[4], 10) || 0;
+      const memPercent = parseFloat(((memUsed / memTotal) * 100).toFixed(1));
+      return { name, temp, memUsed, memTotal, memPercent, utilPercent };
+    }
+    return null;
+  }).filter(Boolean);
+}
+
+/**
+ * Extract 1m, 5m, 15m load average from uptime string
+ * @param {string} uptimeStr
+ */
+export function parseLoadAverage(uptimeStr) {
+  if (!uptimeStr) return { m1: 0, m5: 0, m15: 0 };
+  const match = uptimeStr.match(/load average:\s*([0-9.,]+),\s*([0-9.,]+),\s*([0-9.,]+)/);
+  if (match) {
+    return {
+      m1: parseFloat(match[1].replace(',', '.')),
+      m5: parseFloat(match[2].replace(',', '.')),
+      m15: parseFloat(match[3].replace(',', '.'))
+    };
+  }
+  return { m1: 0, m5: 0, m15: 0 };
+}
+
+/**
+ * Parse output của lệnh `sensors` để lấy tốc độ quạt (fan speed).
+ *
+ * @param {string} raw - raw text từ `sensors`
+ * @returns {Array<{ label: string, value: number }>}
+ */
+export function parseFan(raw) {
+  if (!raw || raw === 'N/A') return [];
+
+  const results = [];
+  const lines = raw.split('\n');
+  const fanRegex = /^(.+?):\s*(\d+)\s*RPM/i;
+
+  for (const line of lines) {
+    const match = line.match(fanRegex);
+    if (!match) continue;
+
+    results.push({ label: match[1].trim(), value: parseInt(match[2], 10) });
+  }
+
+  return results;
+}
+
+/**
+ * Parse output of docker stats --no-stream --format '{{.ID}}|{{.Name}}|{{.CPUPerc}}|{{.MemUsage}}|{{.NetIO}}'
+ * @param {string} raw
+ * @returns {Record<string, { id: string, name: string, cpu: string, mem: string, netIO: string }>}
+ */
+export function parseDockerStats(raw) {
+  if (!raw || raw.includes('DOCKER_NOT_FOUND') || raw.startsWith('ERROR')) return {};
+  const map = {};
+  const lines = raw.trim().split('\n');
+  for (const line of lines) {
+    const parts = line.split('|');
+    if (parts.length >= 4) {
+      const id = parts[0].trim();
+      const name = parts[1].trim();
+      const cpu = parts[2].trim();
+      const mem = parts[3].trim();
+      const netIO = parts.length >= 5 ? parts[4].trim() : '-';
+      const statsObj = { id, name, cpu, mem, netIO };
+      map[id] = statsObj;
+      map[name] = statsObj;
+    }
+  }
+  return map;
+}

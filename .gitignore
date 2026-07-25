@@ -1,0 +1,11 @@
+# ==========================================
+# CẤU HÌNH GITIGNORE DỰ ÁN DÀNH CHO ROOT
+# ==========================================
+
+# File biến môi trường chứa bí mật (SSH credentials, Database password)
+.env
+.env.*
+.env.local
+
+# Docker & Temp
+*.log

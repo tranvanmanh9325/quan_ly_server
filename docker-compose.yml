@@ -1,5 +1,23 @@
 
 services:
+  db:
+    image: postgres:15-alpine
+    container_name: dashboard_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: dashboard_user
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: quan_ly_server
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - dashboard-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dashboard_user -d quan_ly_server"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   backend:
     build:
       context: ./backend
@@ -8,8 +26,11 @@ services:
     ports:
       - "8080:8080"
     env_file:
-      - backend/.env
+      - .env
     restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
     networks:
       - dashboard-network
     # Actuator /health: không phụ thuộc SSH, trả 200 khi Spring Boot sẵn sàng
@@ -57,3 +78,6 @@ services:
 networks:
   dashboard-network:
     driver: bridge
+
+volumes:
+  postgres_data:

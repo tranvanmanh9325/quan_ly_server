@@ -432,7 +432,7 @@ public class MetricsController {
         if (!action.matches("^(start|stop|restart|enable|disable)$")) {
             return Map.of("status", "error", "message", "Invalid action");
         }
-        if (serviceName == null || !serviceName.matches("^[a-zA-Z0-9_.-@]+$")) {
+        if (serviceName == null || !serviceName.matches("^[a-zA-Z0-9_.@-]+$")) {
             return Map.of("status", "error", "message", "Invalid service name format");
         }
         if ("stop".equals(action) && (serviceName.contains("ssh") || serviceName.contains("systemd"))) {

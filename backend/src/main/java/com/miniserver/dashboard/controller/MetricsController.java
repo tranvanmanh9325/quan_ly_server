@@ -17,10 +17,21 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 @RestController
 @RequestMapping("/api/metrics")
 public class MetricsController {
+
+    private static final Pattern DANGEROUS_EVAL_PATTERN = Pattern.compile(
+            "\\b(eval|exec|nc|netcat|bash\\s+-c|sh\\s+-c|zsh\\s+-c)\\b",
+            Pattern.CASE_INSENSITIVE
+    );
+
+    private static final Pattern DESTRUCTIVE_CMD_PATTERN = Pattern.compile(
+            "\\b(rm|mkfs|dd|reboot|shutdown|poweroff|init|fdisk|parted|mkswap|userdel|groupdel|chown|su|sudo)\\b",
+            Pattern.CASE_INSENSITIVE
+    );
 
     private final SshService sshService;
     private final ServerMetricRepository metricRepository;
@@ -558,7 +569,7 @@ public class MetricsController {
         // 3. Reject command substitution, subshell execution, and dangerous evaluation primitives
         String lower = trimmedCmd.toLowerCase();
         if (lower.contains("$(") || lower.contains("`") || lower.contains("${") 
-                || lower.matches(".*\\b(eval|exec|nc|netcat|bash\\s+-c|sh\\s+-c|zsh\\s+-c)\\b.*")
+                || DANGEROUS_EVAL_PATTERN.matcher(lower).find()
                 || lower.contains("/dev/tcp") || lower.contains("/dev/udp")) {
             result.put("status", "error");
             result.put("message", "Security Alert: Subshell, command substitution, or evaluation primitives blocked.");
@@ -566,7 +577,7 @@ public class MetricsController {
         }
 
         // 4. Block destructive binaries and privilege escalation attempts
-        boolean isDestructive = lower.matches(".*\\b(rm|mkfs|dd|reboot|shutdown|poweroff|init|fdisk|parted|mkswap|userdel|groupdel|chown|su|sudo)\\b.*")
+        boolean isDestructive = DESTRUCTIVE_CMD_PATTERN.matcher(lower).find()
                 || lower.contains(":(){ :|:& };:");
 
         if (isDestructive) {

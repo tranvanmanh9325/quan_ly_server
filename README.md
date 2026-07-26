@@ -231,7 +231,7 @@ quan_ly_server/
 All `GET` endpoints return `{ status, data }` JSON. `POST` endpoints accept query params.
 
 | Endpoint | Method | Description |
-|---|---|---|
+| --- | --- | --- |
 | `/api/metrics/system` | GET | Hostname, OS, kernel, uptime |
 | `/api/metrics/cpu` | GET | CPU usage % (top) |
 | `/api/metrics/ram` | GET | Memory breakdown via `free -m` |

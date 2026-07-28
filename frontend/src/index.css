@@ -9,7 +9,9 @@
   --accent-cyan: #00f3ff;
   --accent-purple: #9d4edd;
   --accent-magenta: #ff003c;
+  --accent-pink: #ff0055;
   --accent-green: #00ff66;
+  --accent-yellow: #ffbb00;
   --panel-radius: 0; /* No radius, using clip-path */
   --transition-speed: 0.3s;
 }

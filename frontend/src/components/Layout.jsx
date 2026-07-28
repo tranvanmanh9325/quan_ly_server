@@ -1,16 +1,27 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { NavLink, Outlet } from 'react-router-dom';
+import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { 
   SciFiDashboardIcon, SciFiPulseIcon, SciFiServerRackIcon, 
-  SciFiCyberLockIcon, SciFiPulseBadge, SciFiRefreshIcon, SciFiConsoleIcon 
+  SciFiCyberLockIcon, SciFiPulseBadge, SciFiRefreshIcon, SciFiConsoleIcon,
+  SciFiFolderIcon, SciFiContainerIcon, SciFiGlobeIcon, SciFiSettingsIcon
 } from './SciFiIcons';
 import '../App.css';
 import '../index.css';
+import { removeToken, getUsername } from '../utils/auth';
 
 export default function Layout({ isAlerting, context }) {
+  const navigate = useNavigate();
   const [clock, setClock] = useState('');
-  
+  const username = getUsername();
+
+  const handleLogout = () => {
+    removeToken();
+    navigate('/login', { replace: true });
+  };
+
+  const [logoutHovered, setLogoutHovered] = useState(false);
+
   // Terminal Modal state
   const [showTerminal, setShowTerminal] = useState(false);
   const [commandInput, setCommandInput] = useState('');
@@ -236,10 +247,34 @@ export default function Layout({ isAlerting, context }) {
 
       {/* Sci-Fi Sidebar */}
       <aside className="sci-fi-sidebar">
-        <div className="sidebar-logo">
-          <h1 className="title-glow" style={{ fontSize: '1.4rem', letterSpacing: '2px', margin: 0 }}>
-            SERVER<br/>DASHBOARD
-          </h1>
+        <div className="sidebar-logo" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <div style={{
+            width: '38px',
+            height: '38px',
+            minWidth: '38px',
+            borderRadius: '6px',
+            background: 'rgba(0, 243, 255, 0.08)',
+            border: '1px solid var(--accent-cyan)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            boxShadow: '0 0 12px rgba(0, 243, 255, 0.25)'
+          }}>
+            <svg width="26" height="26" viewBox="0 0 64 64" fill="none">
+              <polygon points="32,4 58,19 58,45 32,60 6,45 6,19" fill="rgba(5,8,16,0.9)" stroke="var(--accent-cyan)" strokeWidth="3.5" strokeLinejoin="round" />
+              <polygon points="32,10 52,21.5 52,42.5 32,54 12,42.5 12,21.5" fill="none" stroke="var(--accent-cyan)" strokeWidth="1" strokeDasharray="4,2" opacity="0.5" />
+              <path d="M20 21 H44 M20 28 H44 M20 35 H44 M20 42 H44" stroke="var(--accent-cyan)" strokeWidth="3" strokeLinecap="round" />
+              <circle cx="26" cy="21" r="2.5" fill="var(--accent-green)" />
+              <circle cx="38" cy="28" r="2.5" fill="var(--accent-cyan)" />
+              <circle cx="26" cy="35" r="2.5" fill="var(--accent-green)" />
+              <circle cx="38" cy="42" r="2.5" fill="var(--accent-cyan)" />
+            </svg>
+          </div>
+          <div>
+            <h1 className="title-glow" style={{ fontSize: '1.2rem', letterSpacing: '2px', margin: 0, lineHeight: 1.15 }}>
+              SERVER<br/>DASHBOARD
+            </h1>
+          </div>
         </div>
 
         <nav className="sidebar-nav">
@@ -258,9 +293,34 @@ export default function Layout({ isAlerting, context }) {
             <span>Services</span>
           </NavLink>
 
+          <NavLink to="/files" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+            <SciFiFolderIcon size={20} />
+            <span>File Manager</span>
+          </NavLink>
+
+          <NavLink to="/containers" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+            <SciFiContainerIcon size={20} />
+            <span>Docker Containers</span>
+          </NavLink>
+
+          <NavLink to="/map" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+            <SciFiGlobeIcon size={20} />
+            <span>Global Map</span>
+          </NavLink>
+
+          <NavLink to="/terminal" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+            <SciFiConsoleIcon size={20} />
+            <span>Terminal Console</span>
+          </NavLink>
+
           <NavLink to="/security" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
             <SciFiCyberLockIcon size={20} />
             <span>Security & Logs</span>
+          </NavLink>
+
+          <NavLink to="/settings" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+            <SciFiSettingsIcon size={20} />
+            <span>Settings</span>
           </NavLink>
         </nav>
       </aside>
@@ -361,6 +421,29 @@ export default function Layout({ isAlerting, context }) {
             <div style={{ color: 'var(--text-secondary)', borderLeft: '1px solid rgba(255,255,255,0.1)', paddingLeft: '16px' }}>
               TIME: <span style={{ color: '#fff', fontWeight: 'bold' }}>{clock}</span>
             </div>
+
+            {/* Logout */}
+            <button
+              id="header-logout-btn"
+              onClick={handleLogout}
+              title={`Logged in as ${username || 'unknown'} — click to logout`}
+              onMouseEnter={() => setLogoutHovered(true)}
+              onMouseLeave={() => setLogoutHovered(false)}
+              style={{
+                background: logoutHovered ? 'rgba(255,0,85,0.15)' : 'transparent',
+                border: '1px solid rgba(255,0,85,0.4)',
+                color: logoutHovered ? 'var(--accent-pink)' : 'rgba(255,0,85,0.7)',
+                padding: '4px 10px',
+                fontSize: '0.7rem',
+                fontFamily: 'Share Tech Mono',
+                letterSpacing: '1px',
+                cursor: 'pointer',
+                borderRadius: '3px',
+                transition: 'all 0.2s',
+              }}
+            >
+              LOGOUT
+            </button>
           </div>
 
         </header>

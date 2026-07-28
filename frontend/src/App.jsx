@@ -2,11 +2,23 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import axios from 'axios';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import Layout from './components/Layout';
+import LoginPage from './pages/LoginPage';
+import ProtectedRoute from './components/ProtectedRoute';
 import DashboardPage from './pages/DashboardPage';
 import ProcessesPage from './pages/ProcessesPage';
 import ServicesPage from './pages/ServicesPage';
 import SecurityPage from './pages/SecurityPage';
+import FileManagerPage from './pages/FileManagerPage';
+import ContainersPage from './pages/ContainersPage';
+import TerminalPage from './pages/TerminalPage';
+import WorldMapPage from './pages/WorldMapPage';
 import ErrorBoundary from './components/ErrorBoundary';
+import SpaceInteractionLayer from './components/SpaceInteractionLayer';
+import SettingsPage from './pages/SettingsPage';
+import { loadSettings } from './utils/settings';
+import { getToken } from './utils/auth';
+// Register the global axios 401 interceptor once at app startup (side-effect only import)
+import './utils/axiosInterceptor';
 import './index.css';
 import './App.css';
 import { 
@@ -23,6 +35,31 @@ const PROCESS_INTERVAL        = 30_000;
 const ADAPTIVE_THRESHOLD_MS   = 5_000;  // Ngưỡng để xem SSH là "đang chậm"
 
 function App() {
+  // Attach JWT token to every outgoing API request
+  useEffect(() => {
+    const id = axios.interceptors.request.use(config => {
+      const token = getToken();
+      if (token) config.headers['Authorization'] = `Bearer ${token}`;
+      return config;
+    });
+    return () => axios.interceptors.request.eject(id);
+  }, []);
+
+  // Load persisted alert thresholds from localStorage
+  const [alertThresholds, setAlertThresholds] = React.useState(() => {
+    const s = loadSettings();
+    return { cpu: s.cpuThreshold, ram: s.ramThreshold, disk: s.diskThreshold };
+  });
+
+  // Re-read thresholds when user saves settings
+  useEffect(() => {
+    const onSettings = (e) => {
+      const s = e.detail || {};
+      setAlertThresholds({ cpu: s.cpuThreshold, ram: s.ramThreshold, disk: s.diskThreshold });
+    };
+    window.addEventListener('srvdash:settings', onSettings);
+    return () => window.removeEventListener('srvdash:settings', onSettings);
+  }, []);
 
   const [processes, setProcesses]   = useState([]);
   const [system, setSystem]         = useState('');
@@ -250,30 +287,44 @@ function App() {
   const isAlerting = useMemo(() => {
     let alert = false;
     const lastCpu = cpuHistory[cpuHistory.length - 1]?.value || 0;
-    if (lastCpu > 85) alert = true;
-    if (ramData.percent > 90) alert = true;
-    if (diskData.some(d => d.percent > 90)) alert = true;
+    if (lastCpu > alertThresholds.cpu) alert = true;
+    if (ramData.percent > alertThresholds.ram) alert = true;
+    if (diskData.some(d => d.percent > alertThresholds.disk)) alert = true;
     
     return alert;
-  }, [cpuHistory, ramData, diskData]);
+  }, [cpuHistory, ramData, diskData, alertThresholds]);
 
   const context = {
     system, sysInfo, cpuHistory, ramData, diskData, 
     networkData, temperatureData, voltageData, fanData,
     processes, dockerData, systemLogs, connections,
     diskIoData, gpuData, loadAvgData,
-    refreshSpeed, setRefreshSpeed
+    refreshSpeed, setRefreshSpeed, alertThresholds
   };
 
   return (
     <ErrorBoundary>
+      <SpaceInteractionLayer />
       <BrowserRouter>
         <Routes>
-          <Route path="/" element={<Layout isAlerting={isAlerting} context={context} />}>
+          <Route path="/login" element={<LoginPage />} />
+          <Route
+            path="/"
+            element={
+              <ProtectedRoute>
+                <Layout isAlerting={isAlerting} context={context} />
+              </ProtectedRoute>
+            }
+          >
             <Route index element={<DashboardPage />} />
             <Route path="processes" element={<ProcessesPage />} />
             <Route path="services" element={<ServicesPage />} />
+            <Route path="files" element={<FileManagerPage />} />
+            <Route path="containers" element={<ContainersPage />} />
+            <Route path="map" element={<WorldMapPage />} />
+            <Route path="terminal" element={<TerminalPage />} />
             <Route path="security" element={<SecurityPage />} />
+            <Route path="settings" element={<SettingsPage />} />
           </Route>
         </Routes>
       </BrowserRouter>

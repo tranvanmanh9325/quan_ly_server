@@ -1,7 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useOutletContext } from 'react-router-dom';
-import { AreaChart, Area, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
+import {
+  AreaChart, Area, Tooltip, ResponsiveContainer,
+  PieChart, Pie, Cell,
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Legend
+} from 'recharts';
 import { Search, Zap, Server, Activity, HardDrive, Wifi } from 'lucide-react';
 import { formatBytes, formatSpeed } from '../utils/parsers';
 
@@ -13,6 +17,28 @@ export default function DashboardPage() {
   const [fanMode, setFanMode] = useState('auto');
   const [fanSpeed, setFanSpeed] = useState(100);
   const [isChangingFan, setIsChangingFan] = useState(false);
+  const [historyChart, setHistoryChart] = useState([]);
+
+  // Fetch 24h historical data once on mount for the trend charts
+  useEffect(() => {
+    axios.get('/api/metrics/history/24h')
+      .then(res => {
+        if (res.data && res.data.length > 0) {
+          const formatted = res.data.map(item => {
+            const d = new Date(item.timestamp);
+            return {
+              time: d.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' }),
+              cpu:  item.cpuPercent  ?? null,
+              ram:  item.ramPercent  ?? null,
+              disk: item.diskPercent ?? null,
+            };
+          });
+          setHistoryChart(formatted);
+        }
+      })
+      .catch(() => { /* silently fail — DB might be empty on first run */ });
+  }, []);
+
 
   const currentFanRpm = fanData && fanData.length > 0 ? fanData[0].value : 0;
   const spinDuration = fanMode === 'manual' 
@@ -58,7 +84,7 @@ export default function DashboardPage() {
   const maxSysTemp = sysTemps.length > 0 ? Math.max(...sysTemps.map(t => parseFloat(t.value) || 0)) : 0;
 
   const renderThermalList = (sensorList) => (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', zIndex: 1, overflowY: 'auto', maxHeight: '160px', paddingRight: '4px' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', zIndex: 1, overflowY: 'auto', flex: 1, paddingRight: '4px' }}>
       {sensorList.map((t, idx) => {
         const valNum = parseFloat(t.value) || 0;
         const pct = Math.min(100, Math.max(0, (valNum / 100) * 100));
@@ -256,8 +282,8 @@ export default function DashboardPage() {
             {shouldSplitCards ? (
               <>
                 {/* CPU Thermal Card */}
-                <div className="kpi-card glass-panel" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-                  <div className="kpi-header" style={{ marginBottom: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div className="kpi-card glass-panel" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-start', gap: '10px' }}>
+                  <div className="kpi-header" style={{ marginBottom: '4px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <span className="kpi-title">CPU THERMAL (°C)</span>
                     <span style={{ 
                       fontSize: '0.68rem', 
@@ -275,8 +301,8 @@ export default function DashboardPage() {
                 </div>
 
                 {/* System Sensors Card */}
-                <div className="kpi-card glass-panel" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-                  <div className="kpi-header" style={{ marginBottom: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div className="kpi-card glass-panel" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-start', gap: '10px' }}>
+                  <div className="kpi-header" style={{ marginBottom: '4px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <span className="kpi-title">SYSTEM SENSORS (°C)</span>
                     <span style={{ 
                       fontSize: '0.68rem', 
@@ -295,8 +321,8 @@ export default function DashboardPage() {
               </>
             ) : (
               /* Single Combined Thermal Card fallback */
-              <div className="kpi-card glass-panel" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-                <div className="kpi-header" style={{ marginBottom: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div className="kpi-card glass-panel" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-start', gap: '10px' }}>
+                <div className="kpi-header" style={{ marginBottom: '4px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <span className="kpi-title">THERMAL SENSORS (°C)</span>
                   {maxTemp > 0 && (
                     <span style={{ 
@@ -631,6 +657,67 @@ export default function DashboardPage() {
           </section>
         </aside>
       </div>
+
+      {/* ── 24H METRIC HISTORY ──────────────────────────────────────────── */}
+      <div style={{ padding: '0 24px 24px' }}>
+      <section className="metric-card" style={{ position: 'relative', overflow: 'visible' }}>
+        <div className="card-header">
+          <span className="card-label">24H METRIC HISTORY</span>
+          <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', fontFamily: 'Share Tech Mono' }}>
+            {historyChart.length > 0
+              ? `${historyChart.length} data points · updated every 60s`
+              : 'Collecting data — first entry appears after 60s'}
+          </span>
+        </div>
+
+        {historyChart.length === 0 ? (
+          <div style={{
+            height: 180, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            color: 'var(--text-secondary)', fontSize: '0.8rem', fontFamily: 'Share Tech Mono',
+            flexDirection: 'column', gap: 8
+          }}>
+            <span style={{ fontSize: '1.4rem' }}>[ NO DATA ]</span>
+            <span>MetricCollectorJob saves a snapshot every 60 seconds.</span>
+            <span>The chart will populate automatically.</span>
+          </div>
+        ) : (
+          <ResponsiveContainer width="100%" height={220}>
+            <LineChart data={historyChart} margin={{ top: 8, right: 20, left: 0, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+              <XAxis
+                dataKey="time"
+                tick={{ fill: 'var(--text-secondary)', fontSize: 10, fontFamily: 'Share Tech Mono' }}
+                interval={Math.max(0, Math.floor(historyChart.length / 8) - 1)}
+                tickLine={false}
+              />
+              <YAxis
+                domain={[0, 100]}
+                tick={{ fill: 'var(--text-secondary)', fontSize: 10, fontFamily: 'Share Tech Mono' }}
+                tickFormatter={v => `${v}%`}
+                tickLine={false}
+                axisLine={false}
+                width={36}
+              />
+              <Tooltip
+                contentStyle={{
+                  background: 'var(--card-bg)', border: '1px solid var(--accent-cyan)',
+                  borderRadius: 4, fontSize: 11, fontFamily: 'Share Tech Mono'
+                }}
+                labelStyle={{ color: 'var(--accent-cyan)' }}
+                formatter={(value, name) => [`${value?.toFixed(1)}%`, name.toUpperCase()]}
+              />
+              <Legend
+                wrapperStyle={{ fontSize: 11, fontFamily: 'Share Tech Mono', paddingTop: 8 }}
+                formatter={v => v.toUpperCase()}
+              />
+              <Line type="monotone" dataKey="cpu"  stroke="var(--accent-cyan)"  dot={false} strokeWidth={1.5} name="cpu" connectNulls />
+              <Line type="monotone" dataKey="ram"  stroke="var(--accent-green)" dot={false} strokeWidth={1.5} name="ram" connectNulls />
+              <Line type="monotone" dataKey="disk" stroke="var(--accent-pink)"  dot={false} strokeWidth={1.5} name="disk" connectNulls />
+            </LineChart>
+          </ResponsiveContainer>
+        )}
+      </section>
+      </div>
     </main>
   );
-}
+}

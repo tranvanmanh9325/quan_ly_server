@@ -145,7 +145,18 @@ export function parseTemperature(raw) {
   const sensorsRegex = /^(.+?):\s*([+-]?\d+\.?\d*)\s*°?C/i;
   const thermalZoneRegex = /^(.+?):\s*(\d{4,6})\s*$/; // millidegrees từ thermal_zone
 
+  let currentAdapter = '';
+
   for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    // Theo dõi adapter block (ví dụ: dell_smm-isa-00de, coretemp-isa-0000)
+    if (!trimmed.includes(':') || /^[a-z0-9_-]+-(isa|acpi|virtual|pci)-[0-9a-f]+$/i.test(trimmed)) {
+      currentAdapter = trimmed.toLowerCase();
+      continue;
+    }
+
     let label = null;
     let tempC = null;
 
@@ -164,6 +175,11 @@ export function parseTemperature(raw) {
     }
 
     if (label === null || tempC === null || isNaN(tempC)) continue;
+
+    // Lọc bỏ cảm biến ảo kẹt 97°C/98°C từ driver dell_smm trên máy Dell
+    if (currentAdapter.includes('dell_smm')) {
+      if (label.toLowerCase() === 'cpu' || tempC >= 95) continue;
+    }
 
     // Chỉ lấy các dòng nhiệt độ thực — bỏ voltage, fan, power
     const lowerLabel = label.toLowerCase();
@@ -192,7 +208,7 @@ export function parseTemperature(raw) {
  */
 export function getMaxTemperature(temps) {
   if (!temps || temps.length === 0) return null;
-  // Ưu tiên Package / Tdie / Tctl (đại diện cho toàn bộ chip)
+  // Ưu tiên Package / Tdie / Tctl / CPU thermal (đại diện cho toàn bộ chip từ coretemp)
   const pkg = temps.find(t =>
     /package|tdie|tctl|cpu thermal/i.test(t.label)
   );

@@ -38,8 +38,8 @@ class MetricsControllerTest {
     @Test
     @DisplayName("getHistory - should return list of metrics reversed")
     void testGetHistory() {
-        ServerMetric m1 = new ServerMetric(LocalDateTime.now().minusMinutes(2), 10.0, 20.0);
-        ServerMetric m2 = new ServerMetric(LocalDateTime.now().minusMinutes(1), 15.0, 25.0);
+        ServerMetric m1 = ServerMetric.builder().timestamp(LocalDateTime.now().minusMinutes(2)).cpuPercent(10.0).ramPercent(20.0).build();
+        ServerMetric m2 = ServerMetric.builder().timestamp(LocalDateTime.now().minusMinutes(1)).cpuPercent(15.0).ramPercent(25.0).build();
         when(metricRepository.findTop100ByOrderByTimestampDesc()).thenReturn(List.of(m2, m1));
 
         List<ServerMetric> result = metricsController.getHistory();

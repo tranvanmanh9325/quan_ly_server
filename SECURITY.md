@@ -16,7 +16,7 @@ The scope of this security policy covers:
 ## Supported Versions
 
 | Version | Supported |
-|---------|-----------|
+| --- | --- |
 | `main` branch (latest) | ✅ Yes |
 | Any tagged release | ✅ Yes |
 | Older commits / forks | ❌ No |
@@ -28,7 +28,7 @@ This project follows a rolling-release model on the `main` branch. Only the late
 ## Known Security Trade-offs
 
 | Area | Trade-off | Reason |
-|------|-----------|--------|
+| --- | --- | --- |
 | `StrictHostKeyChecking=no` | Disables SSH host key verification | Required when using Ngrok tunnels where the host key changes on every reconnect. **Do not use in production environments.** |
 | SSH over Ngrok TCP | Credentials transmitted through a third-party tunnel | Acceptable for personal/development use. Use a VPN or direct SSH connection in production. |
 | No authentication on API endpoints | All `/api/**` routes are publicly accessible | By design — intended to run behind a private network or firewall. **Do NOT expose port `8080` or `5173` to the public internet.** |

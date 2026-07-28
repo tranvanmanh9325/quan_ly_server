@@ -1,15 +1,7 @@
-# 🖥️ Mini Server Dashboard — Sci-Fi Cyberpunk Edition
+﻿# Mini Server Dashboard — Sci-Fi Cyberpunk Edition
 
 **A self-hosted, real-time server monitoring & management dashboard with a Cyberpunk/Sci-Fi HUD interface.**  
 Connect to any remote Linux host over SSH and control live system metrics, processes, services, containers, files, and logs — all from a stunning, futuristic web UI.
-
-[![CI/CD](https://github.com/tranvanmanh9325/quan_ly_server/actions/workflows/deploy.yml/badge.svg?branch=main)](https://github.com/tranvanmanh9325/quan_ly_server/actions/workflows/deploy.yml)
-![Java](https://img.shields.io/badge/Java-21-orange?logo=openjdk&logoColor=white)
-![Spring Boot](https://img.shields.io/badge/Spring_Boot-3.4-6DB33F?logo=springboot&logoColor=white)
-![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)
-![Vite](https://img.shields.io/badge/Vite-8-646CFF?logo=vite&logoColor=white)
-![Docker](https://img.shields.io/badge/Docker-Compose_V2-2496ED?logo=docker&logoColor=white)
-![License](https://img.shields.io/badge/license-MIT-blue)
 
 ---
 
@@ -40,52 +32,52 @@ The Spring Boot backend maintains a **persistent SSH session** (via JSch with ro
 
 ## Screenshots / Demo
 
-> 📸 _Insert screenshots or a demo GIF here._  
+> _Insert screenshots or a demo GIF here._  
 > Suggested shots: Dashboard overview, 3D Globe Map, Settings page, Terminal Console, Process Explorer.
 
 ---
 
 ## Key Features
 
-### 🖥️ System Overview Dashboard (`/`)
+### System Overview Dashboard (`/`)
 
 - **Live metric cards**: CPU usage (chart + sparkline), RAM usage (donut gauge), Disk Space (partition bars), Load Average, Network Traffic, CPU Thermal, Voltage & Power, Fan Control.
 - **CRITICAL ALERT system**: Header turns pulsing red when any threshold is breached (configurable in Settings).
 - **Adaptive polling engine**: Automatically slows refresh rate when SSH response time exceeds 5 seconds to protect both server and UX.
 
-### 🌍 3D Interactive Globe Map (`/map`)
+### 3D Interactive Globe Map (`/map`)
 
 - **Real orthographic 3D globe** rendered with D3-geo + TopoJSON with detailed country boundaries.
 - **Server location marker**: Geolocates the monitored server and displays a neon teardrop pin with sonar pulse rings.
 - **Connected nodes panel**: Tracks active SSH tunnel connections with country flags and IP metadata.
 - Auto-rotating globe with drag-to-rotate interaction.
 
-### 📈 Process Explorer (`/processes`)
+### Process Explorer (`/processes`)
 
 - Smart column sorting by **CPU%**, **Memory MB**, **PID**, or **Name**.
 - Quick filter tabs: `ALL` / `HIGH CPU (>20%)` / `HIGH MEM (>100MB)`.
 - Force-kill processes via a Glassmorphic confirmation modal.
 - **1-click CSV export** of the filtered process table.
 
-### 🛡️ Services & Runtime Center (`/services`)
+### Services & Runtime Center (`/services`)
 
 - **Systemd Services**: View status and 1-click **Start / Stop / Restart**.
 - **Docker Containers**: Full container list with port mappings, live status badges, control actions, and an interactive **Log Viewer Modal** (`docker logs --tail`).
 - **Systemd Timers**: Monitor countdown timers and next-run timestamps.
 - **Host Runtimes**: Detect installed runtimes (Docker, Node.js, Java, Python) and daemons (Nginx, PostgreSQL, Redis, UFW).
 
-### 📁 File Manager (`/files`)
+### File Manager (`/files`)
 
 - SSH-powered filesystem browser — navigate directories, view file contents, create, rename, and delete files/folders.
 - Syntax-aware file viewer for common code and config file types.
 
-### 🐳 Docker Containers (`/containers`)
+### Docker Containers (`/containers`)
 
 - Dedicated container management page with real-time status monitoring.
 - One-click container lifecycle control (start, stop, restart).
 - Inspect container logs with configurable tail lines.
 
-### 💻 Terminal Console (`/terminal`)
+### Terminal Console (`/terminal`)
 
 - Embedded web-based SSH terminal (`root@server:~#`).
 - **Command history** navigation with ↑/↓ arrow keys.
@@ -93,14 +85,14 @@ The Spring Boot backend maintains a **persistent SSH session** (via JSch with ro
 - Built-in **security sandbox** blocking destructive commands (`rm -rf`, `mkfs`, `reboot`, etc.).
 - Copy output to clipboard or clear console with 1-click.
 
-### 🔒 Security & Logs (`/security`)
+### Security & Logs (`/security`)
 
 - **Listening Ports**: TCP & UDP socket scanning with PID/process mapping.
 - **Active SSH Sessions**: Real-time user login tracking via `who`.
 - **Colorized Log Viewer**: `ERROR`/`DENIED` → Pink, `WARN` → Yellow, `INFO` → Green.
 - Log search by keyword/level + export to `.log` file.
 
-### ⚙️ Settings (`/settings`)
+### Settings (`/settings`)
 
 - **Alert Thresholds**: Configurable sliders for CPU, RAM, and Disk — changes instantly affect the CRITICAL ALERT system.
 - **Polling Interval**: Override global refresh speed per-session.
@@ -108,7 +100,7 @@ The Spring Boot backend maintains a **persistent SSH session** (via JSch with ro
 - **SSH Connection Status**: Live ping to backend with connection info.
 - All preferences persist via `localStorage`.
 
-### ✨ Sci-Fi UX Layer (Global)
+### Sci-Fi UX Layer (Global)
 
 - **Custom HUD Cursor**: Rotating dual-ring SVG crosshair (replaces native cursor globally).
 - **Click Effects**: Canvas-based energy shockwave, particle burst, diamond shards, and crosshair flash on every click.
@@ -142,25 +134,28 @@ The Spring Boot backend maintains a **persistent SSH session** (via JSch with ro
 ## Architecture
 
 ```text
-┌──────────────────────────────────────────────────────────┐
-│                  Docker Network  (bridge)                 │
-│                                                          │
-│  ┌──────────────────┐   /api/*   ┌───────────────────┐   │
-│  │    Frontend      │ ─────────▶ │      Backend      │   │
-│  │  React + Nginx   │            │  Spring Boot 3.4  │   │
-│  │   Port 5173:80   │            │    Port 8080      │   │
-│  └──────────────────┘            │  JSch SSH Client  │   │
-│                                  └────────┬──────────┘   │
-│                          ┌────────────────┘              │
-│                          │  PostgreSQL 15                 │
-│                          │  (metric history)              │
-└──────────────────────────┼────────────────────────────────┘
-                           │ SSH (Port 22 / Ngrok TCP)
-                           ▼
-                 ┌──────────────────┐
-                 │  Remote Linux    │
-                 │  Server / VPS    │
-                 └──────────────────┘
++------------------------------------------------------------------------+
+|                      Docker Network (bridge)                           |
+|                                                                        |
+|  +------------------+            +------------------------------+      |
+|  |    Frontend      |  /api/*    |          Backend             |      |
+|  |  React + Nginx   | ---------> |      Spring Boot 3.4         |      |
+|  |  Port 5173:80    |            |      Port 8080               |      |
+|  +------------------+            |      JSch SSH Client         |      |
+|                                  +----------+-------------------+      |
+|  +------------------+            |                                     |
+|  |  PostgreSQL 15   | <----------+  (writes metric history)            |
+|  |  Port 5432       |                                                  |
+|  +------------------+                                                  |
++-------------------------------------------+----------------------------+
+                                            |
+                               SSH (Port 22 / Ngrok TCP)
+                                            |
+                                            v
+                                 +--------------------+
+                                 |   Remote Linux     |
+                                 |   Server / VPS     |
+                                 +--------------------+
 ```
 
 **Request flow:**

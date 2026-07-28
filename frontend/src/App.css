@@ -4,7 +4,8 @@
   flex-direction: column;
   gap: 20px;
   padding: 24px 0 24px 24px;
-  overflow: hidden;
+  overflow-y: auto;
+  min-height: 0;
 }
 
 .top-header {
@@ -36,6 +37,9 @@
   letter-spacing: 1px;
   animation: blink 2s infinite;
 }
+h2.title-glow::after {
+  display: none;
+}
 
 @keyframes blink {
   0%, 100% { opacity: 1; }
@@ -47,9 +51,7 @@
   grid-template-columns: 2fr 1fr;
   grid-template-rows: min-content min-content;
   gap: 20px;
-  flex: 1;
-  overflow-y: auto;
-  min-height: 0;
+  flex-shrink: 0;
   padding-right: 24px;
   margin-right: 0;
 }
@@ -195,17 +197,17 @@
   color: rgba(0, 243, 255, 0.4);
 }
 
-.glass-table {
+.glass-table, .sci-fi-table {
   width: 100%;
   border-collapse: collapse;
   font-family: 'Share Tech Mono', monospace;
-  font-size: 0.9rem;
+  font-size: 0.88rem;
 }
 
-.glass-table th {
+.glass-table th, .sci-fi-table th {
   text-align: left;
   color: var(--accent-cyan);
-  padding: 10px;
+  padding: 12px 14px;
   border-bottom: 2px solid var(--accent-cyan);
   text-transform: uppercase;
   letter-spacing: 1px;
@@ -213,20 +215,20 @@
   top: 0;
   z-index: 10;
   background: rgba(9, 10, 15, 0.95);
+  font-weight: 600;
 }
 
-.glass-table td {
-  padding: 12px 10px;
+.glass-table td, .sci-fi-table td {
+  padding: 12px 14px;
   border-bottom: 1px solid rgba(0, 243, 255, 0.1);
   vertical-align: middle;
   color: #fff;
   transition: background 0.2s;
 }
 
-.glass-table tr:hover td {
-  background: rgba(0, 243, 255, 0.05);
+.glass-table tr:hover td, .sci-fi-table tr:hover td {
+  background: rgba(0, 243, 255, 0.06);
   color: var(--accent-cyan);
-  cursor: crosshair;
 }
 
 .status-badge {

@@ -1,8 +1,17 @@
 package com.miniserver.dashboard.model;
 
 import jakarta.persistence.*;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
 import java.time.LocalDateTime;
 
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
 @Entity
 @Table(name = "server_metrics")
 public class ServerMetric {
@@ -20,44 +29,6 @@ public class ServerMetric {
     @Column(name = "ram_percent")
     private Double ramPercent;
 
-    public ServerMetric() {
-    }
-
-    public ServerMetric(LocalDateTime timestamp, Double cpuPercent, Double ramPercent) {
-        this.timestamp = timestamp;
-        this.cpuPercent = cpuPercent;
-        this.ramPercent = ramPercent;
-    }
-
-    public Long getId() {
-        return id;
-    }
-
-    public void setId(Long id) {
-        this.id = id;
-    }
-
-    public LocalDateTime getTimestamp() {
-        return timestamp;
-    }
-
-    public void setTimestamp(LocalDateTime timestamp) {
-        this.timestamp = timestamp;
-    }
-
-    public Double getCpuPercent() {
-        return cpuPercent;
-    }
-
-    public void setCpuPercent(Double cpuPercent) {
-        this.cpuPercent = cpuPercent;
-    }
-
-    public Double getRamPercent() {
-        return ramPercent;
-    }
-
-    public void setRamPercent(Double ramPercent) {
-        this.ramPercent = ramPercent;
-    }
+    @Column(name = "disk_percent")
+    private Double diskPercent;
 }

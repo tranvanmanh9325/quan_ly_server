@@ -49,7 +49,40 @@
       <artifactId>postgresql</artifactId>
       <scope>runtime</scope>
     </dependency>
-    
+
+    <!-- BCrypt password hashing — only the crypto module, avoids pulling in full Spring Security -->
+    <dependency>
+      <groupId>org.springframework.security</groupId>
+      <artifactId>spring-security-crypto</artifactId>
+    </dependency>
+
+    <!-- JWT authentication -->
+    <dependency>
+      <groupId>io.jsonwebtoken</groupId>
+      <artifactId>jjwt-api</artifactId>
+      <version>0.12.6</version>
+    </dependency>
+    <dependency>
+      <groupId>io.jsonwebtoken</groupId>
+      <artifactId>jjwt-impl</artifactId>
+      <version>0.12.6</version>
+      <scope>runtime</scope>
+    </dependency>
+    <dependency>
+      <groupId>io.jsonwebtoken</groupId>
+      <artifactId>jjwt-jackson</artifactId>
+      <version>0.12.6</version>
+      <scope>runtime</scope>
+    </dependency>
+
+    <!-- Jackson — explicit compile dependency so ObjectMapper/TypeReference are available at compile time.
+         spring-boot-starter-web transitively includes jackson-databind but jjwt-jackson (runtime scope)
+         can prevent the transitive resolution from reaching compile scope in some Maven setups. -->
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
+    </dependency>
+
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-test</artifactId>

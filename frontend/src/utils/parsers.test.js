@@ -86,6 +86,22 @@ Package id 0:  +88.5°C  (high = +80.0°C, crit = +100.0°C)`;
     expect(getMaxTemperature(temps)).toBe('88.5');
   });
 
+  it('parseTemperature - should ignore fake Dell SMM CPU 97°C glitch', () => {
+    const dellSensors = `coretemp-isa-0000
+Adapter: ISA adapter
+Package id 0:  +37.0°C  (high = +100.0°C, crit = +100.0°C)
+Core 0:        +36.0°C  (high = +100.0°C, crit = +100.0°C)
+
+dell_smm-isa-00de
+Adapter: ISA adapter
+Processor Fan: 5306 RPM  (min =    0 RPM, max = 4900 RPM)
+CPU:            +97.0°C`;
+
+    const temps = parseTemperature(dellSensors);
+    expect(temps.some(t => t.label === 'CPU')).toBe(false);
+    expect(getMaxTemperature(temps)).toBe('37.0');
+  });
+
   it('parseLoadAverage - should parse load average string', () => {
     const rawUptime = ' 16:30:00 up 10 days,  4:12,  2 users,  load average: 0.45, 1.20, 2.15';
     const load = parseLoadAverage(rawUptime);

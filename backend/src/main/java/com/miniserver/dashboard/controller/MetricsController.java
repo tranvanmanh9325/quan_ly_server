@@ -1,8 +1,12 @@
 package com.miniserver.dashboard.controller;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.miniserver.dashboard.model.ServerMetric;
 import com.miniserver.dashboard.repository.ServerMetricRepository;
 import com.miniserver.dashboard.service.SshService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -10,6 +14,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -17,11 +22,14 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
 
 @RestController
 @RequestMapping("/api/metrics")
 public class MetricsController {
+
+    private static final Logger log = LoggerFactory.getLogger(MetricsController.class);
 
     private static final Pattern DANGEROUS_EVAL_PATTERN = Pattern.compile(
             "\\b(eval|exec|nc|netcat|bash\\s+-c|sh\\s+-c|zsh\\s+-c)\\b",
@@ -33,8 +41,23 @@ public class MetricsController {
             Pattern.CASE_INSENSITIVE
     );
 
+    // Validates IPv4 addresses to prevent command injection via network data
+    private static final Pattern IPV4_PATTERN =
+            Pattern.compile("^((25[0-5]|2[0-4]\\d|[01]?\\d\\d?)\\.){3}(25[0-5]|2[0-4]\\d|[01]?\\d\\d?)$");
+
+    // Geo lookup cache: ip → (result, fetchedAt). TTL = 1 hour — avoids N+1 blocking SSH/curl calls.
+    private static final long GEO_CACHE_TTL_MS = 3_600_000L;
+    private final ConcurrentHashMap<String, GeoEntry> geoCache = new ConcurrentHashMap<>();
+
+    private record GeoEntry(Map<String, Object> data, long fetchedAt) {
+        boolean isExpired() { return Instant.now().toEpochMilli() - fetchedAt > GEO_CACHE_TTL_MS; }
+    }
+
     private final SshService sshService;
     private final ServerMetricRepository metricRepository;
+    // ObjectMapper is thread-safe for reads; instantiate directly to avoid
+    // relying on JacksonAutoConfiguration bean registration order.
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     public MetricsController(SshService sshService, ServerMetricRepository metricRepository) {
         this.sshService = sshService;
@@ -57,18 +80,27 @@ public class MetricsController {
 
     @GetMapping("/history")
     public List<ServerMetric> getHistory() {
-        // Lấy tối đa 100 bản ghi gần nhất
+        // Seed the real-time CPU sparkline: last 100 records reversed to oldest→newest
         List<ServerMetric> metrics = new ArrayList<>(metricRepository.findTop100ByOrderByTimestampDesc());
-        // Đảo ngược mảng để vẽ biểu đồ theo thứ tự thời gian tăng dần (cũ -> mới)
         Collections.reverse(metrics);
         return metrics;
+    }
+
+    @GetMapping("/history/24h")
+    public List<ServerMetric> getHistory24h() {
+        // Capped at 1440 records (1/min × 24h) — LIMIT applied at DB level.
+        // Using findTop1440... avoids loading unbounded data into memory if the job
+        // ever falls behind and accumulates more rows than expected.
+        return metricRepository.findTop1440ByTimestampAfterOrderByTimestampAsc(
+                java.time.LocalDateTime.now().minusHours(24)
+        );
     }
 
     @GetMapping("/batch")
     public Map<String, Object> getBatchMetrics() {
         String[] cmds = {
             "uptime", // 0
-            "top -b -n 2 -d 0.3 | grep 'Cpu(s)' | tail -n 1", // 1
+            "top -b -n 2 -d 0.2 | grep 'Cpu(s)' | tail -n 1", // 1
             "free -m", // 2
             "df -h -x tmpfs -x devtmpfs", // 3
             "cat /proc/net/dev", // 4
@@ -175,7 +207,7 @@ public class MetricsController {
 
     @GetMapping("/cpu")
     public Map<String, String> getCpu() {
-        return safeData(sshService.executeCommand("top -b -n 2 -d 0.3 | grep 'Cpu(s)' | tail -n 1"));
+        return safeData(sshService.executeCommand("top -b -n 2 -d 0.2 | grep 'Cpu(s)' | tail -n 1"));
     }
 
     @GetMapping("/ram")
@@ -227,22 +259,37 @@ public class MetricsController {
 
     @GetMapping("/connections")
     public Map<String, Object> getConnections() {
-        String whoResult = sshService.executeCommand("who");
-        String ssResult = sshService.executeCommand("ss -tn state established '( dport = :22 or sport = :22 )' 2>/dev/null | tail -n +2");
-        
+        // Single SSH round-trip instead of 3 sequential calls (saves ~2× SSH handshake latency)
+        String batchCmd = "who"
+                + " && echo '===SEP==='"
+                + " && ss -tn state established '( dport = :22 or sport = :22 )' 2>/dev/null | tail -n +2"
+                + " && echo '===SEP==='"
+                + " && ss -tn state established '( sport = :80 or sport = :443 or sport = :8080 )' 2>/dev/null | tail -n +2";
+        String raw = sshService.executeCommand(batchCmd);
+
         List<Map<String, String>> connections = new ArrayList<>();
         Set<String> seenIps = new HashSet<>();
 
-        if (whoResult != null && !whoResult.isBlank() && !whoResult.startsWith("ERROR")) {
-            String[] lines = whoResult.trim().split("\n");
-            for (String line : lines) {
-                String[] parts = line.trim().split("\\s+");
-                if (parts.length >= 4) {
+        String whoResult    = "";
+        String ssResult     = "";
+        String httpSsResult = "";
+
+        if (raw != null && !raw.isBlank() && !raw.startsWith("ERROR")) {
+            String[] parts = raw.split("===SEP===", -1);
+            whoResult    = parts.length > 0 ? parts[0] : "";
+            ssResult     = parts.length > 1 ? parts[1] : "";
+            httpSsResult = parts.length > 2 ? parts[2] : "";
+        }
+
+        if (!whoResult.isBlank()) {
+            for (String line : whoResult.trim().split("\n")) {
+                String[] tokens = line.trim().split("\\s+");
+                if (tokens.length >= 4) {
                     Map<String, String> map = new HashMap<>();
-                    map.put("user", parts[0]);
-                    map.put("terminal", parts[1]);
-                    map.put("loginTime", parts[2] + " " + parts[3]);
-                    String ip = parts.length >= 5 ? parts[4].replace("(", "").replace(")", "") : "Local";
+                    map.put("user",      tokens[0]);
+                    map.put("terminal",  tokens[1]);
+                    map.put("loginTime", tokens[2] + " " + tokens[3]);
+                    String ip = tokens.length >= 5 ? tokens[4].replace("(", "").replace(")", "") : "Local";
                     map.put("ip", ip);
                     connections.add(map);
                     seenIps.add(ip);
@@ -250,18 +297,52 @@ public class MetricsController {
             }
         }
 
-        if (ssResult != null && !ssResult.isBlank() && !ssResult.startsWith("ERROR")) {
-            String[] lines = ssResult.trim().split("\n");
-            for (String line : lines) {
-                String[] parts = line.trim().split("\\s+");
-                if (parts.length >= 5) {
-                    String remoteAddr = parts[4];
-                    String ipOnly = remoteAddr.contains(":") ? remoteAddr.substring(0, remoteAddr.lastIndexOf(":")) : remoteAddr;
-                    if (!ipOnly.isEmpty() && !seenIps.contains(ipOnly) && !ipOnly.equals("127.0.0.1") && !ipOnly.equals("::1")) {
+        if (!ssResult.isBlank()) {
+            for (String line : ssResult.trim().split("\n")) {
+                String[] tokens = line.trim().split("\\s+");
+                // ss columns: Recv-Q Send-Q Local:Port Peer:Port (min 4 cols)
+                if (tokens.length >= 4) {
+                    String remoteAddr = tokens[tokens.length - 1]; // last col is always peer
+                    if (remoteAddr.startsWith("::ffff:")) remoteAddr = remoteAddr.substring(7);
+                    String ipOnly = remoteAddr.contains(":")
+                        ? remoteAddr.substring(0, remoteAddr.lastIndexOf(":"))
+                        : remoteAddr;
+                    if (!ipOnly.isEmpty() && !seenIps.contains(ipOnly)
+                            && !ipOnly.equals("127.0.0.1") && !ipOnly.equals("::1")) {
                         Map<String, String> map = new HashMap<>();
-                        map.put("user", "system/ssh");
-                        map.put("terminal", "tcp/raw");
-                        map.put("loginTime", "ACTIVE TCP");
+                        map.put("user",      "ssh-tunnel");
+                        map.put("terminal",  "SSH:22");
+                        map.put("loginTime", "CONNECTED");
+                        map.put("ip", ipOnly);
+                        connections.add(map);
+                        seenIps.add(ipOnly);
+                    }
+                }
+            }
+        }
+
+        // Also capture HTTP browser connections on port 80, 443, 8080 (nginx/backend)
+        if (!httpSsResult.isBlank()) {
+            for (String line : httpSsResult.trim().split("\n")) {
+                String[] tokens = line.trim().split("\\s+");
+                if (tokens.length >= 5) {
+                    // Remote (peer) address is last column: ip:port
+                    String remoteAddr = tokens[tokens.length - 1];
+                    // Handle IPv6-mapped IPv4 like ::ffff:1.2.3.4:port
+                    if (remoteAddr.startsWith("::ffff:")) remoteAddr = remoteAddr.substring(7);
+                    String ipOnly = remoteAddr.contains(":")
+                        ? remoteAddr.substring(0, remoteAddr.lastIndexOf(":"))
+                        : remoteAddr;
+                    // Skip loopback — still include LAN/private for map visibility
+                    if (!ipOnly.isEmpty() && !seenIps.contains(ipOnly)
+                            && !ipOnly.equals("127.0.0.1") && !ipOnly.equals("::1")) {
+                        String localCol = tokens[tokens.length - 2];
+                        String port = localCol.contains(":")
+                            ? localCol.substring(localCol.lastIndexOf(":") + 1) : "http";
+                        Map<String, String> map = new HashMap<>();
+                        map.put("user",      "browser");
+                        map.put("terminal",  "HTTP:" + port);
+                        map.put("loginTime", "VIEWING");
                         map.put("ip", ipOnly);
                         connections.add(map);
                         seenIps.add(ipOnly);
@@ -273,6 +354,122 @@ public class MetricsController {
         Map<String, Object> response = new HashMap<>();
         response.put("data", connections);
         return response;
+    }
+
+    /**
+     * Parses a JSON string into a Map using Jackson.
+     * Returns an empty map on any parse failure to avoid crashing the endpoint.
+     */
+    private Map<String, Object> parseGeoJson(String json) {
+        if (json == null || json.isBlank()) return new HashMap<>();
+        try {
+            return objectMapper.readValue(json, new TypeReference<Map<String, Object>>() {});
+        } catch (Exception e) {
+            log.warn("[MetricsController] Failed to parse geo JSON: {}", e.getMessage());
+            return new HashMap<>();
+        }
+    }
+
+    /**
+     * Fetches geolocation for a given IP from ip-api.com via SSH/curl.
+     * Results are cached per-IP for GEO_CACHE_TTL_MS (1 hour) to avoid
+     * blocking the thread with N+1 sequential HTTP calls per request.
+     */
+    private Map<String, Object> fetchGeoForIp(String ip) {
+        GeoEntry cached = geoCache.get(ip);
+        if (cached != null && !cached.isExpired()) return cached.data();
+
+        String raw = sshService.executeCommand("curl -s --max-time 3 http://ip-api.com/json/" + ip);
+        Map<String, Object> result = new HashMap<>();
+        if (raw != null && raw.contains("\"status\":\"success\"")) {
+            result = parseGeoJson(raw);
+        }
+        geoCache.put(ip, new GeoEntry(result, Instant.now().toEpochMilli()));
+        return result;
+    }
+
+    @GetMapping("/geolocation")
+    public Map<String, Object> getGeolocation() {
+        Map<String, Object> result = new HashMap<>();
+
+        // 1. Server's own geolocation
+        String serverGeoRaw = sshService.executeCommand("curl -s --max-time 4 http://ip-api.com/json/");
+        final Map<String, Object> serverMap;
+        if (serverGeoRaw != null && serverGeoRaw.contains("\"status\":\"success\"")) {
+            serverMap = parseGeoJson(serverGeoRaw);
+        } else {
+            // Fallback for private/LAN server IPs
+            Map<String, Object> fallback = new HashMap<>();
+            fallback.put("status", "success");
+            fallback.put("country", "Vietnam");
+            fallback.put("countryCode", "VN");
+            fallback.put("city", "Ho Chi Minh City");
+            fallback.put("lat", 10.8231);
+            fallback.put("lon", 106.6297);
+            fallback.put("isp", "Local Private Host / Server");
+            fallback.put("query", "192.168.0.100");
+            serverMap = fallback;
+        }
+
+        // 2. Active connection list
+        Map<String, Object> connData = getConnections();
+        List<Map<String, String>> connectionsList = new ArrayList<>();
+        Object rawConnData = connData.get("data");
+        if (rawConnData instanceof List<?> list) {
+            for (Object obj : list) {
+                if (obj instanceof Map<?, ?> m) {
+                    Map<String, String> itemMap = new HashMap<>();
+                    for (Map.Entry<?, ?> entry : m.entrySet()) {
+                        if (entry.getKey() != null && entry.getValue() != null) {
+                            itemMap.put(String.valueOf(entry.getKey()), String.valueOf(entry.getValue()));
+                        }
+                    }
+                    connectionsList.add(itemMap);
+                }
+            }
+        }
+
+        List<Map<String, Object>> resolvedConnections = new ArrayList<>();
+        Set<String> processedIps = new HashSet<>();
+
+        for (Map<String, String> conn : connectionsList) {
+            String ip = conn.getOrDefault("ip", "Local");
+            Map<String, Object> item = new HashMap<>(conn);
+
+            if (ip.equals("Local") || ip.equals("127.0.0.1")
+                    || ip.startsWith("192.168.") || ip.startsWith("10.")
+                    || ip.startsWith("172.16.")) {
+                item.put("country", "Local Network");
+                item.put("countryCode", "LOCAL");
+                item.put("city", "Internal LAN");
+                item.put("lat", serverMap.getOrDefault("lat", 10.8231));
+                item.put("lon", serverMap.getOrDefault("lon", 106.6297));
+                item.put("isp", "Private Intranet");
+            } else if (!processedIps.contains(ip)) {
+                // B3: validate IPv4 format before using in SSH command
+                if (!IPV4_PATTERN.matcher(ip).matches()) {
+                    log.warn("[MetricsController] Skipping geo lookup for non-IPv4 address: {}", ip);
+                    resolvedConnections.add(item);
+                    continue;
+                }
+                processedIps.add(ip);
+                // S2: fetchGeoForIp uses a 1-hour in-memory cache to avoid N+1 SSH calls
+                Map<String, Object> clientGeo = fetchGeoForIp(ip);
+                if (!clientGeo.isEmpty()) {
+                    item.put("country",     clientGeo.getOrDefault("country",     "Unknown"));
+                    item.put("countryCode", clientGeo.getOrDefault("countryCode", "UN"));
+                    item.put("city",        clientGeo.getOrDefault("city",        "Unknown"));
+                    item.put("lat",         clientGeo.getOrDefault("lat",         0.0));
+                    item.put("lon",         clientGeo.getOrDefault("lon",         0.0));
+                    item.put("isp",         clientGeo.getOrDefault("isp",         "N/A"));
+                }
+            }
+            resolvedConnections.add(item);
+        }
+
+        result.put("server", serverMap);
+        result.put("connections", resolvedConnections);
+        return result;
     }
 
     @GetMapping("/voltage")

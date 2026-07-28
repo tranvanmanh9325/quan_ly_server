@@ -2,26 +2,47 @@
   {
     "name": "ssh.host",
     "type": "java.lang.String",
-    "description": "A description for 'ssh.host'"
+    "description": "Hostname or IP address of the SSH target server."
   },
   {
     "name": "ssh.port",
-    "type": "java.lang.String",
-    "description": "A description for 'ssh.port'"
+    "type": "java.lang.Integer",
+    "description": "SSH port of the target server. Defaults to 22."
   },
   {
     "name": "ssh.user",
     "type": "java.lang.String",
-    "description": "A description for 'ssh.user'"
+    "description": "SSH login username for the target server."
   },
   {
     "name": "ssh.password",
     "type": "java.lang.String",
-    "description": "A description for 'ssh.password'"
+    "description": "SSH login password for the target server. Set via SSH_PASSWORD env var."
   },
   {
     "name": "ssh.strict-host-key-checking",
     "type": "java.lang.String",
-    "description": "A description for 'ssh.strict-host-key-checking'"
+    "description": "Whether to enforce SSH host key verification ('yes'/'no'). Defaults to 'no' for containerised environments."
+  },
+  {
+    "name": "app.auth.username",
+    "type": "java.lang.String",
+    "description": "Single-user dashboard login username. MUST be set via APP_AUTH_USERNAME env var."
+  },
+  {
+    "name": "app.auth.password",
+    "type": "java.lang.String",
+    "description": "Single-user dashboard login password. MUST be set via APP_AUTH_PASSWORD env var."
+  },
+  {
+    "name": "app.jwt.secret",
+    "type": "java.lang.String",
+    "description": "HS256 signing secret for JWT tokens. Must be >= 32 characters (256-bit minimum). Set via JWT_SECRET env var."
+  },
+  {
+    "name": "app.jwt.expiration-hours",
+    "type": "java.lang.Integer",
+    "description": "JWT token validity duration in hours.",
+    "defaultValue": 24
   }
 ]}

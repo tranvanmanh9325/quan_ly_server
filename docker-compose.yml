@@ -10,6 +10,7 @@ services:
       POSTGRES_DB: quan_ly_server
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./db/migrations:/docker-entrypoint-initdb.d
     networks:
       - dashboard-network
     healthcheck:

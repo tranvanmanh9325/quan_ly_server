@@ -28,7 +28,12 @@ const responseInterceptorId = axios.interceptors.response.use(
   err => {
     if (err.response?.status === 401) {
       removeToken();
-      window.location.replace('/login');
+      // Only hard-redirect if NOT already on the login page.
+      // A hard reload while on /login causes an infinite reload loop because
+      // App.jsx starts polling effects even before the user is authenticated.
+      if (!window.location.pathname.startsWith('/login')) {
+        window.location.replace('/login');
+      }
     }
     return Promise.reject(err);
   }

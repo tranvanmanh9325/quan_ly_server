@@ -106,9 +106,21 @@ const ThresholdSlider = ({ value, onChange, id, unit = '%', min = 50, max = 100,
 export default function SettingsPage() {
   const [settings, setSettings] = useState(loadSettings);
   const [saved, setSaved] = useState(false);
-  // Initialize as 'checking' so the effect only needs to set 'ok'/'error'
   const [connStatus, setConnStatus] = useState('checking');
   const [connInfo, setConnInfo] = useState(null);
+
+  // ── Telegram state ──────────────────────────────────────────────────────
+  const [tgConfig, setTgConfig] = useState({
+    enabled: false,
+    cpuThreshold: 80,
+    ramThreshold: 85,
+    diskThreshold: 90,
+    cooldownMinutes: 15,
+  });
+  const [tgSaved, setTgSaved]     = useState(false);
+  const [tgTesting, setTgTesting] = useState(false);
+  const [tgTestResult, setTgTestResult] = useState(null); // { status, message }
+  const [tgLoading, setTgLoading] = useState(true);
 
   // Ping backend to check SSH connection health
   useEffect(() => {
@@ -120,10 +132,65 @@ export default function SettingsPage() {
       .catch(() => setConnStatus('error'));
   }, []);
 
+  // Load Telegram config from backend
+  useEffect(() => {
+    axios.get('/api/telegram/config')
+      .then(res => {
+        const d = res.data;
+        setTgConfig(prev => ({
+          ...prev,
+          enabled:         d.enabled         ?? false,
+          cpuThreshold:    d.cpuThreshold    ?? 80,
+          ramThreshold:    d.ramThreshold    ?? 85,
+          diskThreshold:   d.diskThreshold   ?? 90,
+          cooldownMinutes: d.cooldownMinutes ?? 15,
+          _configured:     d.configured      ?? false,
+        }));
+      })
+      .catch(() => {})
+      .finally(() => setTgLoading(false));
+  }, []);
+
   const update = useCallback((key, val) => {
     setSettings(prev => ({ ...prev, [key]: val }));
     setSaved(false);
   }, []);
+
+  const updateTg = useCallback((key, val) => {
+    setTgConfig(prev => ({ ...prev, [key]: val }));
+    setTgSaved(false);
+    setTgTestResult(null);
+  }, []);
+
+  const handleSaveTelegram = async () => {
+    try {
+      const payload = {
+        enabled:         tgConfig.enabled,
+        cpuThreshold:    tgConfig.cpuThreshold,
+        ramThreshold:    tgConfig.ramThreshold,
+        diskThreshold:   tgConfig.diskThreshold,
+        cooldownMinutes: tgConfig.cooldownMinutes,
+      };
+      await axios.post('/api/telegram/config', payload);
+      setTgSaved(true);
+      setTimeout(() => setTgSaved(false), 2500);
+    } catch {
+      setTgTestResult({ status: 'error', message: 'Failed to save config.' });
+    }
+  };
+
+  const handleTestTelegram = async () => {
+    setTgTesting(true);
+    setTgTestResult(null);
+    try {
+      const res = await axios.post('/api/telegram/test');
+      setTgTestResult(res.data);
+    } catch (e) {
+      setTgTestResult({ status: 'error', message: e.response?.data?.message || 'Request failed.' });
+    } finally {
+      setTgTesting(false);
+    }
+  };
 
   const handleSave = () => {
     saveSettings(settings);
@@ -158,7 +225,8 @@ export default function SettingsPage() {
   const connLabel = connStatus === 'ok' ? 'CONNECTED' : connStatus === 'error' ? 'DISCONNECTED' : 'CHECKING...';
 
   return (
-    <div style={{ padding: '24px 28px', overflowY: 'auto', height: '100%', maxWidth: '900px' }}>
+    <div style={{ padding: '24px 28px', overflowY: 'auto', height: '100%', boxSizing: 'border-box' }}>
+      <div style={{ maxWidth: '1200px', margin: '0 auto' }}>
       {/* Page Header */}
       <div style={{ marginBottom: '28px', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
         <div>
@@ -366,7 +434,140 @@ export default function SettingsPage() {
         </SettingRow>
       </div>
 
-      {/* ── Section 5: About ──────────────────────────────────────────────── */}
+      {/* ── Section 5: Telegram Integration ────────────────────────────── */}
+      <div style={card}>
+        <SectionHeader
+          icon={<span style={{ fontSize: '18px' }}>✈️</span>}
+          title="TELEGRAM INTEGRATION"
+          subtitle="Receive real-time server alerts and query status via Telegram Bot"
+        />
+
+        {tgLoading ? (
+          <div style={{ color: 'var(--text-secondary)', fontFamily: 'Share Tech Mono', fontSize: '0.8rem', opacity: 0.6 }}>
+            Loading config...
+          </div>
+        ) : (
+          <>
+            {/* Credential status — managed via .env, not editable from UI */}
+            <SettingRow
+              label="Bot Token"
+              desc="Managed via TELEGRAM_BOT_TOKEN in .env — restart container to update"
+            >
+              <span style={{
+                fontFamily: 'Share Tech Mono', fontSize: '0.78rem', letterSpacing: '1px',
+                color: tgConfig._configured ? 'var(--accent-green)' : 'var(--accent-pink)',
+                textShadow: '0 0 8px currentColor',
+              }}>
+                {tgConfig._configured ? '✓ SET (from .env)' : '✗ NOT SET'}
+              </span>
+            </SettingRow>
+
+            <SettingRow
+              label="Chat ID"
+              desc="Managed via TELEGRAM_CHAT_ID in .env — restart container to update"
+            >
+              <span style={{
+                fontFamily: 'Share Tech Mono', fontSize: '0.78rem', letterSpacing: '1px',
+                color: tgConfig._configured ? 'var(--accent-green)' : 'var(--accent-pink)',
+                textShadow: '0 0 8px currentColor',
+              }}>
+                {tgConfig._configured ? '✓ SET (from .env)' : '✗ NOT SET'}
+              </span>
+            </SettingRow>
+
+            {/* Enable toggle */}
+            <SettingRow label="Enable Alerts" desc="Bot will send automatic alerts when thresholds are exceeded">
+              <Toggle id="tg-enabled" value={tgConfig.enabled} onChange={v => updateTg('enabled', v)} />
+            </SettingRow>
+
+            {/* Thresholds */}
+            <SettingRow label="CPU Alert Threshold" desc="Alert when CPU exceeds this value (Telegram-specific)">
+              <ThresholdSlider id="tg-cpu" value={tgConfig.cpuThreshold}
+                onChange={v => updateTg('cpuThreshold', v)} color="var(--accent-cyan)" />
+            </SettingRow>
+            <SettingRow label="RAM Alert Threshold" desc="Alert when RAM exceeds this value (Telegram-specific)">
+              <ThresholdSlider id="tg-ram" value={tgConfig.ramThreshold}
+                onChange={v => updateTg('ramThreshold', v)} color="var(--accent-purple)" />
+            </SettingRow>
+            <SettingRow label="Disk Alert Threshold" desc="Alert when any disk partition exceeds this value">
+              <ThresholdSlider id="tg-disk" value={tgConfig.diskThreshold}
+                onChange={v => updateTg('diskThreshold', v)} color="var(--accent-yellow)" />
+            </SettingRow>
+
+            {/* Cooldown */}
+            <SettingRow label="Alert Cooldown" desc="Minimum time between two consecutive alerts of the same type">
+              <select
+                value={tgConfig.cooldownMinutes}
+                onChange={e => updateTg('cooldownMinutes', Number(e.target.value))}
+                style={{
+                  background: 'rgba(0,0,0,0.6)', border: '1px solid rgba(0,243,255,0.3)',
+                  color: 'var(--accent-cyan)', padding: '5px 10px',
+                  fontSize: '0.8rem', fontFamily: 'Share Tech Mono', cursor: 'pointer',
+                }}
+              >
+                <option value={5}>5 minutes</option>
+                <option value={15}>15 minutes</option>
+                <option value={30}>30 minutes</option>
+                <option value={60}>60 minutes</option>
+              </select>
+            </SettingRow>
+
+            {/* Buttons */}
+            <div style={{ display: 'flex', gap: '10px', marginTop: '20px', alignItems: 'center', flexWrap: 'wrap' }}>
+              <button
+                onClick={handleSaveTelegram}
+                style={{
+                  background: tgSaved ? 'rgba(0,255,102,0.15)' : 'rgba(0,243,255,0.12)',
+                  border: `1px solid ${tgSaved ? 'var(--accent-green)' : 'var(--accent-cyan)'}`,
+                  color: tgSaved ? 'var(--accent-green)' : 'var(--accent-cyan)',
+                  padding: '8px 20px', fontFamily: 'Share Tech Mono',
+                  fontSize: '0.78rem', cursor: 'pointer', letterSpacing: '1px',
+                  transition: 'all 0.3s ease',
+                }}
+              >
+                {tgSaved ? '✓ SAVED' : 'SAVE TELEGRAM'}
+              </button>
+
+              <button
+                onClick={handleTestTelegram}
+                disabled={tgTesting}
+                style={{
+                  background: 'rgba(255,165,0,0.1)',
+                  border: '1px solid rgba(255,165,0,0.5)',
+                  color: 'rgba(255,165,0,1)',
+                  padding: '8px 20px', fontFamily: 'Share Tech Mono',
+                  fontSize: '0.78rem', cursor: tgTesting ? 'not-allowed' : 'pointer',
+                  letterSpacing: '1px', opacity: tgTesting ? 0.5 : 1,
+                }}
+              >
+                {tgTesting ? 'SENDING...' : '📨 SEND TEST'}
+              </button>
+
+              {tgTestResult && (
+                <span style={{
+                  fontSize: '0.78rem', fontFamily: 'Share Tech Mono',
+                  color: tgTestResult.status === 'success' ? 'var(--accent-green)' : 'var(--accent-pink)',
+                  textShadow: `0 0 8px currentColor`,
+                }}>
+                  {tgTestResult.status === 'success' ? '✓' : '✗'} {tgTestResult.message}
+                </span>
+              )}
+            </div>
+
+            {/* Bot commands hint */}
+            <div style={{
+              marginTop: '16px', padding: '10px 14px',
+              background: 'rgba(0,0,0,0.2)', border: '1px solid rgba(0,243,255,0.08)',
+              fontSize: '0.72rem', color: 'var(--text-secondary)',
+              fontFamily: 'Share Tech Mono', opacity: 0.7,
+            }}>
+              💬 Bot commands: <code>/status</code> · <code>/cpu</code> · <code>/ram</code> · <code>/disk</code> · <code>/help</code>
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* ── Section 6: About ──────────────────────────────────────────────── */}
       <div style={card}>
         <SectionHeader
           icon={<SciFiSettingsIcon size={18} color="var(--accent-cyan)" />}
@@ -413,6 +614,7 @@ export default function SettingsPage() {
             ⎋ VIEW SOURCE ON GITHUB
           </a>
         </div>
+      </div>
       </div>
     </div>
   );

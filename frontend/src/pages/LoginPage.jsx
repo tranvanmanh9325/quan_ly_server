@@ -32,6 +32,8 @@ export default function LoginPage() {
     try {
       const res = await axios.post('/api/auth/login', { username, password });
       setToken(res.data.token);
+      // Notify App.jsx to flip isAuth state and start polling effects
+      window.dispatchEvent(new Event('auth:login'));
       navigate('/', { replace: true });
     } catch (err) {
       const status = err.response?.status;

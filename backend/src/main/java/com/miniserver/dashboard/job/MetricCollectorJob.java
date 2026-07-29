@@ -3,6 +3,7 @@ package com.miniserver.dashboard.job;
 import com.miniserver.dashboard.model.ServerMetric;
 import com.miniserver.dashboard.repository.ServerMetricRepository;
 import com.miniserver.dashboard.service.SshService;
+import com.miniserver.dashboard.service.TelegramNotificationService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -20,10 +21,14 @@ public class MetricCollectorJob {
 
     private final SshService sshService;
     private final ServerMetricRepository metricRepository;
+    private final TelegramNotificationService telegramService;
 
-    public MetricCollectorJob(SshService sshService, ServerMetricRepository metricRepository) {
+    public MetricCollectorJob(SshService sshService,
+                              ServerMetricRepository metricRepository,
+                              TelegramNotificationService telegramService) {
         this.sshService = sshService;
         this.metricRepository = metricRepository;
+        this.telegramService = telegramService;
     }
 
     /**
@@ -66,6 +71,10 @@ public class MetricCollectorJob {
                 metricRepository.save(metric);
                 log.debug("[MetricCollectorJob] Saved: CPU={}%, RAM={}%, Disk={}%",
                         cpuPercent, ramPercent, diskPercent);
+
+                // Evaluate thresholds and send Telegram alert if needed
+                double disk = (diskPercent != null) ? diskPercent : 0.0;
+                telegramService.checkAndAlert(cpuPercent, ramPercent, disk);
             }
         } catch (Exception e) {
             log.error("[MetricCollectorJob] Error during metric collection: {}", e.getMessage());

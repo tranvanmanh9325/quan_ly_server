@@ -16,7 +16,7 @@ import ErrorBoundary from './components/ErrorBoundary';
 import SpaceInteractionLayer from './components/SpaceInteractionLayer';
 import SettingsPage from './pages/SettingsPage';
 import { loadSettings } from './utils/settings';
-import { getToken } from './utils/auth';
+import { getToken, isAuthenticated } from './utils/auth';
 // Register the global axios 401 interceptor once at app startup (side-effect only import)
 import './utils/axiosInterceptor';
 import './index.css';
@@ -64,6 +64,17 @@ function App() {
   const [processes, setProcesses]   = useState([]);
   const [system, setSystem]         = useState('');
   const [cpuHistory, setCpuHistory] = useState(Array(60).fill({ name: '', value: 0 }));
+  // Reactive auth flag — updated via 'auth:login' event from LoginPage.
+  // Using state (not just calling isAuthenticated()) so that effects whose
+  // dependency array includes `isAuth` will re-run when the user logs in.
+  const [isAuth, setIsAuth] = useState(isAuthenticated);
+
+  useEffect(() => {
+    const onLogin = () => setIsAuth(true);
+    window.addEventListener('auth:login', onLogin);
+    return () => window.removeEventListener('auth:login', onLogin);
+  }, []);
+
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [systemLogs, setSystemLogs] = useState('');
   const [dockerData, setDockerData] = useState({ status: 'LOADING', data: [] });
@@ -84,17 +95,15 @@ function App() {
 
   // ─── Effect 0: Fetch History Data on Mount ──────────────────
   useEffect(() => {
+    if (!isAuth) return;
     axios.get(`${API_BASE}/history`).then(res => {
       if (res.data && res.data.length > 0) {
-        // Lấy tối đa 60 bản ghi cuối cùng để vẽ biểu đồ
         const historyData = res.data.slice(-60).map(item => {
           const date = new Date(item.timestamp);
           const timeStr = date.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
           return { name: timeStr, value: item.cpuPercent || 0 };
         });
-        
         setCpuHistory(prev => {
-          // Gộp dữ liệu cũ (mặc định) và dữ liệu mới
           const merged = [...prev];
           for (let i = 0; i < historyData.length; i++) {
             merged[60 - historyData.length + i] = historyData[i];
@@ -107,10 +116,13 @@ function App() {
       console.error('Lỗi lấy lịch sử:', err);
       setHistoryLoaded(true);
     });
-  }, []);
+  // Re-run whenever auth status changes (e.g. user just logged in)
+  }, [isAuth]);
 
   // ─── Effect 1: Lightweight metrics — poll theo refreshSpeed ────────────
   useEffect(() => {
+    if (!isAuth || !historyLoaded) return;
+
     let isMounted    = true;
     let isFetching   = false;
     let timerId = null;
@@ -229,11 +241,13 @@ function App() {
       clearTimeout(timerId);
       document.removeEventListener('visibilitychange', onVisibilityChange);
     };
-  }, [historyLoaded, refreshSpeed]);
+  }, [historyLoaded, refreshSpeed, isAuth]);
 
 
   // ─── Effect 2: Process list nặng — poll riêng mỗi 30 giây ──────────────────
   useEffect(() => {
+    if (!isAuth) return;
+
     let isMounted      = true;
     let isFetchingProcs = false;
     let timerId        = null;
@@ -281,7 +295,8 @@ function App() {
       clearTimeout(timerId);
       document.removeEventListener('visibilitychange', onVisibilityChange);
     };
-  }, []);
+  // Re-run when auth changes so processes start loading right after login
+  }, [isAuth]);
 
   // ─── Alerting Logic ──────────────────
   const isAlerting = useMemo(() => {

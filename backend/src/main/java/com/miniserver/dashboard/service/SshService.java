@@ -33,6 +33,13 @@ public class SshService {
     @Value("${ssh.strict-host-key-checking:no}")
     private String strictHostKeyChecking;
 
+    // Fallback host/port (e.g. ngrok) used when primary is unreachable (different network)
+    @Value("${ssh.fallback-host:}")
+    private String fallbackHost;
+
+    @Value("${ssh.fallback-port:22}")
+    private int fallbackPort;
+
     // Session duy nhất được tái sử dụng cho toàn bộ vòng đời ứng dụng
     private Session sharedSession;
 
@@ -45,24 +52,42 @@ public class SshService {
             return sharedSession;
         }
 
-        log.info("SSH: Đang tạo kết nối mới tới {}@{}:{}", user, host, port);
+        // Try primary host (LAN) first
+        try {
+            sharedSession = connect(host, port);
+            log.info("SSH: Kết nối thành công qua LAN ({}:{}).", host, port);
+            return sharedSession;
+        } catch (Exception primaryEx) {
+            log.warn("SSH: LAN không thể kết nối ({}:{}): {}", host, port, primaryEx.getMessage());
 
+            // Fallback to ngrok/remote address if configured
+            if (fallbackHost != null && !fallbackHost.isBlank()) {
+                log.info("SSH: Thử fallback qua {} ({}:{})...", 
+                         fallbackHost.contains("ngrok") ? "ngrok" : "remote", fallbackHost, fallbackPort);
+                sharedSession = connect(fallbackHost, fallbackPort);
+                log.info("SSH: Kết nối thành công qua fallback ({}:{}).", fallbackHost, fallbackPort);
+                return sharedSession;
+            }
+
+            throw primaryEx; // No fallback configured, propagate original error
+        }
+    }
+
+    /** Creates and connects a new JSch session to the given host:port. */
+    private Session connect(String targetHost, int targetPort) throws Exception {
+        log.info("SSH: Đang kết nối tới {}@{}:{}", user, targetHost, targetPort);
         JSch jsch = new JSch();
-        Session session = jsch.getSession(user, host, port);
+        Session session = jsch.getSession(user, targetHost, targetPort);
         session.setPassword(password.getBytes(java.nio.charset.StandardCharsets.UTF_8));
 
         Properties config = new Properties();
-        // Configurable StrictHostKeyChecking (defaults to "no" for ngrok/dev environments)
         config.put("StrictHostKeyChecking", strictHostKeyChecking);
         session.setConfig(config);
-        // Giữ kết nối sống, gửi keepalive mỗi 30s để Ngrok không cắt tunnel
+        // Keepalive prevents ngrok from dropping idle tunnels
         session.setServerAliveInterval(30_000);
         session.setServerAliveCountMax(3);
-        session.connect(15_000);
-
-        sharedSession = session;
-        log.info("SSH: Kết nối thành công.");
-        return sharedSession;
+        session.connect(8_000); // 8s timeout — fast enough to detect unreachable LAN
+        return session;
     }
 
     /**

@@ -76,6 +76,16 @@ services:
         reservations:
           memory: 64M
 
+  cloudflare-tunnel:
+    image: cloudflare/cloudflared:latest
+    container_name: dashboard-tunnel
+    command: tunnel --no-autoupdate --url http://localhost:5173
+    network_mode: host   # Required to reach localhost:5173 on the host
+    restart: unless-stopped
+    depends_on:
+      frontend:
+        condition: service_healthy
+
 networks:
   dashboard-network:
     driver: bridge

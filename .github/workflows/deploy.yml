@@ -49,7 +49,7 @@ jobs:
       - name: Rebuild and restart containers
         run: |
           cd ~/quan_ly_server
-          docker compose up -d --build
+          docker compose up -d --build --remove-orphans
 
       - name: Verify all containers healthy
         run: |

@@ -14,7 +14,7 @@ public class CorsConfig implements WebMvcConfigurer {
         // browser sẽ reflect toàn bộ request headers thay vì chặn → quá rộng.
         // Chỉ khai báo các header thực sự cần thiết.
         registry.addMapping("/**")
-                .allowedOrigins("http://localhost:5173", "http://127.0.0.1:5173")
+                .allowedOriginPatterns("*")
                 .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
                 .allowedHeaders("Content-Type", "Accept", "Authorization", "X-Requested-With")
                 .allowCredentials(true)

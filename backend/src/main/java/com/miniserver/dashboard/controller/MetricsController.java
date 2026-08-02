@@ -280,7 +280,9 @@ public class MetricsController {
         // Layer 1 defense: pipe through grep -vE to strip 172.16.0.0/12 (Docker bridge
         // networks, 172.16–172.31) at the shell level. iproute2 ss filter syntax does not
         // support CIDR negation natively, so grep is the reliable cross-version solution.
-        final String docker172Filter = "grep -vE '\\\\b172\\\\.(1[6-9]|2[0-9]|3[01])\\\\.'";
+        // Note: no \b word boundary needed — the 172.(16-31). substring is specific enough
+        // and avoids double-escaping pitfalls in Java string → shell → grep chain.
+        final String docker172Filter = "grep -vE '172\\.(1[6-9]|2[0-9]|3[01])\\.'";
         String batchCmd = "who"
                 + " && echo '===SEP==='"
                 + " && ss -tn state established '( dport = :22 or sport = :22 )' 2>/dev/null | tail -n +2 | " + docker172Filter

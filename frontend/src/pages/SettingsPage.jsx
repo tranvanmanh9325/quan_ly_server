@@ -578,10 +578,10 @@ export default function SettingsPage() {
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
           {[
             { label: 'APPLICATION', value: 'Server Dashboard' },
-            { label: 'VERSION', value: '1.0.0' },
-            { label: 'FRONTEND', value: 'React 18 + Vite 8' },
-            { label: 'BACKEND', value: 'Spring Boot 3 / Java 21' },
-            { label: 'DATABASE', value: 'PostgreSQL 15' },
+            { label: 'VERSION', value: '2.0.0' },
+            { label: 'FRONTEND', value: 'React 19 + Vite 8' },
+            { label: 'BACKEND', value: 'Spring Boot 4 / Java 21 (Microservices)' },
+            { label: 'DATABASE', value: 'PostgreSQL 17' },
             { label: 'RUNTIME', value: 'Docker Compose' },
           ].map(item => (
             <div key={item.label} style={{

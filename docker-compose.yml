@@ -1,6 +1,6 @@
 services:
   db:
-    image: postgres:15-alpine
+    image: postgres:17-alpine
     container_name: dashboard_db
     restart: unless-stopped
     shm_size: '256m'

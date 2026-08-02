@@ -45,6 +45,23 @@ public class MetricsController {
     private static final Pattern IPV4_PATTERN =
             Pattern.compile("^((25[0-5]|2[0-4]\\d|[01]?\\d\\d?)\\.){3}(25[0-5]|2[0-4]\\d|[01]?\\d\\d?)$");
 
+    /**
+     * Returns true if the IP belongs to the Docker-reserved 172.16.0.0/12 range
+     * (172.16.x.x – 172.31.x.x). Uses numeric comparison instead of string prefix
+     * to correctly cover the full /12 block — startsWith("172.16.") only covers /16.
+     */
+    private static boolean isDockerInternalIp(String ip) {
+        try {
+            String[] p = ip.split("\\.");
+            if (p.length != 4) return false;
+            int first  = Integer.parseInt(p[0]);
+            int second = Integer.parseInt(p[1]);
+            return first == 172 && second >= 16 && second <= 31;
+        } catch (NumberFormatException e) {
+            return false;
+        }
+    }
+
     // Geo lookup cache: ip → (result, fetchedAt). TTL = 1 hour — avoids N+1 blocking SSH/curl calls.
     private static final long GEO_CACHE_TTL_MS = 3_600_000L;
     private final ConcurrentHashMap<String, GeoEntry> geoCache = new ConcurrentHashMap<>();
@@ -260,11 +277,15 @@ public class MetricsController {
     @GetMapping("/connections")
     public Map<String, Object> getConnections() {
         // Single SSH round-trip instead of 3 sequential calls (saves ~2× SSH handshake latency)
+        // Layer 1 defense: pipe through grep -vE to strip 172.16.0.0/12 (Docker bridge
+        // networks, 172.16–172.31) at the shell level. iproute2 ss filter syntax does not
+        // support CIDR negation natively, so grep is the reliable cross-version solution.
+        final String docker172Filter = "grep -vE '\\\\b172\\\\.(1[6-9]|2[0-9]|3[01])\\\\.'";
         String batchCmd = "who"
                 + " && echo '===SEP==='"
-                + " && ss -tn state established '( dport = :22 or sport = :22 )' 2>/dev/null | tail -n +2"
+                + " && ss -tn state established '( dport = :22 or sport = :22 )' 2>/dev/null | tail -n +2 | " + docker172Filter
                 + " && echo '===SEP==='"
-                + " && ss -tn state established '( sport = :80 or sport = :443 or sport = :8080 )' 2>/dev/null | tail -n +2";
+                + " && ss -tn state established '( sport = :80 or sport = :443 or sport = :8080 )' 2>/dev/null | tail -n +2 | " + docker172Filter;
         String raw = sshService.executeCommand(batchCmd);
 
         List<Map<String, String>> connections = new ArrayList<>();
@@ -436,9 +457,11 @@ public class MetricsController {
             String ip = conn.getOrDefault("ip", "Local");
             Map<String, Object> item = new HashMap<>(conn);
 
+            // Layer 3 defense: use isDockerInternalIp() to cover full 172.16.0.0/12,
+            // not just 172.16.x (Docker assigns 172.17–172.31 dynamically).
             if (ip.equals("Local") || ip.equals("127.0.0.1")
                     || ip.startsWith("192.168.") || ip.startsWith("10.")
-                    || ip.startsWith("172.16.")) {
+                    || isDockerInternalIp(ip)) {
                 item.put("country", "Local Network");
                 item.put("countryCode", "LOCAL");
                 item.put("city", "Internal LAN");

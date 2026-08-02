@@ -105,7 +105,7 @@ export default function Layout({ isAlerting, context }) {
           display: 'flex',
           justifyContent: 'center',
           alignItems: 'center',
-          zIndex: 99999
+          zIndex: 10000
         }}>
           <div className="glass-panel" style={{
             width: '820px',

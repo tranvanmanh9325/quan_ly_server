@@ -7,6 +7,76 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Legend
 } from 'recharts';
 import { Search, Zap, Server, Activity, HardDrive, Wifi } from 'lucide-react';
+
+/** Custom tooltip for the 24H Metric History chart */
+function CustomChartTooltip({ active, payload, label }) {
+  if (!active || !payload || payload.length === 0) return null;
+
+  const metaMap = {
+    cpu:  { label: 'CPU',  color: '#00f3ff', icon: '⬡' },
+    ram:  { label: 'RAM',  color: '#00ff66', icon: '▣' },
+    disk: { label: 'DISK', color: '#ff0055', icon: '◈' },
+  };
+
+  return (
+    <div style={{
+      background: 'rgba(5, 8, 20, 0.96)',
+      border: '1px solid rgba(0, 243, 255, 0.45)',
+      borderRadius: 6,
+      padding: '10px 14px',
+      fontFamily: "'Share Tech Mono', monospace",
+      boxShadow: '0 0 24px rgba(0,243,255,0.18), 0 4px 20px rgba(0,0,0,0.6)',
+      backdropFilter: 'blur(12px)',
+      minWidth: 130,
+      pointerEvents: 'none',
+    }}>
+      {/* Timestamp header */}
+      <div style={{
+        color: '#00f3ff',
+        fontSize: 11,
+        letterSpacing: '0.08em',
+        borderBottom: '1px solid rgba(0,243,255,0.2)',
+        paddingBottom: 6,
+        marginBottom: 8,
+        textTransform: 'uppercase',
+      }}>
+        ◷ {label}
+      </div>
+
+      {/* Metric rows */}
+      {payload.map((entry) => {
+        const meta = metaMap[entry.dataKey] || { label: entry.dataKey.toUpperCase(), color: '#fff', icon: '●' };
+        const val  = entry.value != null ? entry.value.toFixed(1) : '--';
+        const pct  = parseFloat(val);
+        // color-code severity
+        const valColor = pct >= 85 ? '#ff4444' : pct >= 60 ? '#ffbb00' : meta.color;
+
+        return (
+          <div key={entry.dataKey} style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 14,
+            marginBottom: 4,
+          }}>
+            <span style={{ color: meta.color, fontSize: 11 }}>
+              {meta.icon} {meta.label}
+            </span>
+            <span style={{
+              color: valColor,
+              fontSize: 13,
+              fontWeight: 'bold',
+              letterSpacing: '0.04em',
+              textShadow: `0 0 8px ${valColor}55`,
+            }}>
+              {val}%
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 import { formatBytes, formatSpeed } from '../utils/parsers';
 
 export default function DashboardPage() {
@@ -25,9 +95,9 @@ export default function DashboardPage() {
       .then(res => {
         if (res.data && res.data.length > 0) {
           const formatted = res.data.map(item => {
-            const d = new Date(item.timestamp);
+            const d = new Date(item.timestamp + 'Z'); // Force UTC parse (LocalDateTime has no tz suffix)
             return {
-              time: d.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' }),
+              time: d.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' }),
               cpu:  item.cpuPercent  ?? null,
               ram:  item.ramPercent  ?? null,
               disk: item.diskPercent ?? null,
@@ -698,14 +768,7 @@ export default function DashboardPage() {
                 axisLine={false}
                 width={36}
               />
-              <Tooltip
-                contentStyle={{
-                  background: 'var(--card-bg)', border: '1px solid var(--accent-cyan)',
-                  borderRadius: 4, fontSize: 11, fontFamily: 'Share Tech Mono'
-                }}
-                labelStyle={{ color: 'var(--accent-cyan)' }}
-                formatter={(value, name) => [`${value?.toFixed(1)}%`, name.toUpperCase()]}
-              />
+              <Tooltip content={<CustomChartTooltip />} cursor={{ stroke: 'rgba(0,243,255,0.25)', strokeWidth: 1, strokeDasharray: '4 4' }} />
               <Legend
                 wrapperStyle={{ fontSize: 11, fontFamily: 'Share Tech Mono', paddingTop: 8 }}
                 formatter={v => v.toUpperCase()}

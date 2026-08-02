@@ -467,7 +467,7 @@ export default function FileManagerPage() {
           display: 'flex',
           justifyContent: 'center',
           alignItems: 'center',
-          zIndex: 99999
+          zIndex: 10000
         }}>
           <div className="glass-panel" style={{
             width: '900px',

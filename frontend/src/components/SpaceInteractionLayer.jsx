@@ -370,7 +370,7 @@ export default function SpaceInteractionLayer() {
       <canvas
         ref={canvasRef}
         style={{
-          position: 'fixed', inset: 0, zIndex: 99998,
+          position: 'fixed', inset: 0, zIndex: 2147483646,
           pointerEvents: 'none', width: '100%', height: '100%',
         }}
       />
@@ -382,7 +382,7 @@ export default function SpaceInteractionLayer() {
         style={{
           position: 'fixed', top: 0, left: 0,
           width: 0, height: 0,
-          zIndex: 99999, pointerEvents: 'none',
+          zIndex: 2147483647, pointerEvents: 'none',
           willChange: 'transform',
         }}
       >

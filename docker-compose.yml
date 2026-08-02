@@ -4,6 +4,8 @@ services:
     image: postgres:15-alpine
     container_name: dashboard_db
     restart: unless-stopped
+    shm_size: '256m'
+    command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]
     environment:
       POSTGRES_USER: dashboard_user
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -11,6 +13,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./db/migrations:/docker-entrypoint-initdb.d
+      - ./db/postgresql.conf:/etc/postgresql/postgresql.conf:ro
     networks:
       - dashboard-network
     healthcheck:
@@ -28,6 +31,8 @@ services:
       - "8080:8080"
     env_file:
       - .env
+    environment:
+      JAVA_TOOL_OPTIONS: "-XX:+UseG1GC -XX:MaxRAMPercentage=75.0 -XX:+ExitOnOutOfMemoryError"
     restart: unless-stopped
     depends_on:
       db:
@@ -39,8 +44,8 @@ services:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/actuator/health"]
       interval: 30s
       timeout: 10s
-      retries: 3
-      start_period: 360s
+      retries: 10
+      start_period: 120s
     deploy:
       resources:
         limits:
@@ -76,15 +81,6 @@ services:
         reservations:
           memory: 64M
 
-  cloudflare-tunnel:
-    image: cloudflare/cloudflared:latest
-    container_name: dashboard-tunnel
-    command: tunnel --no-autoupdate --url http://localhost:5173
-    network_mode: host   # Required to reach localhost:5173 on the host
-    restart: unless-stopped
-    depends_on:
-      frontend:
-        condition: service_healthy
 
 networks:
   dashboard-network:

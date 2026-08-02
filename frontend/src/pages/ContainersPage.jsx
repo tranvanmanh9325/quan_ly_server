@@ -373,10 +373,10 @@ export default function ContainersPage() {
                         {c.ports || '—'}
                       </td>
                       <td style={{ fontFamily: 'Share Tech Mono', fontSize: '0.8rem', color: 'var(--accent-yellow)' }}>
-                        {stat.cpuPerc || (isUp ? 'Fetch...' : '0.00%')}
+                        {stat.cpu || (isUp ? '—' : '0.00%')}
                       </td>
                       <td style={{ fontFamily: 'Share Tech Mono', fontSize: '0.8rem', color: 'var(--accent-cyan)' }}>
-                        {stat.memUsage || (isUp ? 'Fetch...' : '0B / 0B')}
+                        {stat.mem || (isUp ? '—' : '0B / 0B')}
                       </td>
                       <td style={{ fontFamily: 'Share Tech Mono', fontSize: '0.78rem', opacity: 0.8 }}>
                         {stat.netIO || '0B / 0B'}
@@ -482,7 +482,7 @@ export default function ContainersPage() {
           display: 'flex',
           justifyContent: 'center',
           alignItems: 'center',
-          zIndex: 99999
+          zIndex: 10000
         }}>
           <div className="glass-panel" style={{
             width: '880px',

@@ -1,4 +1,3 @@
-
 services:
   db:
     image: postgres:15-alpine
@@ -22,13 +21,41 @@ services:
       timeout: 5s
       retries: 5
 
-  backend:
+  auth-service:
     build:
-      context: ./backend
+      context: ./services/auth-service
       dockerfile: Dockerfile
-    container_name: dashboard_backend
+    container_name: dashboard_auth_service
     ports:
-      - "8080:8080"
+      - "8081:8081"
+    env_file:
+      - .env
+    environment:
+      JAVA_TOOL_OPTIONS: "-XX:+UseG1GC -XX:MaxRAMPercentage=75.0 -XX:+ExitOnOutOfMemoryError"
+    restart: unless-stopped
+    networks:
+      - dashboard-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8081/actuator/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 6
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 384M
+        reservations:
+          memory: 192M
+
+  metrics-service:
+    build:
+      context: ./services/metrics-service
+      dockerfile: Dockerfile
+    container_name: dashboard_metrics_service
+    ports:
+      - "8082:8082"
     env_file:
       - .env
     environment:
@@ -39,20 +66,47 @@ services:
         condition: service_healthy
     networks:
       - dashboard-network
-    # Actuator /health: không phụ thuộc SSH, trả 200 khi Spring Boot sẵn sàng
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/actuator/health"]
-      interval: 30s
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8082/actuator/health"]
+      interval: 15s
       timeout: 10s
-      retries: 10
-      start_period: 120s
+      retries: 6
+      start_period: 60s
     deploy:
       resources:
         limits:
-          cpus: '1.5'   # Spring Boot + SSH crypto cần budget hợp lý
-          memory: 1G
+          cpus: '1.0'
+          memory: 512M
         reservations:
-          memory: 512M  # OOM killer sẽ nhắm vào process khác trước khi đụng container này
+          memory: 256M
+
+  file-service:
+    build:
+      context: ./services/file-service
+      dockerfile: Dockerfile
+    container_name: dashboard_file_service
+    ports:
+      - "8083:8083"
+    env_file:
+      - .env
+    environment:
+      JAVA_TOOL_OPTIONS: "-XX:+UseG1GC -XX:MaxRAMPercentage=75.0 -XX:+ExitOnOutOfMemoryError"
+    restart: unless-stopped
+    networks:
+      - dashboard-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8083/actuator/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 6
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 384M
+        reservations:
+          memory: 192M
 
   frontend:
     build:
@@ -60,10 +114,14 @@ services:
       dockerfile: Dockerfile
     container_name: dashboard_frontend
     ports:
-      - "5173:80" # Map to standard vite dev port, backed by Nginx port 80
+      - "5173:80"
     depends_on:
-      backend:
-        condition: service_healthy  # Chờ backend healthy trước khi khởi động
+      auth-service:
+        condition: service_healthy
+      metrics-service:
+        condition: service_healthy
+      file-service:
+        condition: service_healthy
     restart: unless-stopped
     networks:
       - dashboard-network
@@ -76,11 +134,10 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '0.5'   # Nginx static serving, rất nhẹ
+          cpus: '0.5'
           memory: 256M
         reservations:
           memory: 64M
-
 
 networks:
   dashboard-network:

@@ -1,10 +1,10 @@
-package com.miniserver.dashboard.controller;
+package com.miniserver.controller;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.miniserver.dashboard.model.ServerMetric;
-import com.miniserver.dashboard.repository.ServerMetricRepository;
-import com.miniserver.dashboard.service.SshService;
+import com.miniserver.model.ServerMetric;
+import com.miniserver.repository.ServerMetricRepository;
+import com.miniserver.service.SshService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -121,7 +121,7 @@ public class MetricsController {
             "free -m", // 2
             "df -h -x tmpfs -x devtmpfs", // 3
             "cat /proc/net/dev", // 4
-            "who", // 5
+            "LC_ALL=C who", // 5
             "if hash sensors 2>/dev/null; then sensors 2>/dev/null; else for f in /sys/class/thermal/thermal_zone*/temp; do zone=$(echo $f | grep -oP 'thermal_zone\\d+'); val=$(cat $f 2>/dev/null); [ -n \"$val\" ] && echo \"${zone}: ${val}\"; done; fi", // 6
             "if hash sensors 2>/dev/null; then sensors 2>/dev/null; else echo 'N/A'; fi", // 7
             "printf 'KERNEL:%s\\n' \"$(uname -r)\" && printf 'HOSTNAME:%s\\n' \"$(hostname)\" && printf 'OS:%s\\n' \"$(grep PRETTY_NAME /etc/os-release 2>/dev/null | cut -d= -f2 | tr -d '\\\"')\" && printf 'CPU_MODEL:%s\\n' \"$(lscpu 2>/dev/null | grep 'Model name' | sed 's/Model name[[:space:]]*:[[:space:]]*//')\"", // 8
@@ -283,7 +283,7 @@ public class MetricsController {
         // Note: no \b word boundary needed — the 172.(16-31). substring is specific enough
         // and avoids double-escaping pitfalls in Java string → shell → grep chain.
         final String docker172Filter = "grep -vE '172\\.(1[6-9]|2[0-9]|3[01])\\.'";
-        String batchCmd = "who"
+        String batchCmd = "LC_ALL=C who"
                 + " && echo '===SEP==='"
                 + " && ss -tn state established '( dport = :22 or sport = :22 )' 2>/dev/null | tail -n +2 | " + docker172Filter
                 + " && echo '===SEP==='"

@@ -1,6 +1,6 @@
-package com.miniserver.file.controller;
+package com.miniserver.controller;
 
-import com.miniserver.file.service.SshService;
+import com.miniserver.service.SshService;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.*;

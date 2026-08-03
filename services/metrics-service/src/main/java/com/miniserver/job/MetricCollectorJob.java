@@ -1,9 +1,9 @@
-package com.miniserver.dashboard.job;
+package com.miniserver.job;
 
-import com.miniserver.dashboard.model.ServerMetric;
-import com.miniserver.dashboard.repository.ServerMetricRepository;
-import com.miniserver.dashboard.service.SshService;
-import com.miniserver.dashboard.service.TelegramNotificationService;
+import com.miniserver.model.ServerMetric;
+import com.miniserver.repository.ServerMetricRepository;
+import com.miniserver.service.SshService;
+import com.miniserver.service.TelegramNotificationService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;

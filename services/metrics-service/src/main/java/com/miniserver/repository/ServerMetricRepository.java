@@ -1,6 +1,6 @@
-package com.miniserver.dashboard.repository;
+package com.miniserver.repository;
 
-import com.miniserver.dashboard.model.ServerMetric;
+import com.miniserver.model.ServerMetric;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;

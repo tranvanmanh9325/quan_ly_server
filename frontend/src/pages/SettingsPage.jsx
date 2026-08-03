@@ -2,7 +2,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import {
   SciFiSettingsIcon, SciFiRefreshIcon, SciFiPulseBadge,
-  SciFiConsoleIcon, SciFiCyberLockIcon, SciFiDashboardIcon
+  SciFiConsoleIcon, SciFiCyberLockIcon, SciFiDashboardIcon,
+  SciFiTelegramIcon, SciFiInfoIcon, SciFiTerminalPromptIcon
 } from '../components/SciFiIcons';
 import { loadSettings, saveSettings, SETTINGS_DEFAULTS } from '../utils/settings';
 
@@ -437,7 +438,7 @@ export default function SettingsPage() {
       {/* ── Section 5: Telegram Integration ────────────────────────────── */}
       <div style={card}>
         <SectionHeader
-          icon={<span style={{ fontSize: '18px' }}>✈️</span>}
+          icon={<SciFiTelegramIcon size={18} color="var(--accent-cyan)" />}
           title="TELEGRAM INTEGRATION"
           subtitle="Receive real-time server alerts and query status via Telegram Bot"
         />
@@ -538,9 +539,10 @@ export default function SettingsPage() {
                   padding: '8px 20px', fontFamily: 'Share Tech Mono',
                   fontSize: '0.78rem', cursor: tgTesting ? 'not-allowed' : 'pointer',
                   letterSpacing: '1px', opacity: tgTesting ? 0.5 : 1,
+                  display: 'inline-flex', alignItems: 'center', gap: '6px',
                 }}
               >
-                {tgTesting ? 'SENDING...' : '📨 SEND TEST'}
+                {tgTesting ? 'SENDING...' : <><SciFiTelegramIcon size={14} color="rgba(255,165,0,1)" /> SEND TEST</>}
               </button>
 
               {tgTestResult && (
@@ -560,8 +562,9 @@ export default function SettingsPage() {
               background: 'rgba(0,0,0,0.2)', border: '1px solid rgba(0,243,255,0.08)',
               fontSize: '0.72rem', color: 'var(--text-secondary)',
               fontFamily: 'Share Tech Mono', opacity: 0.7,
+              display: 'flex', alignItems: 'center', gap: '8px',
             }}>
-              💬 Bot commands: <code>/status</code> · <code>/cpu</code> · <code>/ram</code> · <code>/disk</code> · <code>/help</code>
+              <SciFiTerminalPromptIcon size={14} color="var(--accent-cyan)" /> Bot commands: <code>/status</code> · <code>/cpu</code> · <code>/ram</code> · <code>/disk</code> · <code>/help</code>
             </div>
           </>
         )}
@@ -570,7 +573,7 @@ export default function SettingsPage() {
       {/* ── Section 6: About ──────────────────────────────────────────────── */}
       <div style={card}>
         <SectionHeader
-          icon={<SciFiSettingsIcon size={18} color="var(--accent-cyan)" />}
+          icon={<SciFiInfoIcon size={18} color="var(--accent-cyan)" />}
           title="ABOUT"
           subtitle="System information and stack details"
         />

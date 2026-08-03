@@ -1,6 +1,6 @@
-package com.miniserver.dashboard.repository;
+package com.miniserver.repository;
 
-import com.miniserver.dashboard.model.TelegramConfig;
+import com.miniserver.model.TelegramConfig;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.Optional;

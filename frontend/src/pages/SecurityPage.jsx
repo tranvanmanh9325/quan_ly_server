@@ -130,9 +130,10 @@ export default function SecurityPage() {
     return matchSearch;
   });
 
-  // Filter System Logs
-  const logLines = systemLogs ? systemLogs.split('\n') : [];
+  // Filter System Logs (newest entries first at the top)
+  const logLines = systemLogs ? systemLogs.split('\n').reverse() : [];
   const filteredLogLines = logLines.filter(line => {
+    if (!line.trim()) return false;
     const matchSearch = line.toLowerCase().includes(logSearch.toLowerCase());
     const upper = line.toUpperCase();
     if (logLevelFilter === 'ERRORS') return matchSearch && (upper.includes('ERROR') || upper.includes('DENIED') || upper.includes('FAILED') || upper.includes('FATAL') || upper.includes('CRITICAL'));

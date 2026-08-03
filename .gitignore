@@ -7,5 +7,20 @@
 .env.*
 .env.local
 
+# Build artifacts (Maven & Node)
+target/
+**/target/
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+
+# IDE & OS files
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+
 # Docker & Temp
 *.log

@@ -1,4 +1,4 @@
-package com.miniserver.dashboard.service;
+package com.miniserver.service;
 
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;

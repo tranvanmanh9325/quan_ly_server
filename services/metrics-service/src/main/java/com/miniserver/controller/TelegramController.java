@@ -1,8 +1,8 @@
-package com.miniserver.dashboard.controller;
+package com.miniserver.controller;
 
-import com.miniserver.dashboard.model.TelegramConfig;
-import com.miniserver.dashboard.repository.TelegramConfigRepository;
-import com.miniserver.dashboard.service.TelegramNotificationService;
+import com.miniserver.model.TelegramConfig;
+import com.miniserver.repository.TelegramConfigRepository;
+import com.miniserver.service.TelegramNotificationService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 

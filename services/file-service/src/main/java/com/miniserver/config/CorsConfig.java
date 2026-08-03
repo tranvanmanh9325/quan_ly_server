@@ -1,4 +1,4 @@
-package com.miniserver.file.config;
+package com.miniserver.config;
 
 import org.springframework.context.annotation.Configuration;
 

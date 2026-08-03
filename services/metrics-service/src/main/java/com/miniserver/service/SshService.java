@@ -1,4 +1,4 @@
-package com.miniserver.dashboard.service;
+package com.miniserver.service;
 
 import com.jcraft.jsch.ChannelExec;
 import com.jcraft.jsch.JSch;

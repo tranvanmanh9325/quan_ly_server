@@ -1,7 +1,7 @@
-package com.miniserver.dashboard.service;
+package com.miniserver.service;
 
-import com.miniserver.dashboard.model.TelegramConfig;
-import com.miniserver.dashboard.repository.TelegramConfigRepository;
+import com.miniserver.model.TelegramConfig;
+import com.miniserver.repository.TelegramConfigRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;

@@ -1,0 +1,49 @@
+{
+  "properties": [
+    {
+      "name": "ssh.host",
+      "type": "java.lang.String",
+      "description": "Primary SSH host IP or hostname."
+    },
+    {
+      "name": "ssh.port",
+      "type": "java.lang.Integer",
+      "description": "Primary SSH port."
+    },
+    {
+      "name": "ssh.user",
+      "type": "java.lang.String",
+      "description": "SSH username."
+    },
+    {
+      "name": "ssh.password",
+      "type": "java.lang.String",
+      "description": "SSH password."
+    },
+    {
+      "name": "ssh.strict-host-key-checking",
+      "type": "java.lang.String",
+      "description": "Strict host key checking setting (yes/no)."
+    },
+    {
+      "name": "ssh.fallback-host",
+      "type": "java.lang.String",
+      "description": "Fallback SSH host IP or hostname."
+    },
+    {
+      "name": "ssh.fallback-port",
+      "type": "java.lang.Integer",
+      "description": "Fallback SSH port."
+    },
+    {
+      "name": "app.jwt.secret",
+      "type": "java.lang.String",
+      "description": "Secret key used for signing JWT tokens."
+    },
+    {
+      "name": "app.jwt.expiration-hours",
+      "type": "java.lang.Integer",
+      "description": "JWT token expiration in hours."
+    }
+  ]
+}

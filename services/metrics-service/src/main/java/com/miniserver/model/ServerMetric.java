@@ -1,4 +1,4 @@
-package com.miniserver.dashboard.model;
+package com.miniserver.model;
 
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;

@@ -1,7 +1,7 @@
-package com.miniserver.file.config;
+package com.miniserver.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.miniserver.file.service.JwtService;
+import com.miniserver.service.JwtService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;

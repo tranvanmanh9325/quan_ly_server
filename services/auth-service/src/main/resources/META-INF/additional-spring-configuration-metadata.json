@@ -1,0 +1,24 @@
+{
+  "properties": [
+    {
+      "name": "app.auth.username",
+      "type": "java.lang.String",
+      "description": "Application admin authentication username."
+    },
+    {
+      "name": "app.auth.password",
+      "type": "java.lang.String",
+      "description": "Application admin authentication password."
+    },
+    {
+      "name": "app.jwt.secret",
+      "type": "java.lang.String",
+      "description": "Secret key used for signing JWT tokens."
+    },
+    {
+      "name": "app.jwt.expiration-hours",
+      "type": "java.lang.Integer",
+      "description": "JWT token expiration in hours."
+    }
+  ]
+}

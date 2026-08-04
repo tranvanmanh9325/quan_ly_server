@@ -1,4 +1,4 @@
-package com.miniserver.dashboard.service;
+package com.miniserver.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;

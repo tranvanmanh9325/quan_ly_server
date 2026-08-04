@@ -1,4 +1,4 @@
-package com.miniserver.dashboard.service;
+package com.miniserver.service;
 
 /**
  * @deprecated Replaced by {@link AiChatService}.

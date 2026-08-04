@@ -9,6 +9,9 @@ concurrency:
   group: deploy
   cancel-in-progress: false  # Never cancel a running deploy
 
+permissions:
+  contents: read
+
 jobs:
   # ── Build verification (GitHub-hosted, fast feedback) ─────────────────────
   verify:

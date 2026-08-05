@@ -258,13 +258,26 @@ public class AiChatService {
     }
 
     private String callGroq(String requestBody) throws Exception {
-        return restClient.post()
-                .uri(GROQ_API_URL)
-                .contentType(MediaType.APPLICATION_JSON)
-                .header("Authorization", "Bearer " + apiKey)
-                .body(requestBody)
-                .retrieve()
-                .body(String.class);
+        int maxRetries = 2;
+        for (int attempt = 0; attempt <= maxRetries; attempt++) {
+            try {
+                return restClient.post()
+                        .uri(GROQ_API_URL)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header("Authorization", "Bearer " + apiKey)
+                        .body(requestBody)
+                        .retrieve()
+                        .body(String.class);
+            } catch (HttpClientErrorException.TooManyRequests e) {
+                if (attempt < maxRetries) {
+                    log.warn("[Agent] Groq 429 Rate limited, retrying in 2s (attempt {}/{})...", attempt + 1, maxRetries);
+                    Thread.sleep(2000);
+                } else {
+                    throw e;
+                }
+            }
+        }
+        throw new IllegalStateException("Max retries exceeded for Groq API");
     }
 
     /**

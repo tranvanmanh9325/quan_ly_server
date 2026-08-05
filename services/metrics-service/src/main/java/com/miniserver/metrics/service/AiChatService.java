@@ -126,6 +126,18 @@ public class AiChatService {
         Deque<ObjectNode> history = historyMap.computeIfAbsent(chatId, k -> new ArrayDeque<>());
         history.addLast(userMessageNode(userMessage));
 
+        if (isGreeting(userMessage)) {
+            String greetingReply = "Xin chào! Tôi là Server Monitor AI, trợ lý tự động giám sát máy chủ Linux. "
+                    + "Tôi có thể giúp bạn kiểm tra CPU, RAM, Disk, Docker containers, hoặc các tiến trình theo thời gian thực. "
+                    + "Bạn có câu hỏi nào về máy chủ không?";
+            ObjectNode replyNode = mapper.createObjectNode();
+            replyNode.put("role", "assistant");
+            replyNode.put("content", greetingReply);
+            history.addLast(replyNode);
+            trimHistory(history);
+            return greetingReply;
+        }
+
         try {
             for (int i = 0; i < MAX_AGENT_ITERATIONS; i++) {
                 String   rawResponse  = callGroq(buildRequest(history));
@@ -336,6 +348,14 @@ public class AiChatService {
 
     // ─── History management ───────────────────────────────────────────────────
 
+    private boolean isGreeting(String text) {
+        if (text == null) return false;
+        String t = text.trim().toLowerCase();
+        return t.equals("chào bạn") || t.equals("chào") || t.equals("hello")
+                || t.equals("hi") || t.equals("bắt đầu") || t.equals("chào bot")
+                || t.equals("xin chào") || t.equals("alo");
+    }
+
     private void trimHistory(Deque<ObjectNode> history) {
         while (history.size() > MAX_HISTORY_MESSAGES) {
             history.pollFirst();
@@ -355,8 +375,12 @@ public class AiChatService {
                 monitoring dashboard. You have real-time access to the server through a `run_command` tool.
 
                 CORE BEHAVIOR:
-                - When the user asks ANY question about the server, ALWAYS call `run_command` with the \
-                  appropriate shell command to get real-time data. Do NOT guess or make up data.
+                - For general greetings (e.g., "Chào bạn", "Hello", "Hi", "Bắt đầu") or conversational chitchat, \
+                  reply politely and warmly as an AI assistant. Do NOT call `run_command` for greetings, and do NOT \
+                  output random server stats unless explicitly asked.
+                - For questions about server status, CPU, RAM, disk, network, processes, Docker containers, \
+                  logs, or system diagnostics, ALWAYS call `run_command` with the appropriate shell command to \
+                  get real-time data. Do NOT guess or make up data.
                 - You know all Linux, Docker, Nginx, MySQL, systemd, and common sysadmin commands. \
                   Use your full knowledge to pick the right command.
                 - After getting data, INTERPRET it: is something wrong? Is usage high? Explain clearly.
@@ -377,7 +401,7 @@ public class AiChatService {
                 NEVER run: rm, kill (services), shutdown, reboot, dd, mkfs, or any destructive command.
 
                 COMMUNICATION:
-                - Be concise \u2014 Telegram has limited screen space.
+                - Be concise — Telegram has limited screen space.
                 - Format numbers and data clearly.
                 - Suggest follow-up actions when relevant.
                 """;

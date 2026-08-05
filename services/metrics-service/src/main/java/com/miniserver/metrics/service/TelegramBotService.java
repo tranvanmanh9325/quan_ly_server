@@ -45,11 +45,8 @@ public class TelegramBotService {
     @org.springframework.beans.factory.annotation.Value("${telegram.chat-id:}")
     private String envChatId;
 
-    @org.springframework.beans.factory.annotation.Value("${telegram.polling-enabled:true}")
+    @org.springframework.beans.factory.annotation.Value("${telegram.polling-enabled:false}")
     private boolean pollingEnabled;
-
-    @org.springframework.beans.factory.annotation.Value("${telegram.node-type:dev}")
-    private String nodeType;
 
     // Tracks the last processed update_id to avoid re-processing
     private long updateOffset = 0;
@@ -66,41 +63,24 @@ public class TelegramBotService {
         this.jdbcTemplate = jdbcTemplate;
     }
 
-    @Scheduled(fixedDelay = 5_000)
-    public void sendNodeHeartbeat() {
-        if ("dev".equalsIgnoreCase(nodeType) && pollingEnabled) {
-            try {
-                jdbcTemplate.update(
-                        "INSERT INTO telegram_active_node (id, node_name, last_heartbeat) VALUES (1, 'dev', now()) " +
-                        "ON CONFLICT (id) DO UPDATE SET node_name = 'dev', last_heartbeat = now()"
-                );
-            } catch (Exception e) {
-                log.debug("[TelegramBot] Heartbeat error: {}", e.getMessage());
-            }
-        }
-    }
-
-    private boolean isDevNodeActive() {
+    @jakarta.annotation.PostConstruct
+    public void initDatabaseSchema() {
         try {
-            Integer count = jdbcTemplate.queryForObject(
-                    "SELECT COUNT(*) FROM telegram_active_node WHERE node_name = 'dev' AND last_heartbeat > now() - INTERVAL '15 seconds'",
-                    Integer.class
+            jdbcTemplate.execute(
+                    "CREATE TABLE IF NOT EXISTS processed_telegram_updates (" +
+                    "    update_id BIGINT PRIMARY KEY, " +
+                    "    processed_at TIMESTAMP NOT NULL DEFAULT now()" +
+                    ")"
             );
-            return count != null && count > 0;
+            log.info("[TelegramBot] Database schema initialized for processed_telegram_updates.");
         } catch (Exception e) {
-            return false;
+            log.warn("[TelegramBot] Could not initialize processed_telegram_updates table: {}", e.getMessage());
         }
     }
 
     @Scheduled(fixedDelay = 3_000)
     public void pollUpdates() {
         if (!pollingEnabled) return;
-
-        // Dev priority guard: If running in production, yield immediately to active Dev node
-        if ("prod".equalsIgnoreCase(nodeType) && isDevNodeActive()) {
-            log.debug("[TelegramBot] Dev node is active. Production standing down.");
-            return;
-        }
 
         Optional<TelegramConfig> cfgOpt = configRepository.getConfig();
         TelegramConfig cfg = cfgOpt.orElseGet(TelegramConfig::new);

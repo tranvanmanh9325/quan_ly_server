@@ -1,4 +1,4 @@
-﻿# Mini Server Dashboard — Sci-Fi Cyberpunk Edition
+# Mini Server Dashboard — Sci-Fi Cyberpunk Edition
 
 **A self-hosted, real-time server monitoring & management dashboard with a Cyberpunk/Sci-Fi HUD interface.**  
 Connect to any remote Linux host over SSH and control live system metrics, processes, services, containers, files, and logs — all from a stunning, futuristic web UI.
@@ -32,12 +32,40 @@ The Spring Boot backend maintains a **persistent SSH session** (via JSch with ro
 
 ## Screenshots / Demo
 
-> _Insert screenshots or a demo GIF here._  
-> Suggested shots: Dashboard overview, 3D Globe Map, Settings page, Terminal Console, Process Explorer.
+### 1. System Overview Dashboard (`/`)
+
+Real-time KPI metrics, CPU & RAM gauges, load average, disk space, and active server telemetry.
+![Dashboard Overview](./docs/assets/dashboard-overview.png)
+
+### 2. Process Explorer (`/processes`)
+
+Live Linux process monitor with column sorting, CPU/Memory filtering, process termination modal, and CSV export.
+![Process Explorer](./docs/assets/dashboard-processes.png)
+
+### 3. Services & Docker Runtime Center (`/services`)
+
+Manage systemd services, view live Docker container statuses, inspect container logs, and monitor host runtimes.
+![Services & Docker](./docs/assets/dashboard-services.png)
+
+### 4. Interactive Web SSH Terminal Console (`/terminal`)
+
+Embedded web terminal with command history, security sandbox, and 1-click Quick Command Macro Chips with `SciFiLightningIcon`.
+![Terminal Console](./docs/assets/dashboard-terminal.png)
+
+### 5. Control Center & Settings (`/settings`)
+
+Configure critical alert threshold sliders, global refresh speeds, Telegram AI agent settings, and Sci-Fi HUD effects.
+![Settings](./docs/assets/dashboard-settings.png)
 
 ---
 
 ## Key Features
+
+### Autonomous Telegram AI Agent
+
+- **Groq LLM Engine (`llama-3.1-8b-instant`):** Natural language system diagnostics and administration via Telegram.
+- **SSH Tool Execution (`run_command` & `sudo`):** Automatically formulates and runs system commands over SSH, using `executeSudoCommand` for privileged tasks.
+- **Resilient Context Window & Token Protection:** Rolling 6-message context window and 1,000 char output cap to stay strictly under Groq's 6,000 TPM limit. Includes 3-attempt exponential backoff on 429 rate limits and self-healing conversation history resets.
 
 ### System Overview Dashboard (`/`)
 
@@ -63,7 +91,7 @@ The Spring Boot backend maintains a **persistent SSH session** (via JSch with ro
 
 - **Systemd Services**: View status and 1-click **Start / Stop / Restart**.
 - **Docker Containers**: Full container list with port mappings, live status badges, control actions, and an interactive **Log Viewer Modal** (`docker logs --tail`).
-- **Systemd Timers**: Monitor countdown timers and next-run timestamps.
+- **Systemd Timers**: Monitor daily automated update/upgrade timers (`apt-daily.timer` at 06:00 AM, `apt-daily-upgrade.timer` at 06:30 AM).
 - **Host Runtimes**: Detect installed runtimes (Docker, Node.js, Java, Python) and daemons (Nginx, PostgreSQL, Redis, UFW).
 
 ### File Manager (`/files`)
@@ -81,7 +109,7 @@ The Spring Boot backend maintains a **persistent SSH session** (via JSch with ro
 
 - Embedded web-based SSH terminal (`root@server:~#`).
 - **Command history** navigation with ↑/↓ arrow keys.
-- **Quick command chips** for common diagnostics (`uname -a`, `df -h`, `docker ps`, `ss -tulpn`...).
+- **Quick command chips** with custom `SciFiLightningIcon` vector graphics for common diagnostics (`uname -a`, `df -h`, `docker ps`, `ss -tulpn`...).
 - Built-in **security sandbox** blocking destructive commands (`rm -rf`, `mkfs`, `reboot`, etc.).
 - Copy output to clipboard or clear console with 1-click.
 
@@ -122,10 +150,12 @@ The Spring Boot backend maintains a **persistent SSH session** (via JSch with ro
 | Icons | Custom Sci-Fi SVG (`SciFiIcons.jsx`) | — |
 | Frontend Server | Nginx (Alpine) | latest |
 | Unit Tests | Vitest | 4 |
-| Backend Framework | Spring Boot | 3.4 |
+| Backend Services | Spring Boot (Metrics, Auth, File Services) | 4.1.0 |
 | Backend Language | Java | 21 |
-| Database | PostgreSQL | 15 |
-| SSH Client | JSch (mwiede fork) | 2.27.9 |
+| AI Integration | Groq REST API (`llama-3.1-8b-instant`) | — |
+| Bot Protocol | Telegram Bot Long Polling | — |
+| Database | PostgreSQL | 17 |
+| SSH Client | JSch (mwiede fork) | 2.28.5 |
 | Containerization | Docker + Compose V2 | — |
 | CI/CD | GitHub Actions | — |
 
@@ -134,37 +164,37 @@ The Spring Boot backend maintains a **persistent SSH session** (via JSch with ro
 ## Architecture
 
 ```text
-+------------------------------------------------------------------------+
-|                      Docker Network (bridge)                           |
-|                                                                        |
-|  +------------------+            +------------------------------+      |
-|  |    Frontend      |  /api/*    |          Backend             |      |
-|  |  React + Nginx   | ---------> |      Spring Boot 3.4         |      |
-|  |  Port 5173:80    |            |      Port 8080               |      |
-|  +------------------+            |      JSch SSH Client         |      |
-|                                  +----------+-------------------+      |
-|  +------------------+            |                                     |
-|  |  PostgreSQL 15   | <----------+  (writes metric history)            |
-|  |  Port 5432       |                                                  |
-|  +------------------+                                                  |
-+-------------------------------------------+----------------------------+
-                                            |
-                               SSH (Port 22 / Ngrok TCP)
-                                            |
-                                            v
-                                 +--------------------+
-                                 |   Remote Linux     |
-                                 |   Server / VPS     |
-                                 +--------------------+
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│                               Docker Network (bridge)                                  │
+│                                                                                        │
+│  ┌──────────────────────┐  /api/auth/*   ┌──────────────────────┐                      │
+│  │       Frontend       │───────────────▶│     Auth Service     │                      │
+│  │   React 19 + Nginx   │                │  Spring Boot (8081)  │──┐                   │
+│  │   Host port 5173:80  │                └──────────────────────┘  │                   │
+│  └──────────┬───────────┘                                          │                   │
+│             │ /api/metrics/*             ┌──────────────────────┐  │ PostgreSQL 17     │
+│             ├───────────────────────────▶│   Metrics Service    │──┼─▶ ┌────────────┐  │
+│             │                            │  Spring Boot (8082)  │  │   │     DB     │  │
+│             │ /api/files/*               └──────────┬───────────┘  │   │Port 5432/tcp│  │
+│             └───────────────────────────┐           │              │   └────────────┘  │
+│                                         ▼           │              │                   │
+│                              ┌──────────────────┐   │              │                   │
+│                              │   File Service   │───┼──────────────┘                   │
+│                              │Spring Boot (8083)│   │                                  │
+│                              └──────────────────┘   │ SSH (22 LAN / 15774 Ngrok)       │
+│                                                     ▼                                  │
+│   ┌──────────────────────┐               ┌──────────────────────┐                      │
+│   │     Telegram API     │◀──────────────│ Remote Linux Server  │                      │
+│   │ (Long Polling Bot)   │               │ (sysadmin execution) │                      │
+│   └──────────┬───────────┘               └──────────────────────┘                      │
+│              │ (Tool Calling)                                                          │
+│              ▼                                                                         │
+│   ┌──────────────────────┐                                                             │
+│   │       Groq AI        │                                                             │
+│   │(llama-3.1-8b-instant)│                                                             │
+│   └──────────────────────┘                                                             │
+└────────────────────────────────────────────────────────────────────────────────────────┘
 ```
-
-**Request flow:**
-
-1. Browser loads the React SPA served by **Nginx** on port 5173.
-2. `/api/*` XHR requests are reverse-proxied by Nginx to **Spring Boot** on port 8080.
-3. Spring Boot executes shell commands over the **persistent SSH session** (with `sudo -S` elevation where needed).
-4. Raw output is returned as JSON; parsing runs in **`frontend/src/utils/parsers.js`**.
-5. Metric history is persisted to **PostgreSQL** by `MetricCollectorJob` (scheduled every 60s).
 
 ---
 
@@ -174,47 +204,42 @@ The Spring Boot backend maintains a **persistent SSH session** (via JSch with ro
 quan_ly_server/
 ├── .env                                  # Root environment file (SSH & DB credentials)
 ├── .gitignore
-├── docker-compose.yml                    # Orchestrates backend, frontend & db containers
+├── docker-compose.yml                    # Orchestrates backend services, frontend & db containers
 ├── LICENSE
 ├── SECURITY.md
 │
-├── backend/                              # Spring Boot REST service
-│   ├── src/main/java/com/miniserver/dashboard/
-│   │   ├── DashboardApplication.java     # Entry point
-│   │   ├── controller/
-│   │   │   ├── MetricsController.java    # /api/metrics/* REST endpoints
-│   │   │   └── FileManagerController.java
-│   │   ├── service/
-│   │   │   └── SshService.java           # Persistent SSH session + sudo elevation
-│   │   └── job/
-│   │       └── MetricCollectorJob.java   # Scheduled metric history recorder
-│   ├── src/test/java/                    # JUnit 5 & Mockito unit tests
-│   ├── Dockerfile
-│   └── pom.xml
+├── docs/                                 # 11 Comprehensive Technical Guides
+│   ├── README.md                         # Documentation index
+│   ├── architecture.md                   # System design & microservices topology
+│   ├── api-reference.md                  # REST endpoints reference
+│   ├── frontend-internals.md             # React state & parser layer
+│   ├── backend-internals.md              # Spring Boot & JSch SSH service
+│   ├── telegram-ai-agent.md              # Autonomous Telegram bot & Groq LLM agent
+│   ├── database-and-auth.md              # Auth service, JWT security & PostgreSQL schema
+│   ├── system-automation.md              # Daily APT timers & auto-cleanup policy
+│   ├── deployment.md                     # Docker & CI/CD deployment guide
+│   ├── security.md                       # Security trade-offs & hardening
+│   └── troubleshooting.md                # Diagnostic guides & fixes
 │
-└── frontend/                             # React + Vite SPA
+├── services/                             # Spring Boot 4.1.0 Microservices
+│   ├── metrics-service/                  # Telemetry, SSH JSch tunnel, Telegram & Groq AI
+│   ├── auth-service/                     # Authentication & JWT security
+│   └── file-service/                     # Remote file system operations
+│
+└── frontend/                             # React 19 + Vite 8 SPA
     ├── src/
-    │   ├── App.jsx                       # Root router & adaptive polling engine
+    │   ├── App.jsx                       # Root layout & routing outlet
     │   ├── components/
-    │   │   ├── Layout.jsx                # Sci-Fi header bar, sidebar & terminal modal
-    │   │   ├── SciFiIcons.jsx            # 16 custom vector SVG icons
-    │   │   ├── SpaceInteractionLayer.jsx # Global cursor, click FX & audio engine
-    │   │   └── ErrorBoundary.jsx
+    │   │   ├── SciFiIcons.jsx            # Custom vector SVG icons library
+    │   │   └── SpaceInteractionLayer.jsx # Global cursor, click FX & audio engine
     │   ├── pages/
-    │   │   ├── DashboardPage.jsx         # Overview cards, charts & Fan HUD
+    │   │   ├── OverviewPage.jsx          # Overview cards, charts & Fan HUD
     │   │   ├── ProcessesPage.jsx         # Process explorer & CSV export
     │   │   ├── ServicesPage.jsx          # Systemd, Docker, timers & runtimes
-    │   │   ├── FileManagerPage.jsx       # SSH filesystem browser
-    │   │   ├── ContainersPage.jsx        # Dedicated Docker container manager
-    │   │   ├── WorldMapPage.jsx          # 3D orthographic globe with geo markers
-    │   │   ├── TerminalPage.jsx          # Web SSH terminal console
-    │   │   ├── SecurityPage.jsx          # Ports, sessions, logs & highlighter
+    │   │   ├── TerminalPage.jsx          # Web SSH terminal console with macro chips
     │   │   └── SettingsPage.jsx          # User preferences & alert thresholds
     │   └── utils/
-    │       ├── parsers.js                # Shell output → structured data parsers
-    │       ├── parsers.test.js           # Vitest unit tests (11 tests)
-    │       └── settings.js               # localStorage settings utility
-    ├── nginx.conf                        # Reverse proxy (/api/* → backend:8080)
+    ├── nginx.conf                        # Reverse proxy (/api/* → backend services)
     ├── vite.config.js                    # Rolldown / ManualChunks code splitting
     └── Dockerfile
 ```
@@ -272,14 +297,37 @@ cd quan_ly_server
 Create `.env` in the root directory:
 
 ```dotenv
-# SSH Target Server
-SSH_HOST=your.target.server.ip
-SSH_PORT=22
-SSH_USER=root
-SSH_PASSWORD=your_secure_password
+# ==========================================
+# ROOT ENVIRONMENT CONFIGURATION (.env)
+# ==========================================
 
-# PostgreSQL
-POSTGRES_PASSWORD=your_db_password
+# Primary SSH Target Credentials (LAN)
+SSH_HOST=your_target_server_ip
+SSH_PORT=22
+SSH_USER=your_ssh_user
+SSH_PASSWORD=your_ssh_password
+
+# SSH Fallback via Ngrok (used automatically when LAN is unreachable)
+SSH_FALLBACK_HOST=your_fallback_ngrok_host
+SSH_FALLBACK_PORT=12345
+
+# Database Configuration (PostgreSQL 17)
+POSTGRES_DB=quan_ly_server
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=your_postgres_password
+
+# Auth Service Credentials & JWT Secret (>= 32 chars)
+APP_AUTH_USERNAME=admin
+APP_AUTH_PASSWORD=your_bcrypt_hashed_password
+JWT_SECRET=your_secret_jwt_key_at_least_32_characters_long
+
+# Telegram Bot Integration
+TELEGRAM_BOT_TOKEN=your_telegram_bot_token
+TELEGRAM_CHAT_ID=your_telegram_chat_id
+TELEGRAM_POLLING_ENABLED=true
+
+# Groq AI Integration (llama-3.1-8b-instant)
+GROQ_API_KEY=your_groq_api_key
 ```
 
 > ⚠️ **Never commit `.env` to git.** It is already in `.gitignore`.

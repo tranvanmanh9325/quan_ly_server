@@ -7,59 +7,66 @@ A detailed walkthrough of how the Mini Server Dashboard is structured, how data 
 ## High-Level Overview
 
 ```text
-┌─────────────────────────────────────────────────────────────────┐
-│                   Docker Network  (bridge)                       │
-│                                                                 │
-│  ┌───────────────────────┐   /api/*   ┌─────────────────────┐  │
-│  │      Frontend         │ ─────────▶ │       Backend       │  │
-│  │   React 19 + Nginx    │            │  Spring Boot 4.0.5  │  │
-│  │   Host port 5173:80   │            │   Host port 8080    │  │
-│  └───────────────────────┘            │   JSch SSH Client   │  │
-│                                       └──────────┬──────────┘  │
-└──────────────────────────────────────────────────│─────────────┘
-                                                   │ SSH (port 22 / Ngrok TCP)
-                                                   ▼
-                                        ┌──────────────────────┐
-                                        │  Remote Linux Server │
-                                        │  (any standard host) │
-                                        └──────────────────────┘
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│                               Docker Network (bridge)                                  │
+│                                                                                        │
+│  ┌──────────────────────┐  /api/auth/*   ┌──────────────────────┐                      │
+│  │       Frontend       │───────────────▶│     Auth Service     │                      │
+│  │   React 19 + Nginx   │                │  Spring Boot (8081)  │──┐                   │
+│  │   Host port 5173:80  │                └──────────────────────┘  │                   │
+│  └──────────┬───────────┘                                          │                   │
+│             │ /api/metrics/*             ┌──────────────────────┐  │ PostgreSQL 17     │
+│             ├───────────────────────────▶│   Metrics Service    │──┼─▶ ┌────────────┐  │
+│             │                            │  Spring Boot (8082)  │  │   │     DB     │  │
+│             │ /api/files/*               └──────────┬───────────┘  │   │Port 5432/tcp│  │
+│             └───────────────────────────┐           │              │   └────────────┘  │
+│                                         ▼           │              │                   │
+│                              ┌──────────────────┐   │              │                   │
+│                              │   File Service   │───┼──────────────┘                   │
+│                              │Spring Boot (8083)│   │                                  │
+│                              └──────────────────┘   │ SSH (22 LAN / 15774 Ngrok)       │
+│                                                     ▼                                  │
+│   ┌──────────────────────┐               ┌──────────────────────┐                      │
+│   │     Telegram API     │◀──────────────│ Remote Linux Server  │                      │
+│   │ (Long Polling Bot)   │               │ (sysadmin execution) │                      │
+│   └──────────┬───────────┘               └──────────────────────┘                      │
+│              │ (Tool Calling)                                                          │
+│              ▼                                                                         │
+│   ┌──────────────────────┐                                                             │
+│   │       Groq AI        │                                                             │
+│   │(llama-3.1-8b-instant)│                                                             │
+│   └──────────────────────┘                                                             │
+└────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
 ## Component Breakdown
 
-### 1. Frontend — React + Nginx
+### 1. Microservices Topology
 
-| Responsibility | Details |
-| --- | --- |
-| Render UI | Single-page application built with React 19 and Vite 8 |
-| Serve static files | Nginx Alpine serves the `dist/` bundle |
-| Proxy API calls | Nginx forwards all `/api/*` requests to the backend container named `backend:8080` |
-| Parse raw data | All SSH output parsing happens in `parsers.js` (pure functions, no side effects) |
-| Adaptive polling | Two separate `useEffect` loops with `setTimeout` chains and Visibility API integration |
-
-**Why Nginx as the production server?**
-Nginx acts as both the static file server and an API reverse proxy. This single-origin architecture eliminates all CORS friction in production — the browser only talks to port `5173`, and Nginx transparently forwards `/api/*` calls to the backend. The backend's `CorsConfig` is only exercised during local development (Vite dev server on `5173` ↔ Spring Boot on `8080`).
+| Service | Port | Primary Responsibility | Key Technologies |
+| --- | --- | --- | --- |
+| **Frontend** | `5173` | React 19 SPA, Cyberpunk Sci-Fi UI, custom SVG icons (`SciFiIcons.jsx`), Nginx reverse proxy | React 19, Vite 8, Recharts, Nginx Alpine |
+| **Metrics Service** | `8082` | System telemetry, JSch SSH persistent tunnel, `executeSudoCommand`, Telegram bot polling, Groq AI Agent | Spring Boot 4.1.0, JSch 2.28.5, Groq REST API |
+| **Auth Service** | `8081` | Authentication, JWT token issuance, user credential validation | Spring Boot 4.1.0, Spring Data JPA, JJWT |
+| **File Service** | `8083` | Remote file system browsing, file inspection & manipulation | Spring Boot 4.1.0, Spring Data JPA |
+| **Database (DB)** | `5432` | Relational storage for users, tokens, and audit logs | PostgreSQL 17 Alpine |
 
 ---
 
-### 2. Backend — Spring Boot
+### 2. Telegram Bot & Autonomous Groq AI Agent Architecture
 
-The backend is intentionally a **thin tunnel**: it receives an HTTP `GET`, translates it into a shell command, executes it over an SSH channel, and returns the raw output wrapped in a JSON envelope. No parsing logic lives in Java.
+The `metrics-service` integrates an autonomous AI assistant that monitors and executes administrative shell commands on the remote Linux server:
 
-#### Package Structure
-
-```
-com.miniserver.dashboard
-├── DashboardApplication.java     ← Spring Boot entry point (@SpringBootApplication)
-├── config/
-│   └── CorsConfig.java           ← WebMvcConfigurer: whitelists localhost:5173 for dev
-├── controller/
-│   └── MetricsController.java    ← @RestController: maps HTTP routes to shell commands
-└── service/
-    └── SshService.java           ← Persistent JSch session + retry + lifecycle management
-```
+1. **Telegram Long Polling Engine:** `TelegramBotService` polls incoming Telegram messages asynchronously using a dedicated `SimpleClientHttpRequestFactory` with strict connect/read timeouts (5s / 12s) to prevent thread exhaustion.
+2. **Dedicated Scheduling Thread Pool:** `SchedulingConfig` configures a 5-worker-thread `ThreadPoolTaskScheduler` so polling, metric updates, and notifications execute concurrently without blocking.
+3. **Groq AI Tool Calling Agent (`AiChatService`):**
+   - Model: `llama-3.1-8b-instant`.
+   - Tool definition: `run_command` allows Groq to generate bash commands.
+   - Context window limit: `MAX_HISTORY_MESSAGES = 6` (3 Q&A pairs) and `MAX_OUTPUT_CHARS = 1000` to guarantee token consumption stays under Groq's 6,000 TPM limit.
+   - Strict System Prompt: Forbids nested double quotes (`"`) and `history` command; enforces single quotes (`'`) and exact log inspection commands (`stat /var/lib/apt/periodic/update-success-stamp`, `grep -E 'Start-Date|Commandline' /var/log/apt/history.log`).
+   - Resiliency: Automatic 3-attempt retry with 2.5s backoff on 429 rate limit responses, and auto-clears conversation history on 400/429 errors to unblock user chats.
 
 #### Why keep parsing in the frontend?
 

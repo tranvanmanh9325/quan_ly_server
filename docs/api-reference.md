@@ -2,10 +2,15 @@
 
 Complete reference for all REST endpoints exposed by the backend.
 
-**Base URL:** `http://<host>:8080/api/metrics`
+**Base URLs:**
+
+- Metrics Service: `http://<host>:8082/api/metrics`
+- Auth Service: `http://<host>:8081/api/auth`
+- File Service: `http://<host>:8083/api/files`
+
 **Protocol:** HTTP/1.1
-**Methods:** `GET` only
-**Authentication:** None (intended for private-network deployment)
+**Methods:** `GET`, `POST`, `PUT`, `DELETE`
+**Authentication:** JWT Bearer Token (issued by Auth Service)
 **Response format:** `application/json`
 
 ---

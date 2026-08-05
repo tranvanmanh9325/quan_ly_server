@@ -123,18 +123,26 @@ If this command produces any output, the file was committed at some point. See t
 | Port | Service | Default Exposure | Recommendation |
 | --- | --- | --- | --- |
 | `5173` | Nginx (Dashboard UI) | Host-level | Bind to `127.0.0.1` or firewall if not serving externally |
-| `8080` | Spring Boot (API) | Host-level | **Do not expose publicly** without an auth layer |
+| `8082` | Metrics Service | Internal Bridge / Host | **Do not expose publicly** without API gateway authentication |
+| `8081` | Auth Service | Internal Bridge / Host | Handles login and token generation; keep behind SSL reverse proxy |
+| `8083` | File Service | Internal Bridge / Host | **Do not expose publicly** |
+| `5432` | PostgreSQL DB | Internal Bridge | Internal container access only; do not map to host |
 
-### Recommended Firewall Rules (UFW example)
+---
 
-```bash
-# Allow dashboard UI only from your home network
-sudo ufw allow from 192.168.1.0/24 to any port 5173
-sudo ufw deny 5173
+## Secret Key Security (Telegram & Groq AI)
 
-# Block backend port from all external access
-sudo ufw deny 8080
-```
+The `.env` file contains sensitive third-party API keys and SSH credentials:
+
+- `TELEGRAM_BOT_TOKEN` & `TELEGRAM_CHAT_ID`: Controls bot notifications and administrative commands.
+- `GROQ_API_KEY`: Authorizes LLM function calling requests to Groq Cloud.
+- `SSH_HOST`, `SSH_PORT`, `SSH_USER`, `SSH_PASSWORD`, `SSH_FALLBACK_HOST`, `SSH_FALLBACK_PORT`: Grants primary LAN and Ngrok remote shell access.
+- `JWT_SECRET` & `APP_AUTH_PASSWORD`: Authenticates single-user sessions and signs API JWT Bearer tokens.
+
+**Security Requirements:**
+
+1. Never commit `.env` or hardcode tokens in Java source code.
+2. Restrict Telegram bot access by validating `chatId` against `TELEGRAM_CHAT_ID` before processing AI commands.
 
 ---
 

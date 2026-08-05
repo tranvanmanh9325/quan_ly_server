@@ -47,7 +47,7 @@ public class TelegramNotificationService {
 
     public TelegramNotificationService(TelegramConfigRepository configRepository) {
         this.configRepository = configRepository;
-        this.restClient = RestClient.create();
+        this.restClient = RestClientFactory.create(5_000, 10_000);
     }
 
     // ─── Public API ──────────────────────────────────────────────────────────

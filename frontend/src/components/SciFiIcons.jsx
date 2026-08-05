@@ -1,29 +1,359 @@
 import React from 'react';
 
-// 1. Custom Sci-Fi Hexagonal Shield Icon for Systemd Services
+// ═══════════════════════════════════════════════════════════════
+//  CUSTOM SCI-FI / CYBERPUNK SVG ICON LIBRARY
+//  All icons are hand-crafted SVG paths — zero external dependencies.
+//  Each icon is unique and purpose-built for its section.
+// ═══════════════════════════════════════════════════════════════
+
+// 1. OVERVIEW — Multi-layered Holographic HUD Grid with scan diamond
+export const SciFiDashboardIcon = ({ size = 20, color = 'currentColor' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    {/* Outer frame with corner cuts */}
+    <path d="M2 5L5 2H10V5H2ZM14 2H19L22 5V10H19V2ZM22 14V19L19 22H14V19H22ZM10 22H5L2 19V14H5V22Z"
+      fill={color} fillOpacity="0.08" stroke={color} strokeWidth="0.8" />
+    {/* Inner cross grid */}
+    <line x1="12" y1="2" x2="12" y2="22" stroke={color} strokeWidth="0.5" strokeOpacity="0.4" />
+    <line x1="2" y1="12" x2="22" y2="12" stroke={color} strokeWidth="0.5" strokeOpacity="0.4" />
+    {/* Center diamond reticle */}
+    <path d="M12 7L17 12L12 17L7 12L12 7Z" stroke={color} strokeWidth="1.2" fill={color} fillOpacity="0.1" />
+    {/* Corner data blocks */}
+    <rect x="3" y="3" width="3" height="3" fill={color} fillOpacity="0.6" />
+    <rect x="18" y="3" width="3" height="3" fill={color} fillOpacity="0.3" />
+    <rect x="3" y="18" width="3" height="3" fill={color} fillOpacity="0.3" />
+    <rect x="18" y="18" width="3" height="3" fill={color} fillOpacity="0.6" />
+    {/* Center dot */}
+    <circle cx="12" cy="12" r="1.5" fill={color} />
+  </svg>
+);
+
+// 2. PROCESSES — ECG Pulse with circuit node branches
+export const SciFiPulseIcon = ({ size = 20, color = 'currentColor' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    {/* Circuit base lines */}
+    <line x1="2" y1="18" x2="4" y2="18" stroke={color} strokeWidth="1" strokeOpacity="0.5" />
+    <line x1="20" y1="18" x2="22" y2="18" stroke={color} strokeWidth="1" strokeOpacity="0.5" />
+    {/* ECG waveform — sharp medical spike style */}
+    <polyline points="2,14 5,14 7,18 8,6 9,18 11,14 13,14 15,10 16,16 17,14 22,14"
+      stroke={color} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+    {/* Node branch dots */}
+    <circle cx="8" cy="6" r="1.5" fill={color} />
+    <circle cx="15" cy="10" r="1" fill={color} fillOpacity="0.7" />
+    {/* Bottom circuit traces */}
+    <path d="M4 20H8M12 20H16M20 20H22" stroke={color} strokeWidth="0.8" strokeOpacity="0.4" strokeLinecap="round" />
+  </svg>
+);
+
+// 3. SERVICES — Server blade rack with power LEDs and activity bars
+export const SciFiServerRackIcon = ({ size = 20, color = 'currentColor' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    {/* Rack chassis outline with vents */}
+    <rect x="2" y="2" width="20" height="6" rx="1" stroke={color} strokeWidth="1.4" fill={color} fillOpacity="0.06" />
+    <rect x="2" y="10" width="20" height="6" rx="1" stroke={color} strokeWidth="1.4" fill={color} fillOpacity="0.06" />
+    <rect x="2" y="18" width="20" height="4" rx="1" stroke={color} strokeWidth="1.4" fill={color} fillOpacity="0.06" />
+    {/* Row 1: status LED + activity bar */}
+    <circle cx="5" cy="5" r="1.2" fill={color} />
+    <rect x="8" y="4" width="7" height="2" rx="0.5" fill={color} fillOpacity="0.5" />
+    <line x1="17" y1="5" x2="20" y2="5" stroke={color} strokeWidth="1.4" strokeLinecap="round" />
+    {/* Row 2: status LED + activity bar */}
+    <circle cx="5" cy="13" r="1.2" fill={color} fillOpacity="0.5" />
+    <rect x="8" y="12" width="4" height="2" rx="0.5" fill={color} fillOpacity="0.35" />
+    <line x1="15" y1="13" x2="20" y2="13" stroke={color} strokeWidth="1.4" strokeLinecap="round" />
+    {/* Row 3: eject slot indicator */}
+    <line x1="5" y1="20" x2="10" y2="20" stroke={color} strokeWidth="1.2" strokeLinecap="round" />
+    <line x1="13" y1="20" x2="18" y2="20" stroke={color} strokeWidth="1.2" strokeLinecap="round" strokeOpacity="0.5" />
+  </svg>
+);
+
+// 4. FILE MANAGER — Data crystal shard with grid-scan overlay
+export const SciFiFolderIcon = ({ size = 20, color = 'currentColor' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    {/* Crystal shard body */}
+    <path d="M3 8C3 6.9 3.9 6 5 6H9L11 4H19C20.1 4 21 4.9 21 6V18C21 19.1 20.1 20 19 20H5C3.9 20 3 19.1 3 18V8Z"
+      stroke={color} strokeWidth="1.4" fill={color} fillOpacity="0.07" />
+    {/* Internal scan grid lines */}
+    <line x1="3" y1="11" x2="21" y2="11" stroke={color} strokeWidth="0.6" strokeOpacity="0.35" strokeDasharray="2 2" />
+    <line x1="3" y1="15" x2="21" y2="15" stroke={color} strokeWidth="0.6" strokeOpacity="0.35" strokeDasharray="2 2" />
+    <line x1="9" y1="11" x2="9" y2="20" stroke={color} strokeWidth="0.6" strokeOpacity="0.35" strokeDasharray="2 2" />
+    <line x1="15" y1="11" x2="15" y2="20" stroke={color} strokeWidth="0.6" strokeOpacity="0.35" strokeDasharray="2 2" />
+    {/* Data node corners */}
+    <circle cx="9" cy="11" r="1" fill={color} />
+    <circle cx="15" cy="15" r="1" fill={color} fillOpacity="0.7" />
+  </svg>
+);
+
+// 5. DOCKER CONTAINERS — Hexagonal pod cluster with network mesh connections
+// Unique design: 3 hexagonal pods interconnected via circuit traces, representing containers in a cluster
+export const SciFiContainerIcon = ({ size = 20, color = 'currentColor' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    {/* Center pod — main container */}
+    <polygon points="12,3 15.5,5 15.5,9 12,11 8.5,9 8.5,5"
+      stroke={color} strokeWidth="1.3" fill={color} fillOpacity="0.15" />
+    {/* Center LED dot */}
+    <circle cx="12" cy="7" r="1.2" fill={color} />
+    {/* Bottom-left pod */}
+    <polygon points="5.5,13 8,14.5 8,17.5 5.5,19 3,17.5 3,14.5"
+      stroke={color} strokeWidth="1.1" fill={color} fillOpacity="0.08" />
+    <circle cx="5.5" cy="16" r="0.8" fill={color} fillOpacity="0.7" />
+    {/* Bottom-right pod */}
+    <polygon points="18.5,13 21,14.5 21,17.5 18.5,19 16,17.5 16,14.5"
+      stroke={color} strokeWidth="1.1" fill={color} fillOpacity="0.08" />
+    <circle cx="18.5" cy="16" r="0.8" fill={color} fillOpacity="0.7" />
+    {/* Network connection lines — center → bottom-left */}
+    <line x1="9" y1="10.5" x2="7" y2="13.5" stroke={color} strokeWidth="1" strokeDasharray="1.5 1.5" strokeLinecap="round" />
+    {/* Network connection lines — center → bottom-right */}
+    <line x1="15" y1="10.5" x2="17" y2="13.5" stroke={color} strokeWidth="1" strokeDasharray="1.5 1.5" strokeLinecap="round" />
+    {/* Bottom connection — bottom-left → bottom-right */}
+    <line x1="8" y1="17" x2="16" y2="17" stroke={color} strokeWidth="0.8" strokeDasharray="1.5 1.5" strokeLinecap="round" strokeOpacity="0.6" />
+  </svg>
+);
+
+// 6. GLOBAL MAP — Orbital scan sphere with meridian rings and target reticle
+export const SciFiGlobeIcon = ({ size = 20, color = 'currentColor' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    {/* Main sphere */}
+    <circle cx="12" cy="12" r="9" stroke={color} strokeWidth="1.4" fill={color} fillOpacity="0.05" />
+    {/* Longitude arcs */}
+    <ellipse cx="12" cy="12" rx="4" ry="9" stroke={color} strokeWidth="0.9" strokeDasharray="2 1.5" />
+    {/* Latitude rings */}
+    <ellipse cx="12" cy="9" rx="7.7" ry="2.5" stroke={color} strokeWidth="0.8" strokeOpacity="0.6" />
+    <ellipse cx="12" cy="15" rx="6.2" ry="2" stroke={color} strokeWidth="0.6" strokeOpacity="0.4" />
+    {/* Equator line */}
+    <line x1="3" y1="12" x2="21" y2="12" stroke={color} strokeWidth="0.9" />
+    {/* Target crosshair at center */}
+    <circle cx="12" cy="12" r="2" stroke={color} strokeWidth="1" fill="none" />
+    <circle cx="12" cy="12" r="0.8" fill={color} />
+    {/* North/south poles */}
+    <circle cx="12" cy="3" r="0.8" fill={color} fillOpacity="0.5" />
+    <circle cx="12" cy="21" r="0.8" fill={color} fillOpacity="0.5" />
+  </svg>
+);
+
+// 7. TERMINAL CONSOLE — Cyberpunk CRT terminal with scanline matrix
+export const SciFiConsoleIcon = ({ size = 16, color = 'var(--accent-cyan)' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    {/* Monitor bezel with chamfered corners */}
+    <path d="M2 4C2 3.4 2.4 3 3 3H21C21.6 3 22 3.4 22 4V17C22 17.6 21.6 18 21 18H13V20H15C15.6 20 16 20.4 16 21H8C8 20.4 8.4 20 9 20H11V18H3C2.4 18 2 17.6 2 17V4Z"
+      stroke={color} strokeWidth="1.4" fill="rgba(0,0,0,0.6)" />
+    {/* CRT scanlines — subtle horizontal bands */}
+    <line x1="4" y1="7" x2="20" y2="7" stroke={color} strokeWidth="0.4" strokeOpacity="0.25" />
+    <line x1="4" y1="10" x2="20" y2="10" stroke={color} strokeWidth="0.4" strokeOpacity="0.25" />
+    <line x1="4" y1="13" x2="20" y2="13" stroke={color} strokeWidth="0.4" strokeOpacity="0.25" />
+    {/* Prompt chevron "> " */}
+    <path d="M5 9L9 12L5 15" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    {/* Cursor block */}
+    <rect x="11" y="10.5" width="5" height="2.5" rx="0.5" fill={color} fillOpacity="0.7" />
+  </svg>
+);
+
+// 8. SECURITY & LOGS — DNA Helix Shield with lock core
+export const SciFiCyberLockIcon = ({ size = 20, color = 'currentColor' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    {/* Hexagonal shield outline */}
+    <path d="M12 2L4 6V13C4 17.4 7.4 21.5 12 23C16.6 21.5 20 17.4 20 13V6L12 2Z"
+      stroke={color} strokeWidth="1.4" strokeLinejoin="round" fill={color} fillOpacity="0.06" />
+    {/* Inner shield ring */}
+    <path d="M12 5.5L6.5 8V13C6.5 16 8.8 18.8 12 20C15.2 18.8 17.5 16 17.5 13V8L12 5.5Z"
+      stroke={color} strokeWidth="0.7" strokeDasharray="2 1.5" fill="none" />
+    {/* Lock shackle */}
+    <path d="M9.5 11V9.5C9.5 7.8 10.6 6.5 12 6.5C13.4 6.5 14.5 7.8 14.5 9.5V11"
+      stroke={color} strokeWidth="1.3" strokeLinecap="round" />
+    {/* Lock body */}
+    <rect x="8.5" y="11" width="7" height="5.5" rx="1" stroke={color} strokeWidth="1.3" fill={color} fillOpacity="0.12" />
+    {/* Keyhole */}
+    <circle cx="12" cy="13.2" r="1.1" fill={color} />
+    <line x1="12" y1="14.3" x2="12" y2="15.8" stroke={color} strokeWidth="1.1" strokeLinecap="round" />
+  </svg>
+);
+
+// 9. SETTINGS — Quantum circuit gear with inner processor die
+export const SciFiSettingsIcon = ({ size = 20, color = 'currentColor' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    {/* Gear teeth — 8-tooth cog built from polygon */}
+    <path d="M12 2L13.4 5.2L16.8 4.4L17.1 7.9L20.4 9.1L19 12L20.4 14.9L17.1 16.1L16.8 19.6L13.4 18.8L12 22L10.6 18.8L7.2 19.6L6.9 16.1L3.6 14.9L5 12L3.6 9.1L6.9 7.9L7.2 4.4L10.6 5.2L12 2Z"
+      stroke={color} strokeWidth="1.2" fill={color} fillOpacity="0.07" strokeLinejoin="round" />
+    {/* Processor die — inner square IC */}
+    <rect x="8.5" y="8.5" width="7" height="7" rx="1" stroke={color} strokeWidth="1.1" fill={color} fillOpacity="0.1" />
+    {/* IC pin traces */}
+    <line x1="10" y1="8.5" x2="10" y2="6.5" stroke={color} strokeWidth="0.9" strokeOpacity="0.5" />
+    <line x1="14" y1="8.5" x2="14" y2="6.5" stroke={color} strokeWidth="0.9" strokeOpacity="0.5" />
+    <line x1="10" y1="15.5" x2="10" y2="17.5" stroke={color} strokeWidth="0.9" strokeOpacity="0.5" />
+    <line x1="14" y1="15.5" x2="14" y2="17.5" stroke={color} strokeWidth="0.9" strokeOpacity="0.5" />
+    <line x1="8.5" y1="10" x2="6.5" y2="10" stroke={color} strokeWidth="0.9" strokeOpacity="0.5" />
+    <line x1="8.5" y1="14" x2="6.5" y2="14" stroke={color} strokeWidth="0.9" strokeOpacity="0.5" />
+    <line x1="15.5" y1="10" x2="17.5" y2="10" stroke={color} strokeWidth="0.9" strokeOpacity="0.5" />
+    <line x1="15.5" y1="14" x2="17.5" y2="14" stroke={color} strokeWidth="0.9" strokeOpacity="0.5" />
+    {/* Core chip cell */}
+    <rect x="10.5" y="10.5" width="3" height="3" fill={color} fillOpacity="0.5" />
+  </svg>
+);
+
+// 10. NETWORK PORT — Ethernet port with signal waves
+export const SciFiPortIcon = ({ size = 20, color = 'var(--accent-cyan)' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
+    {/* RJ45 jack body */}
+    <rect x="5" y="4" width="14" height="12" rx="1.5" stroke={color} strokeWidth="1.4" fill={color} fillOpacity="0.06" />
+    {/* Contact pins inside jack */}
+    <line x1="8" y1="8" x2="8" y2="12" stroke={color} strokeWidth="1" strokeLinecap="round" />
+    <line x1="10.5" y1="7" x2="10.5" y2="12" stroke={color} strokeWidth="1" strokeLinecap="round" />
+    <line x1="13" y1="8" x2="13" y2="12" stroke={color} strokeWidth="1" strokeLinecap="round" />
+    <line x1="15.5" y1="7" x2="15.5" y2="12" stroke={color} strokeWidth="1" strokeLinecap="round" />
+    {/* Clip latch */}
+    <path d="M9 16V19H15V16" stroke={color} strokeWidth="1.1" strokeLinejoin="round" />
+    {/* Signal waves emanating from port */}
+    <path d="M2 10C2 10 2.5 8 4 8" stroke={color} strokeWidth="1" strokeLinecap="round" strokeOpacity="0.6" />
+    <path d="M22 10C22 10 21.5 8 20 8" stroke={color} strokeWidth="1" strokeLinecap="round" strokeOpacity="0.6" />
+  </svg>
+);
+
+// 11. TERMINAL LOG — Scrolling data feed with typewriter bar
+export const SciFiTerminalIcon = ({ size = 20, color = 'var(--accent-green)' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
+    {/* Screen frame */}
+    <rect x="3" y="3" width="18" height="15" rx="1.5" stroke={color} strokeWidth="1.4" fill="rgba(0,0,0,0.5)" />
+    {/* Text rows at varying widths to simulate code */}
+    <line x1="6" y1="7.5" x2="14" y2="7.5" stroke={color} strokeWidth="1.1" strokeLinecap="round" />
+    <line x1="6" y1="10.5" x2="17" y2="10.5" stroke={color} strokeWidth="1.1" strokeLinecap="round" strokeOpacity="0.7" />
+    <line x1="6" y1="13.5" x2="11" y2="13.5" stroke={color} strokeWidth="1.1" strokeLinecap="round" strokeOpacity="0.5" />
+    {/* Blinking cursor */}
+    <rect x="12" y="12.5" width="3" height="2" rx="0.3" fill={color} />
+    {/* Stand */}
+    <path d="M9 18V20H15V18" stroke={color} strokeWidth="1.2" strokeLinejoin="round" />
+    <line x1="7" y1="20" x2="17" y2="20" stroke={color} strokeWidth="1.2" strokeLinecap="round" />
+  </svg>
+);
+
+// 12. SEARCH — Target reticle with diamond crosshair and scan ring
+export const SciFiSearchIcon = ({ size = 16, color = 'var(--accent-cyan)' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
+    {/* Outer scan ring dashed */}
+    <circle cx="10.5" cy="10.5" r="8" stroke={color} strokeWidth="1" strokeDasharray="5 2" />
+    {/* Inner target ring */}
+    <circle cx="10.5" cy="10.5" r="4.5" stroke={color} strokeWidth="1.2" />
+    {/* Diamond center crosshair */}
+    <path d="M10.5 7.5L13.5 10.5L10.5 13.5L7.5 10.5L10.5 7.5Z" stroke={color} strokeWidth="0.9" fill={color} fillOpacity="0.15" />
+    {/* Tick marks at 90° */}
+    <line x1="10.5" y1="2" x2="10.5" y2="4" stroke={color} strokeWidth="1.2" strokeLinecap="round" />
+    <line x1="19" y1="10.5" x2="17" y2="10.5" stroke={color} strokeWidth="1.2" strokeLinecap="round" />
+    {/* Search handle */}
+    <line x1="17" y1="17" x2="22" y2="22" stroke={color} strokeWidth="2" strokeLinecap="round" />
+    <circle cx="10.5" cy="10.5" r="1.2" fill={color} />
+  </svg>
+);
+
+// 13. KILL / DANGER — Hazard triangle with exclamation bolt
+export const SciFiKillIcon = ({ size = 16, color = 'var(--accent-pink)' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
+    {/* Biohazard-style warning triangle */}
+    <path d="M12 2L2 21H22L12 2Z" stroke={color} strokeWidth="1.5" fill="rgba(255,0,85,0.08)" strokeLinejoin="round" />
+    {/* Inner triangle detail */}
+    <path d="M12 8L6.5 18.5H17.5L12 8Z" stroke={color} strokeWidth="0.7" strokeOpacity="0.4" strokeLinejoin="round" fill="none" />
+    {/* Lightning bolt in center */}
+    <path d="M13 10L10 14H12.5L11 18L14 13.5H11.5L13 10Z" fill={color} stroke={color} strokeWidth="0.5" />
+  </svg>
+);
+
+// 14. REFRESH / SYNC — Orbital sync arrows with energy pulse
+export const SciFiRefreshIcon = ({ size = 16, color = 'var(--accent-cyan)' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
+    {/* Top arc arrow */}
+    <path d="M20 8C18.5 5 15.5 3 12 3C8 3 5 5.5 3.5 9" stroke={color} strokeWidth="1.6" strokeLinecap="round" />
+    <polygon points="21,4 20,9 16,8" fill={color} />
+    {/* Bottom arc arrow */}
+    <path d="M4 16C5.5 19 8.5 21 12 21C16 21 19 18.5 20.5 15" stroke={color} strokeWidth="1.6" strokeLinecap="round" />
+    <polygon points="3,20 4,15 8,16" fill={color} />
+    {/* Center pulse dot */}
+    <circle cx="12" cy="12" r="2" stroke={color} strokeWidth="1" fill={color} fillOpacity="0.2" />
+  </svg>
+);
+
+// 15. DOWNLOAD — Data stream downlink with beam effect
+export const SciFiDownloadIcon = ({ size = 16, color = 'var(--accent-cyan)' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
+    {/* Downlink beam */}
+    <line x1="12" y1="2" x2="12" y2="14" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
+    {/* Arrow head */}
+    <path d="M7 10L12 16L17 10" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    {/* Receiving tray with corner notches */}
+    <path d="M3 19H21M3 19V21H21V19" stroke={color} strokeWidth="1.6" strokeLinejoin="round" strokeLinecap="round" />
+    {/* Side beam decorations */}
+    <line x1="7" y1="5" x2="7" y2="8" stroke={color} strokeWidth="0.8" strokeOpacity="0.4" strokeLinecap="round" />
+    <line x1="17" y1="5" x2="17" y2="8" stroke={color} strokeWidth="0.8" strokeOpacity="0.4" strokeLinecap="round" />
+  </svg>
+);
+
+// 16. STATUS BADGE — Pulsing quantum orb
+export const SciFiPulseBadge = ({ size = 16, color = 'var(--accent-green)' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
+    {/* Outer glow ring */}
+    <circle cx="12" cy="12" r="9" stroke={color} strokeWidth="1" strokeDasharray="4 3" />
+    {/* Mid ring */}
+    <circle cx="12" cy="12" r="6" stroke={color} strokeWidth="1" strokeOpacity="0.5" />
+    {/* Core orb */}
+    <circle cx="12" cy="12" r="3.5" fill={color} fillOpacity="0.9" />
+    {/* Specular highlight */}
+    <circle cx="10.5" cy="10.5" r="1" fill="white" fillOpacity="0.5" />
+  </svg>
+);
+
+// 17. FILE ICON — Crystal data fragment
+export const SciFiFileIcon = ({ size = 20, color = 'var(--accent-cyan)' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
+    <path d="M6 2H15L20 7V22H6V2Z" stroke={color} strokeWidth="1.4" fill="rgba(0, 243, 255, 0.05)" strokeLinejoin="round" />
+    <path d="M15 2V7H20" stroke={color} strokeWidth="1.4" strokeLinejoin="round" />
+    {/* Dog-ear fold detail */}
+    <path d="M15 2L13 4.5L15 7" stroke={color} strokeWidth="0.6" strokeOpacity="0.4" />
+    <line x1="9" y1="12" x2="17" y2="12" stroke={color} strokeWidth="1.1" strokeLinecap="round" />
+    <line x1="9" y1="15" x2="15" y2="15" stroke={color} strokeWidth="1.1" strokeLinecap="round" strokeOpacity="0.7" />
+    <line x1="9" y1="18" x2="12" y2="18" stroke={color} strokeWidth="1.1" strokeLinecap="round" strokeOpacity="0.5" />
+  </svg>
+);
+
+// 18. HOME — Futuristic habitat module with signal tower
+export const SciFiHomeIcon = ({ size = 16, color = 'var(--accent-cyan)' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
+    {/* Roof gable */}
+    <path d="M3 10L12 3L21 10" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    {/* Wall body */}
+    <rect x="4" y="10" width="16" height="11" rx="0.5" stroke={color} strokeWidth="1.4" fill={color} fillOpacity="0.06" />
+    {/* Door */}
+    <rect x="9.5" y="15" width="5" height="6" rx="0.5" stroke={color} strokeWidth="1.1" fill={color} fillOpacity="0.1" />
+    {/* Window */}
+    <rect x="5" y="11.5" width="4" height="3.5" rx="0.3" stroke={color} strokeWidth="0.9" fill={color} fillOpacity="0.15" />
+    <rect x="15" y="11.5" width="4" height="3.5" rx="0.3" stroke={color} strokeWidth="0.9" fill={color} fillOpacity="0.15" />
+  </svg>
+);
+
+// 19. PLAY — Launch thrust nozzle
+export const SciFiPlayIcon = ({ size = 14, color = 'var(--accent-green)' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
+    <path d="M6 3L20 12L6 21V3Z" fill={color} fillOpacity="0.85" stroke={color} strokeWidth="1.3" strokeLinejoin="round" />
+    <line x1="6" y1="9" x2="14" y2="12" stroke="rgba(255,255,255,0.2)" strokeWidth="1" strokeLinecap="round" />
+  </svg>
+);
+
+// 20. STOP — Emergency halt block with X glyph
+export const SciFiStopIcon = ({ size = 14, color = 'var(--accent-pink)' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
+    <rect x="4" y="4" width="16" height="16" rx="2" fill={color} fillOpacity="0.15" stroke={color} strokeWidth="1.5" />
+    <line x1="9" y1="9" x2="15" y2="15" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
+    <line x1="15" y1="9" x2="9" y2="15" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
+  </svg>
+);
+
+// 21. SHIELD — Hexagonal sci-fi shield for Systemd services
 export const SciFiShieldIcon = ({ size = 20, color = 'var(--accent-cyan)' }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
-    <path d="M12 2L3 6V12C3 17.52 6.84 21.74 12 23C17.16 21.74 21 17.52 21 12V6L12 2Z" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" fill="rgba(0, 243, 255, 0.05)" />
-    <path d="M12 6L6 9.5V13.5C6 16.5 8.5 19 12 20C15.5 19 18 16.5 18 13.5V9.5L12 6Z" stroke={color} strokeWidth="1" strokeDasharray="2 2" />
+    <path d="M12 2L3 6V12C3 17.52 6.84 21.74 12 23C17.16 21.74 21 17.52 21 12V6L12 2Z"
+      stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" fill="rgba(0, 243, 255, 0.05)" />
+    <path d="M12 6L6 9.5V13.5C6 16.5 8.5 19 12 20C15.5 19 18 16.5 18 13.5V9.5L12 6Z"
+      stroke={color} strokeWidth="1" strokeDasharray="2 2" />
     <circle cx="12" cy="12" r="2.5" fill={color} />
     <path d="M12 8V9.5M12 14.5V16M8 12H9.5M14.5 12H16" stroke={color} strokeWidth="1" />
   </svg>
 );
 
-// 2. Custom Sci-Fi Data Container Icon for Docker
-export const SciFiContainerIcon = ({ size = 20, color = 'currentColor' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
-    <path d="M12 2L2 7V17L12 22L22 17V7L12 2Z" stroke={color} strokeWidth="1.5" strokeLinejoin="round" fill={color} fillOpacity="0.08" />
-    <path d="M2 7L12 12L22 7" stroke={color} strokeWidth="1.5" strokeLinejoin="round" />
-    <path d="M12 12V22" stroke={color} strokeWidth="1.5" strokeLinejoin="round" />
-    <path d="M7 4.5L17 9.5M7 14.5L17 19.5" stroke={color} strokeWidth="1" strokeOpacity="0.6" strokeDasharray="2 2" />
-    <circle cx="12" cy="7" r="1.5" fill={color} />
-    <circle cx="7" cy="14.5" r="1" fill={color} />
-    <circle cx="17" cy="14.5" r="1" fill={color} />
-  </svg>
-);
-
-// 3. Custom Sci-Fi Chrono Target Icon for Systemd Timers
+// 22. CHRONO TIMER — Sci-fi chrono target icon for Systemd Timers
 export const SciFiChronoIcon = ({ size = 20, color = 'var(--accent-cyan)' }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
     <circle cx="12" cy="12" r="9" stroke={color} strokeWidth="1.5" strokeDasharray="6 2" fill="rgba(0, 243, 255, 0.05)" />
@@ -34,193 +364,17 @@ export const SciFiChronoIcon = ({ size = 20, color = 'var(--accent-cyan)' }) => 
   </svg>
 );
 
-// 4. Custom Sci-Fi Quantum Core Icon for Host Runtimes
+// 23. QUANTUM CORE — Quantum energy icon
 export const SciFiQuantumIcon = ({ size = 20, color = 'var(--accent-magenta)' }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
-    <path d="M13 2L3 14H12L11 22L21 10H12L13 2Z" fill="rgba(255, 0, 85, 0.15)" stroke={color} strokeWidth="1.5" strokeLinejoin="round" />
+    <path d="M13 2L3 14H12L11 22L21 10H12L13 2Z"
+      fill="rgba(255, 0, 85, 0.15)" stroke={color} strokeWidth="1.5" strokeLinejoin="round" />
     <circle cx="12" cy="12" r="1.5" fill="#fff" />
     <path d="M7 6L5 4M17 18L19 20M4 17L2 19M20 7L22 5" stroke={color} strokeWidth="1" strokeLinecap="round" />
   </svg>
 );
 
-// 5. Custom Sci-Fi Hologram Grid Icon for Sidebar Overview
-export const SciFiDashboardIcon = ({ size = 20, color = 'currentColor' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <rect x="3" y="3" width="8" height="8" rx="1" stroke={color} strokeWidth="1.5" fill="rgba(0,243,255,0.05)" />
-    <rect x="13" y="3" width="8" height="5" rx="1" stroke={color} strokeWidth="1.5" fill="rgba(0,243,255,0.05)" />
-    <rect x="13" y="10" width="8" height="11" rx="1" stroke={color} strokeWidth="1.5" fill="rgba(0,243,255,0.05)" />
-    <rect x="3" y="13" width="8" height="8" rx="1" stroke={color} strokeWidth="1.5" fill="rgba(0,243,255,0.05)" />
-    <circle cx="7" cy="7" r="1.5" fill={color} />
-    <circle cx="17" cy="15.5" r="1.5" fill={color} />
-  </svg>
-);
-
-// 6. Custom Sci-Fi ECG Waveform Icon for Sidebar Processes
-export const SciFiPulseIcon = ({ size = 20, color = 'currentColor' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <path d="M2 12H6L9 3L13 21L16 10L18 14H22" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-    <circle cx="9" cy="3" r="1.5" fill={color} />
-    <circle cx="13" cy="21" r="1.5" fill={color} />
-  </svg>
-);
-
-// 7. Custom Sci-Fi Server Blade Rack Icon for Sidebar Services
-export const SciFiServerRackIcon = ({ size = 20, color = 'currentColor' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <rect x="3" y="3" width="18" height="5" rx="1" stroke={color} strokeWidth="1.5" />
-    <rect x="3" y="10" width="18" height="5" rx="1" stroke={color} strokeWidth="1.5" />
-    <rect x="3" y="17" width="18" height="4" rx="1" stroke={color} strokeWidth="1.5" />
-    <circle cx="6" cy="5.5" r="1" fill={color} />
-    <circle cx="9" cy="5.5" r="1" fill={color} />
-    <circle cx="6" cy="12.5" r="1" fill={color} />
-    <circle cx="9" cy="12.5" r="1" fill={color} />
-    <circle cx="6" cy="19" r="1" fill={color} />
-    <line x1="15" y1="5.5" x2="18" y2="5.5" stroke={color} strokeWidth="1.5" strokeLinecap="round" />
-    <line x1="15" y1="12.5" x2="18" y2="12.5" stroke={color} strokeWidth="1.5" strokeLinecap="round" />
-    <line x1="15" y1="19" x2="18" y2="19" stroke={color} strokeWidth="1.5" strokeLinecap="round" />
-  </svg>
-);
-
-// 8. Custom Sci-Fi Cyber Shield Lock Icon for Sidebar Security
-export const SciFiCyberLockIcon = ({ size = 20, color = 'currentColor' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <path d="M12 2L4 5V11C4 16.5 7.5 20.5 12 22C16.5 20.5 20 16.5 20 11V5L12 2Z" stroke={color} strokeWidth="1.5" strokeLinejoin="round" />
-    <rect x="9" y="10" width="6" height="5" rx="1" stroke={color} strokeWidth="1.2" />
-    <path d="M10 10V8C10 6.9 10.9 6 12 6C13.1 6 14 6.9 14 8V10" stroke={color} strokeWidth="1.2" />
-    <circle cx="12" cy="12.5" r="1" fill={color} />
-  </svg>
-);
-
-// 9. Custom Sci-Fi Network Port Icon
-export const SciFiPortIcon = ({ size = 20, color = 'var(--accent-cyan)' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
-    <rect x="4" y="4" width="16" height="16" rx="2" stroke={color} strokeWidth="1.5" fill="rgba(0,243,255,0.05)" />
-    <path d="M9 9H15M9 12H15M9 15H13" stroke={color} strokeWidth="1.5" strokeLinecap="round" />
-    <circle cx="17" cy="15" r="1" fill={color} />
-  </svg>
-);
-
-// 10. Custom Sci-Fi Terminal Log Icon
-export const SciFiTerminalIcon = ({ size = 20, color = 'var(--accent-green)' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
-    <rect x="3" y="4" width="18" height="16" rx="2" stroke={color} strokeWidth="1.5" fill="rgba(0,0,0,0.4)" />
-    <path d="M7 9L10 12L7 15" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-    <line x1="12" y1="15" x2="16" y2="15" stroke={color} strokeWidth="1.5" strokeLinecap="round" />
-  </svg>
-);
-
-// 11. Custom Sci-Fi Target Search Reticle Icon
-export const SciFiSearchIcon = ({ size = 16, color = 'var(--accent-cyan)' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
-    <circle cx="11" cy="11" r="7" stroke={color} strokeWidth="1.5" strokeDasharray="10 2" />
-    <line x1="16" y1="16" x2="22" y2="22" stroke={color} strokeWidth="2" strokeLinecap="round" />
-    <circle cx="11" cy="11" r="2" fill={color} />
-  </svg>
-);
-
-// 12. Custom Sci-Fi Process Kill / Danger Icon
-export const SciFiKillIcon = ({ size = 16, color = 'var(--accent-pink)' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
-    <polygon points="12,2 22,22 2,22" stroke={color} strokeWidth="1.5" fill="rgba(255,0,85,0.1)" strokeLinejoin="round" />
-    <line x1="12" y1="9" x2="12" y2="15" stroke={color} strokeWidth="2" strokeLinecap="round" />
-    <circle cx="12" cy="18" r="1" fill={color} />
-  </svg>
-);
-
-// 13. Custom Sci-Fi Refresh Sync Icon
-export const SciFiRefreshIcon = ({ size = 16, color = 'var(--accent-cyan)' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
-    <path d="M21.5 2V6H17.5M2.5 22V18H6.5" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-    <path d="M21.05 11A9 9 0 005.64 5.64L2.5 6M2.95 13A9 9 0 0018.36 18.36L21.5 18" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-  </svg>
-);
-
-// 14. Custom Sci-Fi Download / Export Icon
-export const SciFiDownloadIcon = ({ size = 16, color = 'var(--accent-cyan)' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
-    <path d="M12 3V15M12 15L7 10M12 15L17 10" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-    <path d="M3 17V19C3 20.1 3.9 21 5 21H19C20.1 21 21 20.1 21 19V17" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
-  </svg>
-);
-
-// 15. Custom Sci-Fi System Health Pulse Badge
-export const SciFiPulseBadge = ({ size = 16, color = 'var(--accent-green)' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
-    <circle cx="12" cy="12" r="8" stroke={color} strokeWidth="1.5" fill="rgba(0, 255, 157, 0.1)" />
-    <circle cx="12" cy="12" r="3" fill={color} />
-  </svg>
-);
-
-// 16. Custom Sci-Fi Web Command Console Terminal Icon
-export const SciFiConsoleIcon = ({ size = 16, color = 'var(--accent-cyan)' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
-    <rect x="2" y="3" width="20" height="18" rx="3" stroke={color} strokeWidth="1.5" fill="rgba(0,0,0,0.5)" />
-    <path d="M6 9L10 12L6 15" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-    <line x1="12" y1="15" x2="17" y2="15" stroke={color} strokeWidth="2" strokeLinecap="round" />
-  </svg>
-);
-
-// 17. Custom Sci-Fi Folder Icon for File Manager
-export const SciFiFolderIcon = ({ size = 20, color = 'currentColor' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
-    <path d="M3 6C3 4.89543 3.89543 4 5 4H9.58579C10.1162 4 10.625 4.21071 11 4.58579L12.4142 6H19C20.1046 6 21 6.89543 21 8V18C21 19.1046 20.1046 20 19 20H5C3.89543 20 3 19.1046 3 18V6Z" stroke={color} strokeWidth="1.6" fill={color} fillOpacity="0.15" />
-    <path d="M7 11H17M7 14H13" stroke={color} strokeWidth="1.4" strokeLinecap="round" strokeDasharray="2 2" />
-  </svg>
-);
-
-// 18. Custom Sci-Fi File Icon for File Manager
-export const SciFiFileIcon = ({ size = 20, color = 'var(--accent-cyan)' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
-    <path d="M14 2H6C4.89543 2 4 2.89543 4 4V20C4 21.1046 4.89543 22 6 22H18C19.1046 22 20 21.1046 20 20V8L14 2Z" stroke={color} strokeWidth="1.5" fill="rgba(0, 243, 255, 0.05)" />
-    <path d="M14 2V8H20" stroke={color} strokeWidth="1.5" strokeLinejoin="round" />
-    <line x1="8" y1="12" x2="16" y2="12" stroke={color} strokeWidth="1.2" strokeLinecap="round" />
-    <line x1="8" y1="15" x2="14" y2="15" stroke={color} strokeWidth="1.2" strokeLinecap="round" />
-    <line x1="8" y1="18" x2="11" y2="18" stroke={color} strokeWidth="1.2" strokeLinecap="round" />
-  </svg>
-);
-
-// 19. Custom Sci-Fi Home Icon
-export const SciFiHomeIcon = ({ size = 16, color = 'var(--accent-cyan)' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
-    <path d="M3 9.5L12 3L21 9.5V20C21 20.5523 20.5523 21 20 21H15V14H9V21H4C3.44772 21 3 20.5523 3 20V9.5Z" stroke={color} strokeWidth="1.5" strokeLinejoin="round" fill="rgba(0, 243, 255, 0.05)" />
-  </svg>
-);
-
-// 20. Custom Sci-Fi Play Icon
-export const SciFiPlayIcon = ({ size = 14, color = 'var(--accent-green)' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
-    <polygon points="5,3 19,12 5,21" fill={color} stroke={color} strokeWidth="1.5" strokeLinejoin="round" />
-  </svg>
-);
-
-// 21. Custom Sci-Fi Stop Icon
-export const SciFiStopIcon = ({ size = 14, color = 'var(--accent-pink)' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
-    <rect x="5" y="5" width="14" height="14" rx="2" fill={color} stroke={color} strokeWidth="1.5" />
-  </svg>
-);
-
-// 22. Custom Sci-Fi Globe Icon for Global Map
-export const SciFiGlobeIcon = ({ size = 20, color = 'currentColor' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
-    <circle cx="12" cy="12" r="9" stroke={color} strokeWidth="1.5" fill="rgba(0, 243, 255, 0.05)" />
-    <ellipse cx="12" cy="12" rx="9" ry="3.5" stroke={color} strokeWidth="1" strokeDasharray="3 1" />
-    <ellipse cx="12" cy="12" rx="3.5" ry="9" stroke={color} strokeWidth="1" strokeDasharray="3 1" />
-    <line x1="3" y1="12" x2="21" y2="12" stroke={color} strokeWidth="1.2" />
-    <line x1="12" y1="3" x2="12" y2="21" stroke={color} strokeWidth="1.2" />
-    <circle cx="12" cy="12" r="2" fill={color} />
-  </svg>
-);
-
-// 16. Sci-Fi Settings / Gear Icon — circuit cog with inner ring
-export const SciFiSettingsIcon = ({ size = 20, color = 'currentColor' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
-    <path d="M12 15.5C13.933 15.5 15.5 13.933 15.5 12C15.5 10.067 13.933 8.5 12 8.5C10.067 8.5 8.5 10.067 8.5 12C8.5 13.933 10.067 15.5 12 15.5Z" stroke={color} strokeWidth="1.5" fill={color} fillOpacity="0.12" />
-    <path d="M19.4 15C19.2669 15.3016 19.2272 15.6362 19.286 15.9606C19.3448 16.285 19.4995 16.5843 19.73 16.82L19.79 16.88C19.976 17.0657 20.1235 17.2863 20.2241 17.5291C20.3248 17.7719 20.3766 18.0322 20.3766 18.295C20.3766 18.5578 20.3248 18.8181 20.2241 19.0609C20.1235 19.3037 19.976 19.5243 19.79 19.71C19.6043 19.896 19.3837 20.0435 19.1409 20.1441C18.8981 20.2448 18.6378 20.2966 18.375 20.2966C18.1122 20.2966 17.8519 20.2448 17.6091 20.1441C17.3663 20.0435 17.1457 19.896 16.96 19.71L16.9 19.65C16.6643 19.4195 16.365 19.2648 16.0406 19.206C15.7162 19.1472 15.3816 19.1869 15.08 19.32C14.7842 19.4468 14.532 19.6572 14.3543 19.9255C14.1766 20.1938 14.0813 20.5082 14.08 20.83V21C14.08 21.5304 13.8693 22.0391 13.4942 22.4142C13.1191 22.7893 12.6104 23 12.08 23C11.5496 23 11.0409 22.7893 10.6658 22.4142C10.2907 22.0391 10.08 21.5304 10.08 21V20.91C10.0723 20.579 9.96512 20.258 9.77251 19.9887C9.5799 19.7194 9.31074 19.5143 9 19.4C8.69838 19.2669 8.36381 19.2272 8.03941 19.286C7.71502 19.3448 7.41568 19.4995 7.18 19.73L7.12 19.79C6.93425 19.976 6.71368 20.1235 6.47088 20.2241C6.22808 20.3248 5.96783 20.3766 5.705 20.3766C5.44217 20.3766 5.18192 20.3248 4.93912 20.2241C4.69632 20.1235 4.47575 19.976 4.29 19.79C4.10405 19.6043 3.95653 19.3837 3.85588 19.1409C3.75523 18.8981 3.70343 18.6378 3.70343 18.375C3.70343 18.1122 3.75523 17.8519 3.85588 17.6091C3.95653 17.3663 4.10405 17.1457 4.29 16.96L4.35 16.9C4.58054 16.6643 4.73519 16.365 4.794 16.0406C4.85282 15.7162 4.81312 15.3816 4.68 15.08C4.55324 14.7842 4.34276 14.532 4.07447 14.3543C3.80618 14.1766 3.49179 14.0813 3.17 14.08H3C2.46957 14.08 1.96086 13.8693 1.58579 13.4942C1.21071 13.1191 1 12.6104 1 12.08C1 11.5496 1.21071 11.0409 1.58579 10.6658C1.96086 10.2907 2.46957 10.08 3 10.08H3.09C3.42099 10.0723 3.742 9.96512 4.0113 9.77251C4.28059 9.5799 4.48572 9.31074 4.6 9C4.73312 8.69838 4.77282 8.36381 4.714 8.03941C4.65519 7.71502 4.50054 7.41568 4.27 7.18L4.21 7.12C4.02405 6.93425 3.87653 6.71368 3.77588 6.47088C3.67523 6.22808 3.62343 5.96783 3.62343 5.705C3.62343 5.44217 3.67523 5.18192 3.77588 4.93912C3.87653 4.69632 4.02405 4.47575 4.21 4.29C4.39575 4.10405 4.61632 3.95653 4.85912 3.85588C5.10192 3.75523 5.36217 3.70343 5.625 3.70343C5.88783 3.70343 6.14808 3.75523 6.39088 3.85588C6.63368 3.95653 6.85425 4.10405 7.04 4.29L7.1 4.35C7.33568 4.58054 7.63502 4.73519 7.95941 4.794C8.28381 4.85282 8.61838 4.81312 8.92 4.68H9C9.29577 4.55324 9.54802 4.34276 9.72569 4.07447C9.90337 3.80618 9.99872 3.49179 10 3.17V3C10 2.46957 10.2107 1.96086 10.5858 1.58579C10.9609 1.21071 11.4696 1 12 1C12.5304 1 13.0391 1.21071 13.4142 1.58579C13.7893 1.96086 14 2.46957 14 3V3.09C14.0013 3.41179 14.0966 3.72618 14.2743 3.99447C14.452 4.26276 14.7042 4.47324 15 4.6C15.3016 4.73312 15.6362 4.77282 15.9606 4.714C16.285 4.65519 16.5843 4.50054 16.82 4.27L16.88 4.21C17.0657 4.02405 17.2863 3.87653 17.5291 3.77588C17.7719 3.67523 18.0322 3.62343 18.295 3.62343C18.5578 3.62343 18.8181 3.67523 19.0609 3.77588C19.3037 3.87653 19.5243 4.02405 19.71 4.21C19.896 4.39575 20.0435 4.61632 20.1441 4.85912C20.2448 5.10192 20.2966 5.36217 20.2966 5.625C20.2966 5.88783 20.2448 6.14808 20.1441 6.39088C20.0435 6.63368 19.896 6.85425 19.71 7.04L19.65 7.1C19.4195 7.33568 19.2648 7.63502 19.206 7.95941C19.1472 8.28381 19.1869 8.61838 19.32 8.92V9C19.4468 9.29577 19.6572 9.54802 19.9255 9.72569C20.1938 9.90337 20.5082 9.99872 20.83 10H21C21.5304 10 22.0391 10.2107 22.4142 10.5858C22.7893 10.9609 23 11.4696 23 12C23 12.5304 22.7893 13.0391 22.4142 13.4142C22.0391 13.7893 21.5304 14 21 14H20.91C20.5882 14.0013 20.2738 14.0966 20.0055 14.2743C19.7372 14.452 19.5268 14.7042 19.4 15Z" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" fill={color} fillOpacity="0.05" />
-  </svg>
-);
-
-// 23. Custom Sci-Fi Telegram Telemetry Transmitter Icon
+// 24. TELEGRAM — Sci-fi signal transmitter icon
 export const SciFiTelegramIcon = ({ size = 20, color = 'var(--accent-cyan)' }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
     <path d="M22 2L11 13" stroke={color} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
@@ -230,7 +384,7 @@ export const SciFiTelegramIcon = ({ size = 20, color = 'var(--accent-cyan)' }) =
   </svg>
 );
 
-// 24. Custom Sci-Fi Info Badge Icon for About Section
+// 25. INFO — Hexagonal info badge
 export const SciFiInfoIcon = ({ size = 20, color = 'var(--accent-cyan)' }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
     <polygon points="12,2 21,7 21,17 12,22 3,17 3,7" stroke={color} strokeWidth="1.5" strokeLinejoin="round" fill="rgba(0, 243, 255, 0.06)" />
@@ -239,7 +393,7 @@ export const SciFiInfoIcon = ({ size = 20, color = 'var(--accent-cyan)' }) => (
   </svg>
 );
 
-// 25. Custom Sci-Fi Terminal Prompt Icon for Bot Commands
+// 26. TERMINAL PROMPT — CLI prompt chevron
 export const SciFiTerminalPromptIcon = ({ size = 16, color = 'var(--accent-cyan)' }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
     <path d="M4 17L10 12L4 7" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
@@ -247,4 +401,68 @@ export const SciFiTerminalPromptIcon = ({ size = 16, color = 'var(--accent-cyan)
   </svg>
 );
 
-
+// 27. LIGHTNING — Cyberpunk energy bolt
+export const SciFiLightningIcon = ({ size = 18, color = 'var(--accent-cyan)' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
+    <path d="M13 2L3 14H12L10 22L21 9H12L13 2Z"
+      fill="rgba(0, 243, 255, 0.18)" stroke={color} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M11 5L6 13H11.5L9.5 19L17 10.5H11.5L12.5 5Z"
+      stroke={color} strokeWidth="0.8" strokeDasharray="2 1" strokeOpacity="0.7" />
+    <circle cx="12" cy="11.5" r="1.5" fill="#fff" />
+    <path d="M2 2L4 4M20 20L22 22M2 22L4 20M20 2L22 4" stroke={color} strokeWidth="1" strokeOpacity="0.4" />
+  </svg>
+);
+
+// 28. LOGO ICON — Custom server rack hexagonal logo
+export const SciFiLogoIcon = ({ size = 26, color = 'var(--accent-cyan)' }) => (
+  <svg width={size} height={size} viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+    {/* Outer hexagon */}
+    <polygon points="32,3 58,18 58,46 32,61 6,46 6,18"
+      fill="rgba(5,8,16,0.9)" stroke={color} strokeWidth="3.5" strokeLinejoin="round" />
+    {/* Inner dashed hexagon */}
+    <polygon points="32,10 52,21.5 52,42.5 32,54 12,42.5 12,21.5"
+      fill="none" stroke={color} strokeWidth="1" strokeDasharray="4,2" opacity="0.5" />
+    {/* Server rack rows */}
+    <rect x="16" y="18" width="32" height="6" rx="1.5" fill="none" stroke={color} strokeWidth="2.5" />
+    <rect x="16" y="28" width="32" height="6" rx="1.5" fill="none" stroke={color} strokeWidth="2.5" />
+    <rect x="16" y="38" width="32" height="6" rx="1.5" fill="none" stroke={color} strokeWidth="2.5" />
+    {/* LED indicators */}
+    <circle cx="22" cy="21" r="2.5" fill="var(--accent-green)" />
+    <circle cx="22" cy="31" r="2.5" fill={color} />
+    <circle cx="22" cy="41" r="2.5" fill="var(--accent-green)" />
+    {/* Horizontal bar details */}
+    <line x1="28" y1="21" x2="40" y2="21" stroke={color} strokeWidth="2" strokeLinecap="round" />
+    <line x1="28" y1="31" x2="36" y2="31" stroke={color} strokeWidth="2" strokeLinecap="round" strokeOpacity="0.6" />
+    <line x1="28" y1="41" x2="40" y2="41" stroke={color} strokeWidth="2" strokeLinecap="round" />
+  </svg>
+);
+
+// 29. SORT DESC — Newest first: stacked data bars shrinking downward + downlink arrow
+// Represents "newest on top" — taller bar at top, shorter at bottom, arrow pointing down
+export const SciFiSortDescIcon = ({ size = 14, color = 'currentColor' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
+    {/* Stacked horizontal bars — descending width = newest data on top */}
+    <line x1="3" y1="5" x2="16" y2="5" stroke={color} strokeWidth="2" strokeLinecap="round" />
+    <line x1="3" y1="9" x2="13" y2="9" stroke={color} strokeWidth="2" strokeLinecap="round" strokeOpacity="0.75" />
+    <line x1="3" y1="13" x2="10" y2="13" stroke={color} strokeWidth="2" strokeLinecap="round" strokeOpacity="0.5" />
+    <line x1="3" y1="17" x2="7" y2="17" stroke={color} strokeWidth="2" strokeLinecap="round" strokeOpacity="0.3" />
+    {/* Down arrow on right — data flows downward */}
+    <line x1="20" y1="5" x2="20" y2="19" stroke={color} strokeWidth="1.6" strokeLinecap="round" />
+    <polyline points="17,15 20,20 23,15" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+  </svg>
+);
+
+// 30. SORT ASC — Oldest first: stacked data bars growing upward + uplink arrow
+// Represents "oldest on top" — shorter bar at top, taller at bottom, arrow pointing up
+export const SciFiSortAscIcon = ({ size = 14, color = 'currentColor' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
+    {/* Stacked horizontal bars — ascending width = older data on top */}
+    <line x1="3" y1="5" x2="7" y2="5" stroke={color} strokeWidth="2" strokeLinecap="round" strokeOpacity="0.3" />
+    <line x1="3" y1="9" x2="10" y2="9" stroke={color} strokeWidth="2" strokeLinecap="round" strokeOpacity="0.5" />
+    <line x1="3" y1="13" x2="13" y2="13" stroke={color} strokeWidth="2" strokeLinecap="round" strokeOpacity="0.75" />
+    <line x1="3" y1="17" x2="16" y2="17" stroke={color} strokeWidth="2" strokeLinecap="round" />
+    {/* Up arrow on right — data flows upward */}
+    <line x1="20" y1="19" x2="20" y2="5" stroke={color} strokeWidth="1.6" strokeLinecap="round" />
+    <polyline points="17,9 20,4 23,9" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+  </svg>
+);

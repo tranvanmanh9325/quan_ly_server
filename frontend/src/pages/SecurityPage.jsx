@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import axios from 'axios';
 import { SciFiPortIcon, SciFiCyberLockIcon, SciFiTerminalIcon, SciFiSearchIcon, SciFiDownloadIcon } from '../components/SciFiIcons';
+import { formatLogLineTimestamp } from '../utils/parsers';
 
 const WELL_KNOWN_PORTS = {
   '22': 'sshd (SSH)',
@@ -23,20 +24,22 @@ function formatProcess(proc, localAddr) {
   const port = portMatch ? portMatch[1] : null;
 
   if (proc && proc.trim() !== '' && !proc.includes('Restricted') && proc !== 'N/A') {
+    // Extract process name + PID from ss output: users:(("nginx",pid=1234,fd=6))
     const match = proc.match(/users:\(\("([^"]+)",pid=(\d+)/);
     if (match) {
       return (
-        <span style={{ color: 'var(--accent-green)', fontFamily: 'Share Tech Mono' }}>
-          <strong>{match[1]}</strong> <span style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>(PID {match[2]})</span>
+        <span style={{ color: 'var(--accent-cyan)', fontWeight: 'bold', fontFamily: 'Share Tech Mono' }}>
+          {match[1]} <span style={{ color: 'var(--text-secondary)', fontWeight: 'normal', fontSize: '0.75rem' }}>(PID {match[2]})</span>
         </span>
       );
     }
-    return <span style={{ color: 'var(--accent-cyan)', fontFamily: 'Share Tech Mono' }}>{proc}</span>;
+    // Fallback: render raw string if regex doesn't match (e.g. non-standard format)
+    return <span style={{ color: 'var(--accent-cyan)', fontWeight: 'bold' }}>{proc}</span>;
   }
 
   if (port && WELL_KNOWN_PORTS[port]) {
     return (
-      <span style={{ color: 'var(--accent-cyan)', fontFamily: 'Share Tech Mono' }}>
+      <span style={{ color: '#f0b429', fontStyle: 'italic', fontSize: '0.8rem' }}>
         {WELL_KNOWN_PORTS[port]}
       </span>
     );
@@ -45,7 +48,9 @@ function formatProcess(proc, localAddr) {
   return <span style={{ color: 'var(--text-secondary)', fontStyle: 'italic', fontSize: '0.75rem' }}>System Service</span>;
 }
 
+
 function renderFormattedLogLine(line, index) {
+  const formattedLine = formatLogLineTimestamp(line);
   const upper = line.toUpperCase();
   let color = 'rgba(255, 255, 255, 0.75)';
   let bg = 'transparent';
@@ -69,7 +74,7 @@ function renderFormattedLogLine(line, index) {
       marginBottom: '2px',
       wordBreak: 'break-all'
     }}>
-      {line}
+      {formattedLine}
     </div>
   );
 }

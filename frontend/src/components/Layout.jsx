@@ -4,7 +4,8 @@ import axios from 'axios';
 import { 
   SciFiDashboardIcon, SciFiPulseIcon, SciFiServerRackIcon, 
   SciFiCyberLockIcon, SciFiPulseBadge, SciFiRefreshIcon, SciFiConsoleIcon,
-  SciFiFolderIcon, SciFiContainerIcon, SciFiGlobeIcon, SciFiSettingsIcon
+  SciFiFolderIcon, SciFiContainerIcon, SciFiGlobeIcon, SciFiSettingsIcon,
+  SciFiLogoIcon
 } from './SciFiIcons';
 import '../App.css';
 import '../index.css';
@@ -249,26 +250,18 @@ export default function Layout({ isAlerting, context }) {
       <aside className="sci-fi-sidebar">
         <div className="sidebar-logo" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <div style={{
-            width: '38px',
-            height: '38px',
-            minWidth: '38px',
-            borderRadius: '6px',
-            background: 'rgba(0, 243, 255, 0.08)',
+            width: '42px',
+            height: '42px',
+            minWidth: '42px',
+            borderRadius: '8px',
+            background: 'rgba(0, 243, 255, 0.06)',
             border: '1px solid var(--accent-cyan)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            boxShadow: '0 0 12px rgba(0, 243, 255, 0.25)'
+            boxShadow: '0 0 16px rgba(0, 243, 255, 0.3), inset 0 0 8px rgba(0, 243, 255, 0.05)'
           }}>
-            <svg width="26" height="26" viewBox="0 0 64 64" fill="none">
-              <polygon points="32,4 58,19 58,45 32,60 6,45 6,19" fill="rgba(5,8,16,0.9)" stroke="var(--accent-cyan)" strokeWidth="3.5" strokeLinejoin="round" />
-              <polygon points="32,10 52,21.5 52,42.5 32,54 12,42.5 12,21.5" fill="none" stroke="var(--accent-cyan)" strokeWidth="1" strokeDasharray="4,2" opacity="0.5" />
-              <path d="M20 21 H44 M20 28 H44 M20 35 H44 M20 42 H44" stroke="var(--accent-cyan)" strokeWidth="3" strokeLinecap="round" />
-              <circle cx="26" cy="21" r="2.5" fill="var(--accent-green)" />
-              <circle cx="38" cy="28" r="2.5" fill="var(--accent-cyan)" />
-              <circle cx="26" cy="35" r="2.5" fill="var(--accent-green)" />
-              <circle cx="38" cy="42" r="2.5" fill="var(--accent-cyan)" />
-            </svg>
+            <SciFiLogoIcon size={30} color="var(--accent-cyan)" />
           </div>
           <div>
             <h1 className="title-glow" style={{ fontSize: '1.2rem', letterSpacing: '2px', margin: 0, lineHeight: 1.15 }}>

@@ -2,9 +2,10 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { 
   SciFiContainerIcon, SciFiSearchIcon, SciFiRefreshIcon, 
-  SciFiPlayIcon, SciFiStopIcon, SciFiPulseBadge 
+  SciFiPlayIcon, SciFiStopIcon, SciFiPulseBadge
 } from '../components/SciFiIcons';
 import { parseDockerStats } from '../utils/parsers';
+import LogViewer from '../components/LogViewer';
 
 export default function ContainersPage() {
   const [containers, setContainers] = useState([]);
@@ -24,7 +25,6 @@ export default function ContainersPage() {
   const [logContainer, setLogContainer] = useState(null); // { id, name }
   const [logContent, setLogContent] = useState('');
   const [logLinesCount, setLogLinesCount] = useState(100);
-  const [logSearchQuery, setLogSearchQuery] = useState('');
   const [isLogsLoading, setIsLogsLoading] = useState(false);
   const [copySuccess, setCopySuccess] = useState(false);
 
@@ -532,7 +532,7 @@ export default function ContainersPage() {
               </div>
             </div>
 
-            {/* Modal Controls Bar */}
+            {/* Modal Controls Bar — TAIL selector + refresh only; search & sort live inside LogViewer */}
             <div style={{
               background: 'rgba(0,0,0,0.4)',
               borderBottom: '1px solid rgba(0, 255, 157, 0.15)',
@@ -570,25 +570,6 @@ export default function ContainersPage() {
                 </select>
               </div>
 
-              <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span>SEARCH LOG:</span>
-                <input
-                  type="text"
-                  placeholder="Filter logs..."
-                  value={logSearchQuery}
-                  onChange={e => setLogSearchQuery(e.target.value)}
-                  style={{
-                    flex: 1,
-                    background: '#000',
-                    border: '1px solid rgba(0,255,157,0.3)',
-                    color: '#fff',
-                    padding: '3px 8px',
-                    fontSize: '0.78rem',
-                    fontFamily: 'Share Tech Mono'
-                  }}
-                />
-              </div>
-
               <button
                 onClick={() => fetchContainerLogs(logContainer.id, logLinesCount)}
                 style={{
@@ -605,43 +586,15 @@ export default function ContainersPage() {
               </button>
             </div>
 
-            {/* Log Output Console */}
-            <div style={{
-              flex: 1,
-              background: '#040810',
-              padding: '16px',
-              overflowY: 'auto',
-              fontFamily: 'Share Tech Mono, monospace',
-              fontSize: '0.82rem',
-              color: 'rgba(255,255,255,0.9)',
-              lineHeight: '1.5',
-              whiteSpace: 'pre-wrap',
-              wordBreak: 'break-all'
-            }}>
-              {isLogsLoading ? (
-                <div style={{ color: 'var(--accent-green)', textAlign: 'center', padding: '40px' }}>
-                  FETCHING CONTAINER LOGS FROM DOCKER DAEMON...
-                </div>
-              ) : (
-                logContent.split('\n').map((line, i) => {
-                  if (logSearchQuery && line.toLowerCase().includes(logSearchQuery.toLowerCase())) {
-                    return (
-                      <div key={i} style={{ background: 'rgba(0, 255, 157, 0.25)', color: '#fff' }}>
-                        <span style={{ opacity: 0.4, marginRight: '12px', userSelect: 'none' }}>{i + 1}</span>
-                        {line}
-                      </div>
-                    );
-                  }
-                  return (
-                    <div key={i}>
-                      <span style={{ opacity: 0.4, marginRight: '12px', userSelect: 'none', display: 'inline-block', width: '35px', textAlign: 'right' }}>
-                        {i + 1}
-                      </span>
-                      {line}
-                    </div>
-                  );
-                })
-              )}
+            {/* Log Output Console — search + sort are managed inside LogViewer */}
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+              <LogViewer
+                logContent={logContent}
+                accentColor="var(--accent-green)"
+                isLoading={isLogsLoading}
+                loadingText="FETCHING CONTAINER LOGS FROM DOCKER DAEMON..."
+                background="#040810"
+              />
             </div>
 
           </div>

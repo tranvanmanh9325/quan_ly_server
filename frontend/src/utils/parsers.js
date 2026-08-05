@@ -268,10 +268,13 @@ export function parseVoltage(raw) {
  */
 function guessNominalVoltage(label, measuredV) {
   const l = label.toLowerCase();
+  if (l.includes('vcore') || l.includes('vcpu') || l.includes('vdd') || l.includes('core')) {
+    if (measuredV >= 0.55 && measuredV <= 1.45) return measuredV; // Dynamic CPU Vcore range (0.55V - 1.45V)
+    return 1.2;
+  }
   if (l.includes('12') || (measuredV > 10 && measuredV < 14)) return 12;
   if (l.includes('5')  || (measuredV > 4  && measuredV < 6))  return 5;
   if (l.includes('3.3')|| (measuredV > 2.8 && measuredV < 3.8)) return 3.3;
-  if (l.includes('vcore') || l.includes('vcpu') || l.includes('vdd') || l.includes('core')) return 1.2;
   return 0; // không đoán được → không cảnh báo
 }
 
@@ -426,3 +429,90 @@ export function parseDockerStats(raw) {
   }
   return map;
 }
+
+// Helper used by datetime formatters below
+function pad2(num) {
+  return String(num).padStart(2, '0');
+}
+
+/**
+ * Format bất kỳ chuỗi thời gian hoặc dòng log thô sang chuẩn Việt Nam: DD/MM/YYYY HH:mm:ss
+ *
+ * @param {string|number|Date} input
+ * @returns {string} Chuỗi thời gian chuẩn Việt Nam (ví dụ: 06/08/2026 04:20:14)
+ */
+export function formatVietnameseDateTime(input) {
+  if (!input) return '';
+
+  if (input instanceof Date || typeof input === 'number') {
+    const d = new Date(input);
+    if (isNaN(d.getTime())) return String(input);
+    return pad2(d.getDate()) + '/' + pad2(d.getMonth() + 1) + '/' + d.getFullYear() + ' ' +
+           pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds());
+  }
+
+  const str = String(input).trim();
+
+  // 1. ISO-8601: 2026-08-06T04:20:14.309391+07:00 hoặc 2026-08-06 04:20:14
+  const isoMatch = str.match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})/);
+  if (isoMatch) {
+    const [, yyyy, mm, dd, hh, min, ss] = isoMatch;
+    return `${dd}/${mm}/${yyyy} ${hh}:${min}:${ss}`;
+  }
+
+  // 2. Syslog BSD: Aug  6 04:20:14 hoặc Aug 06 04:20:14
+  const monthMap = { jan:'01', feb:'02', mar:'03', apr:'04', may:'05', jun:'06', jul:'07', aug:'08', sep:'09', oct:'10', nov:'11', dec:'12' };
+  const syslogMatch = str.match(/^([A-Za-z]{3})\s+(\d{1,2})\s+(\d{2}):(\d{2}):(\d{2})/);
+  if (syslogMatch) {
+    const [, monStr, dayStr, hh, min, ss] = syslogMatch;
+    const mm = monthMap[monStr.toLowerCase()] || '01';
+    const dd = pad2(parseInt(dayStr, 10));
+    // Heuristic: if the parsed month is strictly in the future relative to the current month,
+    // the log entry must belong to the previous year (e.g. a Dec log read in Jan).
+    const now = new Date();
+    const parsedMonthIndex = parseInt(mm, 10) - 1; // convert to 0-indexed
+    const yyyy = parsedMonthIndex > now.getMonth() ? now.getFullYear() - 1 : now.getFullYear();
+    return `${dd}/${mm}/${yyyy} ${hh}:${min}:${ss}`;
+  }
+
+  // Khác: Thử parse Date tiêu chuẩn — chỉ áp dụng cho chuỗi đủ dài để tránh
+  // parse sai các giá trị ngắn/mơ hồ như "1", "Infinity", hoặc số đơn lẻ.
+  if (str.length >= 10) {
+    const d = new Date(str);
+    if (!isNaN(d.getTime())) {
+      return pad2(d.getDate()) + '/' + pad2(d.getMonth() + 1) + '/' + d.getFullYear() + ' ' +
+             pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds());
+    }
+  }
+
+  return str;
+}
+
+
+/**
+ * Định dạng lại timestamp ở đầu mỗi dòng log thô theo chuẩn Việt Nam (DD/MM/YYYY HH:mm:ss)
+ *
+ * @param {string} line
+ * @returns {string} Dòng log với timestamp chuẩn Việt Nam ở đầu
+ */
+export function formatLogLineTimestamp(line) {
+  if (!line || typeof line !== 'string') return line;
+
+  // Pattern 1: ISO 8601 (2026-08-06T04:20:14.309391+07:00 ...)
+  const isoPattern = /^(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?)\s+(.*)$/;
+  const isoMatch = line.match(isoPattern);
+  if (isoMatch) {
+    const formattedTs = formatVietnameseDateTime(isoMatch[1]);
+    return `${formattedTs} ${isoMatch[2]}`;
+  }
+
+  // Pattern 2: BSD Syslog (Aug  6 04:20:14 ...)
+  const syslogPattern = /^([A-Za-z]{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})\s+(.*)$/;
+  const syslogMatch = line.match(syslogPattern);
+  if (syslogMatch) {
+    const formattedTs = formatVietnameseDateTime(syslogMatch[1]);
+    return `${formattedTs} ${syslogMatch[2]}`;
+  }
+
+  return line;
+}

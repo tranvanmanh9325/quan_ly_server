@@ -3,6 +3,7 @@ import { useOutletContext } from 'react-router-dom';
 import axios from 'axios';
 import { SciFiShieldIcon, SciFiContainerIcon, SciFiChronoIcon, SciFiQuantumIcon } from '../components/SciFiIcons';
 import { parseDockerStats } from '../utils/parsers';
+import LogViewer from '../components/LogViewer';
 
 export default function ServicesPage() {
   const { dockerData } = useOutletContext();
@@ -26,7 +27,6 @@ export default function ServicesPage() {
   // Container Log Modal States
   const [logContainer, setLogContainer] = useState(null);
   const [logLinesCount, setLogLinesCount] = useState(100);
-  const [logSearchQuery, setLogSearchQuery] = useState('');
   const [logContent, setLogContent] = useState('');
   const [isLogsLoading, setIsLogsLoading] = useState(false);
 
@@ -714,34 +714,16 @@ export default function ServicesPage() {
               borderBottom: '1px solid rgba(255, 255, 255, 0.1)',
               background: 'rgba(0, 0, 0, 0.4)'
             }}>
-              <input
-                type="text"
-                placeholder="Filter logs by keyword..."
-                value={logSearchQuery}
-                onChange={e => setLogSearchQuery(e.target.value)}
-                style={{
-                  flex: 1,
-                  background: 'rgba(0,0,0,0.6)',
-                  border: '1px solid rgba(0,243,255,0.3)',
-                  color: '#fff',
-                  padding: '5px 10px',
-                  fontFamily: 'Share Tech Mono',
-                  fontSize: '0.8rem',
-                  borderRadius: '3px'
-                }}
-              />
+
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', fontFamily: 'Share Tech Mono', color: 'var(--text-secondary)' }}>
                 <span>Lines:</span>
                 {[50, 100, 200, 500].map(count => (
                   <button
                     key={count}
-                    onClick={() => {
-                      setLogLinesCount(count);
-                      fetchContainerLogs(logContainer.id, count);
-                    }}
+                    onClick={() => { setLogLinesCount(count); fetchContainerLogs(logContainer.id, count); }}
                     style={{
                       background: logLinesCount === count ? 'var(--accent-cyan)' : 'transparent',
-                      color: logLinesCount === count ? '#000' : 'var(--text-secondary)',
+                      color: logLinesCount === count ? '#000' : 'var(--accent-cyan)',
                       border: '1px solid rgba(0,243,255,0.3)',
                       padding: '2px 8px',
                       fontSize: '0.7rem',
@@ -754,6 +736,7 @@ export default function ServicesPage() {
                   </button>
                 ))}
               </div>
+
               <button
                 onClick={() => fetchContainerLogs(logContainer.id, logLinesCount)}
                 disabled={isLogsLoading}
@@ -772,31 +755,13 @@ export default function ServicesPage() {
               </button>
             </div>
 
-            {/* Log Display Box */}
-            <div style={{
-              flex: 1,
-              padding: '15px',
-              overflowY: 'auto',
-              background: '#040914',
-              fontFamily: 'Consolas, Monaco, "Courier New", monospace',
-              fontSize: '0.8rem',
-              lineHeight: '1.4',
-              color: '#a0aec0',
-              whiteSpace: 'pre-wrap',
-              wordBreak: 'break-all',
-              maxHeight: '60vh'
-            }}>
-              {isLogsLoading ? (
-                <div style={{ color: 'var(--accent-cyan)' }}>⚡ Loading logs from remote host via SSH...</div>
-              ) : (
-                (logContent || '').split('\n').filter(line => !logSearchQuery || line.toLowerCase().includes(logSearchQuery.toLowerCase())).map((line, idx) => {
-                  let color = '#a0aec0';
-                  if (/error|fail|exception|fatal/i.test(line)) color = 'var(--accent-pink)';
-                  else if (/warn|warning/i.test(line)) color = '#f0b429';
-                  else if (/info|success/i.test(line)) color = 'var(--accent-green)';
-                  return <div key={idx} style={{ color }}>{line}</div>;
-                })
-              )}
+            {/* Log Display Box — search + sort are managed inside LogViewer */}
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, maxHeight: '60vh' }}>
+              <LogViewer
+                logContent={logContent}
+                isLoading={isLogsLoading}
+                background="#040914"
+              />
             </div>
           </div>
         </div>

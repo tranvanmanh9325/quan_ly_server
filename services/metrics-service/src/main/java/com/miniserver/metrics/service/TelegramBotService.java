@@ -13,6 +13,9 @@ import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
 
 import java.util.Optional;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Long-Polling service for receiving Telegram Bot updates.
@@ -51,6 +54,13 @@ public class TelegramBotService {
     // Tracks the last processed update_id to avoid re-processing
     private long updateOffset = 0;
 
+    private final RestClient restClient;
+
+    // Instance-level ExecutorService so Spring can manage its lifecycle via @PreDestroy.
+    // Virtual threads are ideal here: AI inference blocks for seconds (SSH + LLM round-trip)
+    // without pinning any OS thread, keeping the @Scheduled poller free.
+    private final ExecutorService aiExecutor = Executors.newVirtualThreadPerTaskExecutor();
+
     public TelegramBotService(TelegramConfigRepository configRepository,
                               TelegramNotificationService notificationService,
                               SshService sshService,
@@ -61,6 +71,9 @@ public class TelegramBotService {
         this.sshService = sshService;
         this.aiService = aiService;
         this.jdbcTemplate = jdbcTemplate;
+
+        // 12s read timeout — must exceed the 2s long-polling timeout to avoid false SocketTimeoutExceptions
+        this.restClient = RestClientFactory.create(5_000, 12_000);
     }
 
     @jakarta.annotation.PostConstruct
@@ -75,6 +88,22 @@ public class TelegramBotService {
             log.info("[TelegramBot] Database schema initialized for processed_telegram_updates.");
         } catch (Exception e) {
             log.warn("[TelegramBot] Could not initialize processed_telegram_updates table: {}", e.getMessage());
+        }
+    }
+
+    @jakarta.annotation.PreDestroy
+    public void shutdownAiExecutor() {
+        // Allow in-flight AI calls (SSH + LLM) up to 5s to complete before hard kill.
+        // Prevents orphaned virtual threads that would otherwise be silently terminated.
+        aiExecutor.shutdown();
+        try {
+            if (!aiExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
+                aiExecutor.shutdownNow();
+                log.warn("[TelegramBot] AI executor did not terminate cleanly; forced shutdown.");
+            }
+        } catch (InterruptedException e) {
+            aiExecutor.shutdownNow();
+            Thread.currentThread().interrupt();
         }
     }
 
@@ -96,7 +125,7 @@ public class TelegramBotService {
         String url = TG_API_BASE + token + "/getUpdates?timeout=2&offset=" + updateOffset;
 
         try {
-            String response = RestClient.create().get().uri(url).retrieve().body(String.class);
+            String response = restClient.get().uri(url).retrieve().body(String.class);
             if (response == null || response.isBlank()) return;
 
             JsonNode root = objectMapper.readTree(response);
@@ -188,7 +217,11 @@ public class TelegramBotService {
         }
     }
 
-    /** Forwards free-text messages to Groq AI and sends the reply back. */
+    /** Forwards free-text messages to Groq AI and sends the reply back.
+     *
+     * Runs on a virtual thread so the @Scheduled pollUpdates() thread is never
+     * blocked by SSH execution, LLM inference, or retry sleeps.
+     */
     private void handleAiMessage(String userMessage, String chatId) {
         if (!aiService.isConfigured()) {
             notificationService.sendMessage(
@@ -200,8 +233,12 @@ public class TelegramBotService {
         notificationService.sendTypingAction(chatId);
         log.debug("[TelegramBot] Routing to Groq AI: {}", userMessage);
 
-        String reply = aiService.chat(chatId, userMessage);
-        notificationService.sendMessage(reply);
+        // Offload to virtual thread — aiExecutor creates a new VT per task,
+        // so Thread.sleep() in callGroq() never pins the scheduler thread pool.
+        aiExecutor.execute(() -> {
+            String reply = aiService.chat(chatId, userMessage);
+            notificationService.sendMessage(reply);
+        });
     }
 
     // ─── SSH data fetchers ───────────────────────────────────────────────────

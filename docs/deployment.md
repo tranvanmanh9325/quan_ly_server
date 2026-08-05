@@ -40,13 +40,34 @@ cd quan_ly_server
 cp backend/.env.example backend/.env
 ```
 
-Edit `backend/.env` and fill in the credentials for the Linux host you want to monitor:
+Edit `.env` in the project root directory:
 
 ```dotenv
-SSH_HOST=your.ssh.host.or.ngrok.address
+# Primary SSH Target Credentials (LAN)
+SSH_HOST=your_target_server_ip
 SSH_PORT=22
-SSH_USER=your_ssh_username
+SSH_USER=your_ssh_user
 SSH_PASSWORD=your_ssh_password
+
+# SSH Fallback via Ngrok
+SSH_FALLBACK_HOST=your_fallback_ngrok_host
+SSH_FALLBACK_PORT=12345
+
+# Database Configuration
+POSTGRES_DB=quan_ly_server
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=your_postgres_password
+
+# Auth & JWT Security
+APP_AUTH_USERNAME=admin
+APP_AUTH_PASSWORD=your_bcrypt_hashed_password
+JWT_SECRET=your_secret_jwt_key_at_least_32_characters_long
+
+# Telegram & Groq AI Agent
+TELEGRAM_BOT_TOKEN=your_telegram_bot_token
+TELEGRAM_CHAT_ID=your_telegram_chat_id
+TELEGRAM_POLLING_ENABLED=true
+GROQ_API_KEY=your_groq_api_key
 ```
 
 > ⚠️ `.env` is listed in `.gitignore`. Never commit it.
@@ -135,22 +156,46 @@ Both containers should show `healthy` status within ~2 minutes. If the backend c
 docker compose logs backend --tail=50
 ```
 
-### 2.5 Access the Dashboard
+### 2.5 Accessing Microservices & Endpoints
 
-| Service | URL |
-| --- | --- |
-| Dashboard UI | `http://<server-ip>:5173` |
-| Backend health | `http://<server-ip>:8080/actuator/health` |
+| Service | Container Name | Port | Healthcheck / URL |
+| --- | --- | --- | --- |
+| **Frontend UI** | `dashboard_frontend` | `5173` | `http://<server-ip>:5173` |
+| **Metrics Service** | `dashboard_metrics_service` | `8082` | `http://<server-ip>:8082/actuator/health` |
+| **Auth Service** | `dashboard_auth_service` | `8081` | `http://<server-ip>:8081/actuator/health` |
+| **File Service** | `dashboard_file_service` | `8083` | `http://<server-ip>:8083/actuator/health` |
+| **Database** | `dashboard_db` | `5432` | `5432/tcp` (PostgreSQL 17) |
 
 ---
 
-## 3. Container Resource Limits
+## 3. Server Systemd Automation & APT Daily Timers
+
+To ensure the production host remains patched and clean without manual intervention:
+
+1. **`apt-daily.timer`:** Triggered daily at **06:00:00 AM** (`sudo systemctl status apt-daily.timer`). Runs `apt update` to refresh package indices.
+2. **`apt-daily-upgrade.timer`:** Triggered daily at **06:30:00 AM** (`sudo systemctl status apt-daily-upgrade.timer`). Upgrades installed packages.
+3. **Auto Cleanup Policy (`/etc/apt/apt.conf.d/99auto-cleanup`):**
+
+   ```apt
+   APT::Periodic::AutocleanInterval "1";
+   Unattended-Upgrade::Remove-Unused-Dependencies "true";
+   Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
+   ```
+
+   Automatically executes `autoremove` and `autoclean` after daily upgrades to purge obsolete `.deb` archives and orphan kernels.
+
+---
+
+## 4. Container Resource Limits
 
 Defined in `docker-compose.yml` under the `deploy.resources` key.
 
 | Container | CPU Limit | Memory Limit | Memory Reservation |
 | --- | --- | --- | --- |
-| `dashboard_backend` | 1.5 cores | 1 GB | 512 MB |
+| `dashboard_metrics_service` | 1.5 cores | 1 GB | 512 MB |
+| `dashboard_auth_service` | 1.0 cores | 512 MB | 256 MB |
+| `dashboard_file_service` | 1.0 cores | 512 MB | 256 MB |
+| `dashboard_db` | 1.0 cores | 512 MB | 256 MB |
 | `dashboard_frontend` | 0.5 cores | 256 MB | 64 MB |
 
 **Rationale:**
@@ -319,14 +364,26 @@ docker compose down -v --remove-orphans
 
 ## 7. Environment Variables Reference
 
-All variables are consumed by the backend only. They are loaded from `backend/.env` by Spring Boot via `spring.config.import=optional:file:.env[.properties]`, meaning they behave like normal Spring properties.
+All variables are configured in the root `.env` file and passed into the microservice containers via Docker Compose `env_file`.
 
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
-| `SSH_HOST` | ✅ Yes | — | Hostname or IP of the target Linux server. Can be a Ngrok TCP address (e.g. `0.tcp.ngrok.io`). |
-| `SSH_PORT` | ✅ Yes | — | SSH port on the target server. Standard is `22`; Ngrok assigns ephemeral ports. |
+| `SSH_HOST` | ✅ Yes | — | Primary LAN IP or hostname of the target Linux server (e.g. `your_target_server_ip`). |
+| `SSH_PORT` | ✅ Yes | `22` | SSH port on the target server. |
 | `SSH_USER` | ✅ Yes | — | SSH username on the target server. |
-| `SSH_PASSWORD` | ✅ Yes | — | SSH password. For production, consider key-pair authentication instead (see Security Guide). |
+| `SSH_PASSWORD` | ✅ Yes | — | SSH password used for authentication and `sudo -S` elevation. |
+| `SSH_FALLBACK_HOST` | ⚠️ Optional | — | Ephemeral Ngrok TCP tunnel address (e.g. `your_fallback_ngrok_host`) used if LAN is unreachable. |
+| `SSH_FALLBACK_PORT` | ⚠️ Optional | — | Ephemeral Ngrok TCP port. |
+| `POSTGRES_DB` | ✅ Yes | `quan_ly_server` | Database name for central PostgreSQL 17 instance. |
+| `POSTGRES_USER` | ✅ Yes | `postgres` | Database superuser username. |
+| `POSTGRES_PASSWORD` | ✅ Yes | — | Database superuser password. |
+| `APP_AUTH_USERNAME` | ✅ Yes | `admin` | Login username for Auth Service. |
+| `APP_AUTH_PASSWORD` | ✅ Yes | — | BCrypt-hashed login password string. |
+| `JWT_SECRET` | ✅ Yes | — | HMAC-SHA256 secret key for signing JWTs (must be ≥ 32 characters). |
+| `TELEGRAM_BOT_TOKEN` | ⚠️ Optional | — | Telegram Bot API token for status alerts and AI updates. |
+| `TELEGRAM_CHAT_ID` | ⚠️ Optional | — | Allowed Telegram Chat ID for security verification. |
+| `TELEGRAM_POLLING_ENABLED` | ⚠️ Optional | `true` | Enables/disables long polling worker loop in `metrics-service`. |
+| `GROQ_API_KEY` | ⚠️ Optional | — | API key for Groq Cloud LLM function calling (`llama-3.1-8b-instant`). |
 
 ---
 

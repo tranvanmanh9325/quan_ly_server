@@ -508,7 +508,7 @@ export default function DashboardPage() {
                   </div>
                 ) : (
                   /* Multi-Rail List View */
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', zIndex: 1 }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', zIndex: 1, flex: 1, justifyContent: 'center' }}>
                     {voltageData.map((v, idx) => {
                       const valNum = parseFloat(v.value) || 0;
                       const statusClass = v.status === 'crit' ? 'crit' : v.status === 'warn' ? 'warn' : 'ok';
@@ -516,20 +516,17 @@ export default function DashboardPage() {
                       const valColor = v.status === 'crit' ? 'var(--accent-pink)' : v.status === 'warn' ? '#f0b429' : 'var(--accent-green)';
 
                       return (
-                        <div key={`volt-${idx}`} className="sensor-row">
+                        <div key={`volt-${idx}`} className="sensor-row" style={{ padding: '4px 6px' }}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.75rem' }}>
-                            <span style={{ color: '#fff', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '120px' }} title={v.label}>
+                            <span style={{ color: '#fff', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, paddingRight: '8px' }} title={v.label}>
                               {v.label}
                             </span>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                              <span className={`sensor-badge ${statusClass}`}>{badgeLabel}</span>
-                              <span style={{ fontSize: '0.9rem', fontWeight: 'bold', color: valColor, fontFamily: 'Share Tech Mono' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+                              <span className={`sensor-badge ${statusClass}`} style={{ fontSize: '0.62rem', padding: '1px 5px' }}>{badgeLabel}</span>
+                              <span style={{ fontSize: '0.85rem', fontWeight: 'bold', color: valColor, fontFamily: 'Share Tech Mono', minWidth: '65px', textAlign: 'right' }}>
                                 {valNum.toFixed(3)} V
                               </span>
                             </div>
-                          </div>
-                          <div className="thermal-bar-bg">
-                            <div style={{ height: '100%', width: '100%', background: `linear-gradient(90deg, rgba(0,255,102,0.15) 0%, ${valColor} 100%)`, borderRadius: '3px' }} />
                           </div>
                         </div>
                       );

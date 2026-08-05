@@ -29,6 +29,9 @@ curl http://localhost:8080/api/metrics/cpu
 
 - [Dashboard shows "ERROR: no data returned from SSH"](#error-no-data-returned-from-ssh)
 - [Dashboard shows "ERROR: \<exception message\>"](#error-connection-refused--timeout)
+- [Telegram Bot: "AI đang quá tải" (Groq 429 Rate Limit)](#groq-429-rate-limit)
+- [Telegram Bot: "Xin lỗi, AI đã tạo câu lệnh không hợp lệ" (Groq 400 Bad Request)](#groq-400-bad-request)
+- [Telegram Bot stops responding / hangs on `updating..`](#telegram-bot-polling-freeze)
 - [Backend container stuck in "starting" health state](#backend-stuck-in-starting)
 - [Frontend container does not start after backend](#frontend-does-not-start)
 - [All metrics show 0 / N/A after first load](#all-metrics-show-0--na-after-first-load)
@@ -38,6 +41,47 @@ curl http://localhost:8080/api/metrics/cpu
 - [Docker build fails during Maven package step](#docker-build-fails-maven-package-step)
 - [Frontend build fails with peer dependency errors](#frontend-build-fails-peer-dependency-error)
 - [Dashboard loads but data stops updating](#data-stops-updating)
+
+---
+
+## Groq 429 Rate Limit
+
+**Symptom:** Telegram bot replies: `"AI đang quá tải, vui lòng thử lại sau 1 phút."`
+
+**Cause:** Groq free tier limit is 6,000 Tokens Per Minute (TPM). Large command outputs or long conversation histories exceed this limit.
+
+**Fix:**
+
+1. Capped `MAX_HISTORY_MESSAGES = 6` (3 Q&A pairs) and `MAX_OUTPUT_CHARS = 1000` in `AiChatService.java`.
+2. Automatic 3-retry backoff with 2.5s delay.
+3. Automatically clears conversation history on 429 errors.
+
+---
+
+## Groq 400 Bad Request
+
+**Symptom:** Telegram bot replies: `"Xin lỗi, AI đã tạo câu lệnh không hợp lệ. Vui lòng thử hỏi lại."`
+
+**Cause:** Groq generated nested double quotes (`"`) inside command string or invoked unsupported commands like `history`.
+
+**Fix:**
+
+1. System prompt strictly enforces single quotes (`'`) and bans `history` command.
+2. Uses explicit timestamp commands (`stat /var/lib/apt/periodic/update-success-stamp`).
+3. Automatically calls `clearHistory(chatId)` to unblock subsequent queries.
+
+---
+
+## Telegram Bot Polling Freeze
+
+**Symptom:** Telegram bot hangs indefinitely without sending replies or printing logs.
+
+**Cause:** `RestClient` using default `JdkClientHttpRequestFactory` without socket read timeouts, causing threads to park forever on dropped long-polling TCP connections.
+
+**Fix:**
+
+1. Configured `SimpleClientHttpRequestFactory` with 5s connect timeout and 12s/30s read timeouts in `TelegramBotService` and `TelegramNotificationService`.
+2. Dedicated `SchedulingConfig` with 5 thread workers prevents single-thread blocking.
 
 ---
 

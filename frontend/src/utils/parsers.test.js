@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { 
   parseCpu, parseRam, parseDisks, parseNetwork, parseProcesses, 
-  parseTemperature, parseVoltage, parseLoadAverage, getMaxTemperature, parseDockerStats 
+  parseTemperature, parseVoltage, parseLoadAverage, getMaxTemperature, parseDockerStats,
+  formatVietnameseDateTime, formatLogLineTimestamp
 } from './parsers';
 
 describe('parsers.js unit tests', () => {
@@ -124,5 +125,17 @@ CPU:            +97.0°C`;
     expect(statsMap['web_app']).toBeDefined();
     expect(statsMap['web_app'].cpu).toBe('4.2%');
     expect(statsMap['web_app'].mem).toBe('128MiB / 2GiB');
+  });
+
+  it('formatVietnameseDateTime - should format ISO and Syslog dates to DD/MM/YYYY HH:mm:ss', () => {
+    expect(formatVietnameseDateTime('2026-08-06T04:20:14.309391+07:00')).toBe('06/08/2026 04:20:14');
+    expect(formatVietnameseDateTime('2026-08-06 04:20:14')).toBe('06/08/2026 04:20:14');
+    expect(formatVietnameseDateTime('Aug  6 04:20:14')).toContain('/2026 04:20:14');
+  });
+
+  it('formatLogLineTimestamp - should replace raw timestamp with Vietnamese format', () => {
+    const rawLine = '2026-08-06T04:20:14.309391+07:00 kirito-server systemd[1]: Started session-317.scope.';
+    const formatted = formatLogLineTimestamp(rawLine);
+    expect(formatted).toBe('06/08/2026 04:20:14 kirito-server systemd[1]: Started session-317.scope.');
   });
 });

@@ -8,26 +8,33 @@ A technical reference for the Spring Boot backend: package structure, SSH sessio
 
 | Concern | Library / Tool | Version |
 | --- | --- | --- |
-| Framework | Spring Boot | 4.0.5 |
+| Framework | Spring Boot | 4.1.0 |
 | Language | Java | 21 |
 | Build | Maven | 3.9.6 (Docker build) |
-| SSH client | JSch (mwiede fork) | 2.27.9 |
+| SSH client | JSch (mwiede fork) | 2.28.5 |
 | Health check | Spring Boot Actuator | — (managed by Spring Boot BOM) |
+| AI Integration | Groq REST API (`llama-3.1-8b-instant`) | — |
+| Bot Protocol | Telegram Bot Long Polling | — |
+| Database Driver | PostgreSQL JDBC Driver | 17.10 |
 | Runtime image | Eclipse Temurin JRE Alpine | 21 |
 
 ---
 
-## Package Structure
+## Metrics Service Package Structure (`com.miniserver.metrics`)
 
 ```
-com.miniserver.dashboard
-├── DashboardApplication.java     ← @SpringBootApplication — Spring Boot entry point
+com.miniserver.metrics
+├── MetricsServiceApplication.java     ← Spring Boot entry point (@SpringBootApplication)
 ├── config/
-│   └── CorsConfig.java           ← WebMvcConfigurer: CORS policy for local development
+│   ├── CorsConfig.java                ← WebMvcConfigurer: CORS policy for local development
+│   └── SchedulingConfig.java          ← ThreadPoolTaskScheduler (5 worker threads for @Scheduled)
 ├── controller/
-│   └── MetricsController.java    ← @RestController: HTTP routes → shell commands
+│   └── MetricsController.java         ← @RestController: HTTP telemetry routes → shell commands
 └── service/
-    └── SshService.java           ← Persistent JSch session management + retry logic
+    ├── SshService.java                ← Persistent JSch session (LAN/Ngrok fallback) + sudo executor
+    ├── AiChatService.java             ├── Groq LLM tool calling agent & conversation window manager
+    ├── TelegramBotService.java        ├── Long polling Telegram update receiver & dispatcher
+    └── TelegramNotificationService.java └── Async alert notification transmitter
 ```
 
 ---
@@ -146,34 +153,36 @@ Spring context destroyed (SIGTERM / docker compose down)
     └── @PreDestroy cleanup() → session.disconnect()
 ```
 
-### `executeCommand(String command): String`
+### `executeSudoCommand(String command): String`
 
-The public API consumed by `MetricsController`. Implements a **3-retry loop with exponential backoff**:
+Executes administrative commands requiring superuser privileges. Automatically feeds the SSH password into `sudo -S` via stdin (`password + "\n"`), allowing AI tool calls and system administration scripts to run `sudo` commands without interactive password prompts.
 
-| Attempt | Delay before retry |
-| --- | --- |
-| 1 | 250 ms |
-| 2 | 500 ms |
-| 3 | 1 000 ms |
-| 4 (final) | — (returns error string) |
+### Dual-Host Connection Strategy (LAN / Ngrok Fallback)
 
-On each failure:
+`SshService` implements a dual-target strategy:
 
-1. The shared session is disconnected and set to `null` (inside a `synchronized` block to prevent races).
-2. The next call to `getOrCreateSession()` creates a fresh session.
-3. `InterruptedException` during sleep breaks the loop and re-interrupts the thread (thread safety).
+1. Primary target: Local LAN IP (`SSH_HOST:22`).
+2. Fallback target: Ephemeral Ngrok TCP tunnel (`SSH_FALLBACK_HOST:SSH_FALLBACK_PORT`).
+If LAN connection fails or times out (15s), `SshService` automatically switches to the fallback endpoint to guarantee high availability.
 
-**stdout capture:** `BufferedReader` with `InputStreamReader` (default charset, UTF-8 on modern JVM) reads lines until EOF.
+---
 
-**stderr capture:** `ByteArrayOutputStream` is passed to `channel.setErrStream()`. If non-empty, the content is logged at `WARN` level via SLF4J — explicitly not `System.err`, which would bypass Logback and not appear in Docker log aggregation.
+## `AiChatService.java`
 
-**Return value on final failure:**
+Provides an autonomous AI sysadmin agent powered by Groq's Function Calling REST API (`llama-3.1-8b-instant`).
 
-```
-"ERROR: " + lastException.getMessage()
-```
+### Features & Protections
 
-This propagates naturally through `safeData()` in the controller and is rendered as-is in the frontend.
+- **Tool Calling Execution:** Exposes `run_command` tool to Groq LLM, translating natural language queries ("Check when system was last updated") into target shell commands.
+- **Context Window Management:** Caps history at `MAX_HISTORY_MESSAGES = 6` (3 Q&A pairs) and `MAX_OUTPUT_CHARS = 1000` to ensure prompt tokens stay strictly under Groq's 6,000 TPM limit.
+- **Resiliency & Auto-Recovery:** Implements 3 retries with 2.5s backoff on 429 Rate Limit responses. Automatically invokes `clearHistory(chatId)` on 400 Bad Request or 429 Rate Limit errors to purge corrupt state and unblock subsequent chat messages.
+
+---
+
+## `TelegramBotService.java` & `SchedulingConfig.java`
+
+- **Multithreaded Task Scheduler (`SchedulingConfig`):** Configures `ThreadPoolTaskScheduler` with 5 worker threads (`scheduled-task-1`..`5`) so background polling, telemetry refreshes, and Telegram updates execute in parallel.
+- **HTTP Client Timeouts:** `TelegramBotService` and `TelegramNotificationService` utilize `SimpleClientHttpRequestFactory` with explicit 5s connect timeout and 12s/30s read timeouts to prevent HTTP socket threads from parking indefinitely on dropped TCP packets.
 
 ### Thread Safety
 

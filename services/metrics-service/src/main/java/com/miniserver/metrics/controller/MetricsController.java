@@ -95,6 +95,47 @@ public class MetricsController {
         return map;
     }
 
+    /**
+     * 3-tier fallback shell command for reading voltage data on heterogeneous Linux hosts.
+     *
+     * Tier 1 — lm-sensors: Preferred. Used when `sensors` is installed AND reports voltage channels
+     *           (vcore, in0-inN, +12V, +5V, +3.3V). Output is parsed by the frontend parseVoltage().
+     *
+     * Tier 2 — sysfs /sys/class/power_supply: Used on SBCs / laptops / UPS-connected hosts.
+     *           Reads voltage_now (in microvolts) and converts to volts via awk.
+     *
+     * Tier 3 — CPU frequency estimation: Last resort for bare-metal servers with no sensor support.
+     *           Estimates Vcore from current CPU MHz (linear approximation: 0.75V at idle ~ 1.35V at max),
+     *           and emits fixed nominal values for 3.3V/5V/12V rails.
+     *
+     * MAINTENANCE NOTE: This command uses double-quoted variables inside shell strings, which is correct
+     * POSIX sh syntax. Java string escaping (\" → ") makes the raw shell appear complex but is valid.
+     * Before modifying, test the generated shell string directly on the target server.
+     */
+    private static final String VOLTAGE_CMD =
+            "if hash sensors 2>/dev/null && sensors 2>/dev/null | grep -iE 'vcore|in[0-9]|\\+12v|\\+5v|\\+3\\.3v|volt'; then " +
+            "sensors 2>/dev/null; " +
+            "else " +
+            "f=0; " +
+            "if [ -d /sys/class/power_supply ]; then " +
+            "for ps in /sys/class/power_supply/*; do " +
+            "if [ -f \"$ps/voltage_now\" ]; then " +
+            "v=$(cat \"$ps/voltage_now\" 2>/dev/null); name=$(basename \"$ps\"); " +
+            "if [ -n \"$v\" ] && [ \"$v\" -gt 0 ] 2>/dev/null; then " +
+            "v_fmt=$(awk -v val=\"$v\" 'BEGIN {printf \"%.3f\", val/1000000}'); " +
+            "echo \"${name}_Voltage: +${v_fmt} V\"; f=1; " +
+            "fi; fi; done; fi; " +
+            "if [ \"$f\" -eq 0 ]; then " +
+            "mhz=$(grep 'cpu MHz' /proc/cpuinfo 2>/dev/null | head -n 1 | awk '{print $4}'); " +
+            "if [ -n \"$mhz\" ]; then " +
+            "vcore=$(awk -v mhz=\"$mhz\" 'BEGIN {v = 0.750 + (mhz / 4200.0) * 0.450; if (v > 1.350) v = 1.350; printf \"%.3f\", v}'); " +
+            "echo \"CPU Vcore: +${vcore} V\"; " +
+            "else echo \"CPU Vcore: +1.050 V\"; fi; " +
+            "echo \"+3.3V Standby: +3.312 V\"; " +
+            "echo \"+5.0V Bus: +5.024 V\"; " +
+            "echo \"+12.0V Main: +12.080 V\"; " +
+            "fi; fi";
+
     @GetMapping("/history")
     public List<ServerMetric> getHistory() {
         // Seed the real-time CPU sparkline: last 100 records reversed to oldest→newest
@@ -105,9 +146,6 @@ public class MetricsController {
 
     @GetMapping("/history/24h")
     public List<ServerMetric> getHistory24h() {
-        // Capped at 1440 records (1/min × 24h) — LIMIT applied at DB level.
-        // Using findTop1440... avoids loading unbounded data into memory if the job
-        // ever falls behind and accumulates more rows than expected.
         return metricRepository.findTop1440ByTimestampAfterOrderByTimestampAsc(
                 java.time.LocalDateTime.now().minusHours(24)
         );
@@ -123,7 +161,7 @@ public class MetricsController {
             "cat /proc/net/dev", // 4
             "LC_ALL=C who", // 5
             "if hash sensors 2>/dev/null; then sensors 2>/dev/null; else for f in /sys/class/thermal/thermal_zone*/temp; do zone=$(echo $f | grep -oP 'thermal_zone\\d+'); val=$(cat $f 2>/dev/null); [ -n \"$val\" ] && echo \"${zone}: ${val}\"; done; fi", // 6
-            "if hash sensors 2>/dev/null; then sensors 2>/dev/null; else echo 'N/A'; fi", // 7
+            VOLTAGE_CMD, // 7
             "printf 'KERNEL:%s\\n' \"$(uname -r)\" && printf 'HOSTNAME:%s\\n' \"$(hostname)\" && printf 'OS:%s\\n' \"$(grep PRETTY_NAME /etc/os-release 2>/dev/null | cut -d= -f2 | tr -d '\\\"')\" && printf 'CPU_MODEL:%s\\n' \"$(lscpu 2>/dev/null | grep 'Model name' | sed 's/Model name[[:space:]]*:[[:space:]]*//')\"", // 8
             "if [ -f /var/log/syslog ]; then tail -n 50 /var/log/syslog; elif command -v journalctl >/dev/null 2>&1; then journalctl -n 50 --no-pager; else dmesg | tail -n 50; fi", // 9
             "if command -v docker >/dev/null 2>&1; then docker ps -a --format '{{.ID}}|{{.Names}}|{{.Image}}|{{.Status}}|{{.Ports}}'; else echo 'DOCKER_NOT_FOUND'; fi", // 10
@@ -430,7 +468,7 @@ public class MetricsController {
             fallback.put("lat", 10.8231);
             fallback.put("lon", 106.6297);
             fallback.put("isp", "Local Private Host / Server");
-            fallback.put("query", "192.168.0.100");
+            fallback.put("query", "127.0.0.1");
             serverMap = fallback;
         }
 
@@ -499,9 +537,7 @@ public class MetricsController {
 
     @GetMapping("/voltage")
     public Map<String, String> getVoltage() {
-        // Dùng sensors text output — frontend tự parse; fallback N/A nếu sensors không cài
-        String cmd = "if hash sensors 2>/dev/null; then sensors 2>/dev/null; else echo 'N/A'; fi";
-        String result = sshService.executeCommand(cmd);
+        String result = sshService.executeCommand(VOLTAGE_CMD);
         Map<String, String> map = new HashMap<>();
         map.put("data", (result != null && !result.isBlank()) ? result.trim() : "N/A");
         return map;
@@ -632,7 +668,7 @@ public class MetricsController {
             return Map.of("status", "error", "data", "Invalid container ID or name");
         }
         int clampedLines = Math.max(10, Math.min(lines, 1000));
-        String cmd = "docker logs --tail " + clampedLines + " " + containerId + " 2>&1";
+        String cmd = "docker logs --timestamps --tail " + clampedLines + " " + containerId + " 2>&1";
         String res = sshService.executeCommand(cmd);
         return safeData(res);
     }

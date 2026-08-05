@@ -12,7 +12,7 @@ A technical reference for the React frontend: state management, polling architec
 | Build tool | Vite | 8 |
 | HTTP client | Axios | 1 |
 | Charts | Recharts | 3 |
-| Icons | Lucide React | latest |
+| Icons | Custom Sci-Fi SVG system (`SciFiIcons.jsx`) + Lucide React | latest |
 | Production server | Nginx Alpine | latest |
 
 ---
@@ -22,9 +22,15 @@ A technical reference for the React frontend: state management, polling architec
 ```
 frontend/src/
 ├── main.jsx            ← React DOM entry point — mounts <App /> into #root
-├── App.jsx             ← Root component; all state, effects, and UI rendering
+├── App.jsx             ← Root layout, routing outlet, global state & context
 ├── App.css             ← Component-level styles (layout, cards, table, modal, responsive)
 ├── index.css           ← Global CSS variables (design tokens), resets, base styles
+├── components/
+│   └── SciFiIcons.jsx  ← Custom SVG vector icon library (SciFiShield, SciFiLightning, SciFiTelegram, etc.)
+├── pages/
+│   ├── OverviewPage.jsx ← Real-time metrics overview, KPI cards & historical charts
+│   ├── TerminalPage.jsx ← SSH Web Terminal Console with Quick Command Macro Chips & SciFiLightningIcon
+│   └── SettingsPage.jsx ← Telegram notifications, AI bot configuration & system settings
 └── utils/
     └── parsers.js      ← Pure functions: raw SSH text → typed JavaScript objects
 ```

@@ -47,8 +47,8 @@ public class AiChatService {
     private static final String GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
 
     private static final int MAX_AGENT_ITERATIONS = 5;
-    private static final int MAX_HISTORY_MESSAGES = 30;
-    private static final int MAX_OUTPUT_CHARS     = 3000;
+    private static final int MAX_HISTORY_MESSAGES = 6;
+    private static final int MAX_OUTPUT_CHARS     = 1000;
     private static final int COMMAND_TIMEOUT_SEC  = 15;
 
     /**
@@ -102,14 +102,16 @@ public class AiChatService {
     private String model;
 
     private final SshService  sshService;
-    private final ObjectMapper mapper      = new ObjectMapper();
-    private final RestClient   restClient  = RestClient.create();
+    private final ObjectMapper mapper = new ObjectMapper();
+    private final RestClient   restClient;
 
     // chatId → full OpenAI-format message history
     private final Map<String, Deque<ObjectNode>> historyMap = new ConcurrentHashMap<>();
 
     public AiChatService(SshService sshService) {
         this.sshService = sshService;
+        // 30s read timeout — LLM inference can be slow under load
+        this.restClient = RestClientFactory.create(5_000, 30_000);
     }
 
     // ─── Public API ──────────────────────────────────────────────────────────
@@ -170,16 +172,17 @@ public class AiChatService {
 
         } catch (HttpClientErrorException.BadRequest e) {
             log.error("[Agent] Groq BadRequest: {}", e.getResponseBodyAsString());
-            history.pollLast();
-            return "Xin loi, AI da tao cau lenh khong hop le. Vui long thu hoi lai.";
+            clearHistory(chatId);
+            return "Xin lỗi, AI vừa tạo câu lệnh không hợp lệ. Tôi đã dọn dẹp bộ nhớ đệm, vui lòng thử hỏi lại.";
         } catch (HttpClientErrorException.TooManyRequests e) {
             log.error("[Agent] Rate limited: {}", e.getMessage());
-            history.pollLast();
-            return "AI dang qua tai, vui long thu lai sau 1 phut.";
+            clearHistory(chatId);
+            return "AI đang tạm thời quá tải giới hạn token. Tôi đã dọn bộ nhớ hội thoại, bạn hãy thử lại nhé.";
         } catch (Exception e) {
             log.error("[Agent] Error in agent loop: {}", e.getMessage(), e);
-            history.pollLast();
-            return "Da xay ra loi khi xu ly cau hoi. Vui long thu lai.";
+            // Do NOT clear history on transient errors (network, SSH latency) —
+            // preserving context lets the user simply retry without losing the conversation.
+            return "Đã xảy ra lỗi khi xử lý câu hỏi. Vui lòng thử lại.";
         }
     }
 
@@ -224,7 +227,7 @@ public class AiChatService {
         String timedCommand = "timeout " + COMMAND_TIMEOUT_SEC + " " + command;
         log.info("[Agent] Executing SSH: {}", timedCommand);
 
-        String output = sshService.executeCommand(timedCommand);
+        String output = sshService.executeSudoCommand(timedCommand);
         if (output == null || output.isBlank()) {
             return "(lenh khong co output hoac server khong phan hoi)";
         }
@@ -270,7 +273,7 @@ public class AiChatService {
     }
 
     private String callGroq(String requestBody) throws Exception {
-        int maxRetries = 2;
+        int maxRetries = 3;
         for (int attempt = 0; attempt <= maxRetries; attempt++) {
             try {
                 return restClient.post()
@@ -282,8 +285,11 @@ public class AiChatService {
                         .body(String.class);
             } catch (HttpClientErrorException.TooManyRequests e) {
                 if (attempt < maxRetries) {
-                    log.warn("[Agent] Groq 429 Rate limited, retrying in 2s (attempt {}/{})...", attempt + 1, maxRetries);
-                    Thread.sleep(2000);
+                    // Exponential backoff: 1s → 2s → 3s. Keeps first retry fast while
+                    // still giving the rate limiter enough headroom to recover.
+                    long sleepMs = 1000L * (attempt + 1);
+                    log.warn("[Agent] Groq 429 Rate limited, retrying in {}ms (attempt {}/{})...", sleepMs, attempt + 1, maxRetries);
+                    Thread.sleep(sleepMs);
                 } else {
                     throw e;
                 }
@@ -386,12 +392,18 @@ public class AiChatService {
                 - After getting data, INTERPRET it: is something wrong? Is usage high? Explain clearly.
                 - You can call `run_command` multiple times in one response if needed.
 
-                CRITICAL TOOL CALLING RULE:
+                CRITICAL TOOL CALLING RULES:
                 - When generating `command` string arguments, ALWAYS use single quotes (') for options and formatting \
-                  (e.g., `date '+%Y-%m-%d %H:%M:%S %Z'`, `grep 'pattern'`). NEVER use nested double quotes (") inside the command string.
+                  (e.g., `date '+%Y-%m-%d %H:%M:%S %Z'`, `grep 'pattern'`). NEVER use double quotes (") or backslashes (\\) inside the command string.
+                - NEVER use the `history` command (it does not exist in non-interactive SSH shells).
+                - To check system update/upgrade history and exact timestamps:
+                  * Check last apt update time: stat /var/lib/apt/periodic/update-success-stamp
+                  * Check apt upgrade log: grep -E 'Start-Date|Commandline' /var/log/apt/history.log | tail -n 20
+                  * Check dpkg log: grep 'upgrade' /var/log/dpkg.log | tail -n 20
 
                 SAFE COMMANDS YOU CAN USE (examples, not exhaustive):
                 - System/Time: date '+%Y-%m-%d %H:%M:%S %Z', uptime, free -h, df -h, ps aux, top -b -n 1
+                - Apt Updates: stat /var/lib/apt/periodic/update-success-stamp, grep -E 'Start-Date|Commandline' /var/log/apt/history.log | tail -n 20
                 - Docker:  docker ps, docker ps -a, docker stats --no-stream, docker logs --tail 50 <name>
                 - Network: ss -tlnp, netstat -tulnp, ip addr, ping -c 2 <host>
                 - Files:   ls -la /path, cat /etc/nginx/nginx.conf, tail -n 20 /var/log/syslog

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import axios from 'axios';
-import { SciFiConsoleIcon, SciFiDownloadIcon, SciFiRefreshIcon } from '../components/SciFiIcons';
+import { SciFiConsoleIcon, SciFiDownloadIcon, SciFiRefreshIcon, SciFiLightningIcon } from '../components/SciFiIcons';
 
 export default function TerminalPage() {
   const context = useOutletContext();
@@ -221,8 +221,9 @@ Type commands or click Quick Macro chips to execute diagnostic operations.
 
       {/* Quick Command Macro Bar */}
       <div className="glass-panel" style={{ padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-        <div style={{ fontSize: '0.75rem', color: 'var(--accent-cyan)', fontFamily: 'Share Tech Mono', fontWeight: 'bold' }}>
-          ⚡ QUICK COMMAND MACRO CHIPS (1-CLICK EXECUTE):
+        <div style={{ fontSize: '0.75rem', color: 'var(--accent-cyan)', fontFamily: 'Share Tech Mono', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <SciFiLightningIcon size={18} color="var(--accent-cyan)" />
+          <span>QUICK COMMAND MACRO CHIPS (1-CLICK EXECUTE):</span>
         </div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px' }}>
           {macroGroups.map((grp, gIdx) => (

@@ -6,8 +6,10 @@ import com.miniserver.metrics.model.TelegramConfig;
 import com.miniserver.metrics.repository.TelegramConfigRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
 
 import java.util.Optional;
@@ -17,19 +19,12 @@ import java.util.Optional;
  *
  * Polls /getUpdates every 3 seconds (fixedDelay ensures no overlap).
  * Only responds to messages from the configured chat_id (security guard).
+ * Uses PostgreSQL atomic lock (`processed_telegram_updates`) to guarantee
+ * single-instance execution across multi-node/dev+prod environments.
  *
  * Routing logic:
  *   • Messages starting with "/" → slash commands (handled locally).
  *   • All other messages         → forwarded to Groq AI for response.
- *
- * Commands:
- *   /start  — welcome + help
- *   /help   — list commands
- *   /status — server uptime & load
- *   /cpu    — CPU usage
- *   /ram    — RAM usage
- *   /disk   — Disk usage
- *   /ai     — clear AI conversation history
  */
 @Service
 public class TelegramBotService {
@@ -41,6 +36,7 @@ public class TelegramBotService {
     private final TelegramNotificationService notificationService;
     private final SshService sshService;
     private final AiChatService aiService;
+    private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @org.springframework.beans.factory.annotation.Value("${telegram.bot-token:}")
@@ -49,21 +45,63 @@ public class TelegramBotService {
     @org.springframework.beans.factory.annotation.Value("${telegram.chat-id:}")
     private String envChatId;
 
+    @org.springframework.beans.factory.annotation.Value("${telegram.polling-enabled:true}")
+    private boolean pollingEnabled;
+
+    @org.springframework.beans.factory.annotation.Value("${telegram.node-type:dev}")
+    private String nodeType;
+
     // Tracks the last processed update_id to avoid re-processing
     private long updateOffset = 0;
 
     public TelegramBotService(TelegramConfigRepository configRepository,
                               TelegramNotificationService notificationService,
                               SshService sshService,
-                              AiChatService aiService) {
+                              AiChatService aiService,
+                              JdbcTemplate jdbcTemplate) {
         this.configRepository = configRepository;
         this.notificationService = notificationService;
         this.sshService = sshService;
         this.aiService = aiService;
+        this.jdbcTemplate = jdbcTemplate;
+    }
+
+    @Scheduled(fixedDelay = 5_000)
+    public void sendNodeHeartbeat() {
+        if ("dev".equalsIgnoreCase(nodeType) && pollingEnabled) {
+            try {
+                jdbcTemplate.update(
+                        "INSERT INTO telegram_active_node (id, node_name, last_heartbeat) VALUES (1, 'dev', now()) " +
+                        "ON CONFLICT (id) DO UPDATE SET node_name = 'dev', last_heartbeat = now()"
+                );
+            } catch (Exception e) {
+                log.debug("[TelegramBot] Heartbeat error: {}", e.getMessage());
+            }
+        }
+    }
+
+    private boolean isDevNodeActive() {
+        try {
+            Integer count = jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM telegram_active_node WHERE node_name = 'dev' AND last_heartbeat > now() - INTERVAL '15 seconds'",
+                    Integer.class
+            );
+            return count != null && count > 0;
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     @Scheduled(fixedDelay = 3_000)
     public void pollUpdates() {
+        if (!pollingEnabled) return;
+
+        // Dev priority guard: If running in production, yield immediately to active Dev node
+        if ("prod".equalsIgnoreCase(nodeType) && isDevNodeActive()) {
+            log.debug("[TelegramBot] Dev node is active. Production standing down.");
+            return;
+        }
+
         Optional<TelegramConfig> cfgOpt = configRepository.getConfig();
         TelegramConfig cfg = cfgOpt.orElseGet(TelegramConfig::new);
 
@@ -86,7 +124,13 @@ public class TelegramBotService {
 
             for (JsonNode update : root.path("result")) {
                 long updateId = update.path("update_id").asLong();
-                updateOffset = updateId + 1;
+                updateOffset = Math.max(updateOffset, updateId + 1);
+
+                // Atomic distributed lock: Claim update_id in DB (ON CONFLICT DO NOTHING)
+                if (!claimUpdate(updateId)) {
+                    log.info("[TelegramBot] Update ID {} already processed by another instance. Skipping.", updateId);
+                    continue;
+                }
 
                 JsonNode message = update.path("message");
                 if (message.isMissingNode()) continue;
@@ -109,8 +153,32 @@ public class TelegramBotService {
                     handleAiMessage(text, String.valueOf(chatIdLong));
                 }
             }
+        } catch (HttpClientErrorException.Conflict e) {
+            log.warn("[TelegramBot] Polling conflict (409) — another bot instance is active with the same token.");
         } catch (Exception e) {
             log.error("[TelegramBot] Error polling updates: {}", e.getMessage());
+        }
+    }
+
+    private boolean claimUpdate(long updateId) {
+        try {
+            int rows = jdbcTemplate.update(
+                    "INSERT INTO processed_telegram_updates (update_id) VALUES (?) ON CONFLICT (update_id) DO NOTHING",
+                    updateId
+            );
+            return rows > 0;
+        } catch (Exception e) {
+            log.warn("[TelegramBot] Could not claim updateId {}: {}", updateId, e.getMessage());
+            return true;
+        }
+    }
+
+    @Scheduled(fixedDelay = 3_600_000)
+    public void cleanupOldUpdates() {
+        try {
+            jdbcTemplate.update("DELETE FROM processed_telegram_updates WHERE processed_at < now() - INTERVAL '24 hours'");
+        } catch (Exception e) {
+            log.warn("[TelegramBot] Failed to cleanup old update IDs: {}", e.getMessage());
         }
     }
 

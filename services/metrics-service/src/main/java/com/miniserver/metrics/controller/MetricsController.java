@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import org.springframework.scheduling.annotation.Scheduled;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -23,6 +24,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Pattern;
 
 @RestController
@@ -151,8 +154,42 @@ public class MetricsController {
         );
     }
 
+    // High-performance thread-safe in-memory cache for batch metrics
+    private final AtomicReference<Map<String, Object>> cachedBatchMetrics = new AtomicReference<>(null);
+    private final AtomicLong lastCacheTimeMs = new AtomicLong(0);
+
+    /**
+     * Background Poller: Automatically updates the batch metrics snapshot every 2 seconds.
+     * Prevents thundering herd / SSH command execution queues when multiple web clients connect.
+     */
+    @Scheduled(fixedRate = 2000)
+    public void refreshBatchMetricsCache() {
+        try {
+            Map<String, Object> freshData = fetchRawBatchMetrics();
+            if (freshData != null && !freshData.containsKey("error")) {
+                cachedBatchMetrics.set(freshData);
+                lastCacheTimeMs.set(System.currentTimeMillis());
+            }
+        } catch (Exception e) {
+            log.error("[MetricsCache] Failed to refresh background metrics cache: {}", e.getMessage());
+        }
+    }
+
     @GetMapping("/batch")
     public Map<String, Object> getBatchMetrics() {
+        Map<String, Object> cached = cachedBatchMetrics.get();
+        // Fallback for cold start before first scheduled run completes or if stale (>10s)
+        if (cached == null || (System.currentTimeMillis() - lastCacheTimeMs.get() > 10000)) {
+            cached = fetchRawBatchMetrics();
+            if (cached != null && !cached.containsKey("error")) {
+                cachedBatchMetrics.set(cached);
+                lastCacheTimeMs.set(System.currentTimeMillis());
+            }
+        }
+        return cached != null ? cached : Collections.emptyMap();
+    }
+
+    private Map<String, Object> fetchRawBatchMetrics() {
         String[] cmds = {
             "uptime", // 0
             "top -b -n 2 -d 0.2 | grep 'Cpu(s)' | tail -n 1", // 1

@@ -162,7 +162,7 @@ public class MetricsController {
      * Background Poller: Automatically updates the batch metrics snapshot every 2 seconds.
      * Prevents thundering herd / SSH command execution queues when multiple web clients connect.
      */
-    @Scheduled(fixedRate = 2000)
+    @Scheduled(fixedRate = 3000)
     public void refreshBatchMetricsCache() {
         try {
             Map<String, Object> freshData = fetchRawBatchMetrics();
@@ -192,7 +192,7 @@ public class MetricsController {
     private Map<String, Object> fetchRawBatchMetrics() {
         String[] cmds = {
             "uptime", // 0
-            "top -b -n 2 -d 0.2 | grep 'Cpu(s)' | tail -n 1", // 1
+            "awk 'BEGIN{getline a < \"/proc/stat\"; system(\"sleep 0.05\"); getline b < \"/proc/stat\"; split(a,t1); split(b,t2); u=(t2[2]+t2[4])-(t1[2]+t1[4]); i=t2[5]-t1[5]; tot=(t2[2]+t2[3]+t2[4]+t2[5]+t2[6]+t2[7]+t2[8])-(t1[2]+t1[3]+t1[4]+t1[5]+t1[6]+t1[7]+t1[8]); if(tot>0){printf \"%%Cpu(s): %.1f us, 0.0 sy, 0.0 ni, %.1f id, 0.0 wa, 0.0 hi, 0.0 si, 0.0 st\\n\", (u/tot)*100, (i/tot)*100} else {print \"%Cpu(s): 0.0 us, 0.0 sy, 0.0 ni, 100.0 id, 0.0 wa, 0.0 hi, 0.0 si, 0.0 st\"}}'", // 1
             "free -m", // 2
             "df -h -x tmpfs -x devtmpfs", // 3
             "cat /proc/net/dev", // 4

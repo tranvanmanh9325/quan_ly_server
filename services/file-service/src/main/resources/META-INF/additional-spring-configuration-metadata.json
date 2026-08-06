@@ -3,47 +3,47 @@
     {
       "name": "ssh.host",
       "type": "java.lang.String",
-      "description": "Primary SSH host IP or hostname."
+      "description": "Primary LAN SSH Host address."
     },
     {
       "name": "ssh.port",
       "type": "java.lang.Integer",
-      "description": "Primary SSH port."
+      "description": "Primary SSH Port."
     },
     {
       "name": "ssh.user",
       "type": "java.lang.String",
-      "description": "SSH username."
+      "description": "SSH Username."
     },
     {
       "name": "ssh.password",
       "type": "java.lang.String",
-      "description": "SSH password."
+      "description": "SSH Password."
     },
     {
       "name": "ssh.strict-host-key-checking",
       "type": "java.lang.String",
-      "description": "Strict host key checking setting (yes/no)."
+      "description": "SSH strict host key checking policy."
     },
     {
       "name": "ssh.fallback-host",
       "type": "java.lang.String",
-      "description": "Fallback SSH host IP or hostname."
+      "description": "Fallback SSH Host (e.g. ngrok tunnel)."
     },
     {
       "name": "ssh.fallback-port",
       "type": "java.lang.Integer",
-      "description": "Fallback SSH port."
+      "description": "Fallback SSH Port."
     },
     {
       "name": "app.jwt.secret",
       "type": "java.lang.String",
-      "description": "Secret key used for signing JWT tokens."
+      "description": "JWT Signing Secret key."
     },
     {
       "name": "app.jwt.expiration-hours",
       "type": "java.lang.Integer",
-      "description": "JWT token expiration in hours."
+      "description": "JWT token validity in hours."
     }
   ]
 }

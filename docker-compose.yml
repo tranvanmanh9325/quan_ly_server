@@ -31,7 +31,7 @@ services:
     env_file:
       - .env
     environment:
-      JAVA_TOOL_OPTIONS: "-XX:+UseG1GC -XX:MaxRAMPercentage=75.0 -XX:+ExitOnOutOfMemoryError"
+      JAVA_TOOL_OPTIONS: "-XX:+UseSerialGC -XX:MaxRAMPercentage=70.0 -XX:+ExitOnOutOfMemoryError -XX:+TieredCompilation -XX:TieredStopAtLevel=1"
     restart: unless-stopped
     networks:
       - dashboard-network
@@ -59,7 +59,7 @@ services:
     env_file:
       - .env
     environment:
-      JAVA_TOOL_OPTIONS: "-XX:+UseG1GC -XX:MaxRAMPercentage=75.0 -XX:+ExitOnOutOfMemoryError"
+      JAVA_TOOL_OPTIONS: "-XX:+UseSerialGC -XX:MaxRAMPercentage=70.0 -XX:+ExitOnOutOfMemoryError -XX:+TieredCompilation -XX:TieredStopAtLevel=1"
     restart: unless-stopped
     depends_on:
       db:
@@ -90,7 +90,7 @@ services:
     env_file:
       - .env
     environment:
-      JAVA_TOOL_OPTIONS: "-XX:+UseG1GC -XX:MaxRAMPercentage=75.0 -XX:+ExitOnOutOfMemoryError"
+      JAVA_TOOL_OPTIONS: "-XX:+UseSerialGC -XX:MaxRAMPercentage=70.0 -XX:+ExitOnOutOfMemoryError -XX:+TieredCompilation -XX:TieredStopAtLevel=1"
     restart: unless-stopped
     networks:
       - dashboard-network

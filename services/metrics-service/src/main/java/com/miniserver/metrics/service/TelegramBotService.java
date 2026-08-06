@@ -107,9 +107,18 @@ public class TelegramBotService {
         }
     }
 
+    // Adaptive backoff state to prevent CPU/Network spam when token conflict (409) occurs
+    private long backoffUntilMs = 0;
+    private int conflictCount = 0;
+
     @Scheduled(fixedDelay = 3_000)
     public void pollUpdates() {
         if (!pollingEnabled) return;
+
+        // Skip execution if we are in an exponential backoff period
+        if (System.currentTimeMillis() < backoffUntilMs) {
+            return;
+        }
 
         Optional<TelegramConfig> cfgOpt = configRepository.getConfig();
         TelegramConfig cfg = cfgOpt.orElseGet(TelegramConfig::new);
@@ -126,6 +135,13 @@ public class TelegramBotService {
 
         try {
             String response = restClient.get().uri(url).retrieve().body(String.class);
+
+            // Successfully received response -> reset conflict backoff
+            if (conflictCount > 0) {
+                log.info("[TelegramBot] Polling conflict resolved. Resuming normal 3s polling schedule.");
+                conflictCount = 0;
+            }
+
             if (response == null || response.isBlank()) return;
 
             JsonNode root = objectMapper.readTree(response);
@@ -163,9 +179,15 @@ public class TelegramBotService {
                 }
             }
         } catch (HttpClientErrorException.Conflict e) {
-            log.warn("[TelegramBot] Polling conflict (409) — another bot instance is active with the same token.");
+            conflictCount++;
+            // Exponential backoff: 10s, 20s, 40s, max 60s
+            long delaySeconds = Math.min(60, 10L * (1L << Math.min(conflictCount - 1, 3)));
+            backoffUntilMs = System.currentTimeMillis() + (delaySeconds * 1000);
+            log.warn("[TelegramBot] Polling conflict (409) — another bot instance is active with the same token. Backing off for {}s (conflict #{})", delaySeconds, conflictCount);
         } catch (Exception e) {
-            log.error("[TelegramBot] Error polling updates: {}", e.getMessage());
+            // Temporary network glitch or timeout -> back off for 10s
+            backoffUntilMs = System.currentTimeMillis() + 10_000;
+            log.error("[TelegramBot] Error polling updates: {}. Retrying in 10s.", e.getMessage());
         }
     }
 

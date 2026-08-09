@@ -411,19 +411,24 @@ public class AiChatService {
                   • `dashboard_file_service` — Service Quản Lý File (Spring Boot)
                   • `dashboard_db` — Cơ sở dữ liệu PostgreSQL 17
 
-                WHEN USER ASKS ABOUT SERVER IP / ADDRESS / DOMAIN / NGROK URL:
-                - ALWAYS distinguish clearly between the Server Host IP addresses (`kirito-server`) and the Deployed Project Web Dashboard Access URLs (`quan_ly_server`). Note: The server host itself has no domain name; Ngrok provides a public proxy URL specifically for accessing the project `quan_ly_server` Web UI from outside.
-                - Run `curl -s --max-time 3 https://api.ipify.org` for Public WAN IP.
-                - Run `hostname -I | awk '{print $1}'` for Local LAN IP.
-                - Run `curl -s --max-time 3 http://localhost:4040/api/tunnels` for Ngrok URL.
-                - Report clearly in Markdown:
-                  🌐 *Địa Chỉ IP Máy Chủ (`kirito-server`):*
-                  • 🌍 *IP Public (Internet WAN):* `<public_ip>`
-                  • 🏠 *IP Nội Bộ (Mạng LAN):* `192.168.0.100`
+                USER INTENT & RESPONSE FOCUS RULES (CRITICAL):
+                Strictly answer ONLY what the user asks. Never mix IP responses with Web access links unless explicitly requested together.
 
-                  🚀 *Đường Dẫn Truy Cập Web Dashboard Dự Án (`quan_ly_server`):*
-                  • 🔗 *URL Công Cộng Ngrok (Truy cập từ xa):* `https://deformational-semiopenly-ewa.ngrok-free.dev`
-                  • 🌐 *URL Nội Bộ (Mạng LAN):* `http://192.168.0.100`
+                1. WHEN USER ASKS ABOUT SERVER IP ADDRESS (e.g., "Địa chỉ IP server ở đâu", "IP máy chủ là gì", "cho xin IP server"):
+                   - Return ONLY the server IP addresses (Public WAN IP & Local LAN IP).
+                   - NEVER attach project access links, Ngrok URLs, or website links.
+                   - Format:
+                     🌐 *Địa Chỉ IP Máy Chủ (`kirito-server`):*
+                     • 🌍 *IP Public (Internet WAN):* `<public_ip>`
+                     • 🏠 *IP Nội Bộ (Mạng LAN):* `192.168.0.100`
+
+                2. WHEN USER ASKS ABOUT WEB DASHBOARD ACCESS LINKS / URLS (e.g., "link truy cập dự án quan_ly_server là gì", "đường dẫn web dashboard", "link ngrok"):
+                   - Return ONLY the Web Dashboard access links (Ngrok Public URL & LAN URL).
+                   - NEVER dump raw server IP details.
+                   - Format:
+                     🚀 *Đường Dẫn Truy Cập Web Dashboard Dự Án (`quan_ly_server`):*
+                     • 🔗 *URL Công Cộng Ngrok (Truy cập từ xa):* `https://deformational-semiopenly-ewa.ngrok-free.dev`
+                     • 🌐 *URL Nội Bộ (Mạng LAN):* `http://192.168.0.100`
 
                 CORE BEHAVIOR:
                 - For general greetings (e.g., "Chào bạn", "Hello", "Hi", "Bắt đầu") or conversational chitchat, \

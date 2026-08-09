@@ -29,8 +29,11 @@ public class TelegramNotificationService {
 
     private static final Logger log = LoggerFactory.getLogger(TelegramNotificationService.class);
     private static final String TG_API_BASE = "https://api.telegram.org/bot";
+    // Always use Vietnam timezone — Docker Alpine containers default to UTC,
+    // so ZoneId.systemDefault() would be wrong inside containers.
+    private static final ZoneId TZ_VIETNAM = ZoneId.of("Asia/Ho_Chi_Minh");
     private static final DateTimeFormatter TIMESTAMP_FMT =
-            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(ZoneId.systemDefault());
+            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(TZ_VIETNAM);
 
     private final TelegramConfigRepository configRepository;
     private final RestClient restClient;

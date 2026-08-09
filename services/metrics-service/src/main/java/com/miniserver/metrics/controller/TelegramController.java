@@ -87,7 +87,7 @@ public class TelegramController {
         }
 
         String now = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
-                .withZone(ZoneId.systemDefault())
+                .withZone(ZoneId.of("Asia/Ho_Chi_Minh"))
                 .format(java.time.Instant.now());
 
         try {

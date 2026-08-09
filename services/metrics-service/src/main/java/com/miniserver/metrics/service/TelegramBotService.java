@@ -287,24 +287,136 @@ public class TelegramBotService {
         if (raw == null || raw.isBlank() || raw.startsWith("Lỗi")) {
             return "❌ *Status:* SSH unavailable";
         }
+        try {
+            String clean = raw.trim();
+            int upIdx = clean.indexOf("up ");
+            int loadIdx = clean.indexOf("load average:");
+
+            String uptimeStr = "";
+            String loadStr = "";
+            if (upIdx != -1 && loadIdx != -1) {
+                uptimeStr = clean.substring(upIdx + 3, clean.lastIndexOf(',', loadIdx)).trim();
+                loadStr = clean.substring(loadIdx + "load average:".length()).trim();
+            }
+
+            StringBuilder sb = new StringBuilder();
+            sb.append("🖥️ *Server System Status*\n");
+            sb.append("━━━━━━━━━━━━━━━━━━\n");
+            if (!uptimeStr.isBlank()) {
+                sb.append("⏱️ *Uptime:* `").append(uptimeStr).append("`\n");
+            }
+            if (!loadStr.isBlank()) {
+                sb.append("📊 *Load Average:* `").append(loadStr).append("`\n");
+            }
+            sb.append("🟢 *System Health:* `OPTIMAL`");
+            return sb.toString();
+        } catch (Exception e) {
+            log.warn("[TelegramBot] Error parsing status stats: {}", e.getMessage());
+        }
         return "🖥 *Server Status*\n```\n" + raw.trim() + "\n```";
     }
 
     private String fetchCpu() {
-        String raw = sshService.executeCommand("top -b -n 2 -d 0.2 | grep 'Cpu(s)' | tail -n 1");
-        if (raw == null || raw.isBlank()) return "❌ *CPU:* SSH unavailable";
+        String cmd = "awk 'BEGIN{getline a < \"/proc/stat\"; close(\"/proc/stat\"); system(\"sleep 0.1\"); getline b < \"/proc/stat\"; split(a,t1); split(b,t2); u=(t2[2]+t2[4])-(t1[2]+t1[4]); i=t2[5]-t1[5]; tot=(t2[2]+t2[3]+t2[4]+t2[5]+t2[6]+t2[7]+t2[8])-(t1[2]+t1[3]+t1[4]+t1[5]+t1[6]+t1[7]+t1[8]); if(tot>0){printf \"%.1f|%.1f|%.1f|%.1f\\n\", ((t2[2]-t1[2])/tot)*100, ((t2[4]-t1[4])/tot)*100, (i/tot)*100, (1-i/tot)*100} else {print \"0.0|0.0|100.0|0.0\"}}'";
+        String raw = sshService.executeCommand(cmd);
+        if (raw == null || raw.isBlank() || raw.startsWith("Lỗi")) {
+            return "❌ *CPU:* SSH unavailable";
+        }
+        try {
+            String[] parts = raw.trim().split("\\|");
+            if (parts.length >= 4) {
+                double us = Double.parseDouble(parts[0]);
+                double sy = Double.parseDouble(parts[1]);
+                double id = Double.parseDouble(parts[2]);
+                double total = Double.parseDouble(parts[3]);
+                return String.format(
+                    "🖥️ *CPU Usage Overview*\n" +
+                    "━━━━━━━━━━━━━━━━━━\n" +
+                    "⚡ *Total CPU Load:* `%.1f%%` \n\n" +
+                    "📊 *Detailed Breakdown:*\n" +
+                    "• User (`us`): `%.1f%%` \n" +
+                    "• System (`sy`): `%.1f%%` \n" +
+                    "• Idle (`id`): `%.1f%%` ",
+                    total, us, sy, id
+                );
+            }
+        } catch (Exception e) {
+            log.warn("[TelegramBot] Error parsing CPU stats: {}", e.getMessage());
+        }
         return "🔲 *CPU Usage*\n```\n" + raw.trim() + "\n```";
     }
 
     private String fetchRam() {
         String raw = sshService.executeCommand("free -m");
-        if (raw == null || raw.isBlank()) return "❌ *RAM:* SSH unavailable";
+        if (raw == null || raw.isBlank() || raw.startsWith("Lỗi")) {
+            return "❌ *RAM:* SSH unavailable";
+        }
+        try {
+            String[] lines = raw.trim().split("\n");
+            String memLine = null;
+            String swapLine = null;
+            for (String l : lines) {
+                if (l.startsWith("Mem:")) memLine = l;
+                else if (l.startsWith("Swap:")) swapLine = l;
+            }
+            if (memLine != null) {
+                String[] m = memLine.trim().split("\\s+");
+                long total = Long.parseLong(m[1]);
+                long used = Long.parseLong(m[2]);
+                long free = Long.parseLong(m[3]);
+                long buff = m.length > 5 ? Long.parseLong(m[5]) : 0;
+                long avail = m.length > 6 ? Long.parseLong(m[6]) : free;
+                double usagePct = (double) used / total * 100;
+
+                StringBuilder sb = new StringBuilder();
+                sb.append("💾 *RAM Usage Overview*\n");
+                sb.append("━━━━━━━━━━━━━━━━━━\n");
+                sb.append(String.format("📊 *Usage:* `%d MB / %d MB` (`%.1f%%`)\n\n", used, total, usagePct));
+                sb.append(String.format("• Free: `%d MB` \n", free));
+                sb.append(String.format("• Buffers/Cache: `%d MB` \n", buff));
+                sb.append(String.format("• Available: `%d MB` \n", avail));
+
+                if (swapLine != null) {
+                    String[] s = swapLine.trim().split("\\s+");
+                    long sTotal = Long.parseLong(s[1]);
+                    long sUsed = Long.parseLong(s[2]);
+                    if (sTotal > 0) {
+                        double sPct = (double) sUsed / sTotal * 100;
+                        sb.append(String.format("• Swap: `%d MB / %d MB` (`%.1f%%`)", sUsed, sTotal, sPct));
+                    }
+                }
+                return sb.toString();
+            }
+        } catch (Exception e) {
+            log.warn("[TelegramBot] Error parsing RAM stats: {}", e.getMessage());
+        }
         return "💾 *RAM Usage*\n```\n" + raw.trim() + "\n```";
     }
 
     private String fetchDisk() {
-        String raw = sshService.executeCommand("df -h -x tmpfs -x devtmpfs");
-        if (raw == null || raw.isBlank()) return "❌ *Disk:* SSH unavailable";
+        String raw = sshService.executeCommand("df -h -x tmpfs -x devtmpfs -x overlay -x squashfs");
+        if (raw == null || raw.isBlank() || raw.startsWith("Lỗi")) {
+            return "❌ *Disk:* SSH unavailable";
+        }
+        try {
+            String[] lines = raw.trim().split("\n");
+            StringBuilder sb = new StringBuilder();
+            sb.append("🗄️ *Disk Usage Overview*\n");
+            sb.append("━━━━━━━━━━━━━━━━━━\n");
+            for (int i = 1; i < lines.length; i++) {
+                String[] parts = lines[i].trim().split("\\s+");
+                if (parts.length >= 6) {
+                    String size = parts[1];
+                    String used = parts[2];
+                    String pct = parts[4];
+                    String mount = parts[5];
+                    sb.append(String.format("• `%s` — `%s / %s` (`%s`)\n", mount, used, size, pct));
+                }
+            }
+            return sb.toString().trim();
+        } catch (Exception e) {
+            log.warn("[TelegramBot] Error parsing disk stats: {}", e.getMessage());
+        }
         return "🗄 *Disk Usage*\n```\n" + raw.trim() + "\n```";
     }
 }

@@ -160,12 +160,13 @@ public class TelegramNotificationService {
 
     private void sendMessage(TelegramConfig cfg, String text) {
         String url = TG_API_BASE + cfg.getBotToken() + "/sendMessage";
+        String sanitized = sanitizeMarkdown(text);
         try {
             // Attempt 1: with Markdown formatting
             restClient.post()
                     .uri(url)
                     .contentType(MediaType.APPLICATION_JSON)
-                    .body(Map.of("chat_id", cfg.getChatId(), "text", text, "parse_mode", "Markdown"))
+                    .body(Map.of("chat_id", cfg.getChatId(), "text", sanitized, "parse_mode", "Markdown"))
                     .retrieve()
                     .toBodilessEntity();
             log.debug("[Telegram] Message sent (Markdown).");
@@ -186,6 +187,21 @@ public class TelegramNotificationService {
         } catch (Exception e) {
             log.error("[Telegram] Failed to send message: {}", e.getMessage());
         }
+    }
+
+    private String sanitizeMarkdown(String text) {
+        if (text == null || text.isBlank()) return text;
+        String[] lines = text.split("\n");
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i];
+            if (line.contains("_") && !line.contains("`")) {
+                line = line.replaceAll("(?<![`a-zA-Z0-9_/])([a-zA-Z0-9]+(?:_[a-zA-Z0-9-]+)+)(?![`a-zA-Z0-9_/])", "`$1`");
+            }
+            sb.append(line);
+            if (i < lines.length - 1) sb.append("\n");
+        }
+        return sb.toString();
     }
 
     private String buildAlertMessage(TelegramConfig cfg,

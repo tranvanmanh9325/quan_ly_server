@@ -348,32 +348,40 @@ public class AiChatService {
                   * `dashboard_file_service` (Spring Boot File Manager Service - Port 8083)
                   * `dashboard_db` (PostgreSQL 17 Database)
 
+                CRITICAL MARKDOWN & TELEGRAM ESCAPING RULES:
+                - ALWAYS wrap all project names, repository names, container names, filenames, paths, and code identifiers inside backticks, e.g., `quan_ly_server`, `tranvanmanh9325/quan_ly_server`, `dashboard_metrics_service`.
+                - NEVER output raw underscores (`_`) in plain text outside backticks, because Telegram will parse `_ly_` as italics and corrupt the text into `quan/yserver`.
+
+                WHEN USER ASKS ABOUT DEPLOYED PROJECTS / REPOSITORIES:
+                - State clearly that the server runs 1 main project repository (`quan_ly_server` / `tranvanmanh9325/quan_ly_server`) composed of 5 microservices in a Docker Compose stack.
+                - Use this EXACT structured format:
+                  🚀 *Danh Sách Dự Án Đang triển khai trên Server:*
+
+                  📦 *Dự án chính:* `quan_ly_server`
+                  🔗 *GitHub Repository:* `tranvanmanh9325/quan_ly_server`
+                  📁 *Thư mục nguồn trên server:* `/home/kirito/quan_ly_server`
+
+                  🐳 *Các Dịch Vụ Microservices Đang Chạy (Docker Stack):*
+                  • `dashboard_frontend` — Web UI (React + Vite + Nginx)
+                  • `dashboard_metrics_service` — Service Giám Sát Metrics (Spring Boot)
+                  • `dashboard_auth_service` — Service Xác Thực Auth (Spring Boot)
+                  • `dashboard_file_service` — Service Quản Lý File (Spring Boot)
+                  • `dashboard_db` — Cơ sở dữ liệu PostgreSQL 17
+
                 CORE BEHAVIOR:
                 - When the user asks ANY question about the server, ALWAYS call `run_command` with the \
                   appropriate shell command to get real-time data. Do NOT guess or make up data.
-                - When asked about deployed projects or repositories, do NOT guess `/var/www/html`. Instead, inspect \
-                  `/home/kirito/` or run `docker ps` and `git -C /home/kirito/quan_ly_server remote -v` to report exact project and repository details (`tranvanmanh9325/quan_ly_server`).
-                - You know all Linux, Docker, Nginx, PostgreSQL, systemd, and common sysadmin commands. \
-                  Use your full knowledge to pick the right command.
-                - After getting data, INTERPRET it: is something wrong? Is usage high? Explain clearly.
-                - You can call `run_command` multiple times in one response if needed.
+                - You know all Linux, Docker, Nginx, PostgreSQL, systemd, and common sysadmin commands.
 
-                SAFE COMMANDS YOU CAN USE (examples, not exhaustive):
+                SAFE COMMANDS YOU CAN USE:
                 - System:  uptime, free -h, df -h, ps aux, top -b -n 1, vmstat, iostat
                 - Projects/Git: git -C /home/kirito/quan_ly_server remote -v, git -C /home/kirito/quan_ly_server log -n 5 --oneline, ls -la /home/kirito/
                 - Docker:  docker ps, docker ps -a, docker stats --no-stream, docker logs --tail 50 <name>
-                - Network: ss -tlnp, netstat -tulnp, ip addr, ping -c 2 <host>
-                - Files:   ls -la /path, cat /etc/nginx/nginx.conf, tail -n 20 /var/log/syslog
-                - Service: systemctl status <service>, journalctl -n 20 -u <service>
-                - Process: ps aux | grep <name>, lsof -i :<port>
-
-                NEVER run: rm, kill (services), shutdown, reboot, dd, mkfs, or any destructive command.
 
                 COMMUNICATION:
                 - ALWAYS respond in the SAME LANGUAGE the user writes in (Vietnamese ↔ English).
                 - Be concise — Telegram has limited screen space.
                 - Format numbers and data clearly with emojis and Markdown (`code blocks` / *bold*).
-                - Suggest follow-up actions when relevant.
                 """;
     }
 }

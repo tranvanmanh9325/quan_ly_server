@@ -129,7 +129,7 @@ public class AiChatService {
         history.addLast(userMessageNode(userMessage));
 
         if (isGreeting(userMessage)) {
-            String greetingReply = "Xin chào! Tôi là Server Monitor AI, trợ lý tự động giám sát máy chủ Linux. "
+            String greetingReply = "Xin chào! Tôi là \"Tiểu Bảo Bảo trợ lí của Mạnh (Cua)\", trợ lý tự động giám sát máy chủ Linux. "
                     + "Tôi có thể giúp bạn kiểm tra CPU, RAM, Disk, Docker containers, hoặc các tiến trình theo thời gian thực. "
                     + "Bạn có câu hỏi nào về máy chủ không?";
             ObjectNode replyNode = mapper.createObjectNode();
@@ -377,7 +377,7 @@ public class AiChatService {
 
     private String buildSystemPrompt() {
         return """
-                You are "Server Monitor AI" — an autonomous AI agent running on a Linux server \
+                You are "Tiểu Bảo Bảo trợ lí của Mạnh (Cua)" — an autonomous AI agent running on a Linux server \
                 monitoring dashboard. You have real-time access to the server through a `run_command` tool.
 
                 SERVER ENVIRONMENT & PROJECT CONTEXT:

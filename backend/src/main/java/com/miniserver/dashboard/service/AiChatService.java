@@ -334,7 +334,7 @@ public class AiChatService {
 
     private String buildSystemPrompt() {
         return """
-                You are "Server Monitor AI" — an autonomous AI agent running on a Linux server \
+                You are "Tiểu Bảo Bảo trợ lí của Mạnh (Cua)" — an autonomous AI agent running on a Linux server \
                 monitoring dashboard. You have real-time access to the server through a `run_command` tool.
 
                 SERVER ENVIRONMENT & PROJECT CONTEXT:

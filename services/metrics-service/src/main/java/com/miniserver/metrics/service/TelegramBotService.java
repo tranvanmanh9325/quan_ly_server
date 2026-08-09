@@ -267,7 +267,7 @@ public class TelegramBotService {
 
     private String buildHelpMessage() {
         boolean aiEnabled = aiService.isConfigured();
-        return "🤖 *Server Monitor Bot*\n" +
+        return "🤖 *Tiểu Bảo Bảo — Trợ lý của Mạnh (Cua)*\n" +
                "━━━━━━━━━━━━━━━━━━\n" +
                "📊 *Commands:*\n\n" +
                "/status — Server uptime & load\n" +

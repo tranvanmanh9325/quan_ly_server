@@ -104,7 +104,11 @@ public class FacebookMessengerService {
             launchOptions.setExecutablePath(Paths.get("/usr/bin/chromium-browser"));
         }
 
-        try (Playwright playwright = Playwright.create();
+        Map<String, String> env = new HashMap<>(System.getenv());
+        env.put("PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD", "1");
+        Playwright.CreateOptions createOptions = new Playwright.CreateOptions().setEnv(env);
+
+        try (Playwright playwright = Playwright.create(createOptions);
              Browser browser = playwright.chromium().launch(launchOptions)) {
 
             BrowserContext context = browser.newContext(new Browser.NewContextOptions()

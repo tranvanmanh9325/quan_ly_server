@@ -137,23 +137,38 @@ public class FacebookMessengerService {
             for (int i = 0; i < maxCheck; i++) {
                 try {
                     ElementHandle thread = threads.get(i);
-                    thread.click();
-                    page.waitForTimeout(2000);
 
-                    // Extract thread title/sender
+                    // Layer 1: Check thread sidebar item text for group markers BEFORE clicking
+                    String threadItemText = thread.innerText() != null ? thread.innerText().toLowerCase() : "";
+                    if (threadItemText.contains("đã thêm") || threadItemText.contains("ảnh nhóm") || threadItemText.contains("đổi tên") || threadItemText.contains("rời khỏi")) {
+                        log.info("[FB-Responder] Skipping thread #{} (Sidebar item marked as Group/Community chat)", i);
+                        continue;
+                    }
+
+                    thread.click();
+                    page.waitForTimeout(2500);
+
+                    // Layer 2: Check opened conversation header/sidebar for Group indicators
+                    boolean isGroup = isGroupOrCommunityChat(page);
+                    if (isGroup) {
+                        log.info("[FB-Responder] Thread #{} is a GROUP CHAT / COMMUNITY. Strictly skipping without inspection or auto-reply.", i);
+                        continue;
+                    }
+
+                    // Extract thread title/sender for 1-on-1 personal chat
                     String senderName = "User_" + i;
                     ElementHandle headerElem = page.querySelector("h2, [role='main'] header span");
                     if (headerElem != null && headerElem.textContent() != null) {
                         senderName = headerElem.textContent().trim();
                     }
 
-                    // Count unreplied consecutive incoming message bubbles from opponent
+                    // Count unreplied consecutive incoming message bubbles from opponent in 1-on-1 chat
                     int unrepliedCount = countUnrepliedIncomingMessages(page);
-                    log.info("[FB-Responder] Sender '{}' has {} unreplied incoming message(s).", senderName, unrepliedCount);
+                    log.info("[FB-Responder] Personal Chat with '{}': {} unreplied incoming message(s).", senderName, unrepliedCount);
 
                     if (unrepliedCount >= cfg.getThreshold()) {
                         if (isCooldownExpired(senderName, cfg.getCooldownMinutes())) {
-                            log.info("[FB-Responder] Triggering AI Away reply for sender '{}' (Unreplied: {} >= Threshold: {})",
+                            log.info("[FB-Responder] Triggering AI Away reply for 1-on-1 sender '{}' (Unreplied: {} >= Threshold: {})",
                                     senderName, unrepliedCount, cfg.getThreshold());
 
                             String awayReply = generateAwayMessage(senderName, unrepliedCount, cfg.getCustomMessage());
@@ -178,6 +193,23 @@ public class FacebookMessengerService {
         }
 
         return autoRepliesSent;
+    }
+
+    private boolean isGroupOrCommunityChat(Page page) {
+        Object isGroupResult = page.evaluate("() => {" +
+                "  let text = document.body.innerText || '';" +
+                "  let header = document.querySelector('[role=\"main\"] header, [role=\"complementary\"]') || document.body;" +
+                "  let headerText = (header.innerText || '').toLowerCase();" +
+                "  let groupKeywords = ['thành viên', 'view members', 'members', 'thêm người', 'add people', 'đổi tên đoạn chat', 'change chat name', 'rời khỏi nhóm', 'leave group', 'ảnh nhóm', 'cộng đồng', 'community'];" +
+                "  for (let kw of groupKeywords) {" +
+                "    if (headerText.includes(kw)) return true;" +
+                "  }" +
+                "  let memberButtons = document.querySelectorAll('[aria-label*=\"Thành viên\"], [aria-label*=\"Members\"], [aria-label*=\"View members\"]');" +
+                "  if (memberButtons.length > 0) return true;" +
+                "  return false;" +
+                "}");
+
+        return Boolean.TRUE.equals(isGroupResult);
     }
 
     private int countUnrepliedIncomingMessages(Page page) {
@@ -211,14 +243,14 @@ public class FacebookMessengerService {
             return customTemplate.replace("{name}", senderName).replace("{count}", String.valueOf(unrepliedCount));
         }
 
-        String prompt = "Người dùng Facebook tên \"" + senderName + "\" đã gửi cho tôi " + unrepliedCount + " tin nhắn liên tiếp trong lúc tôi vắng mặt. "
-                + "Hãy đóng vai trợ lý AI cá nhân, viết 1 câu trả lời ngắn gọn (1-2 câu), lịch sự, tự nhiên bằng tiếng Việt thông báo rằng chủ tài khoản hiện đang vắng mặt "
-                + "và sẽ phản hồi lại ngay khi có thể.";
+        String prompt = "Bạn là 'Tiểu Bảo Bảo' - trợ lý AI của anh Mạnh (Cua). "
+                + "Người dùng cá nhân tên \"" + senderName + "\" đã gửi cho anh Mạnh (Cua) " + unrepliedCount + " tin nhắn liên tiếp trong lúc anh ấy vắng mặt. "
+                + "Hãy viết 1 câu trả lời ngắn gọn (1-2 câu), xưng là 'Tiểu Bảo Bảo trợ lí của Mạnh (Cua)', thông báo rằng anh Mạnh (Cua) hiện đang vắng mặt và đã nhận được " + unrepliedCount + " tin nhắn của họ, sẽ báo lại anh ấy ngay khi quay lại.";
 
         try {
             return aiChatService.chat("fb-away-" + senderName.hashCode(), prompt);
         } catch (Exception e) {
-            return "Xin chào " + senderName + ", hiện tại mình đang vắng mặt. Mình đã ghi nhận " + unrepliedCount + " tin nhắn của bạn và sẽ phản hồi ngay khi quay lại nhé!";
+            return "Chào bạn, mình là Tiểu Bảo Bảo trợ lí của Mạnh (Cua). Hiện tại anh Mạnh (Cua) đang đi vắng và đã nhận được " + unrepliedCount + " tin nhắn của bạn. Mình sẽ báo lại anh ấy ngay khi quay lại nhé!";
         }
     }
 

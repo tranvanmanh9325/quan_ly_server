@@ -122,8 +122,19 @@ public class FacebookMessengerService {
             applyCookies(context, cfg.getCookiesJson());
 
             Page page = context.newPage();
-            page.navigate("https://www.facebook.com/messages/t/");
-            page.waitForTimeout(4000);
+            page.navigate("https://www.facebook.com/messages/t/", new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED));
+            page.waitForTimeout(5000);
+
+            // Close any popup/modal if present (e.g. E2E encryption / PIN popup / Not Now)
+            try {
+                List<ElementHandle> closeBtns = page.querySelectorAll("div[role='dialog'] div[role='button']:has-text('Not now'), div[role='dialog'] div[role='button']:has-text('Không phải bây giờ'), div[role='dialog'] div[aria-label='Close'], div[role='dialog'] div[aria-label='Đóng']");
+                for (ElementHandle btn : closeBtns) {
+                    if (btn.isVisible()) {
+                        btn.click();
+                        page.waitForTimeout(1000);
+                    }
+                }
+            } catch (Exception ignored) {}
 
             // Check if logged in
             String currentUrl = page.url();
@@ -133,10 +144,17 @@ public class FacebookMessengerService {
                 return 0;
             }
 
-            log.info("[FB-Responder] Successfully loaded Messenger page.");
+            log.info("[FB-Responder] Successfully loaded Messenger page. Current URL: {}", currentUrl);
+
+            // Wait for conversation list
+            try {
+                page.waitForSelector("[role='gridcell'], [role='row'], a[href*='/messages/t/'], div[role='navigation'] a", new Page.WaitForSelectorOptions().setTimeout(8000));
+            } catch (Exception e) {
+                log.warn("[FB-Responder] Wait for thread list selector timed out, attempting query fallback...");
+            }
 
             // Find unread/active conversation elements
-            List<ElementHandle> threads = page.querySelectorAll("[role='gridcell'], [role='row'], a[href*='/messages/t/']");
+            List<ElementHandle> threads = page.querySelectorAll("[role='gridcell'], [role='row'], a[href*='/messages/t/'], div[role='navigation'] a, div[role='listitem']");
             log.info("[FB-Responder] Found {} potential conversation elements.", threads.size());
 
             int maxCheck = Math.min(threads.size(), 10);

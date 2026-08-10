@@ -32,11 +32,11 @@ public class FacebookConfig {
     private int cooldownMinutes = 120;
 
     /** Facebook Session cookies formatted as JSON string */
-    @Column(name = "cookies_json", nullable = false)
+    @Column(name = "cookies_json", nullable = false, columnDefinition = "TEXT")
     private String cookiesJson = "";
 
     /** Custom template or prompt override for away message */
-    @Column(name = "custom_message", nullable = false)
+    @Column(name = "custom_message", nullable = false, columnDefinition = "TEXT")
     private String customMessage = "";
 
     @Column(name = "last_status", nullable = false)

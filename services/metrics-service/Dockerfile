@@ -7,7 +7,7 @@ RUN mvn package -DskipTests -B
 
 FROM eclipse-temurin:21-jre-alpine
 WORKDIR /app
-RUN apk add --no-cache wget
+RUN apk add --no-cache wget chromium font-noto-emoji nss freetype harfbuzz ca-certificates ttf-freefont
 COPY --from=builder /app/target/metrics-service-0.0.1-SNAPSHOT.jar app.jar
 EXPOSE 8082
 ENTRYPOINT ["java", "-jar", "app.jar"]

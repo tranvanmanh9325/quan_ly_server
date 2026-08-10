@@ -121,7 +121,19 @@ export default function SettingsPage() {
   const [tgSaved, setTgSaved]     = useState(false);
   const [tgTesting, setTgTesting] = useState(false);
   const [tgTestResult, setTgTestResult] = useState(null); // { status, message }
-  const [tgLoading, setTgLoading] = useState(true);
+  // ── Facebook state ───────────────────────────────────────────────────────
+  const [fbConfig, setFbConfig] = useState({
+    enabled: false,
+    threshold: 5,
+    cooldownMinutes: 120,
+    cookiesJson: '',
+    customMessage: '',
+    lastStatus: 'Tắt',
+  });
+  const [fbSaved, setFbSaved]       = useState(false);
+  const [fbTesting, setFbTesting]   = useState(false);
+  const [fbTestResult, setFbTestResult] = useState(null);
+  const [fbLoading, setFbLoading]   = useState(true);
 
   // Ping backend to check SSH connection health
   useEffect(() => {
@@ -152,6 +164,26 @@ export default function SettingsPage() {
       .finally(() => setTgLoading(false));
   }, []);
 
+  // Load Facebook config from backend
+  useEffect(() => {
+    axios.get('/api/facebook/config')
+      .then(res => {
+        const d = res.data;
+        if (d) {
+          setFbConfig({
+            enabled:         d.enabled         ?? false,
+            threshold:       d.threshold       ?? 5,
+            cooldownMinutes: d.cooldownMinutes ?? 120,
+            cookiesJson:     d.cookiesJson     || '',
+            customMessage:   d.customMessage   || '',
+            lastStatus:      d.lastStatus      || 'Tắt',
+          });
+        }
+      })
+      .catch(() => {})
+      .finally(() => setFbLoading(false));
+  }, []);
+
   const update = useCallback((key, val) => {
     setSettings(prev => ({ ...prev, [key]: val }));
     setSaved(false);
@@ -162,6 +194,35 @@ export default function SettingsPage() {
     setTgSaved(false);
     setTgTestResult(null);
   }, []);
+
+  const updateFb = useCallback((key, val) => {
+    setFbConfig(prev => ({ ...prev, [key]: val }));
+    setFbSaved(false);
+    setFbTestResult(null);
+  }, []);
+
+  const handleSaveFacebook = async () => {
+    try {
+      await axios.post('/api/facebook/config', fbConfig);
+      setFbSaved(true);
+      setTimeout(() => setFbSaved(false), 2500);
+    } catch {
+      setFbTestResult('Lỗi khi lưu cấu hình Facebook.');
+    }
+  };
+
+  const handleTriggerFacebook = async () => {
+    setFbTesting(true);
+    setFbTestResult(null);
+    try {
+      const res = await axios.post('/api/facebook/trigger');
+      setFbTestResult(res.data?.result || 'Đã kích hoạt quét Messenger!');
+    } catch (e) {
+      setFbTestResult(e.response?.data?.message || 'Lỗi khi kích hoạt quét.');
+    } finally {
+      setFbTesting(false);
+    }
+  };
 
   const handleSaveTelegram = async () => {
     try {
@@ -565,6 +626,116 @@ export default function SettingsPage() {
               display: 'flex', alignItems: 'center', gap: '8px',
             }}>
               <SciFiTerminalPromptIcon size={14} color="var(--accent-cyan)" /> Bot commands: <code>/status</code> · <code>/cpu</code> · <code>/ram</code> · <code>/disk</code> · <code>/help</code>
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* ── Section 6: Facebook Messenger Integration ────────────────────── */}
+      <div style={card}>
+        <SectionHeader
+          icon={<SciFiTelegramIcon size={18} color="var(--accent-purple)" />}
+          title="FACEBOOK MESSENGER AI AGENT"
+          subtitle="Tự động phản hồi tin nhắn vắng mặt khi đối phương nhắn từ 5 tin nhắn trở lên"
+        />
+
+        {fbLoading ? (
+          <div style={{ color: 'var(--text-secondary)', fontFamily: 'Share Tech Mono', fontSize: '0.8rem', opacity: 0.6 }}>
+            Đang tải cấu hình Facebook...
+          </div>
+        ) : (
+          <>
+            <SettingRow label="Chế độ Vắng mặt (Away Mode)" desc="AI Agent sẽ dùng Trình duyệt web của Server tự động phản hồi Facebook Messenger">
+              <Toggle id="fb-enabled" value={fbConfig.enabled} onChange={v => updateFb('enabled', v)} />
+            </SettingRow>
+
+            <SettingRow label="Ngưỡng tin nhắn kích hoạt" desc="Số tin nhắn liên tiếp chưa trả lời để AI tự phản hồi (Mặc định: 5 tin)">
+              <ThresholdSlider id="fb-threshold" min={1} max={20} unit=" tin" value={fbConfig.threshold}
+                onChange={v => updateFb('threshold', v)} color="var(--accent-purple)" />
+            </SettingRow>
+
+            <SettingRow label="Thời gian chờ gửi lại (Cooldown)" desc="Tránh gửi lặp lại cho cùng 1 người dùng trong thời gian vắng mặt">
+              <select
+                value={fbConfig.cooldownMinutes}
+                onChange={e => updateFb('cooldownMinutes', Number(e.target.value))}
+                style={{
+                  background: 'rgba(0,0,0,0.6)', border: '1px solid rgba(187,0,255,0.3)',
+                  color: 'var(--accent-purple)', padding: '5px 10px',
+                  fontSize: '0.8rem', fontFamily: 'Share Tech Mono', cursor: 'pointer',
+                }}
+              >
+                <option value={30}>30 phút</option>
+                <option value={60}>60 phút</option>
+                <option value={120}>120 phút (2 giờ)</option>
+                <option value={240}>240 phút (4 giờ)</option>
+              </select>
+            </SettingRow>
+
+            <SettingRow label="Trạng thái hệ thống" desc="Nhật ký kiểm tra lần cuối từ Trình duyệt Server">
+              <span style={{
+                fontFamily: 'Share Tech Mono', fontSize: '0.78rem',
+                color: fbConfig.enabled ? 'var(--accent-cyan)' : 'var(--text-secondary)',
+              }}>
+                {fbConfig.lastStatus}
+              </span>
+            </SettingRow>
+
+            <div style={{ marginTop: '14px', marginBottom: '14px' }}>
+              <div style={{ fontSize: '0.88rem', color: 'var(--text-primary)', marginBottom: '4px' }}>Facebook Session Cookies (JSON)</div>
+              <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', opacity: 0.6, marginBottom: '8px' }}>
+                Dán JSON Cookies xuất từ tiện ích trình duyệt (ví dụ: EditThisCookie hoặc Get cookies.txt) để Trình duyệt Server tự động duy trì phiên làm việc
+              </div>
+              <textarea
+                value={fbConfig.cookiesJson}
+                onChange={e => updateFb('cookiesJson', e.target.value)}
+                placeholder='[{"name": "c_user", "value": "..."}, {"name": "xs", "value": "..."}]'
+                rows={3}
+                style={{
+                  width: '100%', background: 'rgba(0,0,0,0.5)', border: '1px solid rgba(187,0,255,0.3)',
+                  color: 'var(--text-primary)', fontFamily: 'Share Tech Mono', fontSize: '0.75rem',
+                  padding: '8px', boxSizing: 'border-box', resize: 'vertical',
+                }}
+              />
+            </div>
+
+            <div style={{ display: 'flex', gap: '10px', marginTop: '16px', alignItems: 'center', flexWrap: 'wrap' }}>
+              <button
+                onClick={handleSaveFacebook}
+                style={{
+                  background: fbSaved ? 'rgba(0,255,102,0.15)' : 'rgba(187,0,255,0.12)',
+                  border: `1px solid ${fbSaved ? 'var(--accent-green)' : 'var(--accent-purple)'}`,
+                  color: fbSaved ? 'var(--accent-green)' : 'var(--accent-purple)',
+                  padding: '8px 20px', fontFamily: 'Share Tech Mono',
+                  fontSize: '0.78rem', cursor: 'pointer', letterSpacing: '1px',
+                  transition: 'all 0.3s ease',
+                }}
+              >
+                {fbSaved ? '✓ ĐÃ LƯU' : 'LƯU CẤU HÌNH FACEBOOK'}
+              </button>
+
+              <button
+                onClick={handleTriggerFacebook}
+                disabled={fbTesting}
+                style={{
+                  background: 'rgba(0,243,255,0.1)',
+                  border: '1px solid rgba(0,243,255,0.5)',
+                  color: 'var(--accent-cyan)',
+                  padding: '8px 20px', fontFamily: 'Share Tech Mono',
+                  fontSize: '0.78rem', cursor: fbTesting ? 'not-allowed' : 'pointer',
+                  letterSpacing: '1px', opacity: fbTesting ? 0.5 : 1,
+                }}
+              >
+                {fbTesting ? 'ĐANG QUÉT MESSENGER...' : 'QUÉT NGAY'}
+              </button>
+
+              {fbTestResult && (
+                <span style={{
+                  fontSize: '0.78rem', fontFamily: 'Share Tech Mono',
+                  color: 'var(--accent-cyan)',
+                }}>
+                  {fbTestResult}
+                </span>
+              )}
             </div>
           </>
         )}

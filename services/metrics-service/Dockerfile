@@ -11,6 +11,7 @@ RUN apk add --no-cache wget chromium font-noto-emoji nss freetype harfbuzz ca-ce
     (ln -s /lib/libc.musl-x86_64.so.1 /lib/ld-linux-x86-64.so.2 || true)
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
+ENV PLAYWRIGHT_NODEJS_PATH=/usr/bin/node
 COPY --from=builder /app/target/metrics-service-0.0.1-SNAPSHOT.jar app.jar
 EXPOSE 8082
 ENTRYPOINT ["java", "-jar", "app.jar"]

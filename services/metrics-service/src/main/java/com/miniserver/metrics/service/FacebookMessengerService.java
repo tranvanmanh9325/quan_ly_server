@@ -344,29 +344,47 @@ public class FacebookMessengerService {
         configRepository.save(cfg);
     }
 
-    /** Launches Xvfb, x11vnc, websockify (noVNC), and Chromium on :99 for live web login */
+    /** Launches Xvfb, openbox WM, x11vnc, websockify (noVNC), and Chromium on :99 for live web login */
     public Map<String, String> launchInteractiveBrowserSession() {
         try {
             cleanupProcesses();
 
-            // Start Xvfb virtual framebuffer on :99
-            new ProcessBuilder("Xvfb", ":99", "-screen", "0", "1280x800x24").start();
-            Thread.sleep(800);
+            // 1. Start Xvfb virtual framebuffer on :99 with RANDR extension enabled
+            new ProcessBuilder("Xvfb", ":99", "-screen", "0", "1280x800x24", "-ac", "+extension", "RANDR").start();
+            Thread.sleep(600);
 
-            // Start x11vnc server on port 5900
-            new ProcessBuilder("x11vnc", "-display", ":99", "-forever", "-shared", "-nopw", "-rfbport", "5900").start();
-            Thread.sleep(800);
+            // 2. Start Openbox lightweight window manager for smooth window focus & menu rendering
+            ProcessBuilder pbWm = new ProcessBuilder("openbox");
+            pbWm.environment().put("DISPLAY", ":99");
+            pbWm.start();
+            Thread.sleep(400);
 
-            // Start websockify (noVNC) on port 6080
+            // 3. Start x11vnc server on port 5900 with frame deferral & region caching flags
+            new ProcessBuilder("x11vnc", "-display", ":99", "-forever", "-shared", "-nopw", "-rfbport", "5900", "-wait", "10", "-defer", "10", "-ncache", "10").start();
+            Thread.sleep(600);
+
+            // 4. Start websockify (noVNC) on port 6080
             new ProcessBuilder("websockify", "--web=/usr/share/novnc", "6080", "localhost:5900").start();
-            Thread.sleep(800);
+            Thread.sleep(600);
 
-            // Start Chromium on :99 pointing to Facebook Login
+            // 5. Start Chromium on :99 with performance & process throttling flags
             ProcessBuilder pb = new ProcessBuilder(
                     "/usr/lib/chromium/chromium",
                     "--no-sandbox",
                     "--disable-setuid-sandbox",
                     "--disable-dev-shm-usage",
+                    "--disable-gpu",
+                    "--disable-software-rasterizer",
+                    "--window-size=1280,800",
+                    "--force-device-scale-factor=1",
+                    "--no-first-run",
+                    "--no-default-browser-check",
+                    "--disable-background-networking",
+                    "--disable-background-timer-throttling",
+                    "--disable-backgrounding-occluded-windows",
+                    "--disable-breakpad",
+                    "--disable-component-extensions-with-background-pages",
+                    "--disable-renderer-backgrounding",
                     "--user-data-dir=/tmp/fb_interactive_profile",
                     "--remote-debugging-port=9222",
                     "https://www.facebook.com/login"
@@ -374,8 +392,9 @@ public class FacebookMessengerService {
             pb.environment().put("DISPLAY", ":99");
             pb.start();
 
-            log.info("[FB-Responder] Launched interactive noVNC Chromium login session on display :99");
-            return Map.of("status", "success", "vncUrl", "/fb-vnc/vnc.html?autoconnect=true", "message", "Trình duyệt Facebook đã được mở thành công trên Server.");
+            log.info("[FB-Responder] Launched high-performance noVNC Chromium login session on display :99");
+            String vncOptUrl = "/fb-vnc/vnc.html?autoconnect=true&resize=scale&quality=6&compression=6&reconnect=true&reconnect_delay=1000";
+            return Map.of("status", "success", "vncUrl", vncOptUrl, "message", "Trình duyệt Facebook đã được mở mượt mà trên Server.");
         } catch (Exception e) {
             log.error("[FB-Responder] Failed to launch interactive browser session: {}", e.getMessage(), e);
             return Map.of("status", "error", "message", "Lỗi khi mở trình duyệt Server: " + e.getMessage());
@@ -440,6 +459,7 @@ public class FacebookMessengerService {
     private void cleanupProcesses() {
         try {
             new ProcessBuilder("pkill", "-f", "chromium").start();
+            new ProcessBuilder("pkill", "-f", "openbox").start();
             new ProcessBuilder("pkill", "-f", "websockify").start();
             new ProcessBuilder("pkill", "-f", "x11vnc").start();
             new ProcessBuilder("pkill", "-f", "Xvfb").start();

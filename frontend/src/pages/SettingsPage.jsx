@@ -3,7 +3,8 @@ import axios from 'axios';
 import {
   SciFiSettingsIcon, SciFiRefreshIcon, SciFiPulseBadge,
   SciFiConsoleIcon, SciFiCyberLockIcon, SciFiDashboardIcon,
-  SciFiTelegramIcon, SciFiInfoIcon, SciFiTerminalPromptIcon
+  SciFiTelegramIcon, SciFiInfoIcon, SciFiTerminalPromptIcon,
+  SciFiBrowserLaunchIcon, SciFiChronoSpinnerIcon, SciFiCheckCircleIcon, SciFiCloseIcon
 } from '../components/SciFiIcons';
 import { loadSettings, saveSettings, SETTINGS_DEFAULTS } from '../utils/settings';
 
@@ -691,9 +692,9 @@ export default function SettingsPage() {
       {/* ── Section 6: Facebook Messenger Integration ────────────────────── */}
       <div style={card}>
         <SectionHeader
-          icon={<SciFiTelegramIcon size={18} color="var(--accent-purple)" />}
+          icon={<SciFiFacebookIcon size={18} color="var(--accent-purple)" />}
           title="FACEBOOK MESSENGER AI AGENT"
-          subtitle="Tự động phản hồi tin nhắn vắng mặt khi đối phương nhắn từ 5 tin nhắn trở lên"
+          subtitle="Tự động phản hồi tin nhắn vắng mặt khi đối phương nhắn"
         />
 
         {fbLoading ? (
@@ -737,7 +738,6 @@ export default function SettingsPage() {
               </span>
             </SettingRow>
 
-            {/* Interactive Server Browser Login Option */}
             <div style={{
               margin: '18px 0', padding: '16px 20px',
               background: 'rgba(187,0,255,0.06)', border: '1px dashed rgba(187,0,255,0.4)',
@@ -745,11 +745,11 @@ export default function SettingsPage() {
             }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px' }}>
                 <div>
-                  <div style={{ fontSize: '0.92rem', color: 'var(--accent-purple)', fontWeight: 'bold', letterSpacing: '0.5px' }}>
-                    🌐 Đăng nhập Facebook Trực tiếp trên Trình duyệt Server (noVNC Live)
+                  <div style={{ fontSize: '0.92rem', color: 'var(--accent-purple)', fontWeight: 'bold', letterSpacing: '0.5px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <SciFiBrowserLaunchIcon size={18} color="var(--accent-purple)" /> Đăng nhập Facebook Trực tiếp
                   </div>
                   <div style={{ fontSize: '0.74rem', color: 'var(--text-secondary)', opacity: 0.8, marginTop: '2px' }}>
-                    Mở màn hình Trình duyệt Chromium thực tế trên Server &rarr; Tự gõ Đăng nhập Facebook/2FA trực quan &rarr; Bấm lưu Session tự động 100%
+                    Mở màn hình Trình duyệt Chromium trên Server để đăng nhập Facebook/2FA trực quan
                   </div>
                 </div>
 
@@ -767,9 +767,16 @@ export default function SettingsPage() {
                     letterSpacing: '1px',
                     boxShadow: '0 0 15px rgba(0,243,255,0.25)',
                     transition: 'all 0.25s ease',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '8px',
                   }}
                 >
-                  {vncLaunching ? '⏳ ĐANG MỞ TRÌNH DUYỆT SERVER...' : '🌐 MỞ TRÌNH DUYỆT SERVER ĐỂ DÙNG NGAY'}
+                  {vncLaunching ? (
+                    <><SciFiChronoSpinnerIcon size={16} color="#fff" /> ĐANG MỞ...</>
+                  ) : (
+                    <><SciFiBrowserLaunchIcon size={16} color="#fff" /> MỞ TRÌNH DUYỆT SERVER</>
+                  )}
                 </button>
               </div>
 
@@ -782,18 +789,15 @@ export default function SettingsPage() {
 
             <div style={{ marginTop: '14px', marginBottom: '14px' }}>
               <div style={{ fontSize: '0.88rem', color: 'var(--text-primary)', marginBottom: '4px' }}>Facebook Session Cookies (JSON)</div>
-              <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', opacity: 0.6, marginBottom: '8px' }}>
-                Hoặc dán thủ công JSON Cookies nếu muốn
-              </div>
               <textarea
                 value={fbConfig.cookiesJson}
                 onChange={e => updateFb('cookiesJson', e.target.value)}
-                placeholder='[{"name": "c_user", "value": "..."}, {"name": "xs", "value": "..."}]'
+                placeholder='[{"name": "c_user", "value": "..."}, ...]'
                 rows={3}
                 style={{
                   width: '100%', background: 'rgba(0,0,0,0.5)', border: '1px solid rgba(187,0,255,0.3)',
                   color: 'var(--text-primary)', fontFamily: 'Share Tech Mono', fontSize: '0.75rem',
-                  padding: '8px', boxSizing: 'border-box', resize: 'vertical',
+                  padding: '8px', boxSizing: 'border-box',
                 }}
               />
             </div>
@@ -807,10 +811,9 @@ export default function SettingsPage() {
                   color: fbSaved ? 'var(--accent-green)' : 'var(--accent-purple)',
                   padding: '8px 20px', fontFamily: 'Share Tech Mono',
                   fontSize: '0.78rem', cursor: 'pointer', letterSpacing: '1px',
-                  transition: 'all 0.3s ease',
                 }}
               >
-                {fbSaved ? '✓ ĐÃ LƯU' : 'LƯU CẤU HÌNH FACEBOOK'}
+                {fbSaved ? '✓ ĐÃ LƯU' : 'LƯU CẤU HÌNH'}
               </button>
 
               <button
@@ -825,20 +828,16 @@ export default function SettingsPage() {
                   letterSpacing: '1px', opacity: fbTesting ? 0.5 : 1,
                 }}
               >
-                {fbTesting ? 'ĐANG QUÉT MESSENGER...' : 'QUÉT NGAY'}
+                {fbTesting ? 'ĐANG QUÉT...' : 'QUÉT NGAY'}
               </button>
 
               {fbTestResult && (
-                <span style={{
-                  fontSize: '0.78rem', fontFamily: 'Share Tech Mono',
-                  color: 'var(--accent-cyan)',
-                }}>
+                <span style={{ fontSize: '0.78rem', fontFamily: 'Share Tech Mono', color: 'var(--accent-cyan)' }}>
                   {fbTestResult}
                 </span>
               )}
             </div>
 
-            {/* Live noVNC Browser Iframe Modal */}
             {vncOpen && (
               <div style={{
                 position: 'fixed', inset: 0, zIndex: 99999,
@@ -849,21 +848,16 @@ export default function SettingsPage() {
                 <div style={{
                   width: '95%', maxWidth: '1280px', height: '88vh',
                   background: 'rgba(9, 10, 15, 0.95)', border: '2px solid var(--accent-cyan)',
-                  boxShadow: '0 0 35px rgba(0,243,255,0.4)', borderRadius: '4px',
-                  display: 'flex', flexDirection: 'column', overflow: 'hidden'
+                  borderRadius: '4px', display: 'flex', flexDirection: 'column', overflow: 'hidden'
                 }}>
-                  {/* Header Bar */}
                   <div style={{
                     padding: '12px 20px', background: 'rgba(0,243,255,0.12)',
-                    borderBottom: '1px solid var(--accent-cyan)',
                     display: 'flex', alignItems: 'center', justifyContent: 'space-between'
                   }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <SciFiBrowserLaunchIcon size={18} color="var(--accent-cyan)" />
                       <span style={{ color: 'var(--accent-cyan)', fontFamily: 'Share Tech Mono', fontSize: '1rem', fontWeight: 'bold' }}>
-                        🌐 SERVER LIVE CHROMIUM FACEBOOK LOGIN
-                      </span>
-                      <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                        (Nhập Email, Mật khẩu, Mã 2FA Facebook trực tiếp bên dưới)
+                        SERVER LIVE CHROMIUM
                       </span>
                     </div>
 
@@ -875,20 +869,26 @@ export default function SettingsPage() {
                           background: 'var(--accent-green)', color: '#000', fontWeight: 'bold',
                           border: 'none', padding: '8px 18px', fontFamily: 'Share Tech Mono',
                           fontSize: '0.82rem', cursor: vncSaving ? 'not-allowed' : 'pointer',
-                          borderRadius: '2px', boxShadow: '0 0 10px var(--accent-green)'
+                          borderRadius: '2px', boxShadow: '0 0 10px var(--accent-green)',
+                          display: 'inline-flex', alignItems: 'center', gap: '6px',
                         }}
                       >
-                        {vncSaving ? '⏳ ĐANG LƯU SESSION...' : '✅ ĐÃ ĐĂNG NHẬP XONG - LƯU PHIÊN & BẬT AI AGENT'}
+                        {vncSaving ? (
+                          <><SciFiChronoSpinnerIcon size={15} color="#000" /> ĐANG LƯU SESSION...</>
+                        ) : (
+                          <><SciFiCheckCircleIcon size={15} color="#000" /> ĐÃ ĐĂNG NHẬP XONG - LƯU PHIÊN & BẬT AI AGENT</>
+                        )}
                       </button>
                       <button
                         onClick={() => setVncOpen(false)}
                         style={{
                           background: 'rgba(255,0,85,0.2)', border: '1px solid var(--accent-pink)',
                           color: 'var(--accent-pink)', padding: '8px 14px', fontFamily: 'Share Tech Mono',
-                          fontSize: '0.82rem', cursor: 'pointer'
+                          fontSize: '0.82rem', cursor: 'pointer',
+                          display: 'inline-flex', alignItems: 'center', gap: '6px',
                         }}
                       >
-                        ✖ ĐÓNG
+                        <SciFiCloseIcon size={14} color="var(--accent-pink)" /> ĐÓNG
                       </button>
                     </div>
                   </div>

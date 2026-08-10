@@ -466,3 +466,57 @@ export const SciFiSortAscIcon = ({ size = 14, color = 'currentColor' }) => (
     <polyline points="17,9 20,4 23,9" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" fill="none" />
   </svg>
 );
+
+// 31. BROWSER LAUNCH — Cyberpunk Holographic Web Portal
+export const SciFiBrowserLaunchIcon = ({ size = 18, color = 'var(--accent-cyan)' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
+    {/* Outer Browser Window Frame */}
+    <rect x="2" y="3" width="20" height="18" rx="2" stroke={color} strokeWidth="1.4" fill="rgba(0, 243, 255, 0.08)" />
+    <line x1="2" y1="7" x2="22" y2="7" stroke={color} strokeWidth="1.2" />
+    {/* Window dots */}
+    <circle cx="5" cy="5" r="0.9" fill={color} />
+    <circle cx="8" cy="5" r="0.9" fill={color} fillOpacity="0.6" />
+    <circle cx="11" cy="5" r="0.9" fill={color} fillOpacity="0.4" />
+    {/* Globe Grid Grid Inside Browser */}
+    <circle cx="12" cy="14" r="5" stroke={color} strokeWidth="1.2" strokeDasharray="3 1" />
+    <ellipse cx="12" cy="14" rx="5" ry="2" stroke={color} strokeWidth="0.9" strokeOpacity="0.6" />
+    <line x1="12" y1="9" x2="12" y2="19" stroke={color} strokeWidth="0.9" strokeOpacity="0.6" />
+    {/* Corner Quantum Spark */}
+    <polygon points="17,10 19,12 17,14 15,12" fill={color} />
+  </svg>
+);
+
+// 32. CHRONO SPINNER — Quantum Hourglass Reactor
+export const SciFiChronoSpinnerIcon = ({ size = 18, color = 'var(--accent-cyan)' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"
+    style={{ display: 'inline-block', verticalAlign: 'middle', animation: 'spin 2s linear infinite' }}>
+    <style>{`@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }`}</style>
+    {/* Rotating Outer Hex Ring */}
+    <polygon points="12,2 19,6 19,14 12,18 5,14 5,6" stroke={color} strokeWidth="1.2" strokeDasharray="4 2" fill="none" />
+    {/* Hourglass Diamond Core */}
+    <polygon points="8,7 16,7 12,12 16,17 8,17 12,12" stroke={color} strokeWidth="1.4" fill="rgba(0, 243, 255, 0.2)" />
+    <circle cx="12" cy="12" r="1.5" fill={color} />
+  </svg>
+);
+
+// 33. CHECK CIRCLE — Cyber Shield Verification Checkmark
+export const SciFiCheckCircleIcon = ({ size = 18, color = 'var(--accent-green)' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
+    {/* Shield Octagon */}
+    <polygon points="12,2 18,4 21,10 19,17 12,22 5,17 3,10 6,4"
+      stroke={color} strokeWidth="1.5" fill="rgba(0, 255, 102, 0.12)" />
+    {/* Checkmark */}
+    <polyline points="7,12 10.5,15.5 17,8.5" stroke={color} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+// 34. CLOSE ICON — Cyber Bracket Reticle Cancel Cross
+export const SciFiCloseIcon = ({ size = 18, color = 'var(--accent-pink)' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
+    {/* Corner Bracket Frame */}
+    <path d="M4 8V4H8M16 4H20V8M20 16V20H16M8 20H4V16" stroke={color} strokeWidth="1" strokeOpacity="0.6" />
+    {/* Cross Lines */}
+    <line x1="7" y1="7" x2="17" y2="17" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
+    <line x1="17" y1="7" x2="7" y2="17" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
+  </svg>
+);

@@ -136,6 +136,13 @@ export default function SettingsPage() {
   const [fbTestResult, setFbTestResult] = useState(null);
   const [fbLoading, setFbLoading]   = useState(true);
 
+  // ── Live VNC Server Browser state ───────────────────────────────────────
+  const [vncOpen, setVncOpen]           = useState(false);
+  const [vncUrl, setVncUrl]             = useState('');
+  const [vncLaunching, setVncLaunching] = useState(false);
+  const [vncSaving, setVncSaving]       = useState(false);
+  const [vncStatusMsg, setVncStatusMsg] = useState('');
+
   // Ping backend to check SSH connection health
   useEffect(() => {
     axios.get('/api/metrics/system')
@@ -222,6 +229,55 @@ export default function SettingsPage() {
       setFbTestResult(e.response?.data?.message || 'Lỗi khi kích hoạt quét.');
     } finally {
       setFbTesting(false);
+    }
+  };
+
+  const handleLaunchBrowser = async () => {
+    setVncLaunching(true);
+    setVncStatusMsg('Đang khởi tạo Trình duyệt Facebook trên Server...');
+    try {
+      const res = await axios.post('/api/facebook/launch-browser');
+      if (res.data.status === 'success') {
+        setVncUrl(res.data.vncUrl || '/fb-vnc/vnc.html?autoconnect=true');
+        setVncOpen(true);
+        setVncStatusMsg('');
+      } else {
+        setVncStatusMsg(res.data.message || 'Lỗi khi mở trình duyệt.');
+      }
+    } catch (e) {
+      setVncStatusMsg('Lỗi kết nối tới Server: ' + (e.response?.data?.message || e.message));
+    } finally {
+      setVncLaunching(false);
+    }
+  };
+
+  const handleSaveBrowserSession = async () => {
+    setVncSaving(true);
+    setVncStatusMsg('Đang trích xuất Session Cookies & Lưu vào Database...');
+    try {
+      const res = await axios.post('/api/facebook/save-browser-session');
+      if (res.data.status === 'success') {
+        setVncOpen(false);
+        setFbTestResult(res.data.message);
+        // Reload facebook config
+        const cfgRes = await axios.get('/api/facebook/config');
+        if (cfgRes.data) {
+          setFbConfig({
+            enabled:         cfgRes.data.enabled         ?? false,
+            threshold:       cfgRes.data.threshold       ?? 5,
+            cooldownMinutes: cfgRes.data.cooldownMinutes ?? 120,
+            cookiesJson:     cfgRes.data.cookiesJson     || '',
+            customMessage:   cfgRes.data.customMessage   || '',
+            lastStatus:      cfgRes.data.lastStatus      || 'Tắt',
+          });
+        }
+      } else {
+        setVncStatusMsg(res.data.message);
+      }
+    } catch (e) {
+      setVncStatusMsg('Lỗi lưu phiên: ' + (e.response?.data?.message || e.message));
+    } finally {
+      setVncSaving(false);
     }
   };
 
@@ -681,10 +737,53 @@ export default function SettingsPage() {
               </span>
             </SettingRow>
 
+            {/* Interactive Server Browser Login Option */}
+            <div style={{
+              margin: '18px 0', padding: '16px 20px',
+              background: 'rgba(187,0,255,0.06)', border: '1px dashed rgba(187,0,255,0.4)',
+              borderRadius: '4px', display: 'flex', flexDirection: 'column', gap: '12px'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px' }}>
+                <div>
+                  <div style={{ fontSize: '0.92rem', color: 'var(--accent-purple)', fontWeight: 'bold', letterSpacing: '0.5px' }}>
+                    🌐 Đăng nhập Facebook Trực tiếp trên Trình duyệt Server (noVNC Live)
+                  </div>
+                  <div style={{ fontSize: '0.74rem', color: 'var(--text-secondary)', opacity: 0.8, marginTop: '2px' }}>
+                    Mở màn hình Trình duyệt Chromium thực tế trên Server &rarr; Tự gõ Đăng nhập Facebook/2FA trực quan &rarr; Bấm lưu Session tự động 100%
+                  </div>
+                </div>
+
+                <button
+                  onClick={handleLaunchBrowser}
+                  disabled={vncLaunching}
+                  style={{
+                    background: 'linear-gradient(135deg, rgba(187,0,255,0.3) 0%, rgba(0,243,255,0.3) 100%)',
+                    border: '1px solid var(--accent-cyan)',
+                    color: '#fff',
+                    padding: '10px 22px',
+                    fontFamily: 'Share Tech Mono',
+                    fontSize: '0.82rem',
+                    cursor: vncLaunching ? 'not-allowed' : 'pointer',
+                    letterSpacing: '1px',
+                    boxShadow: '0 0 15px rgba(0,243,255,0.25)',
+                    transition: 'all 0.25s ease',
+                  }}
+                >
+                  {vncLaunching ? '⏳ ĐANG MỞ TRÌNH DUYỆT SERVER...' : '🌐 MỞ TRÌNH DUYỆT SERVER ĐỂ DÙNG NGAY'}
+                </button>
+              </div>
+
+              {vncStatusMsg && (
+                <div style={{ fontSize: '0.78rem', color: 'var(--accent-cyan)', fontFamily: 'Share Tech Mono' }}>
+                  {vncStatusMsg}
+                </div>
+              )}
+            </div>
+
             <div style={{ marginTop: '14px', marginBottom: '14px' }}>
               <div style={{ fontSize: '0.88rem', color: 'var(--text-primary)', marginBottom: '4px' }}>Facebook Session Cookies (JSON)</div>
               <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', opacity: 0.6, marginBottom: '8px' }}>
-                Dán JSON Cookies xuất từ tiện ích trình duyệt (ví dụ: EditThisCookie hoặc Get cookies.txt) để Trình duyệt Server tự động duy trì phiên làm việc
+                Hoặc dán thủ công JSON Cookies nếu muốn
               </div>
               <textarea
                 value={fbConfig.cookiesJson}
@@ -738,6 +837,77 @@ export default function SettingsPage() {
                 </span>
               )}
             </div>
+
+            {/* Live noVNC Browser Iframe Modal */}
+            {vncOpen && (
+              <div style={{
+                position: 'fixed', inset: 0, zIndex: 99999,
+                background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(8px)',
+                display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                padding: '20px'
+              }}>
+                <div style={{
+                  width: '95%', maxWidth: '1280px', height: '88vh',
+                  background: 'rgba(9, 10, 15, 0.95)', border: '2px solid var(--accent-cyan)',
+                  boxShadow: '0 0 35px rgba(0,243,255,0.4)', borderRadius: '4px',
+                  display: 'flex', flexDirection: 'column', overflow: 'hidden'
+                }}>
+                  {/* Header Bar */}
+                  <div style={{
+                    padding: '12px 20px', background: 'rgba(0,243,255,0.12)',
+                    borderBottom: '1px solid var(--accent-cyan)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between'
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <span style={{ color: 'var(--accent-cyan)', fontFamily: 'Share Tech Mono', fontSize: '1rem', fontWeight: 'bold' }}>
+                        🌐 SERVER LIVE CHROMIUM FACEBOOK LOGIN
+                      </span>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                        (Nhập Email, Mật khẩu, Mã 2FA Facebook trực tiếp bên dưới)
+                      </span>
+                    </div>
+
+                    <div style={{ display: 'flex', gap: '12px' }}>
+                      <button
+                        onClick={handleSaveBrowserSession}
+                        disabled={vncSaving}
+                        style={{
+                          background: 'var(--accent-green)', color: '#000', fontWeight: 'bold',
+                          border: 'none', padding: '8px 18px', fontFamily: 'Share Tech Mono',
+                          fontSize: '0.82rem', cursor: vncSaving ? 'not-allowed' : 'pointer',
+                          borderRadius: '2px', boxShadow: '0 0 10px var(--accent-green)'
+                        }}
+                      >
+                        {vncSaving ? '⏳ ĐANG LƯU SESSION...' : '✅ ĐÃ ĐĂNG NHẬP XONG - LƯU PHIÊN & BẬT AI AGENT'}
+                      </button>
+                      <button
+                        onClick={() => setVncOpen(false)}
+                        style={{
+                          background: 'rgba(255,0,85,0.2)', border: '1px solid var(--accent-pink)',
+                          color: 'var(--accent-pink)', padding: '8px 14px', fontFamily: 'Share Tech Mono',
+                          fontSize: '0.82rem', cursor: 'pointer'
+                        }}
+                      >
+                        ✖ ĐÓNG
+                      </button>
+                    </div>
+                  </div>
+
+                  {vncStatusMsg && (
+                    <div style={{ padding: '8px 20px', background: 'rgba(0,243,255,0.15)', color: 'var(--accent-cyan)', fontFamily: 'Share Tech Mono', fontSize: '0.8rem' }}>
+                      {vncStatusMsg}
+                    </div>
+                  )}
+
+                  {/* noVNC Web Screen */}
+                  <iframe
+                    src={vncUrl}
+                    title="Server Facebook Live Chromium"
+                    style={{ width: '100%', height: '100%', border: 'none', background: '#000' }}
+                  />
+                </div>
+              </div>
+            )}
           </>
         )}
       </div>

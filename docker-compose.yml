@@ -57,6 +57,7 @@ services:
     container_name: dashboard_metrics_service
     ports:
       - "8082:8082"
+      - "6080:6080"
     env_file:
       - .env
     environment:

@@ -343,4 +343,107 @@ public class FacebookMessengerService {
         if (checkAt != null) cfg.setLastCheckAt(checkAt);
         configRepository.save(cfg);
     }
+
+    /** Launches Xvfb, x11vnc, websockify (noVNC), and Chromium on :99 for live web login */
+    public Map<String, String> launchInteractiveBrowserSession() {
+        try {
+            cleanupProcesses();
+
+            // Start Xvfb virtual framebuffer on :99
+            new ProcessBuilder("Xvfb", ":99", "-screen", "0", "1280x800x24").start();
+            Thread.sleep(800);
+
+            // Start x11vnc server on port 5900
+            new ProcessBuilder("x11vnc", "-display", ":99", "-forever", "-shared", "-nopw", "-rfbport", "5900").start();
+            Thread.sleep(800);
+
+            // Start websockify (noVNC) on port 6080
+            new ProcessBuilder("websockify", "--web=/usr/share/novnc", "6080", "localhost:5900").start();
+            Thread.sleep(800);
+
+            // Start Chromium on :99 pointing to Facebook Login
+            ProcessBuilder pb = new ProcessBuilder(
+                    "/usr/lib/chromium/chromium",
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--user-data-dir=/tmp/fb_interactive_profile",
+                    "--remote-debugging-port=9222",
+                    "https://www.facebook.com/login"
+            );
+            pb.environment().put("DISPLAY", ":99");
+            pb.start();
+
+            log.info("[FB-Responder] Launched interactive noVNC Chromium login session on display :99");
+            return Map.of("status", "success", "vncUrl", "/fb-vnc/vnc.html?autoconnect=true", "message", "Trình duyệt Facebook đã được mở thành công trên Server.");
+        } catch (Exception e) {
+            log.error("[FB-Responder] Failed to launch interactive browser session: {}", e.getMessage(), e);
+            return Map.of("status", "error", "message", "Lỗi khi mở trình duyệt Server: " + e.getMessage());
+        }
+    }
+
+    /** Connects to live Chromium via CDP, extracts session cookies into PostgreSQL DB, and cleanup */
+    public Map<String, String> saveInteractiveBrowserSession() {
+        try {
+            List<Map<String, Object>> cookieList = new ArrayList<>();
+            Map<String, String> env = new HashMap<>();
+            env.put("PLAYWRIGHT_NODEJS_PATH", "/usr/bin/node");
+            env.put("PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH", "/usr/bin/chromium");
+            env.put("PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD", "1");
+
+            try (Playwright playwright = Playwright.create(new Playwright.CreateOptions().setEnv(env))) {
+                Browser browser = playwright.chromium().connectOverCDP("http://localhost:9222");
+                List<BrowserContext> contexts = browser.contexts();
+                if (!contexts.isEmpty()) {
+                    BrowserContext ctx = contexts.get(0);
+                    List<Cookie> rawCookies = ctx.cookies();
+                    for (Cookie c : rawCookies) {
+                        Map<String, Object> map = new LinkedHashMap<>();
+                        map.put("domain", c.domain);
+                        map.put("name", c.name);
+                        map.put("value", c.value);
+                        map.put("path", c.path);
+                        map.put("secure", c.secure);
+                        map.put("httpOnly", c.httpOnly);
+                        map.put("sameSite", c.sameSite != null ? c.sameSite.toString() : "no_restriction");
+                        if (c.expires != null && c.expires > 0) {
+                            map.put("expirationDate", c.expires);
+                        }
+                        cookieList.add(map);
+                    }
+                }
+            }
+
+            if (cookieList.isEmpty()) {
+                return Map.of("status", "error", "message", "Không tìm thấy Cookies trên trình duyệt. Vui lòng hoàn tất đăng nhập Facebook trước khi lưu.");
+            }
+
+            String cookiesJson = objectMapper.writeValueAsString(cookieList);
+            FacebookConfig cfg = configRepository.getConfig().orElseGet(FacebookConfig::new);
+            cfg.setCookiesJson(cookiesJson);
+            cfg.setEnabled(true);
+            LocalDateTime vnNow = LocalDateTime.now(java.time.ZoneId.of("Asia/Ho_Chi_Minh"));
+            java.time.format.DateTimeFormatter fmt = java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss dd/MM/yyyy");
+            cfg.setLastStatus("Hoạt động: Đã cập nhật Session mới từ Trình duyệt Server lúc " + vnNow.format(fmt));
+            cfg.setLastCheckAt(vnNow);
+            configRepository.save(cfg);
+
+            cleanupProcesses();
+            log.info("[FB-Responder] Successfully captured {} cookies from interactive browser session into DB.", cookieList.size());
+            return Map.of("status", "success", "message", "Đã lưu thành công " + cookieList.size() + " Cookies Facebook & kích hoạt AI Agent 24/7!");
+        } catch (Exception e) {
+            log.error("[FB-Responder] Failed to save interactive browser session: {}", e.getMessage(), e);
+            return Map.of("status", "error", "message", "Lỗi khi lưu phiên làm việc: " + e.getMessage());
+        }
+    }
+
+    private void cleanupProcesses() {
+        try {
+            new ProcessBuilder("pkill", "-f", "chromium").start();
+            new ProcessBuilder("pkill", "-f", "websockify").start();
+            new ProcessBuilder("pkill", "-f", "x11vnc").start();
+            new ProcessBuilder("pkill", "-f", "Xvfb").start();
+            Thread.sleep(500);
+        } catch (Exception ignored) {}
+    }
 }

@@ -53,4 +53,16 @@ public class FacebookConfigController {
         String result = messengerService.triggerManualCheck();
         return ResponseEntity.ok(Map.of("result", result));
     }
+
+    @PostMapping("/launch-browser")
+    public ResponseEntity<Map<String, String>> launchBrowser() {
+        Map<String, String> res = messengerService.launchInteractiveBrowserSession();
+        return ResponseEntity.ok(res);
+    }
+
+    @PostMapping("/save-browser-session")
+    public ResponseEntity<Map<String, String>> saveBrowserSession() {
+        Map<String, String> res = messengerService.saveInteractiveBrowserSession();
+        return ResponseEntity.ok(res);
+    }
 }

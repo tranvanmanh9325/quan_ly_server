@@ -50,6 +50,7 @@ services:
           memory: 192M
 
   metrics-service:
+    init: true
     build:
       context: ./services/metrics-service
       dockerfile: Dockerfile

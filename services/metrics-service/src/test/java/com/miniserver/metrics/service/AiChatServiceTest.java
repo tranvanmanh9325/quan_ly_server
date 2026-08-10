@@ -34,9 +34,12 @@ class AiChatServiceTest {
         ReflectionTestUtils.setField(sshService, "fallbackHost", System.getenv().getOrDefault("SSH_FALLBACK_HOST", ""));
         ReflectionTestUtils.setField(sshService, "fallbackPort", Integer.parseInt(System.getenv().getOrDefault("SSH_FALLBACK_PORT", "22")));
 
-        AiChatService aiChatService = new AiChatService(sshService);
-        ReflectionTestUtils.setField(aiChatService, "apiKey", System.getenv("GROQ_API_KEY"));
-        ReflectionTestUtils.setField(aiChatService, "model",  "llama-3.1-8b-instant");
+        // Build GroqKeyPool with the primary key; pass empty strings for unused slots
+        String groqKey = System.getenv("GROQ_API_KEY");
+        GroqKeyPool keyPool = new GroqKeyPool(groqKey, "", "", "", "");
+
+        AiChatService aiChatService = new AiChatService(sshService, keyPool);
+        ReflectionTestUtils.setField(aiChatService, "model", "llama-3.1-8b-instant");
 
         String response = aiChatService.chat("test-chat-id", "Đã được cập nhật vào thời gian nào");
         System.out.println("=== AI RESPONSE START ===");

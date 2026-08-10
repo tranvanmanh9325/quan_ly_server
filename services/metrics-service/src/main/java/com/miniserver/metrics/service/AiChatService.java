@@ -95,21 +95,20 @@ public class AiChatService {
             "crontab -r"
     );
 
-    @Value("${groq.api-key:}")
-    private String apiKey;
-
     @Value("${groq.model:llama-3.1-8b-instant}")
     private String model;
 
-    private final SshService  sshService;
+    private final SshService   sshService;
+    private final GroqKeyPool  keyPool;
     private final ObjectMapper mapper = new ObjectMapper();
     private final RestClient   restClient;
 
     // chatId → full OpenAI-format message history
     private final Map<String, Deque<ObjectNode>> historyMap = new ConcurrentHashMap<>();
 
-    public AiChatService(SshService sshService) {
+    public AiChatService(SshService sshService, GroqKeyPool keyPool) {
         this.sshService = sshService;
+        this.keyPool    = keyPool;
         // 30s read timeout — LLM inference can be slow under load
         this.restClient = RestClientFactory.create(5_000, 30_000);
     }
@@ -117,12 +116,12 @@ public class AiChatService {
     // ─── Public API ──────────────────────────────────────────────────────────
 
     public boolean isConfigured() {
-        return apiKey != null && !apiKey.isBlank();
+        return keyPool.hasKeys();
     }
 
     public String chat(String chatId, String userMessage) {
         if (!isConfigured()) {
-            return "AI chua duoc cau hinh. Vui long dat GROQ_API_KEY.";
+            return "AI chưa được cấu hình. Vui lòng thêm ít nhất 1 GROQ_API_KEY vào file .env.";
         }
 
         Deque<ObjectNode> history = historyMap.computeIfAbsent(chatId, k -> new ArrayDeque<>());
@@ -272,30 +271,44 @@ public class AiChatService {
         return mapper.writeValueAsString(body);
     }
 
+    /**
+     * Calls the Groq API with smart multi-key rotation (9router-style).
+     *
+     * On each attempt:
+     *   1. Ask the pool for the next healthy key (round-robin, skipping cooldown keys).
+     *   2. Send the request.
+     *   3. HTTP 429 → mark that key as rate-limited (60s cooldown), retry immediately
+     *      with the next key — no sleep needed when another key is available.
+     *   4. Retry up to (pool size + 2) times before giving up.
+     */
     private String callGroq(String requestBody) throws Exception {
-        int maxRetries = 3;
-        for (int attempt = 0; attempt <= maxRetries; attempt++) {
+        // Attempt once per key so every healthy key gets a chance before failing
+        int maxAttempts = Math.max(3, keyPool.getKeyCount());
+
+        for (int attempt = 0; attempt < maxAttempts; attempt++) {
+            String key = keyPool.getNextKey();
+            if (key == null) throw new IllegalStateException("No Groq API keys configured.");
+
             try {
                 return restClient.post()
                         .uri(GROQ_API_URL)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .header("Authorization", "Bearer " + apiKey)
+                        .header("Authorization", "Bearer " + key)
                         .body(requestBody)
                         .retrieve()
                         .body(String.class);
             } catch (HttpClientErrorException.TooManyRequests e) {
-                if (attempt < maxRetries) {
-                    // Exponential backoff: 1s → 2s → 3s. Keeps first retry fast while
-                    // still giving the rate limiter enough headroom to recover.
-                    long sleepMs = 1000L * (attempt + 1);
-                    log.warn("[Agent] Groq 429 Rate limited, retrying in {}ms (attempt {}/{})...", sleepMs, attempt + 1, maxRetries);
-                    Thread.sleep(sleepMs);
-                } else {
-                    throw e;
-                }
+                // Mark this key as rate-limited; pool will skip it for 60s.
+                keyPool.markRateLimited(key);
+                log.warn("[Agent] 429 on key ...{}; pool status: {}",
+                        key.length() > 6 ? key.substring(key.length() - 6) : "***",
+                        keyPool.getPoolStatus());
+                // If this was the last attempt, propagate the error
+                if (attempt == maxAttempts - 1) throw e;
+                // Otherwise continue loop — next iteration picks a different key instantly
             }
         }
-        throw new IllegalStateException("Max retries exceeded for Groq API");
+        throw new IllegalStateException("All Groq API keys exhausted after " + maxAttempts + " attempts.");
     }
 
     /**

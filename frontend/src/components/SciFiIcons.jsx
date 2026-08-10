@@ -520,3 +520,17 @@ export const SciFiCloseIcon = ({ size = 18, color = 'var(--accent-pink)' }) => (
     <line x1="17" y1="7" x2="7" y2="17" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
   </svg>
 );
+
+// 35. FACEBOOK — Cyberpunk Facebook emblem with reticle ring
+export const SciFiFacebookIcon = ({ size = 18, color = 'var(--accent-purple)' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
+    {/* Outer Rounded Hex Box */}
+    <rect x="2" y="2" width="20" height="20" rx="5" stroke={color} strokeWidth="1.5" fill="rgba(187, 0, 255, 0.1)" />
+    {/* Stylized Cyber 'f' path */}
+    <path d="M16 8H13.5C12.7 8 12 8.7 12 9.5V11.5H16L15.5 15.5H12V22H8V15.5H6V11.5H8V9.5C8 7 9.8 5 12.3 5H16V8Z"
+      fill={color} fillOpacity="0.85" />
+    {/* Corner Reticle Sparks */}
+    <circle cx="4" cy="4" r="0.8" fill={color} />
+    <circle cx="20" cy="20" r="0.8" fill={color} />
+  </svg>
+);

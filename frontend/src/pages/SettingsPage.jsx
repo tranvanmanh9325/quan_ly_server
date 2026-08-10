@@ -4,7 +4,8 @@ import {
   SciFiSettingsIcon, SciFiRefreshIcon, SciFiPulseBadge,
   SciFiConsoleIcon, SciFiCyberLockIcon, SciFiDashboardIcon,
   SciFiTelegramIcon, SciFiInfoIcon, SciFiTerminalPromptIcon,
-  SciFiBrowserLaunchIcon, SciFiChronoSpinnerIcon, SciFiCheckCircleIcon, SciFiCloseIcon
+  SciFiBrowserLaunchIcon, SciFiChronoSpinnerIcon, SciFiCheckCircleIcon, SciFiCloseIcon,
+  SciFiFacebookIcon
 } from '../components/SciFiIcons';
 import { loadSettings, saveSettings, SETTINGS_DEFAULTS } from '../utils/settings';
 

@@ -56,18 +56,20 @@ public class FacebookMessengerService {
         }
 
         if (cfg.getCookiesJson() == null || cfg.getCookiesJson().isBlank()) {
-            updateStatus(cfg, "Cần nhập Cookies Facebook để đăng nhập phiên làm việc", LocalDateTime.now());
+            updateStatus(cfg, "Cần nhập Cookies Facebook để đăng nhập phiên làm việc", LocalDateTime.now(java.time.ZoneId.of("Asia/Ho_Chi_Minh")));
             return;
         }
 
         try {
             int repliesSent = processMessengerChats(cfg);
-            String status = "Hoạt động: Đã kiểm tra lúc " + LocalDateTime.now().toLocalTime()
+            LocalDateTime vnNow = LocalDateTime.now(java.time.ZoneId.of("Asia/Ho_Chi_Minh"));
+            java.time.format.DateTimeFormatter fmt = java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss dd/MM/yyyy");
+            String status = "Hoạt động: Đã kiểm tra lúc " + vnNow.format(fmt)
                     + (repliesSent > 0 ? " (Đã phản hồi " + repliesSent + " tin nhắn vắng mặt)" : "");
-            updateStatus(cfg, status, LocalDateTime.now());
+            updateStatus(cfg, status, vnNow);
         } catch (Exception e) {
             log.error("[FB-Responder] Error during Messenger check: {}", e.getMessage(), e);
-            updateStatus(cfg, "Lỗi: " + e.getMessage(), LocalDateTime.now());
+            updateStatus(cfg, "Lỗi: " + e.getMessage(), LocalDateTime.now(java.time.ZoneId.of("Asia/Ho_Chi_Minh")));
         }
     }
 
@@ -141,7 +143,7 @@ public class FacebookMessengerService {
             String currentUrl = page.url();
             if (currentUrl.contains("login") || page.title().contains("Log in") || page.title().contains("Đăng nhập")) {
                 log.warn("[FB-Responder] Cookies expired or invalid. Redirected to login page.");
-                updateStatus(cfg, "Lỗi: Session Cookies hết hạn hoặc không hợp lệ. Vui lòng cập nhật Cookies mới.", LocalDateTime.now());
+                updateStatus(cfg, "Lỗi: Session Cookies hết hạn hoặc không hợp lệ. Vui lòng cập nhật Cookies mới.", LocalDateTime.now(java.time.ZoneId.of("Asia/Ho_Chi_Minh")));
                 return 0;
             }
 

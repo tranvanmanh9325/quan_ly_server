@@ -121,6 +121,7 @@ export default function SettingsPage() {
   const [tgSaved, setTgSaved]     = useState(false);
   const [tgTesting, setTgTesting] = useState(false);
   const [tgTestResult, setTgTestResult] = useState(null); // { status, message }
+  const [tgLoading, setTgLoading]   = useState(true);
   // ── Facebook state ───────────────────────────────────────────────────────
   const [fbConfig, setFbConfig] = useState({
     enabled: false,

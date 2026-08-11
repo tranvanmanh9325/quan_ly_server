@@ -23,13 +23,40 @@ import java.util.concurrent.ConcurrentHashMap;
  * Server-side Headless Web Automation Service for Facebook Messenger.
  *
  * Uses Playwright Chromium (running inside Docker on the server) to monitor
- * Messenger chats. Maintains a single long-running persistent browser context
- * to prevent spamming Facebook login history and avoid account security checkpoints.
+ * Messenger chats. Each scheduled check spawns an ephemeral browser, does work,
+ * then closes it immediately. This keeps CPU at 0% between checks because the
+ * Chromium Renderer process (the main CPU consumer due to Facebook's JS engine)
+ * only lives for the ~5-10 seconds needed to inspect the inbox.
+ *
+ * Login history spam is avoided because cookie-based auth re-uses the same
+ * Facebook session tokens on every launch — Facebook sees the same session,
+ * not a new login event.
  */
 @Service
 public class FacebookMessengerService implements DisposableBean {
 
     private static final Logger log = LoggerFactory.getLogger(FacebookMessengerService.class);
+
+    // Lean Chromium args for headless automation — disables all non-essential features
+    private static final List<String> CHROMIUM_ARGS = List.of(
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-gpu",
+            "--disable-software-rasterizer",
+            "--mute-audio",
+            "--disable-speech-api",
+            "--disable-background-networking",
+            "--disable-background-timer-throttling",
+            "--disable-backgrounding-occluded-windows",
+            "--disable-renderer-backgrounding",
+            "--disable-component-extensions-with-background-pages",
+            "--disable-ipc-flooding-protection",
+            "--disable-blink-features=AutomationControlled",
+            "--disable-features=IsolateOrigins,site-per-process",
+            "--process-per-site",
+            "--renderer-process-limit=1"
+    );
 
     private final FacebookConfigRepository configRepository;
     private final AiChatService aiChatService;
@@ -38,11 +65,10 @@ public class FacebookMessengerService implements DisposableBean {
     // senderKey -> last auto-reply instant (per-sender cooldown)
     private final Map<String, Instant> cooldownMap = new ConcurrentHashMap<>();
 
-    // Long-running persistent browser context & page to prevent Facebook login spam
+    // VNC-only singleton state (used only for interactive login session, NOT for scheduled checks)
     private Playwright activePlaywright;
     private BrowserContext activeContext;
     private Page activePage;
-    private String lastLoadedCookiesJson;
 
     public FacebookMessengerService(FacebookConfigRepository configRepository, AiChatService aiChatService) {
         this.configRepository = configRepository;
@@ -54,103 +80,9 @@ public class FacebookMessengerService implements DisposableBean {
         closeActiveSession();
     }
 
-    private synchronized void closeActiveSession() {
-        try {
-            if (activePage != null && !activePage.isClosed()) {
-                activePage.close();
-            }
-        } catch (Exception ignored) {}
-        activePage = null;
-
-        try {
-            if (activeContext != null) {
-                activeContext.close();
-            }
-        } catch (Exception ignored) {}
-        activeContext = null;
-
-        try {
-            if (activePlaywright != null) {
-                activePlaywright.close();
-            }
-        } catch (Exception ignored) {}
-        activePlaywright = null;
-    }
-
-    private synchronized Page getOrInitActivePage(FacebookConfig cfg) throws Exception {
-        String currentCookiesJson = cfg.getCookiesJson();
-        boolean cookiesChanged = currentCookiesJson != null && !currentCookiesJson.equals(lastLoadedCookiesJson);
-
-        if (activePage != null && !activePage.isClosed() && !cookiesChanged) {
-            try {
-                String currentUrl = activePage.url();
-                if (currentUrl != null && !currentUrl.contains("login")) {
-                    log.debug("[FB-Responder] Reusing active persistent Messenger session without reload. URL: {}", currentUrl);
-                    return activePage;
-                }
-            } catch (Exception e) {
-                log.warn("[FB-Responder] Active Messenger tab unresponsive, re-initializing persistent session...");
-            }
-        }
-
-        closeActiveSession();
-
-        Map<String, String> env = new HashMap<>(System.getenv());
-        env.put("PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD", "1");
-        env.put("PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH", "/usr/bin/chromium");
-        env.put("PLAYWRIGHT_NODEJS_PATH", "/usr/bin/node");
-        Playwright.CreateOptions createOptions = new Playwright.CreateOptions().setEnv(env);
-
-        activePlaywright = Playwright.create(createOptions);
-
-        List<String> args = List.of(
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-gpu",
-                "--disable-software-rasterizer",
-                "--mute-audio",
-                "--disable-speech-api",
-                "--disable-background-networking",
-                "--disable-component-extensions-with-background-pages",
-                "--disable-blink-features=AutomationControlled",
-                "--disable-features=IsolateOrigins,site-per-process"
-        );
-
-        BrowserType.LaunchPersistentContextOptions pOptions = new BrowserType.LaunchPersistentContextOptions()
-                .setHeadless(true)
-                .setArgs(args)
-                .setUserAgent("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36")
-                .setViewportSize(1280, 800);
-
-        if (Paths.get("/usr/bin/chromium").toFile().exists()) {
-            pOptions.setExecutablePath(Paths.get("/usr/bin/chromium"));
-        } else if (Paths.get("/usr/bin/chromium-browser").toFile().exists()) {
-            pOptions.setExecutablePath(Paths.get("/usr/bin/chromium-browser"));
-        }
-
-        java.nio.file.Path profileDir = Paths.get("/tmp/fb_bot_profile");
-        activeContext = activePlaywright.chromium().launchPersistentContext(profileDir, pOptions);
-
-        // Block heavy resources (images, media, fonts) to minimize CPU & RAM consumption
-        activeContext.route("**/*", route -> {
-            String resourceType = route.request().resourceType();
-            if ("image".equals(resourceType) || "media".equals(resourceType) || "font".equals(resourceType)) {
-                route.abort();
-            } else {
-                route.fallback();
-            }
-        });
-
-        applyCookies(activeContext, currentCookiesJson);
-        lastLoadedCookiesJson = currentCookiesJson;
-
-        activePage = activeContext.newPage();
-        activePage.navigate("https://www.facebook.com/messages/t/", new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED));
-        activePage.waitForTimeout(4000);
-
-        return activePage;
-    }
+    // ========================================================================================
+    // SCHEDULED CHECK — Ephemeral browser per cycle (CPU = 0% between checks)
+    // ========================================================================================
 
     /** Scheduled check running every 60 seconds */
     @Scheduled(fixedDelay = 60000, initialDelay = 15000)
@@ -160,14 +92,13 @@ public class FacebookMessengerService implements DisposableBean {
 
         FacebookConfig cfg = configOpt.get();
         if (!cfg.isEnabled()) {
-            closeActiveSession();
             updateStatus(cfg, "Tắt", null);
             return;
         }
 
         if (cfg.getCookiesJson() == null || cfg.getCookiesJson().isBlank()) {
-            closeActiveSession();
-            updateStatus(cfg, "Cần nhập Cookies Facebook để đăng nhập phiên làm việc", LocalDateTime.now(java.time.ZoneId.of("Asia/Ho_Chi_Minh")));
+            updateStatus(cfg, "Cần nhập Cookies Facebook để đăng nhập phiên làm việc",
+                    LocalDateTime.now(java.time.ZoneId.of("Asia/Ho_Chi_Minh")));
             return;
         }
 
@@ -199,127 +130,172 @@ public class FacebookMessengerService implements DisposableBean {
         }
     }
 
+    /**
+     * Core check logic: starts an ephemeral Playwright browser, injects cookies,
+     * inspects Messenger inbox, sends auto-replies, then closes browser immediately.
+     * The browser lives only for the duration of this method (~5-15 seconds).
+     */
     private int processMessengerChats(FacebookConfig cfg) {
+        Map<String, String> env = new HashMap<>(System.getenv());
+        env.put("PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD", "1");
+        env.put("PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH", "/usr/bin/chromium");
+        env.put("PLAYWRIGHT_NODEJS_PATH", "/usr/bin/node");
+
+        // try-with-resources guarantees browser is closed no matter what happens
+        try (Playwright playwright = Playwright.create(new Playwright.CreateOptions().setEnv(env))) {
+
+            BrowserType.LaunchOptions launchOptions = new BrowserType.LaunchOptions()
+                    .setHeadless(true)
+                    .setArgs(CHROMIUM_ARGS);
+
+            if (Paths.get("/usr/bin/chromium").toFile().exists()) {
+                launchOptions.setExecutablePath(Paths.get("/usr/bin/chromium"));
+            } else if (Paths.get("/usr/bin/chromium-browser").toFile().exists()) {
+                launchOptions.setExecutablePath(Paths.get("/usr/bin/chromium-browser"));
+            }
+
+            try (Browser browser = playwright.chromium().launch(launchOptions)) {
+                Browser.NewContextOptions ctxOptions = new Browser.NewContextOptions()
+                        .setUserAgent("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36")
+                        .setViewportSize(1280, 800);
+
+                try (BrowserContext context = browser.newContext(ctxOptions)) {
+                    // Block heavy resources — images/media/fonts/stylesheets have no value for DOM automation
+                    context.route("**/*", route -> {
+                        String rt = route.request().resourceType();
+                        if ("image".equals(rt) || "media".equals(rt) || "font".equals(rt) || "stylesheet".equals(rt)) {
+                            route.abort();
+                        } else {
+                            route.fallback();
+                        }
+                    });
+
+                    applyCookies(context, cfg.getCookiesJson());
+                    Page page = context.newPage();
+
+                    page.navigate("https://www.facebook.com/messages/t/",
+                            new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED));
+                    page.waitForTimeout(4000);
+
+                    String currentUrl = page.url();
+                    if (currentUrl.contains("login") || page.title().contains("Log in") || page.title().contains("Đăng nhập")) {
+                        log.warn("[FB-Responder] Cookies expired or invalid. Redirected to login page.");
+                        updateStatus(cfg, "Lỗi: Session Cookies hết hạn hoặc không hợp lệ. Vui lòng cập nhật Cookies mới.",
+                                LocalDateTime.now(java.time.ZoneId.of("Asia/Ho_Chi_Minh")));
+                        return 0;
+                    }
+
+                    log.info("[FB-Responder] Ephemeral browser ready. Current URL: {}", currentUrl);
+
+                    // Dismiss popups if any
+                    try {
+                        List<ElementHandle> closeBtns = page.querySelectorAll(
+                                "div[role='dialog'] div[role='button']:has-text('Not now'), " +
+                                "div[role='dialog'] div[role='button']:has-text('Không phải bây giờ'), " +
+                                "div[role='dialog'] div[aria-label='Close'], " +
+                                "div[role='dialog'] div[aria-label='Đóng']");
+                        for (ElementHandle btn : closeBtns) {
+                            if (btn.isVisible()) {
+                                btn.click();
+                                page.waitForTimeout(500);
+                            }
+                        }
+                    } catch (Exception ignored) {}
+
+                    // Wait for conversation list to render
+                    try {
+                        page.waitForSelector("[role='gridcell'], [role='row'], a[href*='/messages/t/'], div[role='navigation'] a",
+                                new Page.WaitForSelectorOptions().setTimeout(8000));
+                    } catch (Exception e) {
+                        log.warn("[FB-Responder] Wait for thread list selector timed out, attempting query fallback...");
+                    }
+
+                    return inspectAndReply(page, cfg);
+                }
+                // BrowserContext auto-closed here
+            }
+            // Browser auto-closed here → Chromium Renderer process is killed immediately
+        }
+        // Playwright driver auto-closed here
+    }
+
+    private int inspectAndReply(Page page, FacebookConfig cfg) {
         int autoRepliesSent = 0;
 
-        try {
-            Page page = getOrInitActivePage(cfg);
+        List<ElementHandle> threads = page.querySelectorAll(
+                "[role='gridcell'], [role='row'], a[href*='/messages/t/'], div[role='navigation'] a, div[role='listitem']");
+        log.info("[FB-Responder] Found {} potential conversation elements.", threads.size());
 
-            // Close any popup/modal if present (e.g. E2E encryption / PIN popup / Not Now)
+        int maxCheck = Math.min(threads.size(), 10);
+        for (int i = 0; i < maxCheck; i++) {
             try {
-                List<ElementHandle> closeBtns = page.querySelectorAll("div[role='dialog'] div[role='button']:has-text('Not now'), div[role='dialog'] div[role='button']:has-text('Không phải bây giờ'), div[role='dialog'] div[aria-label='Close'], div[role='dialog'] div[aria-label='Đóng']");
-                for (ElementHandle btn : closeBtns) {
-                    if (btn.isVisible()) {
-                        btn.click();
-                        page.waitForTimeout(1000);
-                    }
+                ElementHandle thread = threads.get(i);
+
+                String threadItemText = thread.innerText() != null ? thread.innerText().toLowerCase() : "";
+                if (threadItemText.contains("đã thêm") || threadItemText.contains("ảnh nhóm")
+                        || threadItemText.contains("đổi tên") || threadItemText.contains("rời khỏi")) {
+                    log.info("[FB-Responder] Skipping thread #{} (Group/Community sidebar marker)", i);
+                    continue;
                 }
-            } catch (Exception ignored) {}
 
-            // Check if logged in
-            String currentUrl = page.url();
-            if (currentUrl.contains("login") || page.title().contains("Log in") || page.title().contains("Đăng nhập")) {
-                log.warn("[FB-Responder] Cookies expired or invalid. Redirected to login page.");
-                updateStatus(cfg, "Lỗi: Session Cookies hết hạn hoặc không hợp lệ. Vui lòng cập nhật Cookies mới.", LocalDateTime.now(java.time.ZoneId.of("Asia/Ho_Chi_Minh")));
-                closeActiveSession();
-                return 0;
-            }
+                thread.click();
+                page.waitForTimeout(2000);
 
-            log.info("[FB-Responder] Successfully inspecting persistent Messenger session. Current URL: {}", currentUrl);
+                boolean isGroup = isGroupOrCommunityChat(page);
+                if (isGroup) {
+                    log.info("[FB-Responder] Thread #{} is a GROUP CHAT / COMMUNITY. Skipping.", i);
+                    continue;
+                }
 
-            // Wait for conversation list
-            try {
-                page.waitForSelector("[role='gridcell'], [role='row'], a[href*='/messages/t/'], div[role='navigation'] a", new Page.WaitForSelectorOptions().setTimeout(8000));
-            } catch (Exception e) {
-                log.warn("[FB-Responder] Wait for thread list selector timed out, attempting query fallback...");
-            }
+                String senderName = "User_" + i;
+                ElementHandle headerElem = page.querySelector("h2, [role='main'] header span");
+                if (headerElem != null && headerElem.textContent() != null) {
+                    senderName = headerElem.textContent().trim();
+                }
 
-            // Find unread/active conversation elements
-            List<ElementHandle> threads = page.querySelectorAll("[role='gridcell'], [role='row'], a[href*='/messages/t/'], div[role='navigation'] a, div[role='listitem']");
-            log.info("[FB-Responder] Found {} potential conversation elements.", threads.size());
+                int unrepliedCount = countUnrepliedIncomingMessages(page);
+                log.info("[FB-Responder] Personal Chat with '{}': {} unreplied incoming message(s).", senderName, unrepliedCount);
 
-            int maxCheck = Math.min(threads.size(), 10);
-            for (int i = 0; i < maxCheck; i++) {
-                try {
-                    ElementHandle thread = threads.get(i);
-
-                    // Layer 1: Check thread sidebar item text for group markers BEFORE clicking
-                    String threadItemText = thread.innerText() != null ? thread.innerText().toLowerCase() : "";
-                    if (threadItemText.contains("đã thêm") || threadItemText.contains("ảnh nhóm") || threadItemText.contains("đổi tên") || threadItemText.contains("rời khỏi")) {
-                        log.info("[FB-Responder] Skipping thread #{} (Sidebar item marked as Group/Community chat)", i);
-                        continue;
-                    }
-
-                    thread.click();
-                    page.waitForTimeout(2500);
-
-                    // Layer 2: Check opened conversation header/sidebar for Group indicators
-                    boolean isGroup = isGroupOrCommunityChat(page);
-                    if (isGroup) {
-                        log.info("[FB-Responder] Thread #{} is a GROUP CHAT / COMMUNITY. Strictly skipping without inspection or auto-reply.", i);
-                        continue;
-                    }
-
-                    // Extract thread title/sender for 1-on-1 personal chat
-                    String senderName = "User_" + i;
-                    ElementHandle headerElem = page.querySelector("h2, [role='main'] header span");
-                    if (headerElem != null && headerElem.textContent() != null) {
-                        senderName = headerElem.textContent().trim();
-                    }
-
-                    // Count unreplied consecutive incoming message bubbles from opponent in 1-on-1 chat
-                    int unrepliedCount = countUnrepliedIncomingMessages(page);
-                    log.info("[FB-Responder] Personal Chat with '{}': {} unreplied incoming message(s).", senderName, unrepliedCount);
-
-                    if (unrepliedCount >= cfg.getThreshold()) {
-                        if (isCooldownExpired(senderName, cfg.getCooldownMinutes())) {
-                            log.info("[FB-Responder] Triggering AI Away reply for 1-on-1 sender '{}' (Unreplied: {} >= Threshold: {})",
-                                    senderName, unrepliedCount, cfg.getThreshold());
-
-                            String awayReply = generateAwayMessage(senderName, unrepliedCount, cfg.getCustomMessage());
-                            boolean sent = sendMessengerReply(page, awayReply);
-
-                            if (sent) {
-                                autoRepliesSent++;
-                                cooldownMap.put(senderName, Instant.now());
-                                log.info("[FB-Responder] AUTO-REPLY SENT to '{}': {}", senderName, awayReply);
-                            }
-                        } else {
-                            log.info("[FB-Responder] Sender '{}' is currently on cooldown; skipping.", senderName);
+                if (unrepliedCount >= cfg.getThreshold()) {
+                    if (isCooldownExpired(senderName, cfg.getCooldownMinutes())) {
+                        log.info("[FB-Responder] Triggering AI Away reply for '{}' (Unreplied: {} >= Threshold: {})",
+                                senderName, unrepliedCount, cfg.getThreshold());
+                        String awayReply = generateAwayMessage(senderName, unrepliedCount, cfg.getCustomMessage());
+                        boolean sent = sendMessengerReply(page, awayReply);
+                        if (sent) {
+                            autoRepliesSent++;
+                            cooldownMap.put(senderName, Instant.now());
+                            log.info("[FB-Responder] AUTO-REPLY SENT to '{}': {}", senderName, awayReply);
                         }
+                    } else {
+                        log.info("[FB-Responder] Sender '{}' is on cooldown; skipping.", senderName);
                     }
-                } catch (Exception ex) {
-                    log.warn("[FB-Responder] Error processing thread #{}: {}", i, ex.getMessage());
                 }
+            } catch (Exception ex) {
+                log.warn("[FB-Responder] Error processing thread #{}: {}", i, ex.getMessage());
             }
-        } catch (Exception e) {
-            log.error("[FB-Responder] Playwright execution error: {}", e.getMessage(), e);
-            closeActiveSession();
-            throw new RuntimeException(e);
         }
 
         return autoRepliesSent;
     }
 
+    // ========================================================================================
+    // HELPER METHODS
+    // ========================================================================================
+
     private boolean isGroupOrCommunityChat(Page page) {
         Object isGroupResult = page.evaluate("() => {" +
-                "  let text = document.body.innerText || '';" +
                 "  let header = document.querySelector('[role=\"main\"] header, [role=\"complementary\"]') || document.body;" +
                 "  let headerText = (header.innerText || '').toLowerCase();" +
                 "  let groupKeywords = ['thành viên', 'view members', 'members', 'thêm người', 'add people', 'đổi tên đoạn chat', 'change chat name', 'rời khỏi nhóm', 'leave group', 'ảnh nhóm', 'cộng đồng', 'community'];" +
-                "  for (let kw of groupKeywords) {" +
-                "    if (headerText.includes(kw)) return true;" +
-                "  }" +
+                "  for (let kw of groupKeywords) { if (headerText.includes(kw)) return true; }" +
                 "  let memberButtons = document.querySelectorAll('[aria-label*=\"Thành viên\"], [aria-label*=\"Members\"], [aria-label*=\"View members\"]');" +
-                "  if (memberButtons.length > 0) return true;" +
-                "  return false;" +
+                "  return memberButtons.length > 0;" +
                 "}");
-
         return Boolean.TRUE.equals(isGroupResult);
     }
 
     private int countUnrepliedIncomingMessages(Page page) {
-        // Evaluate DOM inside the browser to count trailing incoming message bubbles
         Object countResult = page.evaluate("() => {" +
                 "  let rows = document.querySelectorAll('[role=\"row\"], [data-scope=\"messages_table\"]');" +
                 "  if (!rows || rows.length === 0) {" +
@@ -337,10 +313,7 @@ public class FacebookMessengerService implements DisposableBean {
                 "  }" +
                 "  return count;" +
                 "}");
-
-        if (countResult instanceof Number num) {
-            return num.intValue();
-        }
+        if (countResult instanceof Number num) return num.intValue();
         return 0;
     }
 
@@ -362,18 +335,14 @@ public class FacebookMessengerService implements DisposableBean {
 
     private boolean sendMessengerReply(Page page, String text) {
         try {
-            // Locators for Messenger input box
             ElementHandle inputBox = page.querySelector("[role='textbox'], [contenteditable='true'], [aria-label*='Message'], [aria-label*='Tin nhắn']");
             if (inputBox == null) {
                 log.warn("[FB-Responder] Could not find Messenger message textbox element.");
                 return false;
             }
-
             inputBox.focus();
             inputBox.fill(text);
             page.waitForTimeout(500);
-
-            // Press Enter to send
             page.keyboard().press("Enter");
             page.waitForTimeout(1000);
             return true;
@@ -404,7 +373,7 @@ public class FacebookMessengerService implements DisposableBean {
             }
             if (!cookies.isEmpty()) {
                 context.addCookies(cookies);
-                log.info("[FB-Responder] Successfully imported {} cookies into browser context.", cookies.size());
+                log.info("[FB-Responder] Successfully imported {} cookies into ephemeral browser context.", cookies.size());
             }
         } catch (Exception e) {
             log.warn("[FB-Responder] Failed to parse/apply cookies JSON: {}", e.getMessage());
@@ -423,6 +392,27 @@ public class FacebookMessengerService implements DisposableBean {
         configRepository.save(cfg);
     }
 
+    // ========================================================================================
+    // VNC INTERACTIVE LOGIN SESSION (for manual Facebook login via browser)
+    // ========================================================================================
+
+    private synchronized void closeActiveSession() {
+        try {
+            if (activePage != null && !activePage.isClosed()) activePage.close();
+        } catch (Exception ignored) {}
+        activePage = null;
+
+        try {
+            if (activeContext != null) activeContext.close();
+        } catch (Exception ignored) {}
+        activeContext = null;
+
+        try {
+            if (activePlaywright != null) activePlaywright.close();
+        } catch (Exception ignored) {}
+        activePlaywright = null;
+    }
+
     /** Launches Xvfb, openbox WM, x11vnc, websockify (noVNC), and Chromium on :99 for live web login */
     public Map<String, String> launchInteractiveBrowserSession() {
         try {
@@ -439,7 +429,8 @@ public class FacebookMessengerService implements DisposableBean {
             Thread.sleep(400);
 
             // 3. Start x11vnc server on port 5900 with frame deferral & region caching flags
-            new ProcessBuilder("x11vnc", "-display", ":99", "-forever", "-shared", "-nopw", "-rfbport", "5900", "-wait", "10", "-defer", "10", "-ncache", "10").start();
+            new ProcessBuilder("x11vnc", "-display", ":99", "-forever", "-shared", "-nopw", "-rfbport", "5900",
+                    "-wait", "10", "-defer", "10", "-ncache", "10").start();
             Thread.sleep(600);
 
             // 4. Start websockify (noVNC) on port 6080

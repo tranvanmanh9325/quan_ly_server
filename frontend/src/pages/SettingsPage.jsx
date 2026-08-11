@@ -912,13 +912,23 @@ export default function SettingsPage() {
                     </div>
                   )}
 
-                  {/* noVNC Web Screen — only render iframe AFTER Chromium is fully started */}
+                  {/* noVNC Web Screen — only render iframe AFTER Chromium is fully started.
+                      Wrapper div with flex:1 + minHeight:0 is REQUIRED in a flex column container.
+                      Without it, the iframe has no flex-grow so it collapses to intrinsic (tiny) size,
+                      causing noVNC to initialize its canvas at wrong dimensions → narrow strip bug. */}
                   {vncReady ? (
-                    <iframe
-                      src={vncUrl}
-                      title="Server Facebook Live Chromium"
-                      style={{ width: '100%', height: '100%', border: 'none', background: '#000' }}
-                    />
+                    <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', position: 'relative' }}>
+                      <iframe
+                        src={vncUrl}
+                        title="Server Facebook Live Chromium"
+                        style={{
+                          position: 'absolute', top: 0, left: 0,
+                          width: '100%', height: '100%',
+                          border: 'none', background: '#000', display: 'block'
+                        }}
+                      />
+                    </div>
+
                   ) : (
                     <div style={{
                       flex: 1, display: 'flex', flexDirection: 'column',

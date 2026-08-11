@@ -418,15 +418,18 @@ public class FacebookMessengerService implements DisposableBean {
         try {
             cleanupProcesses();
 
+            // Clear stale profile so Chromium does not restore a remembered tiny window size/position
+            new ProcessBuilder("sh", "-c", "rm -rf /tmp/fb_interactive_profile").start().waitFor();
+
             // 1. Start Xvfb virtual framebuffer on :99 with RANDR extension enabled
             new ProcessBuilder("Xvfb", ":99", "-screen", "0", "1280x800x24", "-ac", "+extension", "RANDR").start();
-            Thread.sleep(600);
+            Thread.sleep(800);
 
-            // 2. Start Openbox lightweight window manager for smooth window focus & menu rendering
+            // 2. Start Openbox lightweight window manager (required for xdotool window management)
             ProcessBuilder pbWm = new ProcessBuilder("openbox");
             pbWm.environment().put("DISPLAY", ":99");
             pbWm.start();
-            Thread.sleep(400);
+            Thread.sleep(600);
 
             // 3. Start x11vnc server on port 5900 with frame deferral & region caching flags
             new ProcessBuilder("x11vnc", "-display", ":99", "-forever", "-shared", "-nopw", "-rfbport", "5900",
@@ -437,7 +440,7 @@ public class FacebookMessengerService implements DisposableBean {
             new ProcessBuilder("websockify", "--web=/usr/share/novnc", "6080", "localhost:5900").start();
             Thread.sleep(600);
 
-            // 5. Start Chromium on :99 with performance & process throttling flags
+            // 5. Start Chromium on :99 — use fresh profile, explicit position 0,0 so window fills display
             ProcessBuilder pb = new ProcessBuilder(
                     "/usr/lib/chromium/chromium",
                     "--no-sandbox",
@@ -445,6 +448,7 @@ public class FacebookMessengerService implements DisposableBean {
                     "--disable-dev-shm-usage",
                     "--disable-gpu",
                     "--disable-software-rasterizer",
+                    "--window-position=0,0",
                     "--window-size=1280,800",
                     "--force-device-scale-factor=1",
                     "--no-first-run",
@@ -462,14 +466,23 @@ public class FacebookMessengerService implements DisposableBean {
             pb.environment().put("DISPLAY", ":99");
             pb.start();
 
-            log.info("[FB-Responder] Launched high-performance noVNC Chromium login session on display :99");
-            String vncOptUrl = "/fb-vnc/vnc.html?autoconnect=true&resize=scale&quality=6&compression=6&reconnect=true&reconnect_delay=1000";
-            return Map.of("status", "success", "vncUrl", vncOptUrl, "message", "Trình duyệt Facebook đã được mở mượt mà trên Server.");
+            // 6. After Chromium starts, use xdotool to force window to fill the entire virtual display.
+            //    This overrides any OS-level window decoration/positioning that might make the window small.
+            Thread.sleep(3000);
+            ProcessBuilder xdo = new ProcessBuilder("sh", "-c",
+                    "DISPLAY=:99 xdotool search --sync --class chromium windowmove 0 0 windowsize 1280 800 2>/dev/null || true");
+            xdo.environment().put("DISPLAY", ":99");
+            xdo.start();
+
+            log.info("[FB-Responder] Launched noVNC Chromium login session on display :99 (1280x800 forced via xdotool)");
+            String vncUrl = "/fb-vnc/vnc.html?autoconnect=true&resize=scale&quality=6&compression=6&reconnect=true&reconnect_delay=1000";
+            return Map.of("status", "success", "vncUrl", vncUrl, "message", "Trình duyệt Facebook đã được mở trên Server.");
         } catch (Exception e) {
             log.error("[FB-Responder] Failed to launch interactive browser session: {}", e.getMessage(), e);
             return Map.of("status", "error", "message", "Lỗi khi mở trình duyệt Server: " + e.getMessage());
         }
     }
+
 
     /** Connects to live Chromium via CDP, extracts session cookies into PostgreSQL DB, and cleanup */
     public Map<String, String> saveInteractiveBrowserSession() {

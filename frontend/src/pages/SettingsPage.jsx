@@ -144,6 +144,8 @@ export default function SettingsPage() {
   const [vncLaunching, setVncLaunching] = useState(false);
   const [vncSaving, setVncSaving]       = useState(false);
   const [vncStatusMsg, setVncStatusMsg] = useState('');
+  // vncReady: true only after launch-browser API returns success — prevents 502 on premature iframe load
+  const [vncReady, setVncReady]         = useState(false);
 
   // Ping backend to check SSH connection health
   useEffect(() => {
@@ -236,6 +238,7 @@ export default function SettingsPage() {
 
   const handleLaunchBrowser = async () => {
     setVncLaunching(true);
+    setVncReady(false);
     setVncStatusMsg('Đang khởi tạo Trình duyệt Facebook trên Server...');
     try {
       const res = await axios.post('/api/facebook/launch-browser');
@@ -243,6 +246,8 @@ export default function SettingsPage() {
         setVncUrl(res.data.vncUrl || '/fb-vnc/vnc.html?autoconnect=true');
         setVncOpen(true);
         setVncStatusMsg('');
+        // Small delay to let Chromium fully start before loading iframe
+        setTimeout(() => setVncReady(true), 2500);
       } else {
         setVncStatusMsg(res.data.message || 'Lỗi khi mở trình duyệt.');
       }
@@ -251,6 +256,13 @@ export default function SettingsPage() {
     } finally {
       setVncLaunching(false);
     }
+  };
+
+  const handleCloseVnc = () => {
+    setVncOpen(false);
+    setVncReady(false);
+    setVncUrl('');
+    setVncStatusMsg('');
   };
 
   const handleSaveBrowserSession = async () => {
@@ -881,7 +893,7 @@ export default function SettingsPage() {
                         )}
                       </button>
                       <button
-                        onClick={() => setVncOpen(false)}
+                        onClick={handleCloseVnc}
                         style={{
                           background: 'rgba(255,0,85,0.2)', border: '1px solid var(--accent-pink)',
                           color: 'var(--accent-pink)', padding: '8px 14px', fontFamily: 'Share Tech Mono',
@@ -900,12 +912,39 @@ export default function SettingsPage() {
                     </div>
                   )}
 
-                  {/* noVNC Web Screen */}
-                  <iframe
-                    src={vncUrl}
-                    title="Server Facebook Live Chromium"
-                    style={{ width: '100%', height: '100%', border: 'none', background: '#000' }}
-                  />
+                  {/* noVNC Web Screen — only render iframe AFTER Chromium is fully started */}
+                  {vncReady ? (
+                    <iframe
+                      src={vncUrl}
+                      title="Server Facebook Live Chromium"
+                      style={{ width: '100%', height: '100%', border: 'none', background: '#000' }}
+                    />
+                  ) : (
+                    <div style={{
+                      flex: 1, display: 'flex', flexDirection: 'column',
+                      alignItems: 'center', justifyContent: 'center', gap: '18px',
+                      background: '#0a0b10'
+                    }}>
+                      <SciFiBrowserLaunchIcon size={48} color="var(--accent-cyan)" />
+                      <p style={{ color: 'var(--accent-cyan)', fontFamily: 'Share Tech Mono', fontSize: '1rem', textAlign: 'center', opacity: 0.8 }}>
+                        {vncLaunching ? 'Đang khởi động Chromium trên Server...' : 'Nhấn "Mở Trình Duyệt Server" để bắt đầu phiên đăng nhập Facebook.'}
+                      </p>
+                      {!vncLaunching && (
+                        <button
+                          onClick={handleLaunchBrowser}
+                          style={{
+                            background: 'var(--accent-cyan)', color: '#000', fontWeight: 'bold',
+                            border: 'none', padding: '12px 28px', fontFamily: 'Share Tech Mono',
+                            fontSize: '0.9rem', cursor: 'pointer', borderRadius: '2px',
+                            boxShadow: '0 0 20px var(--accent-cyan)',
+                            display: 'inline-flex', alignItems: 'center', gap: '8px',
+                          }}
+                        >
+                          <SciFiBrowserLaunchIcon size={16} color="#000" /> Mở Trình Duyệt Server
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             )}

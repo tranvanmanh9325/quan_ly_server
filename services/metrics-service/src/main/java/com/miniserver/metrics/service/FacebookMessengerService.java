@@ -9,6 +9,7 @@ import com.miniserver.metrics.model.FacebookConfig;
 import com.miniserver.metrics.repository.FacebookConfigRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.DisposableBean;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
@@ -22,12 +23,11 @@ import java.util.concurrent.ConcurrentHashMap;
  * Server-side Headless Web Automation Service for Facebook Messenger.
  *
  * Uses Playwright Chromium (running inside Docker on the server) to monitor
- * Messenger chats. When Away Mode is enabled (enabled=true) and an incoming sender
- * sends >= threshold (default: 5) unreplied messages, the AI Agent automatically
- * formulates a polite away response using Groq AI and sends it via Messenger.
+ * Messenger chats. Maintains a single long-running persistent browser context
+ * to prevent spamming Facebook login history and avoid account security checkpoints.
  */
 @Service
-public class FacebookMessengerService {
+public class FacebookMessengerService implements DisposableBean {
 
     private static final Logger log = LoggerFactory.getLogger(FacebookMessengerService.class);
 
@@ -38,9 +38,106 @@ public class FacebookMessengerService {
     // senderKey -> last auto-reply instant (per-sender cooldown)
     private final Map<String, Instant> cooldownMap = new ConcurrentHashMap<>();
 
+    // Long-running persistent browser context & page to prevent Facebook login spam
+    private Playwright activePlaywright;
+    private BrowserContext activeContext;
+    private Page activePage;
+    private String lastLoadedCookiesJson;
+
     public FacebookMessengerService(FacebookConfigRepository configRepository, AiChatService aiChatService) {
         this.configRepository = configRepository;
         this.aiChatService = aiChatService;
+    }
+
+    @Override
+    public void destroy() {
+        closeActiveSession();
+    }
+
+    private synchronized void closeActiveSession() {
+        try {
+            if (activePage != null && !activePage.isClosed()) {
+                activePage.close();
+            }
+        } catch (Exception ignored) {}
+        activePage = null;
+
+        try {
+            if (activeContext != null) {
+                activeContext.close();
+            }
+        } catch (Exception ignored) {}
+        activeContext = null;
+
+        try {
+            if (activePlaywright != null) {
+                activePlaywright.close();
+            }
+        } catch (Exception ignored) {}
+        activePlaywright = null;
+    }
+
+    private synchronized Page getOrInitActivePage(FacebookConfig cfg) throws Exception {
+        String currentCookiesJson = cfg.getCookiesJson();
+        boolean cookiesChanged = currentCookiesJson != null && !currentCookiesJson.equals(lastLoadedCookiesJson);
+
+        if (activePage != null && !activePage.isClosed() && !cookiesChanged) {
+            try {
+                String currentUrl = activePage.url();
+                if (currentUrl != null && !currentUrl.contains("login")) {
+                    log.debug("[FB-Responder] Reusing active persistent Messenger session. URL: {}", currentUrl);
+                    activePage.reload(new Page.ReloadOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED));
+                    activePage.waitForTimeout(3000);
+                    return activePage;
+                }
+            } catch (Exception e) {
+                log.warn("[FB-Responder] Active Messenger tab unresponsive, re-initializing persistent session...");
+            }
+        }
+
+        closeActiveSession();
+
+        Map<String, String> env = new HashMap<>(System.getenv());
+        env.put("PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD", "1");
+        env.put("PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH", "/usr/bin/chromium");
+        env.put("PLAYWRIGHT_NODEJS_PATH", "/usr/bin/node");
+        Playwright.CreateOptions createOptions = new Playwright.CreateOptions().setEnv(env);
+
+        activePlaywright = Playwright.create(createOptions);
+
+        List<String> args = List.of(
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
+                "--disable-software-rasterizer",
+                "--disable-blink-features=AutomationControlled",
+                "--disable-features=IsolateOrigins,site-per-process"
+        );
+
+        BrowserType.LaunchPersistentContextOptions pOptions = new BrowserType.LaunchPersistentContextOptions()
+                .setHeadless(true)
+                .setArgs(args)
+                .setUserAgent("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36")
+                .setViewportSize(1280, 800);
+
+        if (Paths.get("/usr/bin/chromium").toFile().exists()) {
+            pOptions.setExecutablePath(Paths.get("/usr/bin/chromium"));
+        } else if (Paths.get("/usr/bin/chromium-browser").toFile().exists()) {
+            pOptions.setExecutablePath(Paths.get("/usr/bin/chromium-browser"));
+        }
+
+        java.nio.file.Path profileDir = Paths.get("/tmp/fb_bot_profile");
+        activeContext = activePlaywright.chromium().launchPersistentContext(profileDir, pOptions);
+
+        applyCookies(activeContext, currentCookiesJson);
+        lastLoadedCookiesJson = currentCookiesJson;
+
+        activePage = activeContext.newPage();
+        activePage.navigate("https://www.facebook.com/messages/t/", new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED));
+        activePage.waitForTimeout(5000);
+
+        return activePage;
     }
 
     /** Scheduled check running every 60 seconds */
@@ -51,11 +148,13 @@ public class FacebookMessengerService {
 
         FacebookConfig cfg = configOpt.get();
         if (!cfg.isEnabled()) {
+            closeActiveSession();
             updateStatus(cfg, "Tắt", null);
             return;
         }
 
         if (cfg.getCookiesJson() == null || cfg.getCookiesJson().isBlank()) {
+            closeActiveSession();
             updateStatus(cfg, "Cần nhập Cookies Facebook để đăng nhập phiên làm việc", LocalDateTime.now(java.time.ZoneId.of("Asia/Ho_Chi_Minh")));
             return;
         }
@@ -91,42 +190,8 @@ public class FacebookMessengerService {
     private int processMessengerChats(FacebookConfig cfg) {
         int autoRepliesSent = 0;
 
-        BrowserType.LaunchOptions launchOptions = new BrowserType.LaunchOptions()
-                .setHeadless(true)
-                .setArgs(List.of(
-                        "--no-sandbox",
-                        "--disable-setuid-sandbox",
-                        "--disable-dev-shm-usage",
-                        "--disable-blink-features=AutomationControlled"
-                ));
-
-        // Use system chromium if available in Linux/Docker container
-        if (Paths.get("/usr/bin/chromium").toFile().exists()) {
-            launchOptions.setExecutablePath(Paths.get("/usr/bin/chromium"));
-        } else if (Paths.get("/usr/bin/chromium-browser").toFile().exists()) {
-            launchOptions.setExecutablePath(Paths.get("/usr/bin/chromium-browser"));
-        }
-
-        Map<String, String> env = new HashMap<>(System.getenv());
-        env.put("PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD", "1");
-        env.put("PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH", "/usr/bin/chromium");
-        env.put("PLAYWRIGHT_NODEJS_PATH", "/usr/bin/node");
-        Playwright.CreateOptions createOptions = new Playwright.CreateOptions().setEnv(env);
-
-        try (Playwright playwright = Playwright.create(createOptions);
-             Browser browser = playwright.chromium().launch(launchOptions)) {
-
-            BrowserContext context = browser.newContext(new Browser.NewContextOptions()
-                    .setUserAgent("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36")
-                    .setViewportSize(1280, 800)
-            );
-
-            // Import cookies
-            applyCookies(context, cfg.getCookiesJson());
-
-            Page page = context.newPage();
-            page.navigate("https://www.facebook.com/messages/t/", new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED));
-            page.waitForTimeout(5000);
+        try {
+            Page page = getOrInitActivePage(cfg);
 
             // Close any popup/modal if present (e.g. E2E encryption / PIN popup / Not Now)
             try {
@@ -144,10 +209,11 @@ public class FacebookMessengerService {
             if (currentUrl.contains("login") || page.title().contains("Log in") || page.title().contains("Đăng nhập")) {
                 log.warn("[FB-Responder] Cookies expired or invalid. Redirected to login page.");
                 updateStatus(cfg, "Lỗi: Session Cookies hết hạn hoặc không hợp lệ. Vui lòng cập nhật Cookies mới.", LocalDateTime.now(java.time.ZoneId.of("Asia/Ho_Chi_Minh")));
+                closeActiveSession();
                 return 0;
             }
 
-            log.info("[FB-Responder] Successfully loaded Messenger page. Current URL: {}", currentUrl);
+            log.info("[FB-Responder] Successfully inspecting persistent Messenger session. Current URL: {}", currentUrl);
 
             // Wait for conversation list
             try {
@@ -216,6 +282,7 @@ public class FacebookMessengerService {
             }
         } catch (Exception e) {
             log.error("[FB-Responder] Playwright execution error: {}", e.getMessage(), e);
+            closeActiveSession();
             throw new RuntimeException(e);
         }
 
@@ -457,6 +524,7 @@ public class FacebookMessengerService {
     }
 
     private void cleanupProcesses() {
+        closeActiveSession();
         try {
             new ProcessBuilder("pkill", "-f", "chromium").start();
             new ProcessBuilder("pkill", "-f", "openbox").start();

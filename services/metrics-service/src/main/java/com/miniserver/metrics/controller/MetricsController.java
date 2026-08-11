@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.miniserver.metrics.model.ServerMetric;
 import com.miniserver.metrics.repository.ServerMetricRepository;
+import com.miniserver.metrics.service.ActiveClientRegistry;
 import com.miniserver.metrics.service.SshService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -75,14 +76,18 @@ public class MetricsController {
 
     private final SshService sshService;
     private final ServerMetricRepository metricRepository;
+    private final ActiveClientRegistry activeClientRegistry;
     // ObjectMapper is thread-safe for reads; instantiate directly to avoid
     // relying on JacksonAutoConfiguration bean registration order.
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    public MetricsController(SshService sshService, ServerMetricRepository metricRepository) {
+    public MetricsController(SshService sshService, ServerMetricRepository metricRepository,
+                             ActiveClientRegistry activeClientRegistry) {
         this.sshService = sshService;
         this.metricRepository = metricRepository;
+        this.activeClientRegistry = activeClientRegistry;
     }
+
 
     /**
      * Null-guard cho mọi kết quả SSH trả về dạng chuỗi thô.
@@ -351,34 +356,28 @@ public class MetricsController {
 
     @GetMapping("/connections")
     public Map<String, Object> getConnections() {
-        // Single SSH round-trip instead of 3 sequential calls (saves ~2× SSH handshake latency)
-        // Layer 1 defense: pipe through grep -vE to strip 172.16.0.0/12 (Docker bridge
-        // networks, 172.16–172.31) at the shell level. iproute2 ss filter syntax does not
-        // support CIDR negation natively, so grep is the reliable cross-version solution.
-        // Note: no \b word boundary needed — the 172.(16-31). substring is specific enough
-        // and avoids double-escaping pitfalls in Java string → shell → grep chain.
+        // SSH connections: `who` + ss port 22 (reliable on host)
+        // HTTP browser connections: tracked by ClientTrackingFilter via X-Forwarded-For headers.
+        // `ss` on the host cannot see through Docker NAT or ngrok tunnels — always returns 0.
         final String docker172Filter = "grep -vE '172\\.(1[6-9]|2[0-9]|3[01])\\.'";
         String batchCmd = "LC_ALL=C who"
                 + " && echo '===SEP==='"
-                + " && ss -tn state established '( dport = :22 or sport = :22 )' 2>/dev/null | tail -n +2 | " + docker172Filter
-                + " && echo '===SEP==='"
-                + " && ss -tn state established '( sport = :80 or sport = :443 or sport = :8080 )' 2>/dev/null | tail -n +2 | " + docker172Filter;
+                + " && ss -tn state established '( dport = :22 or sport = :22 )' 2>/dev/null | tail -n +2 | " + docker172Filter;
         String raw = sshService.executeCommand(batchCmd);
 
         List<Map<String, String>> connections = new ArrayList<>();
         Set<String> seenIps = new HashSet<>();
 
-        String whoResult    = "";
-        String ssResult     = "";
-        String httpSsResult = "";
+        String whoResult = "";
+        String ssResult  = "";
 
         if (raw != null && !raw.isBlank() && !raw.startsWith("ERROR")) {
             String[] parts = raw.split("===SEP===", -1);
-            whoResult    = parts.length > 0 ? parts[0] : "";
-            ssResult     = parts.length > 1 ? parts[1] : "";
-            httpSsResult = parts.length > 2 ? parts[2] : "";
+            whoResult = parts.length > 0 ? parts[0] : "";
+            ssResult  = parts.length > 1 ? parts[1] : "";
         }
 
+        // Parse `who` — SSH login sessions
         if (!whoResult.isBlank()) {
             for (String line : whoResult.trim().split("\n")) {
                 String[] tokens = line.trim().split("\\s+");
@@ -395,12 +394,12 @@ public class MetricsController {
             }
         }
 
+        // Parse `ss` — active SSH tunnel connections (port 22)
         if (!ssResult.isBlank()) {
             for (String line : ssResult.trim().split("\n")) {
                 String[] tokens = line.trim().split("\\s+");
-                // ss columns: Recv-Q Send-Q Local:Port Peer:Port (min 4 cols)
                 if (tokens.length >= 4) {
-                    String remoteAddr = tokens[tokens.length - 1]; // last col is always peer
+                    String remoteAddr = tokens[tokens.length - 1];
                     if (remoteAddr.startsWith("::ffff:")) remoteAddr = remoteAddr.substring(7);
                     String ipOnly = remoteAddr.contains(":")
                         ? remoteAddr.substring(0, remoteAddr.lastIndexOf(":"))
@@ -419,33 +418,13 @@ public class MetricsController {
             }
         }
 
-        // Also capture HTTP browser connections on port 80, 443, 8080 (nginx/backend)
-        if (!httpSsResult.isBlank()) {
-            for (String line : httpSsResult.trim().split("\n")) {
-                String[] tokens = line.trim().split("\\s+");
-                if (tokens.length >= 5) {
-                    // Remote (peer) address is last column: ip:port
-                    String remoteAddr = tokens[tokens.length - 1];
-                    // Handle IPv6-mapped IPv4 like ::ffff:1.2.3.4:port
-                    if (remoteAddr.startsWith("::ffff:")) remoteAddr = remoteAddr.substring(7);
-                    String ipOnly = remoteAddr.contains(":")
-                        ? remoteAddr.substring(0, remoteAddr.lastIndexOf(":"))
-                        : remoteAddr;
-                    // Skip loopback — still include LAN/private for map visibility
-                    if (!ipOnly.isEmpty() && !seenIps.contains(ipOnly)
-                            && !ipOnly.equals("127.0.0.1") && !ipOnly.equals("::1")) {
-                        String localCol = tokens[tokens.length - 2];
-                        String port = localCol.contains(":")
-                            ? localCol.substring(localCol.lastIndexOf(":") + 1) : "http";
-                        Map<String, String> map = new HashMap<>();
-                        map.put("user",      "browser");
-                        map.put("terminal",  "HTTP:" + port);
-                        map.put("loginTime", "VIEWING");
-                        map.put("ip", ipOnly);
-                        connections.add(map);
-                        seenIps.add(ipOnly);
-                    }
-                }
+        // Add HTTP browser clients from application-level tracking (X-Forwarded-For).
+        // This works correctly through ngrok, nginx, and Docker NAT.
+        for (Map<String, String> client : activeClientRegistry.getActiveClients()) {
+            String ip = client.get("ip");
+            if (!seenIps.contains(ip)) {
+                connections.add(client);
+                seenIps.add(ip);
             }
         }
 
@@ -453,6 +432,7 @@ public class MetricsController {
         response.put("data", connections);
         return response;
     }
+
 
     /**
      * Parses a JSON string into a Map using Jackson.

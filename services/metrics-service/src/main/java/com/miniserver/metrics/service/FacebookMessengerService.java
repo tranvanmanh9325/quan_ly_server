@@ -1,9 +1,11 @@
 package com.miniserver.metrics.service;
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.microsoft.playwright.*;
 import com.microsoft.playwright.options.Cookie;
+import com.microsoft.playwright.options.SameSiteAttribute;
 import com.microsoft.playwright.options.WaitUntilState;
 import com.miniserver.metrics.model.FacebookConfig;
 import com.miniserver.metrics.repository.FacebookConfigRepository;
@@ -13,6 +15,7 @@ import org.springframework.beans.factory.DisposableBean;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
+import java.net.Socket;
 import java.nio.file.Paths;
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -84,8 +87,8 @@ public class FacebookMessengerService implements DisposableBean {
     // SCHEDULED CHECK — Ephemeral browser per cycle (CPU = 0% between checks)
     // ========================================================================================
 
-    /** Scheduled check running every 60 seconds */
-    @Scheduled(fixedDelay = 60000, initialDelay = 15000)
+    /** Scheduled check running every 5 minutes (300s) */
+    @Scheduled(fixedDelay = 300000, initialDelay = 15000)
     public void scheduledCheck() {
         Optional<FacebookConfig> configOpt = configRepository.getConfig();
         if (configOpt.isEmpty()) return;
@@ -413,34 +416,55 @@ public class FacebookMessengerService implements DisposableBean {
         activePlaywright = null;
     }
 
-    /** Launches Xvfb, openbox WM, x11vnc, websockify (noVNC), and Chromium on :99 for live web login */
+    /**
+     * Launches Xvfb, openbox WM, x11vnc, websockify (noVNC), and Chromium on :99 for live web login.
+     *
+     * If Facebook session cookies are already saved in the DB, they are injected into Chromium via
+     * Playwright CDP so the user lands on facebook.com already logged in.
+     *
+     * IMPORTANT: Cookie injection runs in a daemon thread AFTER this method returns the VNC URL,
+     * so the HTTP response (and VNC connection) is never blocked by the CDP/Playwright overhead.
+     */
     public Map<String, String> launchInteractiveBrowserSession() {
         try {
             cleanupProcesses();
 
-            // Clear stale profile so Chromium does not restore a remembered tiny window size/position
+            // Extract cookies JSON from DB — null means no saved session exists
+            String savedCookiesJson = configRepository.getConfig()
+                    .map(cfg -> cfg.getCookiesJson())
+                    .filter(c -> c != null && !c.isBlank())
+                    .orElse(null);
+            boolean hasSavedSession = savedCookiesJson != null;
+
+            // Always clear the stale profile to avoid remembered tiny window geometry.
+            // Session state is persisted in the DB as cookies and re-injected via CDP asynchronously.
             new ProcessBuilder("sh", "-c", "rm -rf /tmp/fb_interactive_profile").start().waitFor();
 
-            // 1. Start Xvfb virtual framebuffer on :99 with RANDR extension enabled
-            new ProcessBuilder("Xvfb", ":99", "-screen", "0", "1280x800x24", "-ac", "+extension", "RANDR").start();
+            // 1. Start Xvfb virtual framebuffer on :99 (Full HD 1920x1080)
+            new ProcessBuilder("Xvfb", ":99", "-screen", "0", "1920x1080x24", "-ac", "+extension", "RANDR").start();
             Thread.sleep(800);
 
-            // 2. Start Openbox lightweight window manager (required for xdotool window management)
+            // 2. Start Openbox lightweight window manager
             ProcessBuilder pbWm = new ProcessBuilder("openbox");
             pbWm.environment().put("DISPLAY", ":99");
             pbWm.start();
             Thread.sleep(600);
 
-            // 3. Start x11vnc server on port 5900 with frame deferral & region caching flags
+            // 3. Start x11vnc — '-cursor most' / '-xkb' for accurate mouse & keyboard events
             new ProcessBuilder("x11vnc", "-display", ":99", "-forever", "-shared", "-nopw", "-rfbport", "5900",
-                    "-wait", "10", "-defer", "10", "-ncache", "10").start();
+                    "-cursor", "most", "-xkb", "-wait", "10", "-defer", "10").start();
             Thread.sleep(600);
 
-            // 4. Start websockify (noVNC) on port 6080
+            // 4. Start websockify (noVNC bridge) on port 6080 — MUST be running before returning VNC URL
             new ProcessBuilder("websockify", "--web=/usr/share/novnc", "6080", "localhost:5900").start();
-            Thread.sleep(600);
+            // Block until websockify is genuinely accepting TCP connections (up to 15s).
+            // This replaces a fixed Thread.sleep() that was too short on loaded systems.
+            waitForPort(6080, 15);
 
-            // 5. Start Chromium on :99 — use fresh profile, explicit position 0,0 so window fills display
+            // 5. Start Chromium with remote debugging enabled.
+            //    Open about:blank when a saved session exists — cookies will be injected via CDP asynchronously.
+            //    Open the login page directly when no session is saved.
+            String initialUrl = hasSavedSession ? "about:blank" : "https://www.facebook.com/login";
             ProcessBuilder pb = new ProcessBuilder(
                     "/usr/lib/chromium/chromium",
                     "--no-sandbox",
@@ -449,7 +473,8 @@ public class FacebookMessengerService implements DisposableBean {
                     "--disable-gpu",
                     "--disable-software-rasterizer",
                     "--window-position=0,0",
-                    "--window-size=1280,800",
+                    "--window-size=1920,1080",
+                    "--start-maximized",
                     "--force-device-scale-factor=1",
                     "--no-first-run",
                     "--no-default-browser-check",
@@ -461,25 +486,116 @@ public class FacebookMessengerService implements DisposableBean {
                     "--disable-renderer-backgrounding",
                     "--user-data-dir=/tmp/fb_interactive_profile",
                     "--remote-debugging-port=9222",
-                    "https://www.facebook.com/login"
+                    initialUrl
             );
             pb.environment().put("DISPLAY", ":99");
             pb.start();
 
-            // 6. After Chromium starts, use xdotool to force window to fill the entire virtual display.
-            //    This overrides any OS-level window decoration/positioning that might make the window small.
-            Thread.sleep(3000);
-            ProcessBuilder xdo = new ProcessBuilder("sh", "-c",
-                    "DISPLAY=:99 xdotool search --sync --class chromium windowmove 0 0 windowsize 1280 800 2>/dev/null || true");
-            xdo.environment().put("DISPLAY", ":99");
-            xdo.start();
+            // 6. Offload all post-startup work to a daemon thread.
+            //    This is critical: returning the VNC URL immediately lets the frontend connect
+            //    BEFORE Playwright's CDP session touches Chromium. Playwright's CDP navigate() call
+            //    is heavy and was previously blocking x11vnc frame capture, causing VNC to hang.
+            final String cookiesJsonSnapshot = savedCookiesJson;
+            Thread asyncSetup = new Thread(() -> {
+                try {
+                    // Wait for Chromium to fully start and bind the CDP remote debugging port
+                    Thread.sleep(3000);
 
-            log.info("[FB-Responder] Launched noVNC Chromium login session on display :99 (1280x800 forced via xdotool)");
+                    // Resize Chromium window to fill the entire virtual display
+                    new ProcessBuilder("sh", "-c",
+                            "DISPLAY=:99 xdotool search --sync --class chromium windowmove 0 0 windowsize 1920 1080 2>/dev/null || true"
+                    ).start().waitFor(5, java.util.concurrent.TimeUnit.SECONDS);
+
+                    // Inject saved cookies and navigate to Facebook
+                    if (cookiesJsonSnapshot != null) {
+                        restoreSessionCookies(cookiesJsonSnapshot);
+                    }
+                } catch (Exception e) {
+                    log.warn("[FB-Responder] Async setup error: {}", e.getMessage());
+                }
+            });
+            asyncSetup.setDaemon(true);
+            asyncSetup.setName("fb-session-restore");
+            asyncSetup.start();
+
+            String message = hasSavedSession
+                    ? "Đang khôi phục phiên Facebook từ Session đã lưu..."
+                    : "Trình duyệt Facebook đã được mở trên Server."
+                    ;
+            log.info("[FB-Responder] Launched noVNC Chromium on :99 (hasSavedSession={})", hasSavedSession);
             String vncUrl = "/fb-vnc/vnc.html?autoconnect=true&resize=scale&quality=6&compression=6&reconnect=true&reconnect_delay=1000";
-            return Map.of("status", "success", "vncUrl", vncUrl, "message", "Trình duyệt Facebook đã được mở trên Server.");
+            return Map.of("status", "success", "vncUrl", vncUrl, "message", message);
         } catch (Exception e) {
             log.error("[FB-Responder] Failed to launch interactive browser session: {}", e.getMessage(), e);
             return Map.of("status", "error", "message", "Lỗi khi mở trình duyệt Server: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Injects previously saved Facebook session cookies into the running Chromium via CDP,
+     * then triggers navigation to facebook.com via JavaScript (fire-and-forget — does NOT wait
+     * for page load, so Playwright closes cleanly without blocking Chromium's rendering thread).
+     *
+     * Called only from the async daemon thread in launchInteractiveBrowserSession.
+     */
+    private void restoreSessionCookies(String cookiesJson) {
+        Map<String, String> env = new HashMap<>();
+        env.put("PLAYWRIGHT_NODEJS_PATH", "/usr/bin/node");
+        env.put("PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH", "/usr/lib/chromium/chromium");
+        env.put("PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD", "1");
+
+        try (Playwright playwright = Playwright.create(new Playwright.CreateOptions().setEnv(env))) {
+            Browser browser = playwright.chromium().connectOverCDP("http://localhost:9222");
+            if (browser.contexts().isEmpty()) {
+                log.warn("[FB-Responder] restoreSessionCookies: no browser context found via CDP.");
+                return;
+            }
+            BrowserContext ctx = browser.contexts().get(0);
+
+            // Parse saved cookies JSON and reconstruct Playwright Cookie objects
+            List<Map<String, Object>> rawList = objectMapper.readValue(cookiesJson, new TypeReference<>() {});
+            List<Cookie> cookies = new ArrayList<>();
+            for (Map<String, Object> raw : rawList) {
+                Cookie cookie = new Cookie(
+                        String.valueOf(raw.get("name")),
+                        String.valueOf(raw.get("value"))
+                );
+                if (raw.containsKey("domain"))   cookie.setDomain(String.valueOf(raw.get("domain")));
+                if (raw.containsKey("path"))     cookie.setPath(String.valueOf(raw.get("path")));
+                if (raw.containsKey("secure"))   cookie.setSecure(Boolean.TRUE.equals(raw.get("secure")));
+                if (raw.containsKey("httpOnly")) cookie.setHttpOnly(Boolean.TRUE.equals(raw.get("httpOnly")));
+                if (raw.containsKey("expirationDate")) {
+                    Object exp = raw.get("expirationDate");
+                    if (exp instanceof Number) cookie.setExpires(((Number) exp).doubleValue());
+                }
+                if (raw.containsKey("sameSite")) {
+                    try {
+                        String ss = String.valueOf(raw.get("sameSite")).toUpperCase();
+                        // Playwright uses STRICT / LAX / NONE — map legacy "NO_RESTRICTION" to NONE
+                        if (ss.equals("STRICT")) {
+                            cookie.setSameSite(SameSiteAttribute.STRICT);
+                        } else if (ss.equals("LAX")) {
+                            cookie.setSameSite(SameSiteAttribute.LAX);
+                        } else {
+                            cookie.setSameSite(SameSiteAttribute.NONE);
+                        }
+                    } catch (Exception ignored) {}
+                }
+                cookies.add(cookie);
+            }
+
+            ctx.addCookies(cookies);
+            log.info("[FB-Responder] Injected {} cookies into Chromium via CDP.", cookies.size());
+
+            // Use JavaScript to trigger navigation — this is fire-and-forget from Playwright's perspective.
+            // We do NOT use page.navigate() which blocks until page load completes and interferes with
+            // x11vnc's frame capture by keeping Chromium busy inside a CDP session.
+            if (!ctx.pages().isEmpty()) {
+                ctx.pages().get(0).evaluate("() => { window.location.href = 'https://www.facebook.com'; }");
+                log.info("[FB-Responder] Triggered navigation to facebook.com via JS eval.");
+            }
+        } catch (Exception e) {
+            log.warn("[FB-Responder] Could not restore session cookies via CDP: {}", e.getMessage());
         }
     }
 
@@ -542,12 +658,95 @@ public class FacebookMessengerService implements DisposableBean {
     private void cleanupProcesses() {
         closeActiveSession();
         try {
-            new ProcessBuilder("pkill", "-f", "chromium").start();
-            new ProcessBuilder("pkill", "-f", "openbox").start();
-            new ProcessBuilder("pkill", "-f", "websockify").start();
-            new ProcessBuilder("pkill", "-f", "x11vnc").start();
-            new ProcessBuilder("pkill", "-f", "Xvfb").start();
-            Thread.sleep(500);
-        } catch (Exception ignored) {}
+            // Use waitFor() on each pkill so we don't return until the OS has processed the signal.
+            // fire-and-forget pkill was the root cause of the "stuck on second launch" bug:
+            // the old websockify was still holding port 6080 when the next launch tried to bind it.
+            new ProcessBuilder("pkill", "-TERM", "-f", "chromium").start().waitFor(3, java.util.concurrent.TimeUnit.SECONDS);
+            new ProcessBuilder("pkill", "-TERM", "-f", "openbox").start().waitFor(2, java.util.concurrent.TimeUnit.SECONDS);
+            new ProcessBuilder("pkill", "-TERM", "-f", "websockify").start().waitFor(3, java.util.concurrent.TimeUnit.SECONDS);
+            new ProcessBuilder("pkill", "-TERM", "-f", "x11vnc").start().waitFor(3, java.util.concurrent.TimeUnit.SECONDS);
+            new ProcessBuilder("pkill", "-TERM", "-f", "Xvfb").start().waitFor(3, java.util.concurrent.TimeUnit.SECONDS);
+
+            // Force-kill any survivors that ignored SIGTERM
+            new ProcessBuilder("pkill", "-9", "-f", "websockify").start().waitFor(2, java.util.concurrent.TimeUnit.SECONDS);
+            new ProcessBuilder("pkill", "-9", "-f", "x11vnc").start().waitFor(2, java.util.concurrent.TimeUnit.SECONDS);
+            new ProcessBuilder("pkill", "-9", "-f", "Xvfb").start().waitFor(2, java.util.concurrent.TimeUnit.SECONDS);
+
+            // Block until port 6080 is actually free — this is the critical guard that prevents
+            // the new websockify from racing against a zombie of the old one.
+            waitForPortClosed(6080, 10);
+        } catch (Exception e) {
+            log.warn("[FB-Responder] cleanupProcesses error: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * Returns true if websockify (port 6080) is currently accepting TCP connections.
+     * Used by the REST health endpoint so the frontend can poll before rendering the iframe.
+     */
+    public boolean isVncReady() {
+        try (Socket s = new Socket("localhost", 6080)) {
+            return s.isConnected();
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /**
+     * Blocks the calling thread until {@code localhost:port} accepts a TCP connection
+     * or {@code timeoutSeconds} elapses. Uses exponential back-off starting at 200 ms
+     * to avoid hammering the OS with rapid retries.
+     *
+     * @param port           the TCP port to probe
+     * @param timeoutSeconds maximum seconds to wait before giving up
+     */
+    private void waitForPort(int port, int timeoutSeconds) {
+        long deadline = System.currentTimeMillis() + (long) timeoutSeconds * 1000;
+        long sleepMs = 200;
+        while (System.currentTimeMillis() < deadline) {
+            try (Socket s = new Socket("localhost", port)) {
+                if (s.isConnected()) {
+                    log.info("[FB-Responder] Port {} is ready.", port);
+                    return;
+                }
+            } catch (Exception ignored) {}
+            try {
+                Thread.sleep(sleepMs);
+                // Exponential back-off capped at 1s to remain responsive
+                sleepMs = Math.min(sleepMs * 2, 1000);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+        }
+        log.warn("[FB-Responder] Timed out waiting for port {} to open after {}s.", port, timeoutSeconds);
+    }
+
+    /**
+     * Blocks until {@code localhost:port} refuses connections (i.e. the process holding
+     * the port has actually exited) or {@code timeoutSeconds} elapses.
+     * This complements {@link #waitForPort} to guarantee a clean port hand-off between
+     * an old and a new websockify process.
+     */
+    private void waitForPortClosed(int port, int timeoutSeconds) {
+        long deadline = System.currentTimeMillis() + (long) timeoutSeconds * 1000;
+        long sleepMs = 200;
+        while (System.currentTimeMillis() < deadline) {
+            try (Socket s = new Socket("localhost", port)) {
+                // Port still open — keep waiting
+                log.debug("[FB-Responder] Port {} still open, waiting for it to close...", port);
+            } catch (Exception e) {
+                log.info("[FB-Responder] Port {} is now closed.", port);
+                return; // Connection refused = port is free
+            }
+            try {
+                Thread.sleep(sleepMs);
+                sleepMs = Math.min(sleepMs * 2, 1000);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+        }
+        log.warn("[FB-Responder] Port {} still open after {}s cleanup wait — proceeding anyway.", port, timeoutSeconds);
     }
 }

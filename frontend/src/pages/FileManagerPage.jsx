@@ -119,6 +119,32 @@ export default function FileManagerPage() {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   };
 
+  /**
+   * Reformat the date string returned by the backend.
+   * Backend sends either:
+   *   - "yyyy-MM-dd HH:mm"  (ls -l output parsed by metrics service)
+   *   - A Unix epoch string (milliseconds)
+   * Output: "dd/MM/yyyy HH:mm"
+   */
+  const formatDate = (raw) => {
+    if (!raw) return '—';
+    // If it looks like "yyyy-MM-dd HH:mm" reformat directly without Date overhead
+    const isoMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}:\d{2})/);
+    if (isoMatch) {
+      const [, yyyy, mm, dd, time] = isoMatch;
+      return `${dd}/${mm}/${yyyy} ${time}`;
+    }
+    // Fallback: try parsing as a JS Date (epoch ms, ISO-8601, etc.)
+    const d = new Date(isNaN(Number(raw)) ? raw : Number(raw));
+    if (isNaN(d.getTime())) return raw;
+    const dd  = String(d.getDate()).padStart(2, '0');
+    const mm  = String(d.getMonth() + 1).padStart(2, '0');
+    const yy  = d.getFullYear();
+    const hh  = String(d.getHours()).padStart(2, '0');
+    const min = String(d.getMinutes()).padStart(2, '0');
+    return `${dd}/${mm}/${yy} ${hh}:${min}`;
+  };
+
   // Filtered files
   const filteredFiles = files.filter(f => {
     if (!searchQuery.trim()) return true;
@@ -407,7 +433,7 @@ export default function FileManagerPage() {
                         {file.owner}:{file.group}
                       </td>
                       <td style={{ fontFamily: 'Share Tech Mono', fontSize: '0.8rem', opacity: 0.8 }}>
-                        {file.date}
+                        {formatDate(file.date)}
                       </td>
                       <td style={{ textAlign: 'center' }}>
                         {isDir ? (

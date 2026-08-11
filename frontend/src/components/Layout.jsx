@@ -10,9 +10,90 @@ import {
 import '../App.css';
 import '../index.css';
 import { removeToken, getUsername } from '../utils/auth';
+import { useTranslation, SUPPORTED_LANGS } from '../i18n/index.jsx';
+
+// Compact language switcher for the header bar
+function LanguageSwitcher() {
+  const { lang, setLang } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  const current = SUPPORTED_LANGS.find(l => l.code === lang) || SUPPORTED_LANGS[0];
+
+  useEffect(() => {
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        title="Switch language"
+        style={{
+          display: 'flex', alignItems: 'center', gap: '5px',
+          background: open ? 'rgba(0,243,255,0.15)' : 'rgba(0,0,0,0.4)',
+          border: `1px solid ${open ? 'var(--accent-cyan)' : 'rgba(0,243,255,0.3)'}`,
+          color: 'var(--accent-cyan)', padding: '3px 9px',
+          fontSize: '0.72rem', fontFamily: 'Share Tech Mono',
+          cursor: 'pointer', borderRadius: '3px',
+          transition: 'all 0.2s', outline: 'none',
+          boxShadow: open ? '0 0 8px rgba(0,243,255,0.3)' : 'none',
+        }}
+      >
+        <span style={{ fontSize: '0.95rem' }}>{current.flag}</span>
+        <span>{current.label}</span>
+        <svg width="8" height="5" viewBox="0 0 8 5" fill="none"
+          style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s', flexShrink: 0 }}>
+          <path d="M1 1L4 4L7 1" stroke="var(--accent-cyan)" strokeWidth="1.2" strokeLinecap="round"/>
+        </svg>
+      </button>
+
+      {open && (
+        <div style={{
+          position: 'absolute', top: 'calc(100% + 4px)', right: 0,
+          background: 'rgba(5, 10, 20, 0.98)',
+          border: '1px solid var(--accent-cyan)',
+          borderRadius: '3px', minWidth: '140px',
+          boxShadow: '0 8px 32px rgba(0,0,0,0.7), 0 0 16px rgba(0,243,255,0.2)',
+          zIndex: 99999, overflow: 'hidden',
+          animation: 'langDropIn 0.15s ease',
+        }}>
+          {SUPPORTED_LANGS.map(l => (
+            <div
+              key={l.code}
+              onClick={() => { setLang(l.code); setOpen(false); }}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '8px',
+                padding: '8px 12px', cursor: 'pointer',
+                fontFamily: 'Share Tech Mono', fontSize: '0.78rem',
+                color: l.code === lang ? 'var(--accent-cyan)' : 'rgba(255,255,255,0.75)',
+                background: l.code === lang ? 'rgba(0,243,255,0.1)' : 'transparent',
+                borderLeft: l.code === lang ? '2px solid var(--accent-cyan)' : '2px solid transparent',
+                transition: 'all 0.12s',
+              }}
+              onMouseEnter={e => { if (l.code !== lang) e.currentTarget.style.background = 'rgba(0,243,255,0.06)'; }}
+              onMouseLeave={e => { if (l.code !== lang) e.currentTarget.style.background = 'transparent'; }}
+            >
+              <span style={{ fontSize: '1rem' }}>{l.flag}</span>
+              <span>{l.name}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      <style>{`
+        @keyframes langDropIn {
+          from { opacity: 0; transform: translateY(-5px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+      `}</style>
+    </div>
+  );
+}
 
 export default function Layout({ isAlerting, context }) {
   const navigate = useNavigate();
+  const { t } = useTranslation();
   const [clock, setClock] = useState('');
   const username = getUsername();
 
@@ -273,47 +354,47 @@ export default function Layout({ isAlerting, context }) {
         <nav className="sidebar-nav">
           <NavLink to="/" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} end>
             <SciFiDashboardIcon size={20} />
-            <span>Overview</span>
+            <span>{t('nav.overview')}</span>
           </NavLink>
 
           <NavLink to="/processes" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
             <SciFiPulseIcon size={20} />
-            <span>Processes</span>
+            <span>{t('nav.processes')}</span>
           </NavLink>
 
           <NavLink to="/services" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
             <SciFiServerRackIcon size={20} />
-            <span>Services</span>
+            <span>{t('nav.services')}</span>
           </NavLink>
 
           <NavLink to="/files" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
             <SciFiFolderIcon size={20} />
-            <span>File Manager</span>
+            <span>{t('nav.fileManager')}</span>
           </NavLink>
 
           <NavLink to="/containers" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
             <SciFiContainerIcon size={20} />
-            <span>Docker Containers</span>
+            <span>{t('nav.dockerContainers')}</span>
           </NavLink>
 
           <NavLink to="/map" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
             <SciFiGlobeIcon size={20} />
-            <span>Global Map</span>
+            <span>{t('nav.globalMap')}</span>
           </NavLink>
 
           <NavLink to="/terminal" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
             <SciFiConsoleIcon size={20} />
-            <span>Terminal Console</span>
+            <span>{t('nav.terminal')}</span>
           </NavLink>
 
           <NavLink to="/security" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
             <SciFiCyberLockIcon size={20} />
-            <span>Security & Logs</span>
+            <span>{t('nav.security')}</span>
           </NavLink>
 
           <NavLink to="/settings" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
             <SciFiSettingsIcon size={20} />
-            <span>Settings</span>
+            <span>{t('nav.settings')}</span>
           </NavLink>
         </nav>
       </aside>
@@ -351,11 +432,11 @@ export default function Layout({ isAlerting, context }) {
               fontWeight: 'bold'
             }}>
               <SciFiPulseBadge size={14} color={isAlerting ? 'var(--accent-pink)' : 'var(--accent-green)'} />
-              <span>{isAlerting ? 'CRITICAL ALERT' : 'SYSTEM STATUS: ONLINE'}</span>
+              <span>{isAlerting ? t('header.criticalAlert') : t('header.systemOnline')}</span>
             </div>
 
             <div style={{ color: 'var(--text-secondary)' }}>
-              NODE: <span style={{ color: 'var(--accent-cyan)' }}>{sysInfo.hostname || 'localhost'}</span>
+              {t('header.node')}: <span style={{ color: 'var(--accent-cyan)' }}>{sysInfo.hostname || 'localhost'}</span>
               {sysInfo.os && <span style={{ marginLeft: '8px', opacity: 0.7 }}>({sysInfo.os})</span>}
             </div>
           </div>
@@ -382,13 +463,13 @@ export default function Layout({ isAlerting, context }) {
               title="Open Web SSH Terminal Console"
             >
               <SciFiConsoleIcon size={14} color="var(--accent-cyan)" />
-              <span>TERMINAL CONSOLE</span>
+              <span>{t('header.terminalConsole')}</span>
             </button>
 
             {/* Refresh Speed Dropdown */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--accent-cyan)' }}>
               <SciFiRefreshIcon size={14} color="var(--accent-cyan)" />
-              <span>AUTO-REFRESH:</span>
+              <span>{t('header.autoRefresh')}:</span>
               <select
                 value={refreshSpeed}
                 onChange={e => setRefreshSpeed(e.target.value)}
@@ -412,8 +493,11 @@ export default function Layout({ isAlerting, context }) {
             </div>
 
             <div style={{ color: 'var(--text-secondary)', borderLeft: '1px solid rgba(255,255,255,0.1)', paddingLeft: '16px' }}>
-              TIME: <span style={{ color: '#fff', fontWeight: 'bold' }}>{clock}</span>
+              {t('header.time')}: <span style={{ color: '#fff', fontWeight: 'bold' }}>{clock}</span>
             </div>
+
+            {/* Language Switcher */}
+            <LanguageSwitcher />
 
             {/* Logout */}
             <button
@@ -435,7 +519,7 @@ export default function Layout({ isAlerting, context }) {
                 transition: 'all 0.2s',
               }}
             >
-              LOGOUT
+              {t('header.logout')}
             </button>
           </div>
 

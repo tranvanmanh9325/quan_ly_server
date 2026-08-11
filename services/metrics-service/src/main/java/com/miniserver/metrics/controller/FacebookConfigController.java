@@ -65,4 +65,14 @@ public class FacebookConfigController {
         Map<String, String> res = messengerService.saveInteractiveBrowserSession();
         return ResponseEntity.ok(res);
     }
+
+    /**
+     * Lightweight readiness probe — returns {"ready": true/false}.
+     * Frontend polls this after launch-browser succeeds to know when the VNC stack
+     * (websockify on :6080) is actually accepting connections before rendering the iframe.
+     */
+    @GetMapping("/vnc-ready")
+    public ResponseEntity<Map<String, Boolean>> isVncReady() {
+        return ResponseEntity.ok(Map.of("ready", messengerService.isVncReady()));
+    }
 }

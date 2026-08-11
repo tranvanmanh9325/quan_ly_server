@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { formatLogLineTimestamp } from '../utils/parsers';
 import { SciFiSortDescIcon, SciFiSortAscIcon } from './SciFiIcons';
+import { useTranslation } from '../i18n/index.jsx';
 
 /**
  * Debounce hook — prevents the expensive useMemo from re-running on every single
@@ -35,11 +36,13 @@ export default function LogViewer({
   logContent,
   accentColor = 'var(--accent-cyan)',
   isLoading = false,
-  loadingText = '⚡ Loading logs from remote host via SSH...',
+  loadingText,
   background = '#040914',
 }) {
+  const { t } = useTranslation();
   const [logOrderDesc, setLogOrderDesc] = useState(true);
   const [rawSearch, setRawSearch] = useState('');
+  const displayLoadingText = loadingText || t('logViewer.loading');
 
   // Debounce search to avoid re-filtering on every keystroke
   const logSearchQuery = useDebounce(rawSearch, 200);
@@ -146,8 +149,8 @@ export default function LogViewer({
         >
           <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
             {logOrderDesc
-              ? <><SciFiSortDescIcon size={13} color={accentColor} /> Mới nhất trước</>
-              : <><SciFiSortAscIcon  size={13} color={accentColor} /> Cũ nhất trước</>}
+              ? <><SciFiSortDescIcon size={13} color={accentColor} /> {t('logViewer.newestFirst')}</>
+              : <><SciFiSortAscIcon  size={13} color={accentColor} /> {t('logViewer.oldestFirst')}</>}
           </span>
         </button>
       </div>
@@ -162,7 +165,7 @@ export default function LogViewer({
         padding: '12px',
       }}>
         {isLoading
-          ? <div style={{ color: accentColor, textAlign: 'center', padding: '40px' }}>{loadingText}</div>
+          ? <div style={{ color: accentColor, textAlign: 'center', padding: '40px' }}>{displayLoadingText}</div>
           : renderedLines}
       </div>
 

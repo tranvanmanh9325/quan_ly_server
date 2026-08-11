@@ -5,7 +5,6 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
@@ -33,17 +32,35 @@ public class ClientTrackingFilter extends OncePerRequestFilter {
     private static final Pattern IPV4_PATTERN =
             Pattern.compile("^(\\d{1,3}\\.){3}\\d{1,3}$");
 
-    @Autowired
-    private ActiveClientRegistry clientRegistry;
+    private final ActiveClientRegistry clientRegistry;
+
+    public ClientTrackingFilter(ActiveClientRegistry clientRegistry) {
+        this.clientRegistry = clientRegistry;
+    }
 
     @Override
     protected void doFilterInternal(HttpServletRequest request,
                                     HttpServletResponse response,
                                     FilterChain chain)
             throws ServletException, IOException {
-        String ip = extractRealIp(request);
-        if (isTrackable(ip)) {
-            clientRegistry.recordAccess(ip);
+        String uri = request.getRequestURI();
+        // Ignore health checks & static assets
+        if (uri != null && (uri.contains("/actuator") || uri.contains("/health"))) {
+            chain.doFilter(request, response);
+            return;
+        }
+
+        String userAgent = request.getHeader("User-Agent");
+        boolean isBrowser = userAgent != null && (
+                userAgent.contains("Mozilla") || userAgent.contains("Chrome") ||
+                userAgent.contains("Safari")  || userAgent.contains("Edge") || userAgent.contains("Firefox")
+        );
+
+        if (isBrowser) {
+            String ip = extractRealIp(request);
+            if (isTrackable(ip)) {
+                clientRegistry.recordAccess(ip);
+            }
         }
         chain.doFilter(request, response);
     }
@@ -65,22 +82,14 @@ public class ClientTrackingFilter extends OncePerRequestFilter {
     }
 
     /**
-     * Returns true for IPs we want to show on the map:
-     * - Must be a valid IPv4 address
-     * - Not loopback (127.x.x.x)
-     * - Not Docker bridge range (172.16.0.0/12 = 172.16–172.31)
-     * LAN ranges (10.x, 192.168.x) are allowed — shown at server coordinates.
+     * Returns true for valid IPv4 or localhost addresses from browser sessions.
      */
     private boolean isTrackable(String ip) {
         if (ip == null || ip.isBlank()) return false;
+        if (ip.equals("127.0.0.1") || ip.startsWith("127.")) return true;
         if (!IPV4_PATTERN.matcher(ip).matches()) return false;
-        if (ip.startsWith("127.")) return false;
-        if (ip.startsWith("172.")) {
-            try {
-                int second = Integer.parseInt(ip.split("\\.")[1]);
-                if (second >= 16 && second <= 31) return false;
-            } catch (NumberFormatException ignored) { return false; }
-        }
         return true;
     }
+
+
 }

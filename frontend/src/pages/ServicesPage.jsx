@@ -5,6 +5,28 @@ import { SciFiShieldIcon, SciFiContainerIcon, SciFiChronoIcon, SciFiQuantumIcon 
 import { parseDockerStats } from '../utils/parsers';
 import LogViewer from '../components/LogViewer';
 
+/**
+ * Reformat systemd timer date strings returned by the backend.
+ *
+ * Input variants:
+ *   - "Wed 2026-08-12 06:30:00 +07"  -> "Wed 12/08/2026 06:30:00 +07"
+ *   - "2026-08-11"                    -> "11/08/2026"
+ *   - "N/A" or empty                 -> unchanged
+ */
+function formatTimerDate(raw) {
+  if (!raw || raw === 'N/A') return raw;
+  // Optional "Weekday " prefix, then yyyy-MM-dd, then optional time + tz suffix
+  const m = raw.match(/^([A-Za-z]{2,3}\s+)?(\d{4})-(\d{2})-(\d{2})(\s+.*)?$/);
+  if (!m) return raw;
+  const prefix   = m[1] || '';   // e.g. "Wed "
+  const yyyy     = m[2];
+  const mm       = m[3];
+  const dd       = m[4];
+  const timePart = m[5] || '';   // e.g. " 06:30:00 +07"
+  return `${prefix}${dd}/${mm}/${yyyy}${timePart}`;
+}
+
+
 export default function ServicesPage() {
   const { dockerData } = useOutletContext();
   const [services, setServices] = useState([]);
@@ -570,7 +592,7 @@ export default function ServicesPage() {
                 {timers.map((t, i) => (
                   <tr key={i}>
                     <td style={{ fontWeight: 'bold', color: 'var(--accent-cyan)', fontFamily: 'Share Tech Mono' }}>{t.unit}</td>
-                    <td style={{ fontFamily: 'Share Tech Mono' }}>{t.next}</td>
+                    <td style={{ fontFamily: 'Share Tech Mono' }}>{formatTimerDate(t.next)}</td>
                     <td>
                       <span style={{
                         background: 'rgba(0, 255, 157, 0.1)',
@@ -584,7 +606,7 @@ export default function ServicesPage() {
                         {t.left}
                       </span>
                     </td>
-                    <td style={{ color: 'var(--text-secondary)', fontFamily: 'Share Tech Mono' }}>{t.activates}</td>
+                    <td style={{ color: 'var(--text-secondary)', fontFamily: 'Share Tech Mono' }}>{formatTimerDate(t.activates)}</td>
                   </tr>
                 ))}
                 {timers.length === 0 && (
@@ -609,7 +631,14 @@ export default function ServicesPage() {
           <div style={{ overflowY: 'auto', flex: 1, paddingRight: '6px' }}>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
               {Object.entries(runtimes).map(([name, val], idx) => {
-                const isInstalled = val && !val.includes('Not Installed') && !val.includes('inactive');
+                const lowerVal = (val || '').toLowerCase();
+                const isInstalled = val
+                  && !lowerVal.includes('not installed')
+                  && !lowerVal.includes('not found')
+                  && !lowerVal.includes('command not found')
+                  && !lowerVal.includes('no such file')
+                  && !lowerVal.includes('inactive')
+                  && !lowerVal.includes('error');
                 const isService = ['Nginx', 'PostgreSQL', 'Redis', 'UFW Firewall'].includes(name);
                 return (
                   <div key={idx} style={{

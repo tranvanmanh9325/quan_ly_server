@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Server VNC</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+    }
+
+    /*
+     * CRITICAL: Do NOT apply any width/height/transform/object-fit CSS to the
+     * noVNC canvas element. noVNC with scaleViewport=true manages the canvas
+     * intrinsic width/height attributes internally, and uses getBoundingClientRect()
+     * on the canvas to compute mouse coordinates. If CSS stretches the canvas
+     * differently than its buffer dimensions, two separate scale factors exist
+     * and mouse clicks land at wrong coordinates (offset bug).
+     *
+     * Instead: make the container fill 100% and let noVNC resize the canvas
+     * buffer to match — this keeps visual size == buffer size == coordinate space.
+     */
+    #screen {
+      position: absolute;
+      top: 0; left: 0; right: 0; bottom: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+    }
+
+    /* Only safe canvas overrides — no sizing that breaks coordinate system */
+    #screen canvas {
+      outline: none !important;
+      cursor: default;
+    }
+
+    #status {
+      position: fixed;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      color: #00f3ff;
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 14px;
+      text-align: center;
+      pointer-events: none;
+      z-index: 100;
+      text-shadow: 0 0 10px #00f3ff;
+    }
+  </style>
+</head>
+<body>
+  <div id="screen"></div>
+  <div id="status">⟳ Đang kết nối VNC Server...</div>
+
+  <script type="module">
+    import RFB from '/fb-vnc/core/rfb.js';
+
+    const screen = document.getElementById('screen');
+    const status = document.getElementById('status');
+
+    const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl   = `${wsProto}//${window.location.host}/fb-vnc/`;
+
+    let rfb = null;
+    let reconnectTimer = null;
+
+    /*
+     * scaleViewport=true tells noVNC to:
+     *   1. Read the container's actual pixel dimensions via getBoundingClientRect()
+     *   2. Resize the <canvas> buffer attributes (width/height) to match exactly
+     *   3. Scale the remote framebuffer content to fit — all within one coordinate space
+     *
+     * This means canvas.width === container.clientWidth at all times, so every
+     * mouse click maps perfectly: no offset, no drift.
+     *
+     * We trigger a re-scale after connect and on every container resize so that
+     * if the modal animates open or the user resizes the browser, coordinates
+     * stay in sync.
+     */
+    function triggerScale() {
+      if (!rfb) return;
+      // Toggle off→on forces noVNC to re-read container size and resize canvas
+      rfb.scaleViewport = false;
+      rfb.scaleViewport = true;
+    }
+
+    function initVNC() {
+      clearTimeout(reconnectTimer);
+      try {
+        rfb = new RFB(screen, wsUrl);
+        rfb.viewOnly      = false;
+        rfb.scaleViewport = true;   // noVNC manages canvas size — DO NOT override via CSS
+        rfb.resizeSession = false;  // Keep server resolution fixed at 1920x1080
+        rfb.background    = '#000000';
+
+        rfb.addEventListener('connect', () => {
+          status.style.display = 'none';
+          // Fire multiple times: container layout may still be settling
+          requestAnimationFrame(triggerScale);
+          setTimeout(triggerScale, 200);
+          setTimeout(triggerScale, 800);
+          setTimeout(triggerScale, 2000);
+        });
+
+        rfb.addEventListener('disconnect', (e) => {
+          rfb = null;
+          if (e.detail.clean) {
+            status.textContent = '✓ Đã ngắt kết nối VNC';
+          } else {
+            status.textContent = '⟳ Mất kết nối — đang thử lại...';
+            reconnectTimer = setTimeout(initVNC, 2000);
+          }
+          status.style.display = 'block';
+        });
+
+        rfb.addEventListener('credentialsrequired', () => {
+          rfb.sendCredentials({ password: '' });
+        });
+
+      } catch (err) {
+        status.textContent = `✕ Lỗi VNC: ${err.message}`;
+        console.error('[VNC] Init error:', err);
+      }
+    }
+
+    // Re-trigger scale whenever the container is resized (modal open/resize events)
+    const ro = new ResizeObserver(() => triggerScale());
+    ro.observe(screen);
+
+    initVNC();
+  </script>
+</body>
+</html>

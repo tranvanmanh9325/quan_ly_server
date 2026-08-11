@@ -9,6 +9,14 @@ export default defineConfig({
       '/api': {
         target: 'http://localhost:8080',
         changeOrigin: true,
+      },
+      // Proxy /fb-vnc/ to websockify (port 6080) for local dev VNC access.
+      // ws:true enables WebSocket proxying required by noVNC.
+      '/fb-vnc': {
+        target: 'http://localhost:6080',
+        changeOrigin: true,
+        ws: true,
+        rewrite: (path) => path.replace(/^\/fb-vnc/, ''),
       }
     }
   },

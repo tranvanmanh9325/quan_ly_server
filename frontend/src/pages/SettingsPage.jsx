@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import axios from 'axios';
 import {
   SciFiSettingsIcon, SciFiRefreshIcon, SciFiPulseBadge,
@@ -8,6 +9,9 @@ import {
   SciFiFacebookIcon
 } from '../components/SciFiIcons';
 import { loadSettings, saveSettings, SETTINGS_DEFAULTS } from '../utils/settings';
+import VncViewer from '../components/VncViewer';
+import { useTranslation } from '../i18n/index.jsx';
+
 
 // ── Sub-components ──────────────────────────────────────────────────────────
 const SectionHeader = ({ icon, title, subtitle }) => (
@@ -105,8 +109,165 @@ const ThresholdSlider = ({ value, onChange, id, unit = '%', min = 50, max = 100,
   </div>
 );
 
+// Sci-fi styled custom dropdown — replaces native <select> for consistent theming
+const SciFiSelect = ({ value, onChange, options, color = 'var(--accent-purple)' }) => {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  const selected = options.find(o => o.value === value) || options[0];
+
+  // Close on outside click
+  useEffect(() => {
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  return (
+    <div ref={ref} style={{ position: 'relative', userSelect: 'none' }}>
+      {/* Trigger button */}
+      <button
+        onClick={() => setOpen(o => !o)}
+        style={{
+          display: 'flex', alignItems: 'center', gap: '10px',
+          background: open ? 'rgba(187,0,255,0.15)' : 'rgba(0,0,0,0.55)',
+          border: `1px solid ${open ? color : 'rgba(187,0,255,0.35)'}`,
+          borderRadius: '3px',
+          padding: '6px 12px',
+          cursor: 'pointer',
+          fontFamily: 'Share Tech Mono',
+          fontSize: '0.82rem',
+          color,
+          minWidth: '170px',
+          justifyContent: 'space-between',
+          transition: 'all 0.2s ease',
+          boxShadow: open ? `0 0 10px ${color}55` : 'none',
+          outline: 'none',
+        }}
+      >
+        <span>{selected.label}</span>
+        {/* Animated chevron */}
+        <svg
+          width="10" height="6" viewBox="0 0 10 6" fill="none"
+          style={{ transition: 'transform 0.2s ease', transform: open ? 'rotate(180deg)' : 'rotate(0deg)', flexShrink: 0 }}
+        >
+          <path d="M1 1L5 5L9 1" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+
+      {/* Dropdown list */}
+      {open && (
+        <div style={{
+          position: 'absolute',
+          top: 'calc(100% + 4px)',
+          left: 0,
+          right: 0,
+          background: 'rgba(8, 4, 20, 0.97)',
+          border: `1px solid ${color}`,
+          borderRadius: '3px',
+          boxShadow: `0 8px 32px rgba(0,0,0,0.7), 0 0 16px ${color}44`,
+          zIndex: 9999,
+          overflow: 'hidden',
+          animation: 'scifiDropIn 0.15s ease',
+        }}>
+          {options.map(opt => {
+            const isSelected = opt.value === value;
+            return (
+              <div
+                key={opt.value}
+                onClick={() => { onChange(opt.value); setOpen(false); }}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: '8px',
+                  padding: '9px 12px',
+                  fontFamily: 'Share Tech Mono',
+                  fontSize: '0.82rem',
+                  color: isSelected ? color : 'var(--text-primary)',
+                  background: isSelected ? `${color}22` : 'transparent',
+                  borderLeft: isSelected ? `2px solid ${color}` : '2px solid transparent',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease',
+                }}
+                onMouseEnter={e => {
+                  if (!isSelected) {
+                    e.currentTarget.style.background = 'rgba(187,0,255,0.1)';
+                    e.currentTarget.style.color = color;
+                  }
+                }}
+                onMouseLeave={e => {
+                  if (!isSelected) {
+                    e.currentTarget.style.background = 'transparent';
+                    e.currentTarget.style.color = 'var(--text-primary)';
+                  }
+                }}
+              >
+                {/* Active indicator dot */}
+                <div style={{
+                  width: '5px', height: '5px', borderRadius: '50%', flexShrink: 0,
+                  background: isSelected ? color : 'transparent',
+                  boxShadow: isSelected ? `0 0 6px ${color}` : 'none',
+                  transition: 'all 0.15s',
+                }} />
+                {opt.label}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Keyframe for dropdown animation */}
+      <style>{`
+        @keyframes scifiDropIn {
+          from { opacity: 0; transform: translateY(-6px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+      `}</style>
+    </div>
+  );
+};
+
+function formatFbStatus(rawStatus, t) {
+  if (!rawStatus || rawStatus === 'Tắt' || rawStatus === 'OFF' || rawStatus === 'Disabled') {
+    return t('settings.facebook.statusOff');
+  }
+  if (rawStatus.includes('Cần nhập Cookies') || rawStatus.includes('Cookies required')) {
+    return t('settings.facebook.statusNeedCookies');
+  }
+  const match = rawStatus.match(/(?:Hoạt động:\s*|Active:\s*)?Đã kiểm tra lúc\s*([\d:\s\/]+)(?:\s*\((?:Đã phản hồi|Replied|Away replies sent:)\s*(\d+)\s*(?:tin nhắn vắng mặt|away replies sent)?\))?/i);
+  if (match) {
+    const time = match[1].trim();
+    const count = match[2];
+    if (count) {
+      return t('settings.facebook.statusActiveWithReplies', { time, count });
+    }
+    return t('settings.facebook.statusActive', { time });
+  }
+  if (rawStatus.startsWith('Lỗi:') || rawStatus.startsWith('Error:')) {
+    return t('settings.facebook.statusError') + ': ' + rawStatus.replace(/^(?:Lỗi|Error):\s*/, '');
+  }
+  return rawStatus;
+}
+
+function formatFbTriggerResult(resultStr, t) {
+  if (!resultStr) return '';
+  if (resultStr.includes('Chức năng Vắng mặt hiện đang TẮT')) {
+    return t('settings.facebook.triggerDisabled');
+  }
+  if (resultStr.includes('Chưa cấu hình Cookies Facebook')) {
+    return t('settings.facebook.triggerNoCookies');
+  }
+  const doneMatch = resultStr.match(/Đã quét xong!\s*Số tin nhắn vắng mặt đã tự động trả lời:\s*(\d+)/i);
+  if (doneMatch) {
+    return t('settings.facebook.triggerDone', { count: doneMatch[1] });
+  }
+  const errMatch = resultStr.match(/Lỗi khi quét Messenger:\s*(.*)/i);
+  if (errMatch) {
+    return t('settings.facebook.triggerError') + ': ' + errMatch[1];
+  }
+  return resultStr;
+}
+
 // ── Main Component ──────────────────────────────────────────────────────────
 export default function SettingsPage() {
+  const { t } = useTranslation();
   const [settings, setSettings] = useState(loadSettings);
   const [saved, setSaved] = useState(false);
   const [connStatus, setConnStatus] = useState('checking');
@@ -144,8 +305,21 @@ export default function SettingsPage() {
   const [vncLaunching, setVncLaunching] = useState(false);
   const [vncSaving, setVncSaving]       = useState(false);
   const [vncStatusMsg, setVncStatusMsg] = useState('');
-  // vncReady: true only after launch-browser API returns success — prevents 502 on premature iframe load
   const [vncReady, setVncReady]         = useState(false);
+  // Ref that holds the readiness-poll interval ID so we can always cancel it
+  // (works even when the state closure is stale)
+  const vncPollRef = useRef(null);
+
+  useEffect(() => {
+    if (vncOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [vncOpen]);
 
   // Ping backend to check SSH connection health
   useEffect(() => {
@@ -219,7 +393,7 @@ export default function SettingsPage() {
       setFbSaved(true);
       setTimeout(() => setFbSaved(false), 2500);
     } catch {
-      setFbTestResult('Lỗi khi lưu cấu hình Facebook.');
+      setFbTestResult(t('settings.facebook.saveConfigError'));
     }
   };
 
@@ -228,37 +402,72 @@ export default function SettingsPage() {
     setFbTestResult(null);
     try {
       const res = await axios.post('/api/facebook/trigger');
-      setFbTestResult(res.data?.result || 'Đã kích hoạt quét Messenger!');
+      setFbTestResult(res.data?.result || t('settings.facebook.scanTriggered'));
     } catch (e) {
-      setFbTestResult(e.response?.data?.message || 'Lỗi khi kích hoạt quét.');
+      setFbTestResult(e.response?.data?.message || t('settings.facebook.scanError'));
     } finally {
       setFbTesting(false);
     }
   };
 
   const handleLaunchBrowser = async () => {
+    // Cancel any lingering readiness poll from a previous session
+    if (vncPollRef.current) {
+      clearInterval(vncPollRef.current);
+      vncPollRef.current = null;
+    }
+
     setVncLaunching(true);
     setVncReady(false);
-    setVncStatusMsg('Đang khởi tạo Trình duyệt Facebook trên Server...');
+    setVncOpen(true);
+    setVncStatusMsg(t('settings.facebook.initBrowser'));
     try {
       const res = await axios.post('/api/facebook/launch-browser');
       if (res.data.status === 'success') {
-        setVncUrl(res.data.vncUrl || '/fb-vnc/vnc.html?autoconnect=true');
-        setVncOpen(true);
-        setVncStatusMsg('');
-        // Small delay to let Chromium fully start before loading iframe
-        setTimeout(() => setVncReady(true), 2500);
+        setVncUrl('/vnc-embed.html');
+        setVncStatusMsg(t('settings.facebook.waitingVnc'));
+        let attempts = 0;
+        const MAX_ATTEMPTS = 40;
+        vncPollRef.current = setInterval(async () => {
+          attempts++;
+          try {
+            const probe = await axios.get('/api/facebook/vnc-ready');
+            if (probe.data.ready === true) {
+              clearInterval(vncPollRef.current);
+              vncPollRef.current = null;
+              setVncStatusMsg('');
+              setVncReady(true);
+            } else if (attempts >= MAX_ATTEMPTS) {
+              clearInterval(vncPollRef.current);
+              vncPollRef.current = null;
+              setVncStatusMsg(t('settings.facebook.vncTimeout'));
+            } else {
+              setVncStatusMsg(t('settings.facebook.waitingVncProgress', { n: attempts, max: MAX_ATTEMPTS }));
+            }
+          } catch {
+            if (attempts >= MAX_ATTEMPTS) {
+              clearInterval(vncPollRef.current);
+              vncPollRef.current = null;
+              setVncStatusMsg(t('settings.facebook.backendError'));
+            }
+          }
+        }, 1500);
       } else {
-        setVncStatusMsg(res.data.message || 'Lỗi khi mở trình duyệt.');
+        setVncStatusMsg(res.data.message || t('settings.facebook.browserError'));
       }
     } catch (e) {
-      setVncStatusMsg('Lỗi kết nối tới Server: ' + (e.response?.data?.message || e.message));
+      setVncStatusMsg(t('settings.facebook.serverConnError') + (e.response?.data?.message || e.message));
     } finally {
       setVncLaunching(false);
     }
   };
 
   const handleCloseVnc = () => {
+    // Always cancel any in-flight readiness poll before closing the modal
+    if (vncPollRef.current) {
+      clearInterval(vncPollRef.current);
+      vncPollRef.current = null;
+    }
     setVncOpen(false);
     setVncReady(false);
     setVncUrl('');
@@ -267,13 +476,12 @@ export default function SettingsPage() {
 
   const handleSaveBrowserSession = async () => {
     setVncSaving(true);
-    setVncStatusMsg('Đang trích xuất Session Cookies & Lưu vào Database...');
+    setVncStatusMsg(t('settings.facebook.extractingCookies'));
     try {
       const res = await axios.post('/api/facebook/save-browser-session');
       if (res.data.status === 'success') {
         setVncOpen(false);
         setFbTestResult(res.data.message);
-        // Reload facebook config
         const cfgRes = await axios.get('/api/facebook/config');
         if (cfgRes.data) {
           setFbConfig({
@@ -289,7 +497,7 @@ export default function SettingsPage() {
         setVncStatusMsg(res.data.message);
       }
     } catch (e) {
-      setVncStatusMsg('Lỗi lưu phiên: ' + (e.response?.data?.message || e.message));
+      setVncStatusMsg(t('settings.facebook.sessionSaveError') + (e.response?.data?.message || e.message));
     } finally {
       setVncSaving(false);
     }
@@ -355,7 +563,7 @@ export default function SettingsPage() {
   };
 
   const connColor = connStatus === 'ok' ? 'var(--accent-green)' : connStatus === 'error' ? 'var(--accent-pink)' : 'var(--accent-yellow)';
-  const connLabel = connStatus === 'ok' ? 'CONNECTED' : connStatus === 'error' ? 'DISCONNECTED' : 'CHECKING...';
+  const connLabel = connStatus === 'ok' ? t('settings.ssh.connected') : connStatus === 'error' ? t('settings.ssh.disconnected') : t('settings.ssh.checking');
 
   return (
     <div style={{ padding: '24px 28px', overflowY: 'auto', height: '100%', boxSizing: 'border-box' }}>
@@ -389,7 +597,7 @@ export default function SettingsPage() {
               letterSpacing: '1px',
             }}
           >
-            RESET
+            {t('settings.reset')}
           </button>
           <button
             onClick={handleSave}
@@ -406,7 +614,7 @@ export default function SettingsPage() {
               transition: 'all 0.3s ease',
             }}
           >
-            {saved ? '✓ SAVED' : 'SAVE CHANGES'}
+            {saved ? t('settings.saved') : t('settings.save')}
           </button>
         </div>
       </div>
@@ -415,8 +623,8 @@ export default function SettingsPage() {
       <div style={card}>
         <SectionHeader
           icon={<SciFiConsoleIcon size={18} color="var(--accent-cyan)" />}
-          title="SSH CONNECTION"
-          subtitle="Status of the SSH tunnel to the monitored server"
+          title={t('settings.ssh.title')}
+          subtitle={t('settings.ssh.subtitle')}
         />
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '14px', marginBottom: '16px' }}>
@@ -453,7 +661,7 @@ export default function SettingsPage() {
           ))}
         </div>
         <p style={{ marginTop: '12px', fontSize: '0.7rem', color: 'var(--text-secondary)', opacity: 0.5, fontFamily: 'Share Tech Mono' }}>
-          ⓘ  SSH credentials are configured via environment variables on the server. Edit <code>.env</code> to update.
+          {t('settings.ssh.note')}
         </p>
       </div>
 
@@ -461,14 +669,11 @@ export default function SettingsPage() {
       <div style={card}>
         <SectionHeader
           icon={<SciFiRefreshIcon size={18} color="var(--accent-cyan)" />}
-          title="POLLING & PERFORMANCE"
-          subtitle="Control how frequently the dashboard fetches data from the server"
+          title={t('settings.polling.title')}
+          subtitle={t('settings.polling.subtitle')}
         />
 
-        <SettingRow
-          label="Auto-Refresh Interval"
-          desc="How often metrics are fetched via SSH. Lower = higher server load."
-        >
+        <SettingRow label={t('settings.polling.label')} desc={t('settings.polling.desc')}>
           <select
             value={settings.refreshSpeed}
             onChange={e => update('refreshSpeed', e.target.value)}
@@ -496,49 +701,32 @@ export default function SettingsPage() {
       <div style={card}>
         <SectionHeader
           icon={<SciFiCyberLockIcon size={18} color="var(--accent-cyan)" />}
-          title="ALERT THRESHOLDS"
-          subtitle="Set resource usage levels that trigger the CRITICAL ALERT indicator"
+          title={t('settings.alerts.title')}
+          subtitle={t('settings.alerts.subtitle')}
         />
 
-        <SettingRow label="CPU Usage Threshold" desc="Alert when CPU usage exceeds this value">
-          <ThresholdSlider
-            id="cpu-threshold"
-            value={settings.cpuThreshold}
-            onChange={v => update('cpuThreshold', v)}
-            color="var(--accent-cyan)"
-          />
+        <SettingRow label={t('settings.alerts.cpu')} desc={t('settings.alerts.cpuDesc')}>
+          <ThresholdSlider id="cpu-threshold" value={settings.cpuThreshold}
+            onChange={v => update('cpuThreshold', v)} color="var(--accent-cyan)" />
         </SettingRow>
 
-        <SettingRow label="RAM Usage Threshold" desc="Alert when RAM usage exceeds this value">
-          <ThresholdSlider
-            id="ram-threshold"
-            value={settings.ramThreshold}
-            onChange={v => update('ramThreshold', v)}
-            color="var(--accent-purple)"
-          />
+        <SettingRow label={t('settings.alerts.ram')} desc={t('settings.alerts.ramDesc')}>
+          <ThresholdSlider id="ram-threshold" value={settings.ramThreshold}
+            onChange={v => update('ramThreshold', v)} color="var(--accent-purple)" />
         </SettingRow>
 
-        <SettingRow label="Disk Usage Threshold" desc="Alert when any disk partition exceeds this value">
-          <ThresholdSlider
-            id="disk-threshold"
-            value={settings.diskThreshold}
-            onChange={v => update('diskThreshold', v)}
-            color="var(--accent-yellow)"
-          />
+        <SettingRow label={t('settings.alerts.disk')} desc={t('settings.alerts.diskDesc')}>
+          <ThresholdSlider id="disk-threshold" value={settings.diskThreshold}
+            onChange={v => update('diskThreshold', v)} color="var(--accent-yellow)" />
         </SettingRow>
 
         {/* Alert preview */}
         <div style={{
-          marginTop: '16px',
-          padding: '10px 14px',
-          background: 'rgba(0,0,0,0.2)',
-          border: '1px solid rgba(0, 243, 255, 0.08)',
-          fontSize: '0.72rem',
-          color: 'var(--text-secondary)',
-          fontFamily: 'Share Tech Mono',
-          opacity: 0.7,
+          marginTop: '16px', padding: '10px 14px',
+          background: 'rgba(0,0,0,0.2)', border: '1px solid rgba(0, 243, 255, 0.08)',
+          fontSize: '0.72rem', color: 'var(--text-secondary)', fontFamily: 'Share Tech Mono', opacity: 0.7,
         }}>
-          CRITICAL ALERT fires when: CPU &gt; {settings.cpuThreshold}% OR RAM &gt; {settings.ramThreshold}% OR Disk &gt; {settings.diskThreshold}%
+          {t('settings.alerts.preview', { cpu: settings.cpuThreshold, ram: settings.ramThreshold, disk: settings.diskThreshold })}
         </div>
       </div>
 
@@ -546,23 +734,23 @@ export default function SettingsPage() {
       <div style={card}>
         <SectionHeader
           icon={<SciFiDashboardIcon size={18} color="var(--accent-cyan)" />}
-          title="DISPLAY & EFFECTS"
-          subtitle="Visual and audio effects — toggle to reduce CPU usage on low-end devices"
+          title={t('settings.display.title')}
+          subtitle={t('settings.display.subtitle')}
         />
 
-        <SettingRow label="Sci-Fi Cursor Effect" desc="Custom crosshair cursor with rotating rings">
+        <SettingRow label={t('settings.display.cursor')} desc={t('settings.display.cursorDesc')}>
           <Toggle id="cursor-effect" value={settings.cursorEffect} onChange={v => update('cursorEffect', v)} />
         </SettingRow>
 
-        <SettingRow label="Click Sound Effects" desc="Synthesized laser blip sound on every click">
+        <SettingRow label={t('settings.display.sound')} desc={t('settings.display.soundDesc')}>
           <Toggle id="click-sound" value={settings.clickSound} onChange={v => update('clickSound', v)} />
         </SettingRow>
 
-        <SettingRow label="Scanline Overlay" desc="CRT scanline effect on background">
+        <SettingRow label={t('settings.display.scanline')} desc={t('settings.display.scanlineDesc')}>
           <Toggle id="scanline" value={settings.scanlineEffect} onChange={v => update('scanlineEffect', v)} />
         </SettingRow>
 
-        <SettingRow label="Tron Grid Background" desc="Animated perspective grid background">
+        <SettingRow label={t('settings.display.grid')} desc={t('settings.display.gridDesc')}>
           <Toggle id="grid-bg" value={settings.gridBackground} onChange={v => update('gridBackground', v)} />
         </SettingRow>
       </div>
@@ -571,64 +759,51 @@ export default function SettingsPage() {
       <div style={card}>
         <SectionHeader
           icon={<SciFiTelegramIcon size={18} color="var(--accent-cyan)" />}
-          title="TELEGRAM INTEGRATION"
-          subtitle="Receive real-time server alerts and query status via Telegram Bot"
+          title={t('settings.telegram.title')}
+          subtitle={t('settings.telegram.subtitle')}
         />
 
         {tgLoading ? (
           <div style={{ color: 'var(--text-secondary)', fontFamily: 'Share Tech Mono', fontSize: '0.8rem', opacity: 0.6 }}>
-            Loading config...
+            {t('settings.telegram.loading')}
           </div>
         ) : (
           <>
-            {/* Credential status — managed via .env, not editable from UI */}
-            <SettingRow
-              label="Bot Token"
-              desc="Managed via TELEGRAM_BOT_TOKEN in .env — restart container to update"
-            >
-              <span style={{
-                fontFamily: 'Share Tech Mono', fontSize: '0.78rem', letterSpacing: '1px',
+            <SettingRow label={t('settings.telegram.botToken')} desc={t('settings.telegram.botTokenDesc')}>
+              <span style={{ fontFamily: 'Share Tech Mono', fontSize: '0.78rem', letterSpacing: '1px',
                 color: tgConfig._configured ? 'var(--accent-green)' : 'var(--accent-pink)',
-                textShadow: '0 0 8px currentColor',
-              }}>
-                {tgConfig._configured ? '✓ SET (from .env)' : '✗ NOT SET'}
+                textShadow: '0 0 8px currentColor' }}>
+                {tgConfig._configured ? t('settings.telegram.configured') : t('settings.telegram.notConfigured')}
               </span>
             </SettingRow>
 
-            <SettingRow
-              label="Chat ID"
-              desc="Managed via TELEGRAM_CHAT_ID in .env — restart container to update"
-            >
-              <span style={{
-                fontFamily: 'Share Tech Mono', fontSize: '0.78rem', letterSpacing: '1px',
+            <SettingRow label={t('settings.telegram.chatId')} desc={t('settings.telegram.chatIdDesc')}>
+              <span style={{ fontFamily: 'Share Tech Mono', fontSize: '0.78rem', letterSpacing: '1px',
                 color: tgConfig._configured ? 'var(--accent-green)' : 'var(--accent-pink)',
-                textShadow: '0 0 8px currentColor',
-              }}>
-                {tgConfig._configured ? '✓ SET (from .env)' : '✗ NOT SET'}
+                textShadow: '0 0 8px currentColor' }}>
+                {tgConfig._configured ? t('settings.telegram.configured') : t('settings.telegram.notConfigured')}
               </span>
             </SettingRow>
 
-            {/* Enable toggle */}
-            <SettingRow label="Enable Alerts" desc="Bot will send automatic alerts when thresholds are exceeded">
+            <SettingRow label={t('settings.telegram.enableAlerts')} desc={t('settings.telegram.enableAlertsDesc')}>
               <Toggle id="tg-enabled" value={tgConfig.enabled} onChange={v => updateTg('enabled', v)} />
             </SettingRow>
 
-            {/* Thresholds */}
-            <SettingRow label="CPU Alert Threshold" desc="Alert when CPU exceeds this value (Telegram-specific)">
+            <SettingRow label={t('settings.telegram.cpuThreshold')} desc={t('settings.telegram.cpuThresholdDesc')}>
               <ThresholdSlider id="tg-cpu" value={tgConfig.cpuThreshold}
                 onChange={v => updateTg('cpuThreshold', v)} color="var(--accent-cyan)" />
             </SettingRow>
-            <SettingRow label="RAM Alert Threshold" desc="Alert when RAM exceeds this value (Telegram-specific)">
+            <SettingRow label={t('settings.telegram.ramThreshold')} desc={t('settings.telegram.ramThresholdDesc')}>
               <ThresholdSlider id="tg-ram" value={tgConfig.ramThreshold}
                 onChange={v => updateTg('ramThreshold', v)} color="var(--accent-purple)" />
             </SettingRow>
-            <SettingRow label="Disk Alert Threshold" desc="Alert when any disk partition exceeds this value">
+            <SettingRow label={t('settings.telegram.diskThreshold')} desc={t('settings.telegram.diskThresholdDesc')}>
               <ThresholdSlider id="tg-disk" value={tgConfig.diskThreshold}
                 onChange={v => updateTg('diskThreshold', v)} color="var(--accent-yellow)" />
             </SettingRow>
 
             {/* Cooldown */}
-            <SettingRow label="Alert Cooldown" desc="Minimum time between two consecutive alerts of the same type">
+            <SettingRow label={t('settings.telegram.cooldown')} desc={t('settings.telegram.cooldownDesc')}>
               <select
                 value={tgConfig.cooldownMinutes}
                 onChange={e => updateTg('cooldownMinutes', Number(e.target.value))}
@@ -658,23 +833,21 @@ export default function SettingsPage() {
                   transition: 'all 0.3s ease',
                 }}
               >
-                {tgSaved ? '✓ SAVED' : 'SAVE TELEGRAM'}
+                {tgSaved ? t('settings.telegram.saved') : t('settings.telegram.save')}
               </button>
 
               <button
                 onClick={handleTestTelegram}
                 disabled={tgTesting}
                 style={{
-                  background: 'rgba(255,165,0,0.1)',
-                  border: '1px solid rgba(255,165,0,0.5)',
-                  color: 'rgba(255,165,0,1)',
-                  padding: '8px 20px', fontFamily: 'Share Tech Mono',
+                  background: 'rgba(255,165,0,0.1)', border: '1px solid rgba(255,165,0,0.5)',
+                  color: 'rgba(255,165,0,1)', padding: '8px 20px', fontFamily: 'Share Tech Mono',
                   fontSize: '0.78rem', cursor: tgTesting ? 'not-allowed' : 'pointer',
                   letterSpacing: '1px', opacity: tgTesting ? 0.5 : 1,
                   display: 'inline-flex', alignItems: 'center', gap: '6px',
                 }}
               >
-                {tgTesting ? 'SENDING...' : <><SciFiTelegramIcon size={14} color="rgba(255,165,0,1)" /> SEND TEST</>}
+                {tgTesting ? t('settings.telegram.sending') : <><SciFiTelegramIcon size={14} color="rgba(255,165,0,1)" /> {t('settings.telegram.sendTest')}</>}
               </button>
 
               {tgTestResult && (
@@ -706,48 +879,42 @@ export default function SettingsPage() {
       <div style={card}>
         <SectionHeader
           icon={<SciFiFacebookIcon size={18} color="var(--accent-purple)" />}
-          title="FACEBOOK MESSENGER AI AGENT"
-          subtitle="Tự động phản hồi tin nhắn vắng mặt khi đối phương nhắn"
+          title={t('settings.facebook.title')}
+          subtitle={t('settings.facebook.subtitle')}
         />
 
         {fbLoading ? (
           <div style={{ color: 'var(--text-secondary)', fontFamily: 'Share Tech Mono', fontSize: '0.8rem', opacity: 0.6 }}>
-            Đang tải cấu hình Facebook...
+            {t('settings.facebook.loading')}
           </div>
         ) : (
           <>
-            <SettingRow label="Chế độ Vắng mặt (Away Mode)" desc="AI Agent sẽ dùng Trình duyệt web của Server tự động phản hồi Facebook Messenger">
+            <SettingRow label={t('settings.facebook.awayMode')} desc={t('settings.facebook.awayModeDesc')}>
               <Toggle id="fb-enabled" value={fbConfig.enabled} onChange={v => updateFb('enabled', v)} />
             </SettingRow>
 
-            <SettingRow label="Ngưỡng tin nhắn kích hoạt" desc="Số tin nhắn liên tiếp chưa trả lời để AI tự phản hồi (Mặc định: 5 tin)">
-              <ThresholdSlider id="fb-threshold" min={1} max={20} unit=" tin" value={fbConfig.threshold}
+            <SettingRow label={t('settings.facebook.threshold')} desc={t('settings.facebook.thresholdDesc')}>
+              <ThresholdSlider id="fb-threshold" min={1} max={20} unit={` ${t('settings.facebook.thresholdUnit')}`} value={fbConfig.threshold}
                 onChange={v => updateFb('threshold', v)} color="var(--accent-purple)" />
             </SettingRow>
 
-            <SettingRow label="Thời gian chờ gửi lại (Cooldown)" desc="Tránh gửi lặp lại cho cùng 1 người dùng trong thời gian vắng mặt">
-              <select
+            <SettingRow label={t('settings.facebook.cooldown')} desc={t('settings.facebook.cooldownDesc')}>
+              <SciFiSelect
                 value={fbConfig.cooldownMinutes}
-                onChange={e => updateFb('cooldownMinutes', Number(e.target.value))}
-                style={{
-                  background: 'rgba(0,0,0,0.6)', border: '1px solid rgba(187,0,255,0.3)',
-                  color: 'var(--accent-purple)', padding: '5px 10px',
-                  fontSize: '0.8rem', fontFamily: 'Share Tech Mono', cursor: 'pointer',
-                }}
-              >
-                <option value={30}>30 phút</option>
-                <option value={60}>60 phút</option>
-                <option value={120}>120 phút (2 giờ)</option>
-                <option value={240}>240 phút (4 giờ)</option>
-              </select>
+                onChange={v => updateFb('cooldownMinutes', v)}
+                options={[
+                  { value: 30,  label: t('settings.facebook.cd30') },
+                  { value: 60,  label: t('settings.facebook.cd60') },
+                  { value: 120, label: t('settings.facebook.cd120') },
+                  { value: 240, label: t('settings.facebook.cd240') },
+                ]}
+              />
             </SettingRow>
 
-            <SettingRow label="Trạng thái hệ thống" desc="Nhật ký kiểm tra lần cuối từ Trình duyệt Server">
-              <span style={{
-                fontFamily: 'Share Tech Mono', fontSize: '0.78rem',
-                color: fbConfig.enabled ? 'var(--accent-cyan)' : 'var(--text-secondary)',
-              }}>
-                {fbConfig.lastStatus}
+            <SettingRow label={t('settings.facebook.systemStatus')} desc={t('settings.facebook.systemStatusDesc')}>
+              <span style={{ fontFamily: 'Share Tech Mono', fontSize: '0.78rem',
+                color: fbConfig.enabled ? 'var(--accent-cyan)' : 'var(--text-secondary)' }}>
+                {formatFbStatus(fbConfig.lastStatus, t)}
               </span>
             </SettingRow>
 
@@ -759,10 +926,10 @@ export default function SettingsPage() {
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px' }}>
                 <div>
                   <div style={{ fontSize: '0.92rem', color: 'var(--accent-purple)', fontWeight: 'bold', letterSpacing: '0.5px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <SciFiBrowserLaunchIcon size={18} color="var(--accent-purple)" /> Đăng nhập Facebook Trực tiếp
+                    <SciFiBrowserLaunchIcon size={18} color="var(--accent-purple)" /> {t('settings.facebook.loginSection')}
                   </div>
                   <div style={{ fontSize: '0.74rem', color: 'var(--text-secondary)', opacity: 0.8, marginTop: '2px' }}>
-                    Mở màn hình Trình duyệt Chromium trên Server để đăng nhập Facebook/2FA trực quan
+                    {t('settings.facebook.loginSectionDesc')}
                   </div>
                 </div>
 
@@ -771,24 +938,17 @@ export default function SettingsPage() {
                   disabled={vncLaunching}
                   style={{
                     background: 'linear-gradient(135deg, rgba(187,0,255,0.3) 0%, rgba(0,243,255,0.3) 100%)',
-                    border: '1px solid var(--accent-cyan)',
-                    color: '#fff',
-                    padding: '10px 22px',
-                    fontFamily: 'Share Tech Mono',
-                    fontSize: '0.82rem',
-                    cursor: vncLaunching ? 'not-allowed' : 'pointer',
-                    letterSpacing: '1px',
-                    boxShadow: '0 0 15px rgba(0,243,255,0.25)',
-                    transition: 'all 0.25s ease',
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '8px',
+                    border: '1px solid var(--accent-cyan)', color: '#fff',
+                    padding: '10px 22px', fontFamily: 'Share Tech Mono', fontSize: '0.82rem',
+                    cursor: vncLaunching ? 'not-allowed' : 'pointer', letterSpacing: '1px',
+                    boxShadow: '0 0 15px rgba(0,243,255,0.25)', transition: 'all 0.25s ease',
+                    display: 'inline-flex', alignItems: 'center', gap: '8px',
                   }}
                 >
                   {vncLaunching ? (
-                    <><SciFiChronoSpinnerIcon size={16} color="#fff" /> ĐANG MỞ...</>
+                    <><SciFiChronoSpinnerIcon size={16} color="#fff" /> {t('settings.facebook.opening')}</>
                   ) : (
-                    <><SciFiBrowserLaunchIcon size={16} color="#fff" /> MỞ TRÌNH DUYỆT SERVER</>
+                    <><SciFiBrowserLaunchIcon size={16} color="#fff" /> {t('settings.facebook.openBrowser')}</>
                   )}
                 </button>
               </div>
@@ -801,7 +961,7 @@ export default function SettingsPage() {
             </div>
 
             <div style={{ marginTop: '14px', marginBottom: '14px' }}>
-              <div style={{ fontSize: '0.88rem', color: 'var(--text-primary)', marginBottom: '4px' }}>Facebook Session Cookies (JSON)</div>
+              <div style={{ fontSize: '0.88rem', color: 'var(--text-primary)', marginBottom: '4px' }}>{t('settings.facebook.cookiesLabel')}</div>
               <textarea
                 value={fbConfig.cookiesJson}
                 onChange={e => updateFb('cookiesJson', e.target.value)}
@@ -826,55 +986,58 @@ export default function SettingsPage() {
                   fontSize: '0.78rem', cursor: 'pointer', letterSpacing: '1px',
                 }}
               >
-                {fbSaved ? '✓ ĐÃ LƯU' : 'LƯU CẤU HÌNH'}
+                {fbSaved ? t('settings.facebook.savedConfig') : t('settings.facebook.saveConfig')}
               </button>
 
               <button
                 onClick={handleTriggerFacebook}
                 disabled={fbTesting}
                 style={{
-                  background: 'rgba(0,243,255,0.1)',
-                  border: '1px solid rgba(0,243,255,0.5)',
-                  color: 'var(--accent-cyan)',
-                  padding: '8px 20px', fontFamily: 'Share Tech Mono',
+                  background: 'rgba(0,243,255,0.1)', border: '1px solid rgba(0,243,255,0.5)',
+                  color: 'var(--accent-cyan)', padding: '8px 20px', fontFamily: 'Share Tech Mono',
                   fontSize: '0.78rem', cursor: fbTesting ? 'not-allowed' : 'pointer',
                   letterSpacing: '1px', opacity: fbTesting ? 0.5 : 1,
                 }}
               >
-                {fbTesting ? 'ĐANG QUÉT...' : 'QUÉT NGAY'}
+                {fbTesting ? t('settings.facebook.scanning') : t('settings.facebook.scanNow')}
               </button>
 
               {fbTestResult && (
                 <span style={{ fontSize: '0.78rem', fontFamily: 'Share Tech Mono', color: 'var(--accent-cyan)' }}>
-                  {fbTestResult}
+                  {formatFbTriggerResult(fbTestResult, t)}
                 </span>
               )}
             </div>
 
-            {vncOpen && (
+            {vncOpen && createPortal(
               <div style={{
-                position: 'fixed', inset: 0, zIndex: 99999,
-                background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(8px)',
+                position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+                width: '100vw', height: '100vh', zIndex: 99999,
+                background: 'rgba(5, 7, 13, 0.92)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)',
                 display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-                padding: '20px'
+                padding: '24px', boxSizing: 'border-box'
               }}>
                 <div style={{
-                  width: '95%', maxWidth: '1280px', height: '88vh',
-                  background: 'rgba(9, 10, 15, 0.95)', border: '2px solid var(--accent-cyan)',
-                  borderRadius: '4px', display: 'flex', flexDirection: 'column', overflow: 'hidden'
+                  width: '94vw', maxWidth: '1440px', height: '88vh', maxHeight: '900px',
+                  background: '#090a0f', border: '1px solid var(--accent-cyan)',
+                  borderRadius: '6px', display: 'flex', flexDirection: 'column', overflow: 'hidden',
+                  boxShadow: '0 0 30px rgba(0, 243, 255, 0.3), 0 0 80px rgba(0, 0, 0, 0.95)'
                 }}>
+
                   <div style={{
-                    padding: '12px 20px', background: 'rgba(0,243,255,0.12)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'space-between'
+                    padding: '12px 20px', background: 'rgba(0,243,255,0.08)',
+                    borderBottom: '1px solid rgba(0,243,255,0.2)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    flexShrink: 0
                   }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                       <SciFiBrowserLaunchIcon size={18} color="var(--accent-cyan)" />
-                      <span style={{ color: 'var(--accent-cyan)', fontFamily: 'Share Tech Mono', fontSize: '1rem', fontWeight: 'bold' }}>
-                        SERVER LIVE CHROMIUM
+                      <span style={{ color: 'var(--accent-cyan)', fontFamily: 'Share Tech Mono', fontSize: '1rem', fontWeight: 'bold', letterSpacing: '1px' }}>
+                        {t('settings.facebook.serverLive')}
                       </span>
                     </div>
 
-                    <div style={{ display: 'flex', gap: '12px' }}>
+                    <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
                       <button
                         onClick={handleSaveBrowserSession}
                         disabled={vncSaving}
@@ -882,81 +1045,62 @@ export default function SettingsPage() {
                           background: 'var(--accent-green)', color: '#000', fontWeight: 'bold',
                           border: 'none', padding: '8px 18px', fontFamily: 'Share Tech Mono',
                           fontSize: '0.82rem', cursor: vncSaving ? 'not-allowed' : 'pointer',
-                          borderRadius: '2px', boxShadow: '0 0 10px var(--accent-green)',
+                          borderRadius: '3px', boxShadow: '0 0 12px rgba(0, 255, 157, 0.4)',
                           display: 'inline-flex', alignItems: 'center', gap: '6px',
+                          transition: 'all 0.2s'
                         }}
                       >
                         {vncSaving ? (
-                          <><SciFiChronoSpinnerIcon size={15} color="#000" /> ĐANG LƯU SESSION...</>
+                          <><SciFiChronoSpinnerIcon size={15} color="#000" /> {t('settings.facebook.savingSession')}</>
                         ) : (
-                          <><SciFiCheckCircleIcon size={15} color="#000" /> ĐÃ ĐĂNG NHẬP XONG - LƯU PHIÊN & BẬT AI AGENT</>
+                          <><SciFiCheckCircleIcon size={15} color="#000" /> {t('settings.facebook.saveSession')}</>
                         )}
                       </button>
                       <button
                         onClick={handleCloseVnc}
                         style={{
-                          background: 'rgba(255,0,85,0.2)', border: '1px solid var(--accent-pink)',
-                          color: 'var(--accent-pink)', padding: '8px 14px', fontFamily: 'Share Tech Mono',
-                          fontSize: '0.82rem', cursor: 'pointer',
+                          background: 'rgba(255,0,85,0.15)', border: '1px solid var(--accent-pink)',
+                          color: 'var(--accent-pink)', padding: '8px 16px', fontFamily: 'Share Tech Mono',
+                          fontSize: '0.82rem', cursor: 'pointer', borderRadius: '3px',
                           display: 'inline-flex', alignItems: 'center', gap: '6px',
+                          transition: 'all 0.2s'
                         }}
                       >
-                        <SciFiCloseIcon size={14} color="var(--accent-pink)" /> ĐÓNG
+                        <SciFiCloseIcon size={14} color="var(--accent-pink)" /> {t('settings.facebook.close')}
                       </button>
                     </div>
                   </div>
 
                   {vncStatusMsg && (
-                    <div style={{ padding: '8px 20px', background: 'rgba(0,243,255,0.15)', color: 'var(--accent-cyan)', fontFamily: 'Share Tech Mono', fontSize: '0.8rem' }}>
+                    <div style={{ padding: '8px 20px', background: 'rgba(0,243,255,0.15)', color: 'var(--accent-cyan)', fontFamily: 'Share Tech Mono', fontSize: '0.8rem', flexShrink: 0, borderBottom: '1px solid rgba(0,243,255,0.2)' }}>
                       {vncStatusMsg}
                     </div>
                   )}
 
-                  {/* noVNC Web Screen — only render iframe AFTER Chromium is fully started.
-                      Wrapper div with flex:1 + minHeight:0 is REQUIRED in a flex column container.
-                      Without it, the iframe has no flex-grow so it collapses to intrinsic (tiny) size,
-                      causing noVNC to initialize its canvas at wrong dimensions → narrow strip bug. */}
-                  {vncReady ? (
-                    <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', position: 'relative' }}>
+                  <div style={{ flex: 1, minHeight: 0, width: '100%', position: 'relative', overflow: 'hidden', background: '#000' }}>
+                    {vncReady ? (
                       <iframe
-                        src={vncUrl}
-                        title="Server Facebook Live Chromium"
-                        style={{
-                          position: 'absolute', top: 0, left: 0,
-                          width: '100%', height: '100%',
-                          border: 'none', background: '#000', display: 'block'
-                        }}
+                        src={vncUrl || '/vnc-embed.html'}
+                        title="Server Live Chromium"
+                        style={{ width: '100%', height: '100%', border: 'none', display: 'block', background: '#000' }}
                       />
-                    </div>
+                    ) : (
+                      <div style={{
+                        width: '100%', height: '100%', display: 'flex', flexDirection: 'column',
+                        alignItems: 'center', justifyContent: 'center', gap: '18px',
+                        background: '#0a0b10'
+                      }}>
+                        <SciFiBrowserLaunchIcon size={48} color="var(--accent-cyan)" />
+                        <p style={{ color: 'var(--accent-cyan)', fontFamily: 'Share Tech Mono', fontSize: '1rem', textAlign: 'center', opacity: 0.8 }}>
+                          {vncLaunching ? t('settings.facebook.launching') : t('settings.facebook.promptLogin')}
+                        </p>
+                      </div>
+                    )}
+                  </div>
 
-                  ) : (
-                    <div style={{
-                      flex: 1, display: 'flex', flexDirection: 'column',
-                      alignItems: 'center', justifyContent: 'center', gap: '18px',
-                      background: '#0a0b10'
-                    }}>
-                      <SciFiBrowserLaunchIcon size={48} color="var(--accent-cyan)" />
-                      <p style={{ color: 'var(--accent-cyan)', fontFamily: 'Share Tech Mono', fontSize: '1rem', textAlign: 'center', opacity: 0.8 }}>
-                        {vncLaunching ? 'Đang khởi động Chromium trên Server...' : 'Nhấn "Mở Trình Duyệt Server" để bắt đầu phiên đăng nhập Facebook.'}
-                      </p>
-                      {!vncLaunching && (
-                        <button
-                          onClick={handleLaunchBrowser}
-                          style={{
-                            background: 'var(--accent-cyan)', color: '#000', fontWeight: 'bold',
-                            border: 'none', padding: '12px 28px', fontFamily: 'Share Tech Mono',
-                            fontSize: '0.9rem', cursor: 'pointer', borderRadius: '2px',
-                            boxShadow: '0 0 20px var(--accent-cyan)',
-                            display: 'inline-flex', alignItems: 'center', gap: '8px',
-                          }}
-                        >
-                          <SciFiBrowserLaunchIcon size={16} color="#000" /> Mở Trình Duyệt Server
-                        </button>
-                      )}
-                    </div>
-                  )}
                 </div>
-              </div>
+              </div>,
+              document.body
             )}
           </>
         )}

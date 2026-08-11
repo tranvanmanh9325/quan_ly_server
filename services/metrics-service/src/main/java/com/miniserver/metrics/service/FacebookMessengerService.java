@@ -85,9 +85,7 @@ public class FacebookMessengerService implements DisposableBean {
             try {
                 String currentUrl = activePage.url();
                 if (currentUrl != null && !currentUrl.contains("login")) {
-                    log.debug("[FB-Responder] Reusing active persistent Messenger session. URL: {}", currentUrl);
-                    activePage.reload(new Page.ReloadOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED));
-                    activePage.waitForTimeout(3000);
+                    log.debug("[FB-Responder] Reusing active persistent Messenger session without reload. URL: {}", currentUrl);
                     return activePage;
                 }
             } catch (Exception e) {
@@ -111,6 +109,10 @@ public class FacebookMessengerService implements DisposableBean {
                 "--disable-dev-shm-usage",
                 "--disable-gpu",
                 "--disable-software-rasterizer",
+                "--mute-audio",
+                "--disable-speech-api",
+                "--disable-background-networking",
+                "--disable-component-extensions-with-background-pages",
                 "--disable-blink-features=AutomationControlled",
                 "--disable-features=IsolateOrigins,site-per-process"
         );
@@ -130,12 +132,22 @@ public class FacebookMessengerService implements DisposableBean {
         java.nio.file.Path profileDir = Paths.get("/tmp/fb_bot_profile");
         activeContext = activePlaywright.chromium().launchPersistentContext(profileDir, pOptions);
 
+        // Block heavy resources (images, media, fonts) to minimize CPU & RAM consumption
+        activeContext.route("**/*", route -> {
+            String resourceType = route.request().resourceType();
+            if ("image".equals(resourceType) || "media".equals(resourceType) || "font".equals(resourceType)) {
+                route.abort();
+            } else {
+                route.fallback();
+            }
+        });
+
         applyCookies(activeContext, currentCookiesJson);
         lastLoadedCookiesJson = currentCookiesJson;
 
         activePage = activeContext.newPage();
         activePage.navigate("https://www.facebook.com/messages/t/", new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED));
-        activePage.waitForTimeout(5000);
+        activePage.waitForTimeout(4000);
 
         return activePage;
     }

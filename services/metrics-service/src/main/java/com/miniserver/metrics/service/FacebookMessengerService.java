@@ -373,10 +373,14 @@ public class FacebookMessengerService implements DisposableBean {
                 String threadItemText = thread.innerText() != null ? thread.innerText().toLowerCase() : "";
                 if (threadItemText.contains("menu") || threadItemText.contains("thông báo")
                         || threadItemText.contains("cài đặt") || threadItemText.contains("trang cá nhân")
-                        || threadItemText.contains("chuyển đến")
+                        || threadItemText.contains("chuyển đến") || threadItemText.contains("bài viết")
+                        || threadItemText.contains("bạn đang nghĩ gì") || threadItemText.contains("tìm kiếm")
+                        || threadItemText.contains("phím tắt") || threadItemText.contains("trợ giúp")
+                        || threadItemText.contains("xem thêm") || threadItemText.contains("bạn bè")
+                        || threadItemText.contains("watch") || threadItemText.contains("marketplace")
                         || threadItemText.contains("đã thêm") || threadItemText.contains("ảnh nhóm")
                         || threadItemText.contains("đổi tên") || threadItemText.contains("rời khỏi")) {
-                    log.info("[FB-Responder] Skipping item #{} (Navigation/Group marker: '{}')", i, threadItemText.substring(0, Math.min(30, threadItemText.length())).replace('\n', ' '));
+                    log.info("[FB-Responder] Skipping item #{} (Non-contact marker: '{}')", i, threadItemText.substring(0, Math.min(30, threadItemText.length())).replace('\n', ' '));
                     continue;
                 }
 

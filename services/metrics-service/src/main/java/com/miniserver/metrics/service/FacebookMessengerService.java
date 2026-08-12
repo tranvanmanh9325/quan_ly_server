@@ -750,19 +750,44 @@ public class FacebookMessengerService implements DisposableBean {
 
     private int countUnrepliedIncomingMessages(Page page) {
         Object countResult = page.evaluate("() => {" +
-                "  let rows = document.querySelectorAll('[role=\"row\"], [data-scope=\"messages_table\"]');" +
-                "  if (!rows || rows.length === 0) {" +
-                "    let bubbles = document.querySelectorAll('[dir=\"auto\"]');" +
-                "    return Math.min(bubbles.length, 5);" +
+                "  let main = document.querySelector('[role=\"main\"]');" +
+                "  if (!main) return 0;" +
+                "  let rows = Array.from(main.querySelectorAll('[role=\"row\"], [data-scope=\"messages_table\"]'));" +
+                "  if (rows.length === 0) {" +
+                "    rows = Array.from(main.querySelectorAll('div[dir=\"auto\"]')).map(el => el.closest('div[style*=\"flex\"]') || el).filter(Boolean);" +
                 "  }" +
                 "  let count = 0;" +
                 "  for (let i = rows.length - 1; i >= 0; i--) {" +
                 "    let row = rows[i];" +
-                "    let text = row.innerText || '';" +
-                "    if (!text.trim()) continue;" +
-                "    let isOutgoing = row.querySelector('[aria-label*=\"You sent\"], [aria-label*=\"Bạn đã gửi\"]') !== null;" +
-                "    if (isOutgoing) break;" +
-                "    count++;" +
+                "    let text = (row.innerText || '').trim();" +
+                "    if (!text) continue;" +
+                "    let isOutgoing = false;" +
+                "    let aria = (row.getAttribute('aria-label') || '') + ' ' + (row.querySelector('[aria-label]')?.getAttribute('aria-label') || '');" +
+                "    if (aria.includes('B\u1ea1n \u0111\u00e3 g\u1eedi') || aria.includes('You sent') || aria.includes('\u0110\u00e3 g\u1eedi') || aria.includes('Sent')) {" +
+                "      isOutgoing = true;" +
+                "    }" +
+                "    if (!isOutgoing) {" +
+                "      let flexParent = row.closest('div[style*=\"flex-end\"]') || row;" +
+                "      let comp = window.getComputedStyle(flexParent);" +
+                "      if (comp.alignItems === 'flex-end' || comp.justifyContent === 'flex-end') {" +
+                "        isOutgoing = true;" +
+                "      }" +
+                "    }" +
+                "    if (!isOutgoing) {" +
+                "      let bubbles = row.querySelectorAll('div[dir=\"auto\"]');" +
+                "      for (let b of bubbles) {" +
+                "        let bg = window.getComputedStyle(b).backgroundColor;" +
+                "        if (bg.includes('rgb(0,') || bg.includes('rgb(10,') || bg.includes('rgb(45, 136, 255)') || bg.includes('rgb(0, 132, 255)')) {" +
+                "          isOutgoing = true;" +
+                "          break;" +
+                "        }" +
+                "      }" +
+                "    }" +
+                "    if (isOutgoing) {" +
+                "      break;" +
+                "    } else {" +
+                "      count++;" +
+                "    }" +
                 "  }" +
                 "  return count;" +
                 "}");

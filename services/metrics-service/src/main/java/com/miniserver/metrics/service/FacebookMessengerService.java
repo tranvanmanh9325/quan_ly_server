@@ -93,39 +93,6 @@ public class FacebookMessengerService implements DisposableBean {
         }
     }
 
-    /**
-     * Ensures Xvfb is running on display :99. If the lock file is missing, starts a new Xvfb
-     * process. This is required so that launchPersistentContext can run in headed (non-headless)
-     * mode — Facebook detects --headless and suppresses the Messenger chat panel DOM.
-     *
-     * @return the DISPLAY value to use (":99") if Xvfb is available, null otherwise
-     */
-    private static String ensureXvfbRunning() {
-        // Check if Xvfb is already running on :99
-        if (new java.io.File("/tmp/.X99-lock").exists()) {
-            log.info("[FB-Responder] Xvfb already running on :99");
-            return ":99";
-        }
-        // Try to start Xvfb on :99
-        try {
-            ProcessBuilder pb = new ProcessBuilder(
-                    "Xvfb", ":99", "-screen", "0", "1920x1080x24", "-ac", "+extension", "GLX"
-            );
-            pb.environment().put("DISPLAY", ":99");
-            pb.redirectErrorStream(true);
-            Process xvfb = pb.start();
-            // Give Xvfb 1.5s to bind the display
-            Thread.sleep(1500);
-            if (new java.io.File("/tmp/.X99-lock").exists()) {
-                log.info("[FB-Responder] Xvfb started on :99 (PID={})", xvfb.pid());
-                return ":99";
-            }
-        } catch (Exception e) {
-            log.warn("[FB-Responder] Could not start Xvfb: {}", e.getMessage());
-        }
-        return null;
-    }
-
     // Lean Chromium args for headless automation — disables all non-essential features.
     private static final List<String> CHROMIUM_ARGS = List.of(
             "--no-sandbox",
@@ -311,47 +278,9 @@ public class FacebookMessengerService implements DisposableBean {
             // always starts at the URL we navigate to, not at the last-visited thread URL.
             preparePersistentProfileDir();
 
-            // Run in headed mode on the Xvfb virtual display (:99) rather than headless.
-            // Facebook detects Chromium's headless mode (via CSS media queries, JS feature detection,
-            // and DOM render suppression) and does NOT render the full Messenger chat panel —
-            // only h1=Messenger appears. Running on :99 (already running for VNC) makes Facebook
-            // treat the browser as a normal GUI browser and render the complete chat panel DOM.
-            // Ensure Xvfb is running, then run Chromium in headed mode to bypass Facebook's
-            // headless detection which suppresses the Messenger chat panel DOM.
-            String display = ensureXvfbRunning();
-            boolean hasDisplay = display != null;
-            if (hasDisplay) {
-                // Set DISPLAY on the JVM process environment so the Playwright Node driver subprocess
-                // and Chromium child process both inherit it. .setEnv() alone is insufficient because
-                // Playwright's Node driver forks its own env from the JVM parent process.
-                ProcessBuilder.inheritIO().environment().put("DISPLAY", display);
-                try {
-                    // This is the correct way to set env on the current JVM process for child processes
-                    Class<?> unixClass = Class.forName("java.lang.ProcessEnvironment");
-                    java.lang.reflect.Field theUnmodifiableEnvironment = unixClass.getDeclaredField("theUnmodifiableEnvironment");
-                    theUnmodifiableEnvironment.setAccessible(true);
-                    java.lang.reflect.Field theEnvironment = unixClass.getDeclaredField("theEnvironment");
-                    theEnvironment.setAccessible(true);
-                    @SuppressWarnings("unchecked")
-                    java.util.Map<String, String> env = (java.util.Map<String, String>) theEnvironment.get(null);
-                    env.put("DISPLAY", display);
-                    log.info("[FB-Responder] Set DISPLAY={} in JVM process environment for Playwright.", display);
-                } catch (Exception e) {
-                    log.warn("[FB-Responder] Could not set DISPLAY via reflection ({}). Trying Runtime.exec workaround.", e.getMessage());
-                }
-            }
-
-            // --ozone-platform=x11 forces Chromium to use X11 (via Xvfb) instead of headless ozone
-            List<String> scanArgs = new java.util.ArrayList<>(CHROMIUM_ARGS);
-            if (hasDisplay) {
-                scanArgs.add("--ozone-platform=x11");
-                scanArgs.add("--disable-gpu-sandbox");
-            }
-
             BrowserType.LaunchPersistentContextOptions pOptions = new BrowserType.LaunchPersistentContextOptions()
-                    .setHeadless(!hasDisplay)
-                    .setArgs(scanArgs)
-                    .setEnv(hasDisplay ? java.util.Map.of("DISPLAY", display) : java.util.Map.of())
+                    .setHeadless(true)
+                    .setArgs(CHROMIUM_ARGS)
                     .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
                     .setViewportSize(1920, 1080);
 
@@ -1394,13 +1323,9 @@ public class FacebookMessengerService implements DisposableBean {
                 // Session files are cleared by preparePersistentProfileDir() to prevent URL restoration.
                 preparePersistentProfileDir();
 
-                String display2 = ensureXvfbRunning();
-                boolean hasDisplay2 = display2 != null;
-
                 BrowserType.LaunchPersistentContextOptions pOptions = new BrowserType.LaunchPersistentContextOptions()
-                        .setHeadless(!hasDisplay2)
+                        .setHeadless(true)
                         .setArgs(CHROMIUM_ARGS)
-                        .setEnv(hasDisplay2 ? java.util.Map.of("DISPLAY", display2) : java.util.Map.of())
                         .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
                         .setViewportSize(1920, 1080);
 

@@ -94,7 +94,6 @@ public class FacebookMessengerService implements DisposableBean {
     }
 
     // Lean Chromium args for headless automation — disables all non-essential features.
-    // --headless=new uses the modern Chrome headless renderer (less detectable, fixes blank-page bugs in older --headless mode).
     private static final List<String> CHROMIUM_ARGS = List.of(
             "--no-sandbox",
             "--disable-setuid-sandbox",
@@ -111,7 +110,14 @@ public class FacebookMessengerService implements DisposableBean {
             "--disable-ipc-flooding-protection",
             "--disable-blink-features=AutomationControlled",
             "--disable-features=IsolateOrigins,site-per-process",
-            "--window-size=1920,1080"
+            "--window-size=1920,1080",
+            // Prevent Chromium from restoring the last session or showing crash dialogs.
+            // Without these flags, a persistent context launched after the previous one closed
+            // abnormally will ask to restore the last URLs, which blocks our navigation.
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--disable-session-crashed-bubble",
+            "--restore-last-session=false"
     );
 
     // JS injected into every new page to hide Playwright's automation fingerprint from Facebook's bot detection.
@@ -300,8 +306,17 @@ public class FacebookMessengerService implements DisposableBean {
                     applyCookies(context, cfg.getCookiesJson());
                 }
 
-                Page page = context.pages().isEmpty() ? context.newPage() : context.pages().get(0);
+                // CRITICAL: Always create a fresh new page. Reusing an existing page from the
+                // persistent context means that page may already be in a mid-session state (e.g.
+                // on a specific thread URL), causing navigation inconsistencies. A new page always
+                // starts blank and navigates cleanly to the URL we specify.
+                // Close any leftover pages from previous sessions first to conserve memory.
+                for (Page p : context.pages()) {
+                    try { p.close(); } catch (Exception ignored) {}
+                }
+                Page page = context.newPage();
 
+                // Navigate to Messenger inbox root from a blank page.
                 page.navigate("https://www.facebook.com/messages/t/",
                         new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED).setTimeout(20000));
                 page.waitForTimeout(3000);
@@ -369,10 +384,13 @@ public class FacebookMessengerService implements DisposableBean {
                 if (href == null || href.isBlank()) continue;
 
                 // Click the anchor link — this triggers the SPA router to mount the chat panel correctly.
-                // This is the key fix: SPA routing via user-click properly hydrates the React component tree,
-                // whereas page.navigate() to a thread URL in a fresh context often leaves the panel blank.
                 anchor.click();
                 page.waitForTimeout(2500);
+
+                // Handle E2EE PIN screen if it appears after clicking a conversation.
+                // This is needed when the persistent profile doesn’t yet have the E2EE key in IndexedDB.
+                // After successful PIN entry, the key is stored in IndexedDB and won’t be needed again.
+                handleE2eePinScreen(page);
 
                 boolean isGroup = isGroupOrCommunityChat(page);
                 if (isGroup) {
@@ -429,6 +447,89 @@ public class FacebookMessengerService implements DisposableBean {
      * @param contactName    display name to verify after opening (e.g. "Trần Văn Mạnh")
      * @return true if the chat window was opened and identity was verified
      */
+    /**
+     * Detects and automatically handles the Facebook Messenger E2EE PIN entry screen.
+     *
+     * When a Messenger conversation uses End-to-End Encryption and the persistent browser profile
+     * does not yet have the IndexedDB decryption key, Facebook shows a PIN entry dialog.
+     * This method detects that screen and fills the hardcoded PIN so the key is derived and stored
+     * in IndexedDB — meaning subsequent scans will NOT trigger this screen again.
+     *
+     * The PIN screen selector targets: any visible input near text containing "PIN" or
+     * "khôi phục" (recover). This is resilient to Facebook DOM changes because it
+     * looks for a password-type input or a numeric input within the page.
+     *
+     * @param page  the active Playwright page, already on the conversation URL.
+     */
+    private void handleE2eePinScreen(Page page) {
+        try {
+            // Fast-path check: evaluate JS to see if a PIN screen is present.
+            // We look for an input field of type 'password', 'number', or 'text' that is
+            // adjacent to heading text containing PIN-related keywords.
+            Boolean pinScreenPresent = (Boolean) page.evaluate(
+                    "() => {" +
+                    "  const heading = document.querySelector('h2,h3,h4,[role=heading]');" +
+                    "  if (!heading) return false;" +
+                    "  const text = (heading.innerText || '').toLowerCase();" +
+                    "  if (!text.includes('pin') && !text.includes('kh\u00f4i ph\u1ee5c') && !text.includes('recover') && !text.includes('m\u00e3')) return false;" +
+                    "  const inp = document.querySelector('input[type=password], input[type=number], input[inputmode=numeric], input[aria-label*=PIN]');" +
+                    "  return inp !== null;" +
+                    "}");
+
+            if (!Boolean.TRUE.equals(pinScreenPresent)) {
+                return; // No PIN screen — nothing to do
+            }
+
+            log.info("[FB-Responder] E2EE PIN screen detected. Attempting automatic PIN entry (090325)...");
+
+            // Find the PIN input field — try multiple selectors in order of specificity
+            ElementHandle pinInput = page.querySelector(
+                    "input[type='password'], input[type='number'], input[inputmode='numeric'], " +
+                    "input[aria-label*='PIN'], input[aria-label*='pin'], input[aria-label*='M\u00e3']");
+
+            if (pinInput == null) {
+                // Fallback: find any input visible near the PIN heading
+                pinInput = page.querySelector("input");
+            }
+
+            if (pinInput != null) {
+                pinInput.click();
+                page.waitForTimeout(200);
+                pinInput.fill("090325");
+                page.waitForTimeout(500);
+
+                // Submit: try pressing Enter, then look for a submit/continue button
+                page.keyboard().press("Enter");
+                page.waitForTimeout(1500);
+
+                // If still on PIN screen (Enter didn’t work), click the confirm button
+                ElementHandle confirmBtn = page.querySelector(
+                        "[aria-label*='Tiếp theo'], [aria-label*='Xác nhập'], [aria-label*='Continue'], " +
+                        "[aria-label*='OK'], [aria-label*='Submit'], [role='button']:not([aria-label*='Huỷ']):not([aria-label*='Cancel'])");
+                if (confirmBtn != null) {
+                    confirmBtn.click();
+                    page.waitForTimeout(2000);
+                }
+
+                log.info("[FB-Responder] PIN submitted. Waiting for conversation to unlock...");
+                page.waitForTimeout(2000);
+
+                String headerAfterPin = extractCurrentChatHeaderName(page);
+                if (headerAfterPin != null && !headerAfterPin.isBlank()
+                        && !headerAfterPin.toLowerCase().contains("pin")
+                        && !headerAfterPin.toLowerCase().contains("kh\u00f4i ph\u1ee5c")) {
+                    log.info("[FB-Responder] PIN entry SUCCESS. Conversation header: '{}'", headerAfterPin);
+                } else {
+                    log.warn("[FB-Responder] PIN entry may have failed. Header after PIN: '{}'", headerAfterPin);
+                }
+            } else {
+                log.warn("[FB-Responder] PIN screen detected but no input field found. Cannot auto-fill.");
+            }
+        } catch (Exception e) {
+            log.warn("[FB-Responder] Error handling E2EE PIN screen: {}", e.getMessage());
+        }
+    }
+
     private boolean openTargetThreadInSidebar(Page page, String threadId, String contactName) {
         // Step 1: Look for the thread's anchor link in the current sidebar.
         log.info("[FB-TestSend] Searching sidebar for thread link containing '{}'", threadId);
@@ -441,14 +542,13 @@ public class FacebookMessengerService implements DisposableBean {
                 anchors.get(0).click();
                 page.waitForTimeout(3000);
 
-                // Detect E2EE PIN screen — this blocks the conversation in a headless context
-                // that doesn't have the PIN stored in IndexedDB (ephemeral context).
-                // When the PIN screen appears, skip to the compose fallback which opens a
-                // different conversation window (non-E2EE) via the New Message flow.
+                // Automatically handle E2EE PIN screen if it appears.
+                // After successful entry, the PIN key is stored in IndexedDB.
+                handleE2eePinScreen(page);
+
                 String header = extractCurrentChatHeaderName(page);
-                if (header != null && (header.contains("PIN") || header.contains("mã") || header.contains("khôi phục"))) {
-                    log.warn("[FB-TestSend] E2EE PIN screen detected (header='{}')! This conversation requires a PIN key stored in IndexedDB.", header);
-                    log.warn("[FB-TestSend] To fix: open the browser via the VNC panel, enter the PIN once, and save the session. The PIN key will then be stored in the persistent profile.");
+                if (header != null && (header.contains("PIN") || header.contains("m\u00e3") || header.contains("kh\u00f4i ph\u1ee5c"))) {
+                    log.warn("[FB-TestSend] Still on PIN screen after auto-fill attempt (header='{}'). Skipping.", header);
                     return false;
                 }
 

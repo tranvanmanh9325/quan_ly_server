@@ -85,8 +85,9 @@ public class FacebookConfigController {
 
     @PostMapping("/test-send-target")
     public ResponseEntity<Map<String, String>> testSendTarget(@RequestBody Map<String, String> body) {
-        String targetUrl = body.getOrDefault("targetUrl", "https://www.facebook.com/messages/t/100084961920667");
-        Map<String, String> res = messengerService.sendTestToThread(targetUrl);
+        String targetUrl = body.getOrDefault("targetUrl", "https://www.facebook.com/messages/t/100045592363397");
+        String targetName = body.getOrDefault("targetName", "Trần Văn Mạnh");
+        Map<String, String> res = messengerService.sendTestToThread(targetUrl, targetName);
         return ResponseEntity.ok(res);
     }
 }

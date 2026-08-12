@@ -316,7 +316,7 @@ public class FacebookMessengerService implements DisposableBean {
             ElementHandle activeHeader = page.querySelector("h2, [role='main'] header span");
             if (activeHeader != null && activeHeader.textContent() != null && !activeHeader.textContent().isBlank()) {
                 String activeSender = activeHeader.textContent().trim();
-                if (!isGroupOrCommunityChat(page)) {
+                if (!isGroupOrCommunityChat(page) && verifyRecipientIdentity(page, activeSender)) {
                     int unreplied = countUnrepliedIncomingMessages(page);
                     log.info("[FB-Responder] Currently open active chat with '{}': {} unreplied incoming message(s).", activeSender, unreplied);
                     if (unreplied >= cfg.getThreshold()) {
@@ -399,6 +399,12 @@ public class FacebookMessengerService implements DisposableBean {
                     senderName = headerElem.textContent().trim();
                 }
 
+                // Strict Recipient Identity Verification before proceeding
+                if (!verifyRecipientIdentity(page, senderName)) {
+                    log.warn("[FB-Responder] Safety check failed for thread #{} header '{}'. Skipping.", i, senderName);
+                    continue;
+                }
+
                 int unrepliedCount = countUnrepliedIncomingMessages(page);
                 log.info("[FB-Responder] Personal Chat with '{}': {} unreplied incoming message(s).", senderName, unrepliedCount);
 
@@ -428,6 +434,35 @@ public class FacebookMessengerService implements DisposableBean {
     // ========================================================================================
     // HELPER METHODS
     // ========================================================================================
+
+    private boolean verifyRecipientIdentity(Page page, String expectedTarget) {
+        if (expectedTarget == null || expectedTarget.isBlank()) {
+            log.warn("[FB-Responder] Target recipient verification skipped: Expected target is empty.");
+            return true;
+        }
+
+        Object checkResult = page.evaluate("(expected) => {" +
+                "  let header = document.querySelector('h2, [role=\"main\"] header span, div[role=\"main\"] header h1, [role=\"complementary\"] header');" +
+                "  let headerText = header ? (header.innerText || '').trim() : '';" +
+                "  let currentUrl = window.location.href || '';" +
+                "  let invalidKeywords = ['menu', 'thông báo', 'cài đặt', 'trang cá nhân', 'bài viết', 'bảng tin', 'tìm kiếm', 'phím tắt', 'bạn bè', 'xem thêm', 'trợ giúp'];" +
+                "  let headerLower = headerText.toLowerCase();" +
+                "  for (let kw of invalidKeywords) {" +
+                "    if (headerLower.includes(kw)) return JSON.stringify({ valid: false, reason: 'Header contains non-contact keyword: ' + kw, headerText, currentUrl });" +
+                "  }" +
+                "  let exp = expected.toLowerCase().trim();" +
+                "  let matchName = headerLower.includes(exp) || currentUrl.includes(exp);" +
+                "  let words = exp.split(/\\s+/);" +
+                "  let anyWordMatch = words.some(w => w.length > 2 && headerLower.includes(w));" +
+                "  if (!matchName && !anyWordMatch) {" +
+                "    return JSON.stringify({ valid: false, reason: 'Header \"' + headerText + '\" does not match target \"' + expected + '\"', headerText, currentUrl });" +
+                "  }" +
+                "  return JSON.stringify({ valid: true, headerText, currentUrl });" +
+                "}", expectedTarget);
+
+        log.info("[FB-Responder] Recipient Identity Verification: {}", checkResult);
+        return checkResult != null && checkResult.toString().contains("\"valid\":true");
+    }
 
     private boolean isGroupOrCommunityChat(Page page) {
         Object isGroupResult = page.evaluate("() => {" +
@@ -944,13 +979,18 @@ public class FacebookMessengerService implements DisposableBean {
         log.warn("[FB-Responder] Port {} still open after {}s cleanup wait — proceeding anyway.", port, timeoutSeconds);
     }
 
-    /** Direct test send to a target thread URL (e.g. https://www.facebook.com/messages/t/100084961920667) */
+    /** Direct test send to a target thread URL (e.g. https://www.facebook.com/messages/t/100045592363397) */
     public Map<String, String> sendTestToThread(String threadTarget) {
+        return sendTestToThread(threadTarget, "Trần Văn Mạnh");
+    }
+
+    public Map<String, String> sendTestToThread(String threadTarget, String expectedTargetName) {
         FacebookConfig cfg = configRepository.getConfig().orElseGet(FacebookConfig::new);
         if (cfg.getCookiesJson() == null || cfg.getCookiesJson().isBlank()) {
             return Map.of("status", "error", "message", "Chưa cấu hình Cookies Facebook.");
         }
 
+        String searchName = (expectedTargetName != null && !expectedTargetName.isBlank()) ? expectedTargetName : "Trần Văn Mạnh";
         String targetUrl = threadTarget.startsWith("http")
                 ? threadTarget
                 : "https://www.facebook.com/messages/t/" + threadTarget;
@@ -980,77 +1020,72 @@ public class FacebookMessengerService implements DisposableBean {
                     applyCookies(context, cfg.getCookiesJson());
                     Page page = context.pages().isEmpty() ? context.newPage() : context.pages().get(0);
 
-                    log.info("[FB-TestSend] Direct navigating to target thread: {}", targetUrl);
+                    log.info("[FB-TestSend] Direct navigating to target thread: {} (Expected: '{}')", targetUrl, searchName);
                     page.navigate(targetUrl, new Page.NavigateOptions().setWaitUntil(WaitUntilState.COMMIT).setTimeout(10000));
                     page.waitForTimeout(5000);
                     log.info("[FB-TestSend] Landed on URL: '{}', Title: '{}'", page.url(), page.title());
 
-                    Object domSummary = page.evaluate("() => {" +
-                            "  let all = Array.from(document.querySelectorAll('*'));" +
-                            "  let editables = all.filter(el => el.isContentEditable || el.getAttribute('role') === 'textbox');" +
-                            "  let inputs = all.filter(el => el.tagName === 'INPUT' || el.tagName === 'TEXTAREA');" +
-                            "  let mains = all.filter(el => el.getAttribute('role') === 'main');" +
-                            "  return JSON.stringify({" +
-                            "    editablesCount: editables.length," +
-                            "    inputsCount: inputs.length," +
-                            "    hasMain: mains.length > 0," +
-                            "    bodyText: (document.body.innerText || '').substring(0, 400).replace(/\\n/g, ' ')" +
-                            "  });" +
-                            "}");
-                    log.info("[FB-TestSend] DOM Summary: {}", domSummary);
-
-                    String senderName = "Phạm Minh";
-
-                    // Check if message input box is visible; if not, try clicking target thread in sidebar or searching
+                    // Check if message input box is visible and recipient identity is verified
                     ElementHandle checkInput = page.querySelector("div[data-lexical-editor='true'], div[role='textbox'], div[contenteditable='true'], [aria-label*='Aa']");
-                    if (checkInput == null) {
-                        log.info("[FB-TestSend] Message input not immediately found. Searching for 'Phạm Minh' in sidebar...");
-                        List<ElementHandle> sidebarThreads = page.querySelectorAll("div[role='grid'] [role='row'], a[href*='/messages/']");
+                    if (checkInput == null || !verifyRecipientIdentity(page, searchName)) {
+                        log.info("[FB-TestSend] Message input or verified header not found immediately. Searching for '{}' in Contacts/Sidebar...", searchName);
+                        List<ElementHandle> sidebarThreads = page.querySelectorAll(
+                                "div[aria-label='Người liên hệ'] [role='button'], " +
+                                "div[aria-label='Contacts'] [role='button'], " +
+                                "div[role='grid'] [role='row'], " +
+                                "a[href*='/messages/']");
                         boolean clicked = false;
                         for (ElementHandle st : sidebarThreads) {
                             String txt = st.innerText() != null ? st.innerText() : "";
-                            if (txt.contains("Phạm Minh") || txt.contains("Minh")) {
+                            if (txt.contains(searchName) || txt.contains("Mạnh") || txt.contains("Manh")) {
                                 st.click();
                                 page.waitForTimeout(3000);
                                 clicked = true;
-                                log.info("[FB-TestSend] Clicked sidebar thread for 'Phạm Minh'");
+                                log.info("[FB-TestSend] Clicked sidebar/contact element for '{}'", searchName);
                                 break;
                             }
                         }
 
                         if (!clicked) {
-                            log.info("[FB-TestSend] Target not in top sidebar. Using Messenger Search box for 'Phạm Minh'...");
+                            log.info("[FB-TestSend] Target not found in sidebar. Using Messenger Search box for '{}'...", searchName);
                             ElementHandle searchBox = page.querySelector("input[aria-label*='Tìm kiếm'], input[placeholder*='Tìm kiếm'], input[aria-label*='Search']");
                             if (searchBox != null) {
                                 searchBox.click();
-                                searchBox.fill("Phạm Minh");
+                                searchBox.fill(searchName);
                                 page.waitForTimeout(2000);
                                 ElementHandle firstResult = page.querySelector("[role='listbox'] [role='option'], div[role='grid'] [role='row']");
                                 if (firstResult != null) {
                                     firstResult.click();
                                     page.waitForTimeout(3000);
-                                    log.info("[FB-TestSend] Clicked search result for 'Phạm Minh'");
+                                    log.info("[FB-TestSend] Clicked search result for '{}'", searchName);
                                 }
                             }
                         }
                     }
 
+                    // STRICT SAFETY RECIPIENT VERIFICATION
+                    if (!verifyRecipientIdentity(page, searchName)) {
+                        log.warn("[FB-TestSend] ABORTED: Open chat window failed identity verification for recipient '{}'", searchName);
+                        return;
+                    }
+
+                    String senderName = searchName;
                     ElementHandle headerElem = page.querySelector("h2, [role='main'] header span");
                     if (headerElem != null && headerElem.textContent() != null && !headerElem.textContent().isBlank()) {
                         senderName = headerElem.textContent().trim();
                     }
 
                     String testMsg = generateAwayMessage(senderName, 1, cfg.getCustomMessage());
-                    log.info("[FB-TestSend] Generated AI away message for '{}': {}", senderName, testMsg);
+                    log.info("[FB-TestSend] Generated AI away message for Verified Recipient '{}': {}", senderName, testMsg);
 
                     boolean sent = sendMessengerReply(page, testMsg);
-                    log.info("[FB-TestSend] Direct send result for '{}': {}", senderName, sent);
+                    log.info("[FB-TestSend] Direct send result for Verified Recipient '{}': {}", senderName, sent);
                 }
             } catch (Exception e) {
                 log.error("[FB-TestSend] Error sending to target thread {}: {}", targetUrl, e.getMessage(), e);
             }
         });
 
-        return Map.of("status", "started", "message", "Đã khởi động tiến trình gửi tin nhắn thử nghiệm tới " + targetUrl);
+        return Map.of("status", "started", "message", "Đã khởi động tiến trình gửi tin nhắn thử nghiệm có xác thực tới " + searchName);
     }
 }

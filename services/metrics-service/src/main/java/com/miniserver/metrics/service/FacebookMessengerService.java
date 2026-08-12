@@ -540,7 +540,18 @@ public class FacebookMessengerService implements DisposableBean {
             try {
                 log.info("[FB-TestSend] Found sidebar link for thread '{}'. Clicking...", threadId);
                 anchors.get(0).click();
-                page.waitForTimeout(3000);
+
+                // Wait up to 8s for the chat panel header to appear after the SPA route change.
+                // Without this, extractCurrentChatHeaderName() returns null because React hasn't
+                // finished rendering the chat panel yet.
+                try {
+                    page.waitForSelector(
+                            "h1, header a[href], [role='main'] h2, [role='heading']",
+                            new Page.WaitForSelectorOptions().setTimeout(8000));
+                } catch (Exception ignored) {
+                    // If no heading found in 8s, still proceed — handleE2eePinScreen and verify will check
+                    page.waitForTimeout(2000);
+                }
 
                 // Automatically handle E2EE PIN screen if it appears.
                 // After successful entry, the PIN key is stored in IndexedDB.
@@ -560,6 +571,7 @@ public class FacebookMessengerService implements DisposableBean {
             } catch (Exception e) {
                 log.warn("[FB-TestSend] Sidebar anchor click failed: {}", e.getMessage());
             }
+
         } else {
             log.info("[FB-TestSend] No sidebar link found for thread '{}'. Will use New Message compose.", threadId);
         }

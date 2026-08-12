@@ -591,16 +591,6 @@ public class FacebookMessengerService implements DisposableBean {
         }
     }
 
-    private void preparePersistentProfileDir() {
-        try {
-            Path profileDir = Paths.get(PROFILE_DIR_PATH);
-            if (!Files.exists(profileDir)) {
-                Files.createDirectories(profileDir);
-            }
-        } catch (Exception e) {
-            log.warn("[FB-Responder] Could not create persistent profile directory {}: {}", PROFILE_DIR_PATH, e.getMessage());
-        }
-    }
 
     private void applyCookies(BrowserContext context, String cookiesJson) {
         try {

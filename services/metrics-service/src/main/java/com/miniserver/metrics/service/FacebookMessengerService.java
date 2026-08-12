@@ -311,6 +311,33 @@ public class FacebookMessengerService implements DisposableBean {
     private int inspectAndReply(Page page, FacebookConfig cfg) {
         int autoRepliesSent = 0;
 
+        // 1. Check if an active chat window is already open on screen
+        try {
+            ElementHandle activeHeader = page.querySelector("h2, [role='main'] header span");
+            if (activeHeader != null && activeHeader.textContent() != null && !activeHeader.textContent().isBlank()) {
+                String activeSender = activeHeader.textContent().trim();
+                if (!isGroupOrCommunityChat(page)) {
+                    int unreplied = countUnrepliedIncomingMessages(page);
+                    log.info("[FB-Responder] Currently open active chat with '{}': {} unreplied incoming message(s).", activeSender, unreplied);
+                    if (unreplied >= cfg.getThreshold()) {
+                        if (isCooldownExpired(activeSender, cfg.getCooldownMinutes())) {
+                            log.info("[FB-Responder] Triggering AI Away reply for active chat '{}'", activeSender);
+                            String awayReply = generateAwayMessage(activeSender, unreplied, cfg.getCustomMessage());
+                            boolean sent = sendMessengerReply(page, awayReply);
+                            if (sent) {
+                                autoRepliesSent++;
+                                cooldownMap.put(activeSender, Instant.now());
+                                log.info("[FB-Responder] AUTO-REPLY SENT to active chat '{}': {}", activeSender, awayReply);
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.debug("[FB-Responder] Active chat inspection fallback: {}", e.getMessage());
+        }
+
+        // 2. Query sidebar threads
         List<ElementHandle> threads = page.querySelectorAll(
                 "div[role='grid'] [role='row'], " +
                 "div[aria-label*='Đoạn chat'] [role='row'], " +
@@ -319,16 +346,19 @@ public class FacebookMessengerService implements DisposableBean {
                 "a[href*='/messages/t/']");
 
         if (threads.isEmpty()) {
-            Object diag = page.evaluate("() => {" +
-                    "  let dialogs = document.querySelectorAll('div[role=\"dialog\"]');" +
-                    "  let btns = Array.from(document.querySelectorAll('button, [role=\"button\"]')).map(b => b.innerText || b.getAttribute('aria-label') || '').filter(Boolean);" +
-                    "  return JSON.stringify({" +
-                    "    dialogCount: dialogs.length," +
-                    "    buttonTexts: btns.slice(0, 15)," +
-                    "    bodySnippet: (document.body.innerText || '').substring(0, 300).replace(/\\n/g, ' ')" +
-                    "  });" +
-                    "}");
-            log.warn("[FB-Responder] Sidebar threads 0! URL: {}. Diag: {}", page.url(), diag);
+            // Attempt to expand/focus sidebar by clicking Messenger nav / button
+            try {
+                ElementHandle navBtn = page.querySelector("a[href*='/messages/'], [aria-label*='Tin nhắn'], [aria-label*='Chats']");
+                if (navBtn != null) {
+                    navBtn.click();
+                    page.waitForTimeout(2000);
+                    threads = page.querySelectorAll(
+                            "div[role='grid'] [role='row'], " +
+                            "[role='row'], " +
+                            "a[href*='/messages/e2ee/t/'], " +
+                            "a[href*='/messages/t/']");
+                }
+            } catch (Exception ignored) {}
         }
 
         log.info("[FB-Responder] Found {} potential conversation elements.", threads.size());

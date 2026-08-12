@@ -457,21 +457,17 @@ public class FacebookMessengerService implements DisposableBean {
                 // Click the anchor link — this triggers the SPA router to mount the chat panel correctly.
                 anchor.click();
 
-                // Wait for the chat panel heading to appear before reading header name.
-                // Without this, extractCurrentChatHeaderName() returns null because React hasn't
-                // rendered the chat panel yet after the SPA route change.
-                try {
-                    page.waitForSelector(
-                            "h1, header a[href], [role='main'] h2, [role='heading']",
-                            new Page.WaitForSelectorOptions().setTimeout(6000));
-                } catch (Exception ignored) {
-                    page.waitForTimeout(2000);
-                }
+                // Poll up to 6s for the active chat panel header to render after the SPA route change.
+                // Previously, waitForSelector("h1...") matched sidebar h1 instantly, causing
+                // extractCurrentChatHeaderName() to run before React rendered the main chat panel header.
+                String senderName = waitForChatHeaderToLoad(page, 6000);
 
                 // Handle E2EE PIN screen if it appears after clicking a conversation.
-                // This is needed when the persistent profile doesn’t yet have the E2EE key in IndexedDB.
-                // After successful PIN entry, the key is stored in IndexedDB and won’t be needed again.
                 handleE2eePinScreen(page);
+
+                if (senderName == null || senderName.isBlank()) {
+                    senderName = extractCurrentChatHeaderName(page);
+                }
 
                 boolean isGroup = isGroupOrCommunityChat(page);
                 if (isGroup) {
@@ -479,8 +475,6 @@ public class FacebookMessengerService implements DisposableBean {
                     continue;
                 }
 
-                // Extract sender name from the now-active chat header
-                String senderName = extractCurrentChatHeaderName(page);
                 if (senderName == null || senderName.isBlank()) {
                     log.info("[FB-Responder] Thread #{} [{}]: empty header after click. Skipping.", i, href);
                     continue;
@@ -622,23 +616,13 @@ public class FacebookMessengerService implements DisposableBean {
                 log.info("[FB-TestSend] Found sidebar link for thread '{}'. Clicking...", threadId);
                 anchors.get(0).click();
 
-                // Wait up to 8s for the chat panel header to appear after the SPA route change.
-                // Without this, extractCurrentChatHeaderName() returns null because React hasn't
-                // finished rendering the chat panel yet.
-                try {
-                    page.waitForSelector(
-                            "h1, header a[href], [role='main'] h2, [role='heading']",
-                            new Page.WaitForSelectorOptions().setTimeout(8000));
-                } catch (Exception ignored) {
-                    // If no heading found in 8s, still proceed — handleE2eePinScreen and verify will check
-                    page.waitForTimeout(2000);
-                }
+                // Poll up to 6s for the chat panel header to appear after the SPA route change.
+                String header = waitForChatHeaderToLoad(page, 6000);
 
                 // Automatically handle E2EE PIN screen if it appears.
-                // After successful entry, the PIN key is stored in IndexedDB.
                 handleE2eePinScreen(page);
 
-                String header = extractCurrentChatHeaderName(page);
+                if (header == null) header = extractCurrentChatHeaderName(page);
                 if (header != null && (header.contains("PIN") || header.contains("m\u00e3") || header.contains("kh\u00f4i ph\u1ee5c"))) {
                     log.warn("[FB-TestSend] Still on PIN screen after auto-fill attempt (header='{}'). Skipping.", header);
                     return false;
@@ -657,25 +641,16 @@ public class FacebookMessengerService implements DisposableBean {
         }
 
         // Step 2: Fallback — direct SPA navigation to the thread URL.
-        // At this point, the inbox root is already loaded (we waited for sidebar links above),
-        // which means the React SPA has fully bootstrapped. Navigating to the specific thread URL
-        // now triggers React Router to mount the chat panel correctly — unlike a cold navigate
-        // where the SPA hasn't booted yet and the panel renders empty.
         log.info("[FB-TestSend] Attempting direct SPA navigation to thread URL...");
         try {
             String threadUrl = "https://www.facebook.com/messages/t/" + threadId + "/";
             page.navigate(threadUrl,
                     new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED).setTimeout(15000));
 
-            // Wait for the chat panel heading to appear
-            try {
-                page.waitForSelector("h1, header a[href], [role='main'] h2, [role='heading']",
-                        new Page.WaitForSelectorOptions().setTimeout(10000));
-            } catch (Exception ignored) {
-                page.waitForTimeout(3000);
-            }
+            // Poll up to 8s for the chat panel header to render
+            String header = waitForChatHeaderToLoad(page, 8000);
 
-            log.info("[FB-TestSend] Direct navigate result. URL: {} Header: '{}'", page.url(), extractCurrentChatHeaderName(page));
+            log.info("[FB-TestSend] Direct navigate result. URL: {} Header: '{}'", page.url(), header);
 
             // Handle E2EE PIN screen if it appears on direct navigate
             handleE2eePinScreen(page);
@@ -704,6 +679,24 @@ public class FacebookMessengerService implements DisposableBean {
         return false;
     }
 
+    /**
+     * Polls until extractCurrentChatHeaderName returns a valid header for the active chat panel,
+     * or until timeoutMs expires. This prevents premature header reads after clicking a thread anchor.
+     */
+    private String waitForChatHeaderToLoad(Page page, int timeoutMs) {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        while (System.currentTimeMillis() < deadline) {
+            String header = extractCurrentChatHeaderName(page);
+            if (header != null && !header.isBlank()
+                    && !header.equalsIgnoreCase("Đoạn chat")
+                    && !header.equalsIgnoreCase("Messenger")) {
+                return header;
+            }
+            try { page.waitForTimeout(300); } catch (Exception ignored) {}
+        }
+        return extractCurrentChatHeaderName(page);
+    }
+
     /** Reads the current active chat's header name from the DOM. Returns null if not found. */
     private String extractCurrentChatHeaderName(Page page) {
         try {
@@ -713,8 +706,10 @@ public class FacebookMessengerService implements DisposableBean {
                     "    '[role=\"main\"] header h1'," +
                     "    '[role=\"main\"] header h2'," +
                     "    '[role=\"main\"] header [dir=\"auto\"]'," +
-                    "    'h2[dir=\"auto\"]'," +
-                    "    '[role=\"main\"] header span'" +
+                    "    '[role=\"main\"] h1'," +
+                    "    '[role=\"main\"] h2'," +
+                    "    '[role=\"main\"] header span'," +
+                    "    'h2[dir=\"auto\"]'" +
                     "  ];" +
                     "  for (let sel of selectors) {" +
                     "    let el = document.querySelector(sel);" +

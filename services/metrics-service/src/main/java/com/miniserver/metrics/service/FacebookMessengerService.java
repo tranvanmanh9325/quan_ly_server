@@ -267,7 +267,7 @@ public class FacebookMessengerService implements DisposableBean {
                 Page page = context.pages().isEmpty() ? context.newPage() : context.pages().get(0);
 
                 page.navigate("https://www.facebook.com/messages/t/",
-                        new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED));
+                        new Page.NavigateOptions().setWaitUntil(WaitUntilState.COMMIT).setTimeout(10000));
                 page.waitForTimeout(4000);
 
                 String currentUrl = page.url();
@@ -919,7 +919,7 @@ public class FacebookMessengerService implements DisposableBean {
                     Page page = context.pages().isEmpty() ? context.newPage() : context.pages().get(0);
 
                     log.info("[FB-TestSend] Direct navigating to target thread: {}", targetUrl);
-                    page.navigate(targetUrl, new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED));
+                    page.navigate(targetUrl, new Page.NavigateOptions().setWaitUntil(WaitUntilState.COMMIT).setTimeout(10000));
                     page.waitForTimeout(5000);
 
                     String senderName = "Phạm Minh";

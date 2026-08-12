@@ -442,8 +442,13 @@ public class FacebookMessengerService implements DisposableBean {
             ElementHandle inputBox = page.querySelector(combinedSelector);
 
             if (inputBox == null) {
-                // Fallback: try clicking footer / main chat area to focus input
-                log.warn("[FB-Responder] Primary textbox selector null. Attempting footer click fallback...");
+                Object diag = page.evaluate("() => {" +
+                        "  let editables = Array.from(document.querySelectorAll('*')).filter(el => el.isContentEditable || el.getAttribute('role') === 'textbox' || el.getAttribute('data-lexical-editor') === 'true');" +
+                        "  return editables.map(el => '<' + el.tagName + ' role=' + el.getAttribute('role') + ' aria=' + el.getAttribute('aria-label') + ' class=' + el.className + '>').join(' | ');" +
+                        "}");
+                log.warn("[FB-Responder] Textbox null! URL: {}. Editables on page: {}", page.url(), diag);
+
+                log.warn("[FB-Responder] Attempting footer click fallback...");
                 ElementHandle footer = page.querySelector("footer, [role='main'] div[style*='bottom'], [role='region'] div[contenteditable]");
                 if (footer != null) {
                     footer.click();
@@ -921,6 +926,7 @@ public class FacebookMessengerService implements DisposableBean {
                     log.info("[FB-TestSend] Direct navigating to target thread: {}", targetUrl);
                     page.navigate(targetUrl, new Page.NavigateOptions().setWaitUntil(WaitUntilState.COMMIT).setTimeout(10000));
                     page.waitForTimeout(5000);
+                    log.info("[FB-TestSend] Landed on URL: '{}', Title: '{}'", page.url(), page.title());
 
                     String senderName = "Phạm Minh";
                     ElementHandle headerElem = page.querySelector("h2, [role='main'] header span");

@@ -320,10 +320,37 @@ public class FacebookMessengerService implements DisposableBean {
             // headless detection which suppresses the Messenger chat panel DOM.
             String display = ensureXvfbRunning();
             boolean hasDisplay = display != null;
+            if (hasDisplay) {
+                // Set DISPLAY on the JVM process environment so the Playwright Node driver subprocess
+                // and Chromium child process both inherit it. .setEnv() alone is insufficient because
+                // Playwright's Node driver forks its own env from the JVM parent process.
+                ProcessBuilder.inheritIO().environment().put("DISPLAY", display);
+                try {
+                    // This is the correct way to set env on the current JVM process for child processes
+                    Class<?> unixClass = Class.forName("java.lang.ProcessEnvironment");
+                    java.lang.reflect.Field theUnmodifiableEnvironment = unixClass.getDeclaredField("theUnmodifiableEnvironment");
+                    theUnmodifiableEnvironment.setAccessible(true);
+                    java.lang.reflect.Field theEnvironment = unixClass.getDeclaredField("theEnvironment");
+                    theEnvironment.setAccessible(true);
+                    @SuppressWarnings("unchecked")
+                    java.util.Map<String, String> env = (java.util.Map<String, String>) theEnvironment.get(null);
+                    env.put("DISPLAY", display);
+                    log.info("[FB-Responder] Set DISPLAY={} in JVM process environment for Playwright.", display);
+                } catch (Exception e) {
+                    log.warn("[FB-Responder] Could not set DISPLAY via reflection ({}). Trying Runtime.exec workaround.", e.getMessage());
+                }
+            }
+
+            // --ozone-platform=x11 forces Chromium to use X11 (via Xvfb) instead of headless ozone
+            List<String> scanArgs = new java.util.ArrayList<>(CHROMIUM_ARGS);
+            if (hasDisplay) {
+                scanArgs.add("--ozone-platform=x11");
+                scanArgs.add("--disable-gpu-sandbox");
+            }
 
             BrowserType.LaunchPersistentContextOptions pOptions = new BrowserType.LaunchPersistentContextOptions()
                     .setHeadless(!hasDisplay)
-                    .setArgs(CHROMIUM_ARGS)
+                    .setArgs(scanArgs)
                     .setEnv(hasDisplay ? java.util.Map.of("DISPLAY", display) : java.util.Map.of())
                     .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
                     .setViewportSize(1920, 1080);

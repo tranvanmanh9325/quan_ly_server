@@ -280,24 +280,29 @@ public class FacebookMessengerService implements DisposableBean {
 
                 log.info("[FB-Responder] Persistent browser ready. Current URL: {}", currentUrl);
 
-                // Dismiss popups if any
+                // Dismiss popups/modals if any
                 try {
-                    List<ElementHandle> closeBtns = page.querySelectorAll(
-                            "div[role='dialog'] div[role='button']:has-text('Not now'), " +
-                            "div[role='dialog'] div[role='button']:has-text('Không phải bây giờ'), " +
-                            "div[role='dialog'] div[aria-label='Close'], " +
-                            "div[role='dialog'] div[aria-label='Đóng']");
-                    for (ElementHandle btn : closeBtns) {
-                        if (btn.isVisible()) {
-                            btn.click();
-                            page.waitForTimeout(500);
-                        }
+                    List<ElementHandle> dialogBtns = page.querySelectorAll(
+                            "div[role='dialog'] [role='button'], " +
+                            "div[role='dialog'] [aria-label*='Đóng'], " +
+                            "div[role='dialog'] [aria-label*='Close'], " +
+                            "div[role='dialog'] button");
+                    for (ElementHandle btn : dialogBtns) {
+                        try {
+                            String txt = btn.innerText() != null ? btn.innerText().toLowerCase() : "";
+                            String aria = btn.getAttribute("aria-label") != null ? btn.getAttribute("aria-label").toLowerCase() : "";
+                            if (txt.contains("đóng") || txt.contains("tiếp tục") || txt.contains("tôi đã hiểu") || txt.contains("ok") || txt.contains("bỏ qua") || txt.contains("close") || txt.contains("not now") || aria.contains("đóng") || aria.contains("close")) {
+                                btn.click();
+                                page.waitForTimeout(500);
+                                log.info("[FB-Responder] Dismissed dialog overlay button: '{}' / aria: '{}'", txt, aria);
+                            }
+                        } catch (Exception ignored) {}
                     }
                 } catch (Exception ignored) {}
 
                 // Wait for conversation list to render
                 try {
-                    page.waitForSelector("[role='gridcell'], [role='row'], a[href*='/messages/t/'], div[role='navigation'] a",
+                    page.waitForSelector("[role='grid'] [role='row'], [role='row'], a[href*='/messages/t/'], a[href*='/messages/e2ee/t/']",
                             new Page.WaitForSelectorOptions().setTimeout(8000));
                 } catch (Exception e) {
                     log.warn("[FB-Responder] Wait for thread list selector timed out, attempting query fallback...");

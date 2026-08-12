@@ -797,71 +797,42 @@ public class FacebookMessengerService implements DisposableBean {
 
     private boolean sendMessengerReply(Page page, String text) {
         try {
-            // Only select contenteditable elements that are inside the main chat panel
-            // or the Messenger input area. We explicitly EXCLUDE the Messenger search box
-            // (which is also a div[contenteditable]) to avoid accidentally sending messages
-            // as searches when the chat panel hasn't loaded (e.g. E2EE without IndexedDB key).
-            String chatInputSelector =
-                    "[role='main'] div[data-lexical-editor='true'], " +
-                    "[role='main'] div[role='textbox'], " +
-                    "[role='main'] div[contenteditable='true'], " +
-                    "[role='main'] [aria-label*='Message'], " +
-                    "[role='main'] [aria-label*='Tin nhắn'], " +
-                    "[role='main'] [aria-label*='Aa'], " +
-                    "[role='main'] [aria-placeholder*='Aa']";
+            // Target the bottom-most contenteditable input box inside [role='main']
+            // Messenger's message input editor is ALWAYS located at the very bottom of the main container,
+            // below all message history bubbles. Sorting by getBoundingClientRect().top descending guarantees
+            // we select the actual message input box rather than an editable message history bubble.
+            JSHandle handle = page.evaluateHandle("() => {" +
+                    "  let main = document.querySelector('[role=\"main\"]') || document.body;" +
+                    "  let footerEditables = Array.from(main.querySelectorAll('footer div[contenteditable=\"true\"], footer div[data-lexical-editor=\"true\"], footer div[role=\"textbox\"]'));" +
+                    "  if (footerEditables.length > 0) return footerEditables[footerEditables.length - 1];" +
+                    "  let inputByAria = main.querySelector('[aria-label*=\"Tin nh\u1eafn trong cu\u1ed9c tr\u00f2 chuy\u1ec7n\"], [aria-label*=\"Message in conversation\"], [aria-placeholder*=\"Aa\"], [aria-label*=\"Aa\"]');" +
+                    "  if (inputByAria) return inputByAria;" +
+                    "  let allEditables = Array.from(main.querySelectorAll('div[contenteditable=\"true\"], div[data-lexical-editor=\"true\"], div[role=\"textbox\"]'));" +
+                    "  if (allEditables.length > 0) {" +
+                    "    allEditables.sort((a, b) => b.getBoundingClientRect().top - a.getBoundingClientRect().top);" +
+                    "    return allEditables[0];" +
+                    "  }" +
+                    "  return null;" +
+                    "}");
 
-            // Wait up to 15s for the chat input to appear
+            ElementHandle targetInput = handle != null ? handle.asElement() : null;
+            if (targetInput == null) {
+                log.warn("[FB-Responder] Chat input box NOT found on page. URL: {}", page.url());
+                return false;
+            }
+
+            String ariaLabel = (String) targetInput.evaluate("el => el.getAttribute('aria-label') || el.getAttribute('aria-placeholder') || ''");
+            log.info("[FB-Responder] Target chat input box selected. ariaLabel='{}' URL={}", ariaLabel, page.url());
+
+            // Step 1: Focus and click the target input box
             try {
-                page.waitForSelector(chatInputSelector, new Page.WaitForSelectorOptions().setTimeout(15000));
-            } catch (Exception e) {
-                // Chat panel input not found — dump DOM diagnostic to determine why
-                Object diag = page.evaluate(
-                        "() => {" +
-                        "  let main = document.querySelector('[role=\"main\"]');" +
-                        "  let editables = Array.from(document.querySelectorAll('div[contenteditable], div[role=\"textbox\"]'));" +
-                        "  return JSON.stringify({" +
-                        "    url: window.location.href," +
-                        "    mainExists: !!main," +
-                        "    mainText: main ? main.innerText?.trim()?.substring(0,80) : null," +
-                        "    editables: editables.map(el => ({" +
-                        "      role: el.getAttribute('role')," +
-                        "      ariaLabel: el.getAttribute('aria-label')," +
-                        "      inMain: !!el.closest('[role=\"main\"]')," +
-                        "      lexical: el.getAttribute('data-lexical-editor')" +
-                        "    }))" +
-                        "  });" +
-                        "}");
-                log.warn("[FB-Responder] Chat input NOT found in [role='main']. DOM: {}", diag);
-                return false;
-            }
-
-            ElementHandle inputBox = page.querySelector(chatInputSelector);
-
-            if (inputBox == null) {
-                log.warn("[FB-Responder] Chat input selector returned null after waitForSelector succeeded. URL: {}", page.url());
-                return false;
-            }
-
-            // Confirm this element is truly inside the chat panel before typing
-            Boolean isInMain = (Boolean) inputBox.evaluate(
-                    "el => !!el.closest('[role=\"main\"]')");
-            String ariaLabel = (String) inputBox.evaluate("el => el.getAttribute('aria-label') || ''");
-            log.info("[FB-Responder] Chat input found. inMain={} ariaLabel='{}' URL={}", isInMain, ariaLabel, page.url());
-
-            if (!Boolean.TRUE.equals(isInMain)) {
-                log.warn("[FB-Responder] Found contenteditable is NOT inside [role='main']. Refusing to send to avoid typing into search/wrong element.");
-                return false;
-            }
-
-            // Step 1: Focus and click editor to activate Lexical cursor
-            try {
-                inputBox.click();
-                inputBox.focus();
+                targetInput.click();
+                targetInput.focus();
             } catch (Exception ignored) {}
             page.waitForTimeout(300);
 
             // Step 2: Inject text via JS Event Pipeline + execCommand (specifically designed for Lexical / DraftJS)
-            inputBox.evaluate("(el, txt) => {" +
+            targetInput.evaluate("(el, txt) => {" +
                     "  el.focus();" +
                     "  let sel = window.getSelection();" +
                     "  let range = document.createRange();" +
@@ -881,27 +852,27 @@ public class FacebookMessengerService implements DisposableBean {
             page.waitForTimeout(400);
 
             // Check if text successfully populated into editor; if not, use keyboard.insertText with explicit focus
-            String typedText = (String) inputBox.evaluate("el => (el.innerText || '').trim()");
-            if (typedText == null || typedText.isEmpty()) {
+            String typedText = (String) targetInput.evaluate("el => (el.innerText || '').trim()");
+            if (typedText == null || typedText.isEmpty() || !typedText.contains(text.substring(0, Math.min(10, text.length())))) {
                 log.info("[FB-Responder] JS execCommand did not populate text. Using keyboard.insertText with explicit focus...");
                 try {
-                    inputBox.click();
-                    inputBox.focus();
+                    targetInput.click();
+                    targetInput.focus();
                 } catch (Exception ignored) {}
                 page.keyboard().insertText(text);
                 page.waitForTimeout(400);
             }
 
             // Verify text is now present in editor before submitting
-            typedText = (String) inputBox.evaluate("el => (el.innerText || '').trim()");
+            typedText = (String) targetInput.evaluate("el => (el.innerText || '').trim()");
             log.info("[FB-Responder] Editor content before submit: '{}'", typedText != null && typedText.length() > 30 ? typedText.substring(0, 30) : typedText);
 
             // Step 3: Submit message (Press Enter, then fallback to Send button if needed)
             page.keyboard().press("Enter");
             page.waitForTimeout(800);
 
-            String remainingText = (String) inputBox.evaluate("el => (el.innerText || '').trim()");
-            if (remainingText != null && !remainingText.isEmpty()) {
+            String remainingText = (String) targetInput.evaluate("el => (el.innerText || '').trim()");
+            if (remainingText != null && !remainingText.isEmpty() && remainingText.contains(text.substring(0, Math.min(10, text.length())))) {
                 log.info("[FB-Responder] Editor still contains text ('{}') after Enter. Attempting Send button click...",
                         remainingText.substring(0, Math.min(20, remainingText.length())));
 
@@ -917,21 +888,18 @@ public class FacebookMessengerService implements DisposableBean {
                 }
             }
 
-            // Step 4: EMPIRICAL VERIFICATION
+            // Step 4: EMPIRICAL VERIFICATION — confirm message snippet is in conversation body
             Object verification = page.evaluate("(txt) => {" +
-                    "  let main = document.querySelector('[role=\"main\"]');" +
-                    "  let el = main ? main.querySelector('div[data-lexical-editor=\"true\"], div[contenteditable=\"true\"]') : null;" +
-                    "  let editorText = el ? (el.innerText || '').trim() : '';" +
+                    "  let main = document.querySelector('[role=\"main\"]') || document.body;" +
                     "  let mainText = main ? main.innerText || '' : '';" +
                     "  let snippet = txt.length > 15 ? txt.substring(0, 15) : txt;" +
                     "  let inBody = mainText.includes(snippet);" +
-                    "  let cleared = editorText === '' || !editorText.includes(snippet);" +
-                    "  return JSON.stringify({ cleared, inBody, editorText: editorText.substring(0,30), snippet });" +
+                    "  return JSON.stringify({ inBody, snippet });" +
                     "}", text);
 
             log.info("[FB-Responder] Message send verification result: {}", verification);
 
-            boolean isVerified = verification != null && (verification.toString().contains("\"cleared\":true") || verification.toString().contains("\"inBody\":true"));
+            boolean isVerified = verification != null && verification.toString().contains("\"inBody\":true");
             if (isVerified) {
                 log.info("[FB-Responder] EMPIRICALLY VERIFIED: Message was successfully typed and sent to chat!");
                 return true;

@@ -694,38 +694,56 @@ public class FacebookMessengerService implements DisposableBean {
     }
 
     private boolean verifyRecipientIdentity(Page page, String expectedTarget) {
-        // When expectedTarget is blank, we are scanning the inbox generically — skip name check
         if (expectedTarget == null || expectedTarget.isBlank()) {
             return true;
         }
 
         Object checkResult = page.evaluate("(expected) => {" +
-                // Try multiple selectors in priority order — h1 inside main header is the most specific
-                "  let selectors = ['[role=\"main\"] header h1','[role=\"main\"] header h2','[role=\"main\"] header [dir=\"auto\"]','h2[dir=\"auto\"]','[role=\"main\"] header span'];" +
                 "  let headerText = '';" +
-                "  for (let sel of selectors) {" +
-                "    let el = document.querySelector(sel);" +
-                "    if (el && el.innerText && el.innerText.trim()) { headerText = el.innerText.trim(); break; }" +
+                "  let main = document.querySelector('[role=\"main\"]');" +
+                "  if (main) {" +
+                "    let header = main.querySelector('header, [role=\"banner\"]');" +
+                "    if (header) {" +
+                "      let titleEl = header.querySelector('h1, h2, [role=\"heading\"], a[href*=\"facebook.com/\"] span, span[dir=\"auto\"]');" +
+                "      if (titleEl && titleEl.innerText && titleEl.innerText.trim()) {" +
+                "        headerText = titleEl.innerText.trim();" +
+                "      }" +
+                "    }" +
                 "  }" +
-                "  let currentUrl = window.location.href || '';" +
                 "  if (!headerText) {" +
-                "    return JSON.stringify({ valid: false, reason: 'Header text is empty - no active chat window open', headerText: '', currentUrl });" +
+                "    let currentPath = window.location.pathname || '';" +
+                "    if (currentPath.includes('/messages/t/')) {" +
+                "      let parts = currentPath.split('/messages/t/');" +
+                "      if (parts.length > 1) {" +
+                "        let threadId = parts[1].replace(/\\//g, '');" +
+                "        let sidebarLink = document.querySelector('a[href*=\"' + threadId + '\"]');" +
+                "        if (sidebarLink) {" +
+                "          let nameEl = sidebarLink.querySelector('span[dir=\"auto\"], span');" +
+                "          if (nameEl && nameEl.innerText && nameEl.innerText.trim()) {" +
+                "            headerText = nameEl.innerText.trim();" +
+                "          }" +
+                "        }" +
+                "      }" +
+                "    }" +
                 "  }" +
-                "  let invalidKeywords = ['menu', 'thông báo', 'cài đặt', 'trang cá nhân', 'bài viết', 'bảng tin', 'tìm kiếm', 'phím tắt', 'bạn bè', 'xem thêm', 'trợ giúp', 'messenger'];" +
-                "  let headerLower = headerText.toLowerCase();" +
-                "  for (let kw of invalidKeywords) {" +
-                "    if (headerLower.includes(kw)) return JSON.stringify({ valid: false, reason: 'Header contains non-contact keyword: ' + kw, headerText, currentUrl });" +
+                "  if (!headerText) {" +
+                "    let docTitle = document.title || '';" +
+                "    if (docTitle.includes('|')) headerText = docTitle.split('|')[0].trim();" +
+                "    else if (docTitle.includes('-')) headerText = docTitle.split('-')[0].trim();" +
+                "    else headerText = docTitle.trim();" +
                 "  }" +
-                // When called from inspectAndReply, expectedTarget IS the extracted header name,
-                // so a direct contains-check is sufficient.
+                "  let lower = (headerText || '').toLowerCase();" +
+                "  if (!headerText || lower.includes('messenger') || lower.startsWith('(')) {" +
+                "    return JSON.stringify({ valid: false, reason: 'Header text is empty or generic title: ' + headerText, headerText, currentUrl: window.location.href });" +
+                "  }" +
                 "  let exp = expected.toLowerCase().trim();" +
-                "  let matchName = headerLower.includes(exp);" +
+                "  let matchName = lower.includes(exp);" +
                 "  let words = exp.split(/\\s+/).filter(w => w.length > 1);" +
-                "  let anyWordMatch = words.some(w => headerLower.includes(w));" +
+                "  let anyWordMatch = words.some(w => lower.includes(w));" +
                 "  if (!matchName && !anyWordMatch) {" +
-                "    return JSON.stringify({ valid: false, reason: 'Header \"' + headerText + '\" does not match target \"' + expected + '\"', headerText, currentUrl });" +
+                "    return JSON.stringify({ valid: false, reason: 'Header \"' + headerText + '\" does not match target \"' + expected + '\"', headerText, currentUrl: window.location.href });" +
                 "  }" +
-                "  return JSON.stringify({ valid: true, headerText, currentUrl });" +
+                "  return JSON.stringify({ valid: true, headerText, currentUrl: window.location.href });" +
                 "}", expectedTarget);
 
         log.info("[FB-Responder] Recipient Identity Verification: {}", checkResult);

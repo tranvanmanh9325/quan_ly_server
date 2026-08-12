@@ -571,116 +571,42 @@ public class FacebookMessengerService implements DisposableBean {
             } catch (Exception e) {
                 log.warn("[FB-TestSend] Sidebar anchor click failed: {}", e.getMessage());
             }
-
         } else {
-            log.info("[FB-TestSend] No sidebar link found for thread '{}'. Will use New Message compose.", threadId);
+            log.info("[FB-TestSend] No sidebar link found for thread '{}'. Will try direct SPA navigate.", threadId);
         }
 
-        // Step 2: New Message compose fallback.
-        // Click the "New message" / "Tạo đoạn chat mới" button, type the contact name,
-        // and select the matching result from the dropdown.
+        // Step 2: Fallback — direct SPA navigation to the thread URL.
+        // At this point, the inbox root is already loaded (we waited for sidebar links above),
+        // which means the React SPA has fully bootstrapped. Navigating to the specific thread URL
+        // now triggers React Router to mount the chat panel correctly — unlike a cold navigate
+        // where the SPA hasn't booted yet and the panel renders empty.
+        log.info("[FB-TestSend] Attempting direct SPA navigation to thread URL...");
         try {
-            log.info("[FB-TestSend] Attempting New Message compose flow for contact '{}'", contactName);
+            String threadUrl = "https://www.facebook.com/messages/t/" + threadId + "/";
+            page.navigate(threadUrl,
+                    new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED).setTimeout(15000));
 
-            // Find the "New message" / "Pencil" compose button in the Messenger sidebar
-            ElementHandle composeBtn = page.querySelector(
-                    "[aria-label*='Tạo đoạn chat mới'], [aria-label*='New message'], " +
-                    "[aria-label*='Compose'], [aria-label*='Cuộc trò chuyện mới'], " +
-                    "svg[aria-label*='Chỉnh sửa'], a[href*='/messages/new']");
-
-            if (composeBtn != null) {
-                composeBtn.click();
-                page.waitForTimeout(1500);
-                log.info("[FB-TestSend] Clicked New Message compose button.");
-            } else {
-                // Fallback: navigate to facebook.com/messages/new if compose button not found
-                log.info("[FB-TestSend] Compose button not found; navigating to /messages/new");
-                page.navigate("https://www.facebook.com/messages/new",
-                        new Page.NavigateOptions().setWaitUntil(WaitUntilState.COMMIT).setTimeout(10000));
-                page.waitForTimeout(2000);
-            }
-
-            // Type contact name into the "To:" search field
-            ElementHandle toField = null;
+            // Wait for the chat panel heading to appear
             try {
-                page.waitForSelector(
-                        "input[aria-label*='Tìm kiếm'], input[placeholder*='Tìm kiếm'], " +
-                        "input[aria-label*='Search'], input[placeholder*='To:'], " +
-                        "div[role='dialog'] input, input[aria-label*='Người nhận']",
-                        new Page.WaitForSelectorOptions().setTimeout(5000));
-                toField = page.querySelector(
-                        "input[aria-label*='Tìm kiếm'], input[placeholder*='Tìm kiếm'], " +
-                        "input[aria-label*='Search'], input[placeholder*='To:'], " +
-                        "div[role='dialog'] input, input[aria-label*='Người nhận']");
-            } catch (Exception e) {
-                log.warn("[FB-TestSend] To: field not found in compose dialog.");
+                page.waitForSelector("h1, header a[href], [role='main'] h2, [role='heading']",
+                        new Page.WaitForSelectorOptions().setTimeout(10000));
+            } catch (Exception ignored) {
+                page.waitForTimeout(3000);
             }
 
-            if (toField != null) {
-                toField.click();
-                page.waitForTimeout(300);
-                toField.fill(contactName);
-                page.waitForTimeout(2500);
-                log.info("[FB-TestSend] Typed '{}' into compose To: field.", contactName);
+            log.info("[FB-TestSend] Direct navigate result. URL: {} Header: '{}'", page.url(), extractCurrentChatHeaderName(page));
 
-                // Click the first matching result in the dropdown
-                List<ElementHandle> results = page.querySelectorAll(
-                        "[role='listbox'] [role='option'], [role='listbox'] li, " +
-                        "div[role='dialog'] [role='option'], ul li[role='option']");
+            // Handle E2EE PIN screen if it appears on direct navigate
+            handleE2eePinScreen(page);
 
-                for (ElementHandle res : results) {
-                    String txt = res.innerText() != null ? res.innerText() : "";
-                    // Match any word from the contact name (e.g. "Mạnh", "Trần", "Văn")
-                    String[] words = contactName.split("\\s+");
-                    boolean matched = false;
-                    for (String w : words) {
-                        if (w.length() > 1 && txt.contains(w)) {
-                            matched = true;
-                            break;
-                        }
-                    }
-                    if (matched) {
-                        log.info("[FB-TestSend] Found compose result: '{}'. Clicking.", txt.replace("\n", " ").substring(0, Math.min(60, txt.length())));
-                        res.click();
-                        // Wait for the conversation to open after selecting the contact
-                        try {
-                            page.waitForSelector("h1, header a[href], [role='main'] h2, [role='heading']",
-                                    new Page.WaitForSelectorOptions().setTimeout(6000));
-                        } catch (Exception ignored) {
-                            page.waitForTimeout(1500);
-                        }
-                        break;
-                    }
-                }
-
-                // Click the "Open" / "Mở" / "Next" button to open the conversation
-                ElementHandle openBtn = page.querySelector(
-                        "[aria-label*='Mở đoạn chat'], [aria-label*='Open chat'], " +
-                        "div[role='dialog'] [role='button']:last-child, " +
-                        "button[type='submit']");
-                if (openBtn != null) {
-                    openBtn.click();
-                    // Wait for chat panel to render after dialog closes
-                    try {
-                        page.waitForSelector("h1, header a[href], [role='main'] h2, [role='heading']",
-                                new Page.WaitForSelectorOptions().setTimeout(8000));
-                    } catch (Exception ignored) {
-                        page.waitForTimeout(3000);
-                    }
-                    log.info("[FB-TestSend] Clicked Open/Submit button. URL now: {}", page.url());
-                }
-            }
-
-            // Verify the chat window opened with the correct contact
             if (verifyRecipientIdentity(page, contactName)) {
-                log.info("[FB-TestSend] New Message compose SUCCESS. Verified chat header for '{}'", contactName);
+                log.info("[FB-TestSend] Direct SPA navigate SUCCESS. Verified chat for '{}'", contactName);
                 return true;
             }
-
-            log.warn("[FB-TestSend] Compose flow finished but header verification failed. Header: '{}' URL: {}",
+            log.warn("[FB-TestSend] Direct navigate verification failed. Header: '{}' URL: {}",
                     extractCurrentChatHeaderName(page), page.url());
         } catch (Exception e) {
-            log.warn("[FB-TestSend] New Message compose flow error: {}", e.getMessage());
+            log.warn("[FB-TestSend] Direct SPA navigate error: {}", e.getMessage());
         }
 
         return false;

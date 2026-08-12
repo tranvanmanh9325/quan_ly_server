@@ -21,6 +21,10 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Server-side Headless Web Automation Service for Facebook Messenger.
@@ -73,6 +77,15 @@ public class FacebookMessengerService implements DisposableBean {
     private BrowserContext activeContext;
     private Page activePage;
 
+    // Async manual scan state — single-thread executor prevents concurrent scans
+    private final ExecutorService scanExecutor = Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "fb-manual-scan");
+        t.setDaemon(true);
+        return t;
+    });
+    private final AtomicBoolean scanRunning = new AtomicBoolean(false);
+    private volatile String lastScanResult = null;
+
     public FacebookMessengerService(FacebookConfigRepository configRepository, AiChatService aiChatService) {
         this.configRepository = configRepository;
         this.aiChatService = aiChatService;
@@ -81,6 +94,8 @@ public class FacebookMessengerService implements DisposableBean {
     @Override
     public void destroy() {
         closeActiveSession();
+        scanExecutor.shutdownNow();
+        try { scanExecutor.awaitTermination(5, TimeUnit.SECONDS); } catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
     }
 
     // ========================================================================================
@@ -118,19 +133,40 @@ public class FacebookMessengerService implements DisposableBean {
         }
     }
 
-    /** Manually trigger a check from REST API */
-    public String triggerManualCheck() {
+    /** Manually trigger a check from REST API — runs async to avoid HTTP timeout */
+    public Map<String, String> triggerManualCheck() {
         FacebookConfig cfg = configRepository.getConfig().orElseGet(FacebookConfig::new);
-        if (!cfg.isEnabled()) return "Chức năng Vắng mặt hiện đang TẮT. Hãy bật công tắc trước.";
-        if (cfg.getCookiesJson() == null || cfg.getCookiesJson().isBlank()) return "Chưa cấu hình Cookies Facebook.";
+        if (!cfg.isEnabled())
+            return Map.of("status", "skipped", "message", "Chức năng Vắng mặt hiện đang TẮT. Hãy bật công tắc trước.");
+        if (cfg.getCookiesJson() == null || cfg.getCookiesJson().isBlank())
+            return Map.of("status", "skipped", "message", "Chưa cấu hình Cookies Facebook.");
 
-        try {
-            int count = processMessengerChats(cfg);
-            return "Đã quét xong! Số tin nhắn vắng mặt đã tự động trả lời: " + count;
-        } catch (Exception e) {
-            log.error("[FB-Responder] Manual trigger error: {}", e.getMessage(), e);
-            return "Lỗi khi quét Messenger: " + e.getMessage();
-        }
+        if (scanRunning.get())
+            return Map.of("status", "running", "message", "Đang quét... Vui lòng đợi.");
+
+        scanRunning.set(true);
+        lastScanResult = null;
+        scanExecutor.submit(() -> {
+            try {
+                int count = processMessengerChats(cfg);
+                lastScanResult = "Đã quét xong! Số tin nhắn vắng mặt đã tự động trả lời: " + count;
+            } catch (Exception e) {
+                log.error("[FB-Responder] Manual trigger error: {}", e.getMessage(), e);
+                lastScanResult = "Lỗi khi quét Messenger: " + e.getMessage();
+            } finally {
+                scanRunning.set(false);
+            }
+        });
+        return Map.of("status", "started", "message", "Đã bắt đầu quét Messenger...");
+    }
+
+    /** Poll endpoint — returns current scan status */
+    public Map<String, String> getScanStatus() {
+        if (scanRunning.get())
+            return Map.of("status", "running", "message", "Đang quét...");
+        if (lastScanResult != null)
+            return Map.of("status", "done", "message", lastScanResult);
+        return Map.of("status", "idle", "message", "");
     }
 
     /**

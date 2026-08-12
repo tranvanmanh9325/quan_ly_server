@@ -50,8 +50,15 @@ public class FacebookConfigController {
 
     @PostMapping("/trigger")
     public ResponseEntity<Map<String, String>> triggerManualCheck() {
-        String result = messengerService.triggerManualCheck();
-        return ResponseEntity.ok(Map.of("result", result));
+        Map<String, String> result = messengerService.triggerManualCheck();
+        // Return 202 Accepted for async start; 200 OK for immediate skip/busy responses
+        int status = "started".equals(result.get("status")) ? 202 : 200;
+        return ResponseEntity.status(status).body(result);
+    }
+
+    @GetMapping("/scan-status")
+    public ResponseEntity<Map<String, String>> getScanStatus() {
+        return ResponseEntity.ok(messengerService.getScanStatus());
     }
 
     @PostMapping("/launch-browser")

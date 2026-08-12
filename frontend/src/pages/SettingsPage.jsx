@@ -426,13 +426,42 @@ export default function SettingsPage() {
     setFbTestResult(null);
     try {
       const res = await axios.post('/api/facebook/trigger');
-      setFbTestResult(res.data?.result || t('settings.facebook.scanTriggered'));
+      const { status, message } = res.data;
+
+      // Immediate result (disabled / missing cookies / already running)
+      if (status === 'skipped' || status === 'running') {
+        setFbTestResult(message);
+        return;
+      }
+
+      // status === 'started' → poll /scan-status until done
+      setFbTestResult(t('settings.facebook.scanTriggered'));
+      const poll = setInterval(async () => {
+        try {
+          const s = await axios.get('/api/facebook/scan-status');
+          if (s.data.status === 'done') {
+            clearInterval(poll);
+            setFbTestResult(s.data.message);
+            setFbTesting(false);
+          } else if (s.data.status === 'idle') {
+            clearInterval(poll);
+            setFbTesting(false);
+          }
+          // status === 'running' → keep polling
+        } catch {
+          clearInterval(poll);
+          setFbTestResult(t('settings.facebook.scanError'));
+          setFbTesting(false);
+        }
+      }, 2000);
     } catch (e) {
       setFbTestResult(e.response?.data?.message || t('settings.facebook.scanError'));
     } finally {
-      setFbTesting(false);
+      // Don't clear fbTesting here — polling will clear it when done
+      if (!fbTesting) setFbTesting(false);
     }
   };
+
 
   const handleLaunchBrowser = async () => {
     // Cancel any lingering readiness poll from a previous session

@@ -90,6 +90,7 @@ const en = {
       cookiesLabel: "Facebook Session Cookies (JSON)",
       saveConfig: "SAVE CONFIG", savedConfig: "✓ SAVED",
       scanNow: "SCAN NOW", scanning: "SCANNING...",
+      scanResultTitle: "MESSENGER SCAN RESULT",
       saveSession: "LOGGED IN — SAVE SESSION & ENABLE AI",
       savingSession: "SAVING SESSION...",
       close: "CLOSE",

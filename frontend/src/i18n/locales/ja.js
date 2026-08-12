@@ -89,6 +89,7 @@ const ja = {
       cookiesLabel: "Facebook セッションCookie (JSON)",
       saveConfig: "設定を保存", savedConfig: "✓ 保存済み",
       scanNow: "今すぐスキャン", scanning: "スキャン中...",
+      scanResultTitle: "MESSENGERスキャン結果",
       saveSession: "ログイン完了 — セッションを保存してAIを有効化",
       savingSession: "セッション保存中...",
       close: "閉じる",

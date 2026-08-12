@@ -89,6 +89,7 @@ const ko = {
       cookiesLabel: "Facebook 세션 쿠키 (JSON)",
       saveConfig: "설정 저장", savedConfig: "✓ 저장됨",
       scanNow: "지금 스캔", scanning: "스캔 중...",
+      scanResultTitle: "MESSENGER 검사 결과",
       saveSession: "로그인 완료 — 세션 저장 및 AI 활성화",
       savingSession: "세션 저장 중...",
       close: "닫기",

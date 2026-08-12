@@ -89,6 +89,7 @@ const zh = {
       cookiesLabel: "Facebook会话Cookie (JSON)",
       saveConfig: "保存配置", savedConfig: "✓ 已保存",
       scanNow: "立即扫描", scanning: "扫描中...",
+      scanResultTitle: "MESSENGER 扫描结果",
       saveSession: "登录完成 — 保存会话并启用AI",
       savingSession: "保存会话中...",
       close: "关闭",

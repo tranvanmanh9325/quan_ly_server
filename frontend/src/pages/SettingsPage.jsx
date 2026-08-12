@@ -300,6 +300,11 @@ export default function SettingsPage() {
   const [fbTesting, setFbTesting]   = useState(false);
   const [fbTestResult, setFbTestResult] = useState(null);
   const [fbLoading, setFbLoading]   = useState(true);
+  const [fbScanModal, setFbScanModal] = useState({ open: false, status: '', message: '' });
+
+  const closeFbScanModal = useCallback(() => {
+    setFbScanModal(prev => ({ ...prev, open: false }));
+  }, []);
 
   // ── Live VNC Server Browser state ───────────────────────────────────────
   const [vncOpen, setVncOpen]           = useState(false);
@@ -430,19 +435,27 @@ export default function SettingsPage() {
 
       // Immediate result (disabled / missing cookies / already running)
       if (status === 'skipped' || status === 'running') {
-        setFbTestResult(message);
+        setFbTesting(false);
+        setFbScanModal({
+          open: true,
+          status,
+          message: formatFbTriggerResult(message, t),
+        });
         return;
       }
 
       // status === 'started' → poll /scan-status until done
-      setFbTestResult(t('settings.facebook.scanTriggered'));
       const poll = setInterval(async () => {
         try {
           const s = await axios.get('/api/facebook/scan-status');
           if (s.data.status === 'done') {
             clearInterval(poll);
-            setFbTestResult(s.data.message);
             setFbTesting(false);
+            setFbScanModal({
+              open: true,
+              status: 'done',
+              message: formatFbTriggerResult(s.data.message, t),
+            });
           } else if (s.data.status === 'idle') {
             clearInterval(poll);
             setFbTesting(false);
@@ -450,15 +463,22 @@ export default function SettingsPage() {
           // status === 'running' → keep polling
         } catch {
           clearInterval(poll);
-          setFbTestResult(t('settings.facebook.scanError'));
           setFbTesting(false);
+          setFbScanModal({
+            open: true,
+            status: 'error',
+            message: t('settings.facebook.scanError'),
+          });
         }
       }, 2000);
     } catch (e) {
-      setFbTestResult(e.response?.data?.message || t('settings.facebook.scanError'));
-    } finally {
-      // Don't clear fbTesting here — polling will clear it when done
-      if (!fbTesting) setFbTesting(false);
+      setFbTesting(false);
+      const errMsg = e.response?.data?.message || t('settings.facebook.scanError');
+      setFbScanModal({
+        open: true,
+        status: 'error',
+        message: formatFbTriggerResult(errMsg, t),
+      });
     }
   };
 
@@ -1046,21 +1066,181 @@ export default function SettingsPage() {
                 onClick={handleTriggerFacebook}
                 disabled={fbTesting}
                 style={{
-                  background: 'rgba(0,243,255,0.1)', border: '1px solid rgba(0,243,255,0.5)',
-                  color: 'var(--accent-cyan)', padding: '8px 20px', fontFamily: 'Share Tech Mono',
-                  fontSize: '0.78rem', cursor: fbTesting ? 'not-allowed' : 'pointer',
-                  letterSpacing: '1px', opacity: fbTesting ? 0.5 : 1,
+                  background: fbTesting ? 'rgba(0,243,255,0.18)' : 'rgba(0,243,255,0.1)',
+                  border: `1px solid ${fbTesting ? 'var(--accent-cyan)' : 'rgba(0,243,255,0.5)'}`,
+                  color: 'var(--accent-cyan)',
+                  padding: '8px 22px', fontFamily: 'Share Tech Mono',
+                  fontSize: '0.78rem',
+                  cursor: fbTesting ? 'not-allowed' : 'pointer',
+                  letterSpacing: '1px',
+                  opacity: fbTesting ? 0.85 : 1,
+                  display: 'inline-flex', alignItems: 'center', gap: '8px',
+                  boxShadow: fbTesting ? '0 0 15px rgba(0,243,255,0.3)' : 'none',
+                  transition: 'all 0.25s ease',
                 }}
               >
-                {fbTesting ? t('settings.facebook.scanning') : t('settings.facebook.scanNow')}
+                {fbTesting ? (
+                  <>
+                    <SciFiChronoSpinnerIcon size={16} color="var(--accent-cyan)" />
+                    {t('settings.facebook.scanning')}
+                  </>
+                ) : (
+                  <>
+                    <SciFiRefreshIcon size={14} color="var(--accent-cyan)" />
+                    {t('settings.facebook.scanNow')}
+                  </>
+                )}
               </button>
-
-              {fbTestResult && (
-                <span style={{ fontSize: '0.78rem', fontFamily: 'Share Tech Mono', color: 'var(--accent-cyan)' }}>
-                  {formatFbTriggerResult(fbTestResult, t)}
-                </span>
-              )}
             </div>
+
+            {/* ── Facebook Scan Result Popup Modal ────────────────────────────── */}
+            {fbScanModal.open && createPortal(
+              <div
+                onClick={closeFbScanModal}
+                style={{
+                  position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+                  width: '100vw', height: '100vh', zIndex: 99999,
+                  background: 'rgba(5, 7, 13, 0.85)',
+                  backdropFilter: 'blur(10px)',
+                  WebkitBackdropFilter: 'blur(10px)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  padding: '20px', boxSizing: 'border-box',
+                  animation: 'scifiFadeIn 0.2s ease-out',
+                }}
+              >
+                <div
+                  onClick={e => e.stopPropagation()}
+                  style={{
+                    width: '100%', maxWidth: '460px',
+                    background: '#090a0f',
+                    border: `1px solid ${
+                      fbScanModal.status === 'done' || fbScanModal.status === 'success'
+                        ? 'var(--accent-green)'
+                        : fbScanModal.status === 'error'
+                        ? 'var(--accent-pink)'
+                        : 'var(--accent-cyan)'
+                    }`,
+                    borderRadius: '6px',
+                    padding: '24px 28px',
+                    boxShadow: `0 0 35px ${
+                      fbScanModal.status === 'done' || fbScanModal.status === 'success'
+                        ? 'rgba(0, 255, 102, 0.3)'
+                        : fbScanModal.status === 'error'
+                        ? 'rgba(255, 0, 85, 0.3)'
+                        : 'rgba(0, 243, 255, 0.3)'
+                    }, 0 0 90px rgba(0, 0, 0, 0.95)`,
+                    position: 'relative',
+                    boxSizing: 'border-box',
+                    clipPath: 'polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px))',
+                    animation: 'scifiPopIn 0.25s cubic-bezier(0.16, 1, 0.3, 1)',
+                  }}
+                >
+                  {/* Header */}
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      {fbScanModal.status === 'done' || fbScanModal.status === 'success' ? (
+                        <SciFiCheckCircleIcon size={22} color="var(--accent-green)" />
+                      ) : fbScanModal.status === 'error' ? (
+                        <SciFiCloseIcon size={22} color="var(--accent-pink)" />
+                      ) : (
+                        <SciFiInfoIcon size={22} color="var(--accent-cyan)" />
+                      )}
+                      <h3 style={{
+                        fontFamily: 'Share Tech Mono', fontSize: '1rem', letterSpacing: '2px', margin: 0,
+                        color: fbScanModal.status === 'done' || fbScanModal.status === 'success'
+                          ? 'var(--accent-green)'
+                          : fbScanModal.status === 'error'
+                          ? 'var(--accent-pink)'
+                          : 'var(--accent-cyan)'
+                      }}>
+                        {t('settings.facebook.scanResultTitle')}
+                      </h3>
+                    </div>
+                    <button
+                      onClick={closeFbScanModal}
+                      style={{
+                        background: 'none', border: 'none', cursor: 'pointer', padding: '4px',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      }}
+                    >
+                      <SciFiCloseIcon size={16} color="var(--text-secondary)" />
+                    </button>
+                  </div>
+
+                  {/* Glowing Divider */}
+                  <div style={{
+                    height: '1px',
+                    background: `linear-gradient(90deg, ${
+                      fbScanModal.status === 'done' || fbScanModal.status === 'success'
+                        ? 'var(--accent-green)'
+                        : fbScanModal.status === 'error'
+                        ? 'var(--accent-pink)'
+                        : 'var(--accent-cyan)'
+                    } 0%, transparent 100%)`,
+                    marginBottom: '18px', opacity: 0.5
+                  }} />
+
+                  {/* Content Body */}
+                  <div style={{
+                    background: 'rgba(0, 0, 0, 0.45)',
+                    border: '1px solid rgba(255, 255, 255, 0.08)',
+                    padding: '16px 18px',
+                    borderRadius: '4px',
+                    marginBottom: '20px',
+                  }}>
+                    <p style={{
+                      fontFamily: 'Share Tech Mono', fontSize: '0.85rem', lineHeight: '1.5',
+                      color: 'var(--text-primary)', margin: 0, wordBreak: 'break-word',
+                    }}>
+                      {fbScanModal.message}
+                    </p>
+                  </div>
+
+                  {/* Action Footer */}
+                  <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                    <button
+                      onClick={closeFbScanModal}
+                      style={{
+                        background: fbScanModal.status === 'done' || fbScanModal.status === 'success'
+                          ? 'rgba(0, 255, 102, 0.15)'
+                          : fbScanModal.status === 'error'
+                          ? 'rgba(255, 0, 85, 0.15)'
+                          : 'rgba(0, 243, 255, 0.15)',
+                        border: `1px solid ${
+                          fbScanModal.status === 'done' || fbScanModal.status === 'success'
+                            ? 'var(--accent-green)'
+                            : fbScanModal.status === 'error'
+                            ? 'var(--accent-pink)'
+                            : 'var(--accent-cyan)'
+                        }`,
+                        color: fbScanModal.status === 'done' || fbScanModal.status === 'success'
+                          ? 'var(--accent-green)'
+                          : fbScanModal.status === 'error'
+                          ? 'var(--accent-pink)'
+                          : 'var(--accent-cyan)',
+                        padding: '8px 24px',
+                        fontFamily: 'Share Tech Mono',
+                        fontSize: '0.8rem',
+                        letterSpacing: '1px',
+                        cursor: 'pointer',
+                        borderRadius: '3px',
+                        transition: 'all 0.2s ease',
+                        boxShadow: `0 0 10px ${
+                          fbScanModal.status === 'done' || fbScanModal.status === 'success'
+                            ? 'rgba(0, 255, 102, 0.3)'
+                            : fbScanModal.status === 'error'
+                            ? 'rgba(255, 0, 85, 0.3)'
+                            : 'rgba(0, 243, 255, 0.3)'
+                        }`,
+                      }}
+                    >
+                      {t('settings.facebook.close')}
+                    </button>
+                  </div>
+                </div>
+              </div>,
+              document.body
+            )}
 
             {vncOpen && createPortal(
               <div style={{

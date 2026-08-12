@@ -89,6 +89,7 @@ const vi = {
       cookiesLabel: "Facebook Session Cookies (JSON)",
       saveConfig: "LƯU CẤU HÌNH", savedConfig: "✓ ĐÃ LƯU",
       scanNow: "QUÉT NGAY", scanning: "ĐANG QUÉT...",
+      scanResultTitle: "KẾT QUẢ QUÉT MESSENGER",
       saveSession: "ĐÃ ĐĂNG NHẬP XONG - LƯU PHIÊN & BẬT AI AGENT",
       savingSession: "ĐANG LƯU SESSION...",
       close: "ĐÓNG",

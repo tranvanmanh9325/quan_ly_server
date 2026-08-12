@@ -409,7 +409,12 @@ public class FacebookMessengerService implements DisposableBean {
                 }
 
                 if (senderName == null || senderName.isBlank()) {
-                    log.info("[FB-Responder] Thread #{} [{}]: empty header after navigate. Skipping.", i, href);
+                    Object diag = page.evaluate("() => {" +
+                            "  let headers = Array.from(document.querySelectorAll('header, [role=\"main\"] header, [role=\"main\"] h1, [role=\"main\"] h2, h2')).map(el => ({ tag: el.tagName, role: el.getAttribute('role'), text: el.innerText?.trim()?.substring(0,50) }));" +
+                            "  let mainText = document.querySelector('[role=\"main\"]')?.innerText?.trim()?.substring(0,100) || '';" +
+                            "  return JSON.stringify({ url: window.location.href, title: document.title, mainText, headers });" +
+                            "}");
+                    log.info("[FB-Responder] Thread #{} [{}] empty header. DOM diag: {}", i, href, diag);
                     continue;
                 }
 

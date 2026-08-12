@@ -596,20 +596,20 @@ public class FacebookMessengerService implements DisposableBean {
 
             log.info("[FB-TestSend] Direct navigate result. URL: {} Header: '{}'", page.url(), extractCurrentChatHeaderName(page));
 
-            // Dump DOM diagnostic to find the correct header selectors
-            Object domDiag = page.evaluate(
-                    "() => {" +
-                    "  let h1s = Array.from(document.querySelectorAll('h1')).map(el => ({tag:'h1', text: el.innerText?.trim()?.substring(0,60), cls: el.className?.substring(0,40)}));" +
-                    "  let h2s = Array.from(document.querySelectorAll('h2')).map(el => ({tag:'h2', text: el.innerText?.trim()?.substring(0,60), cls: el.className?.substring(0,40)}));" +
-                    "  let spans = Array.from(document.querySelectorAll('[role=\"main\"] header span')).slice(0,5).map(el => ({tag:'span', text: el.innerText?.trim()?.substring(0,60)}));" +
-                    "  let headers = Array.from(document.querySelectorAll('header')).slice(0,3).map(el => ({tag:'header', text: el.innerText?.trim()?.substring(0,100)}));" +
-                    "  return JSON.stringify({h1s,h2s,spans,headers,url:window.location.href});" +
-                    "}");
-            log.info("[FB-TestSend] DOM diagnostic: {}", domDiag);
-
             // Handle E2EE PIN screen if it appears on direct navigate
             handleE2eePinScreen(page);
 
+            // URL-based identity check: if the current URL contains the expected thread ID,
+            // we are definitively on the correct conversation. This is necessary for E2EE threads
+            // where the chat panel body won't render in a headless context without the IndexedDB
+            // PIN key — the URL is the only reliable indicator we can check programmatically.
+            String currentUrl = page.url();
+            if (currentUrl.contains(threadId)) {
+                log.info("[FB-TestSend] URL verification passed (URL contains thread ID '{}').", threadId);
+                return true;
+            }
+
+            // Secondary check: header name match (works for non-E2EE conversations)
             if (verifyRecipientIdentity(page, contactName)) {
                 log.info("[FB-TestSend] Direct SPA navigate SUCCESS. Verified chat for '{}'", contactName);
                 return true;

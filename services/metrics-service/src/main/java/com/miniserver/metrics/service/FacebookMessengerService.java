@@ -1282,9 +1282,54 @@ public class FacebookMessengerService implements DisposableBean {
             env.put("PLAYWRIGHT_NODEJS_PATH", "/usr/bin/node");
 
             try (Playwright playwright = Playwright.create(new Playwright.CreateOptions().setEnv(env))) {
-                // Use persistent context so IndexedDB (E2EE PIN keys) is preserved.
-                // Session restoration files are wiped by preparePersistentProfileDir() so Chromium
-                // always opens to the inbox root URL, not the last-visited thread URL.
+
+                // Path A: VNC browser is running on CDP port 9222 — connect to the live session.
+                // This is the same browser the user sees in the VNC panel, which is already logged in
+                // and has all E2EE keys in IndexedDB. This is the most reliable path.
+                if (isPortOpen("localhost", 9222)) {
+                    log.info("[FB-TestSend] VNC browser detected on CDP port 9222. Connecting to live session...");
+                    try {
+                        Browser browser = playwright.chromium().connectOverCDP("http://localhost:9222");
+                        if (!browser.contexts().isEmpty()) {
+                            BrowserContext ctx = browser.contexts().get(0);
+                            Page page = ctx.pages().isEmpty() ? ctx.newPage() : ctx.pages().get(0);
+
+                            // Navigate to inbox root so sidebar is available
+                            page.navigate("https://www.facebook.com/messages/t/",
+                                    new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED).setTimeout(20000));
+                            page.waitForTimeout(3000);
+
+                            try {
+                                page.waitForSelector(
+                                        "a[href*='/messages/t/'], a[href*='/messages/e2ee/t/']",
+                                        new Page.WaitForSelectorOptions().setTimeout(12000));
+                                log.info("[FB-TestSend] Sidebar loaded via VNC CDP. URL: {}", page.url());
+                            } catch (Exception e) {
+                                log.warn("[FB-TestSend] Sidebar timeout on VNC. Proceeding anyway. URL: {}", page.url());
+                            }
+
+                            boolean opened = openTargetThreadInSidebar(page, finalThreadId, contactName);
+                            if (!opened) {
+                                log.warn("[FB-TestSend] ABORTED via VNC: Could not open verified chat window for '{}'", contactName);
+                                return;
+                            }
+
+                            String verifiedName = extractCurrentChatHeaderName(page);
+                            if (verifiedName == null || verifiedName.isBlank()) verifiedName = contactName;
+
+                            String testMsg = generateAwayMessage(verifiedName, 1, cfg.getCustomMessage());
+                            log.info("[FB-TestSend] Sending via VNC to verified recipient '{}': {}", verifiedName, testMsg);
+                            boolean sent = sendMessengerReply(page, testMsg);
+                            log.info("[FB-TestSend] VNC send result for '{}': {}", verifiedName, sent);
+                            return;
+                        }
+                    } catch (Exception e) {
+                        log.warn("[FB-TestSend] Failed to connect to VNC CDP session: {}. Falling back to persistent context.", e.getMessage());
+                    }
+                }
+
+                // Path B: No VNC browser — use persistent context (IndexedDB preserved).
+                // Session files are cleared by preparePersistentProfileDir() to prevent URL restoration.
                 preparePersistentProfileDir();
 
                 BrowserType.LaunchPersistentContextOptions pOptions = new BrowserType.LaunchPersistentContextOptions()
@@ -1311,10 +1356,16 @@ public class FacebookMessengerService implements DisposableBean {
                     });
 
                     applyCookies(context, cfg.getCookiesJson());
-                    Page page = context.pages().isEmpty() ? context.newPage() : context.pages().get(0);
 
-                    // Step 1: Navigate to inbox root so SPA hydrates correctly.
-                    log.info("[FB-TestSend] Navigating to Messenger inbox root to bootstrap SPA...");
+                    // Close all stale pages before opening a fresh one.
+                    // Reusing an existing page from a previous session causes navigation issues
+                    // because that page may already be at a specific thread URL.
+                    for (Page p : context.pages()) {
+                        try { p.close(); } catch (Exception ignored) {}
+                    }
+                    Page page = context.newPage();
+
+                    log.info("[FB-TestSend] Navigating to Messenger inbox root...");
                     page.navigate("https://www.facebook.com/messages/t/",
                             new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED).setTimeout(20000));
                     page.waitForTimeout(3000);
@@ -1326,7 +1377,6 @@ public class FacebookMessengerService implements DisposableBean {
                         return;
                     }
 
-                    // Step 2: Wait for sidebar to render
                     try {
                         page.waitForSelector(
                                 "a[href*='/messages/t/'], a[href*='/messages/e2ee/t/']",
@@ -1340,24 +1390,22 @@ public class FacebookMessengerService implements DisposableBean {
                         log.warn("[FB-TestSend] Sidebar timeout. DOM diag: {}", diagResult);
                     }
 
-                    // Step 3: Open the target thread via sidebar click or New Message compose
                     boolean opened = openTargetThreadInSidebar(page, finalThreadId, contactName);
                     if (!opened) {
                         log.warn("[FB-TestSend] ABORTED: Could not open verified chat window for '{}'", contactName);
                         return;
                     }
 
-                    // Step 4: Read the verified contact name from the header
                     String verifiedName = extractCurrentChatHeaderName(page);
                     if (verifiedName == null || verifiedName.isBlank()) verifiedName = contactName;
 
-                    // Step 5: Generate and send the AI away-message
                     String testMsg = generateAwayMessage(verifiedName, 1, cfg.getCustomMessage());
                     log.info("[FB-TestSend] Sending test message to verified recipient '{}': {}", verifiedName, testMsg);
 
                     boolean sent = sendMessengerReply(page, testMsg);
                     log.info("[FB-TestSend] Send result for '{}': {}", verifiedName, sent);
                 }
+
             } catch (Exception e) {
                 log.error("[FB-TestSend] Error in sendTestToThread for '{}': {}", contactName, e.getMessage(), e);
             } finally {

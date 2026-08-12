@@ -853,51 +853,50 @@ public class FacebookMessengerService implements DisposableBean {
                 return false;
             }
 
+            // Step 1: Focus and click editor to activate Lexical cursor
             try {
                 inputBox.click();
                 inputBox.focus();
             } catch (Exception ignored) {}
             page.waitForTimeout(300);
 
-            // Step 1: Input text into Lexical editor using multi-strategy fallback
-            boolean inputSuccess = false;
-            try {
-                // Method A: Playwright fill() — dispatches native CDP events
-                inputBox.fill(text);
-                inputSuccess = true;
-            } catch (Exception e1) {
-                log.warn("[FB-Responder] fill() failed ({}), trying keyboard insertText...", e1.getMessage());
+            // Step 2: Inject text via JS Event Pipeline + execCommand (specifically designed for Lexical / DraftJS)
+            inputBox.evaluate("(el, txt) => {" +
+                    "  el.focus();" +
+                    "  let sel = window.getSelection();" +
+                    "  let range = document.createRange();" +
+                    "  range.selectNodeContents(el);" +
+                    "  sel.removeAllRanges();" +
+                    "  sel.addRange(range);" +
+                    "  try {" +
+                    "    let inputEvt = new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: txt });" +
+                    "    el.dispatchEvent(inputEvt);" +
+                    "  } catch (e) {}" +
+                    "  document.execCommand('insertText', false, txt);" +
+                    "  try {" +
+                    "    el.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true }));" +
+                    "  } catch (e) {}" +
+                    "}", text);
+
+            page.waitForTimeout(400);
+
+            // Check if text successfully populated into editor; if not, use keyboard.insertText with explicit focus
+            String typedText = (String) inputBox.evaluate("el => (el.innerText || '').trim()");
+            if (typedText == null || typedText.isEmpty()) {
+                log.info("[FB-Responder] JS execCommand did not populate text. Using keyboard.insertText with explicit focus...");
                 try {
-                    page.keyboard().insertText(text);
-                    inputSuccess = true;
-                } catch (Exception e2) {
-                    log.warn("[FB-Responder] keyboard insertText failed ({}), trying JS input event pipeline...", e2.getMessage());
-                }
+                    inputBox.click();
+                    inputBox.focus();
+                } catch (Exception ignored) {}
+                page.keyboard().insertText(text);
+                page.waitForTimeout(400);
             }
 
-            // Method B: Full synthetic Event pipeline for Lexical/DraftJS (beforeinput -> insertText -> input)
-            if (!inputSuccess) {
-                inputBox.evaluate("(el, txt) => {" +
-                        "  el.focus();" +
-                        "  let sel = window.getSelection();" +
-                        "  let range = document.createRange();" +
-                        "  range.selectNodeContents(el);" +
-                        "  sel.removeAllRanges();" +
-                        "  sel.addRange(range);" +
-                        "  try {" +
-                        "    let inputEvt = new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: txt });" +
-                        "    el.dispatchEvent(inputEvt);" +
-                        "  } catch (e) {}" +
-                        "  document.execCommand('insertText', false, txt);" +
-                        "  try {" +
-                        "    el.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true }));" +
-                        "  } catch (e) {}" +
-                        "}", text);
-            }
+            // Verify text is now present in editor before submitting
+            typedText = (String) inputBox.evaluate("el => (el.innerText || '').trim()");
+            log.info("[FB-Responder] Editor content before submit: '{}'", typedText != null && typedText.length() > 30 ? typedText.substring(0, 30) : typedText);
 
-            page.waitForTimeout(600);
-
-            // Step 2: Submit message (Try Enter press first, then click Send button if text remains in editor)
+            // Step 3: Submit message (Press Enter, then fallback to Send button if needed)
             page.keyboard().press("Enter");
             page.waitForTimeout(800);
 
@@ -918,7 +917,7 @@ public class FacebookMessengerService implements DisposableBean {
                 }
             }
 
-            // Step 3: EMPIRICAL VERIFICATION — confirm editor is cleared OR message snippet is in conversation body
+            // Step 4: EMPIRICAL VERIFICATION
             Object verification = page.evaluate("(txt) => {" +
                     "  let main = document.querySelector('[role=\"main\"]');" +
                     "  let el = main ? main.querySelector('div[data-lexical-editor=\"true\"], div[contenteditable=\"true\"]') : null;" +

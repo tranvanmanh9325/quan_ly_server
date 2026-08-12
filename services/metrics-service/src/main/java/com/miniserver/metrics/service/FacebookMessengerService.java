@@ -932,6 +932,20 @@ public class FacebookMessengerService implements DisposableBean {
                     page.waitForTimeout(5000);
                     log.info("[FB-TestSend] Landed on URL: '{}', Title: '{}'", page.url(), page.title());
 
+                    Object domSummary = page.evaluate("() => {" +
+                            "  let all = Array.from(document.querySelectorAll('*'));" +
+                            "  let editables = all.filter(el => el.isContentEditable || el.getAttribute('role') === 'textbox');" +
+                            "  let inputs = all.filter(el => el.tagName === 'INPUT' || el.tagName === 'TEXTAREA');" +
+                            "  let mains = all.filter(el => el.getAttribute('role') === 'main');" +
+                            "  return JSON.stringify({" +
+                            "    editablesCount: editables.length," +
+                            "    inputsCount: inputs.length," +
+                            "    hasMain: mains.length > 0," +
+                            "    bodyText: (document.body.innerText || '').substring(0, 400).replace(/\\n/g, ' ')" +
+                            "  });" +
+                            "}");
+                    log.info("[FB-TestSend] DOM Summary: {}", domSummary);
+
                     String senderName = "Phạm Minh";
 
                     // Check if message input box is visible; if not, try clicking target thread in sidebar or searching

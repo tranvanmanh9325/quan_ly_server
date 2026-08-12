@@ -688,7 +688,11 @@ public class FacebookMessengerService implements DisposableBean {
 
     private boolean isGroupOrCommunityChat(Page page) {
         Object isGroupResult = page.evaluate("() => {" +
-                "  let header = document.querySelector('[role=\"main\"] header, [role=\"complementary\"]') || document.body;" +
+                // Only look at the chat panel header — NOT document.body or sidebar panel.
+                // When the chat panel doesn't render (E2EE headless context), return false
+                // rather than falling back to body/sidebar text which contains 'Thành viên' etc.
+                "  let header = document.querySelector('[role=\"main\"] header');" +
+                "  if (!header) return false;" +
                 "  let headerText = (header.innerText || '').toLowerCase();" +
                 "  let groupKeywords = ['thành viên', 'view members', 'members', 'thêm người', 'add people', 'đổi tên đoạn chat', 'change chat name', 'rời khỏi nhóm', 'leave group', 'ảnh nhóm', 'cộng đồng', 'community'];" +
                 "  for (let kw of groupKeywords) { if (headerText.includes(kw)) return true; }" +

@@ -313,10 +313,27 @@ public class FacebookMessengerService implements DisposableBean {
 
         List<ElementHandle> threads = page.querySelectorAll(
                 "div[role='grid'] [role='row'], " +
-                "div[aria-label='Đoạn chat'] [role='row'], " +
-                "div[aria-label='Chats'] [role='row'], " +
+                "div[aria-label*='Đoạn chat'] [role='row'], " +
+                "div[aria-label*='Chats'] [role='row'], " +
                 "a[href*='/messages/e2ee/t/'], " +
                 "a[href*='/messages/t/']");
+
+        if (threads.isEmpty()) {
+            Object diag = page.evaluate("() => {" +
+                    "  let all = Array.from(document.querySelectorAll('*'));" +
+                    "  let rows = all.filter(el => el.getAttribute('role') === 'row');" +
+                    "  let grids = all.filter(el => el.getAttribute('role') === 'grid');" +
+                    "  let links = all.filter(el => (el.getAttribute('href') || '').includes('/messages/'));" +
+                    "  return JSON.stringify({" +
+                    "    rowsCount: rows.length," +
+                    "    gridsCount: grids.length," +
+                    "    linksCount: links.length," +
+                    "    bodySnippet: (document.body.innerText || '').substring(0, 300).replace(/\\n/g, ' ')" +
+                    "  });" +
+                    "}");
+            log.warn("[FB-Responder] Sidebar threads 0! URL: {}. Diag: {}", page.url(), diag);
+        }
+
         log.info("[FB-Responder] Found {} potential conversation elements.", threads.size());
 
         int maxCheck = Math.min(threads.size(), 10);

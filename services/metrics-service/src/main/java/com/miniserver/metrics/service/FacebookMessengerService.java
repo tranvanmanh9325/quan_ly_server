@@ -642,7 +642,13 @@ public class FacebookMessengerService implements DisposableBean {
                     if (matched) {
                         log.info("[FB-TestSend] Found compose result: '{}'. Clicking.", txt.replace("\n", " ").substring(0, Math.min(60, txt.length())));
                         res.click();
-                        page.waitForTimeout(1000);
+                        // Wait for the conversation to open after selecting the contact
+                        try {
+                            page.waitForSelector("h1, header a[href], [role='main'] h2, [role='heading']",
+                                    new Page.WaitForSelectorOptions().setTimeout(6000));
+                        } catch (Exception ignored) {
+                            page.waitForTimeout(1500);
+                        }
                         break;
                     }
                 }
@@ -654,8 +660,14 @@ public class FacebookMessengerService implements DisposableBean {
                         "button[type='submit']");
                 if (openBtn != null) {
                     openBtn.click();
-                    page.waitForTimeout(3000);
-                    log.info("[FB-TestSend] Clicked Open/Submit button in compose dialog.");
+                    // Wait for chat panel to render after dialog closes
+                    try {
+                        page.waitForSelector("h1, header a[href], [role='main'] h2, [role='heading']",
+                                new Page.WaitForSelectorOptions().setTimeout(8000));
+                    } catch (Exception ignored) {
+                        page.waitForTimeout(3000);
+                    }
+                    log.info("[FB-TestSend] Clicked Open/Submit button. URL now: {}", page.url());
                 }
             }
 
@@ -665,8 +677,8 @@ public class FacebookMessengerService implements DisposableBean {
                 return true;
             }
 
-            log.warn("[FB-TestSend] Compose flow finished but header verification failed. Header: '{}'",
-                    extractCurrentChatHeaderName(page));
+            log.warn("[FB-TestSend] Compose flow finished but header verification failed. Header: '{}' URL: {}",
+                    extractCurrentChatHeaderName(page), page.url());
         } catch (Exception e) {
             log.warn("[FB-TestSend] New Message compose flow error: {}", e.getMessage());
         }

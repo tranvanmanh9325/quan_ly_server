@@ -899,7 +899,7 @@ public class FacebookMessengerService implements DisposableBean {
 
             // Step 3: Submit message (Press Enter, then fallback to Send button if needed)
             page.keyboard().press("Enter");
-            page.waitForTimeout(800);
+            page.waitForTimeout(1000);
 
             String remainingText = (String) targetInput.evaluate("el => (el.innerText || '').trim()");
             if (remainingText != null && !remainingText.isEmpty() && remainingText.contains(text.substring(0, Math.min(10, text.length())))) {
@@ -913,10 +913,14 @@ public class FacebookMessengerService implements DisposableBean {
                 if (sendBtn != null) {
                     try {
                         sendBtn.click();
-                        page.waitForTimeout(800);
+                        page.waitForTimeout(1000);
                     } catch (Exception ignored) {}
                 }
             }
+
+            // CRITICAL: Wait 4.5 seconds on active conversation page so Facebook's MQTT/GraphQL WebSocket network payload finishes transmitting and receives server ACK before any SPA navigation.
+            log.info("[FB-Responder] Waiting 4.5s for Facebook MQTT/GraphQL network transmission to complete...");
+            page.waitForTimeout(4500);
 
             // Step 4: Save PNG screenshot for visual verification
             try {

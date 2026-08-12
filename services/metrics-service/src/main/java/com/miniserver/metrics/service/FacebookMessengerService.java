@@ -278,9 +278,18 @@ public class FacebookMessengerService implements DisposableBean {
             // always starts at the URL we navigate to, not at the last-visited thread URL.
             preparePersistentProfileDir();
 
+            // Run in headed mode on the Xvfb virtual display (:99) rather than headless.
+            // Facebook detects Chromium's headless mode (via CSS media queries, JS feature detection,
+            // and DOM render suppression) and does NOT render the full Messenger chat panel —
+            // only h1=Messenger appears. Running on :99 (already running for VNC) makes Facebook
+            // treat the browser as a normal GUI browser and render the complete chat panel DOM.
+            boolean hasDisplay = new java.io.File("/tmp/.X99-lock").exists() ||
+                    System.getenv("DISPLAY") != null;
+
             BrowserType.LaunchPersistentContextOptions pOptions = new BrowserType.LaunchPersistentContextOptions()
-                    .setHeadless(true)
+                    .setHeadless(!hasDisplay)   // headed on Xvfb, headless as last resort
                     .setArgs(CHROMIUM_ARGS)
+                    .setEnv(hasDisplay ? java.util.Map.of("DISPLAY", ":99") : java.util.Map.of())
                     .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
                     .setViewportSize(1920, 1080);
 
@@ -1325,9 +1334,13 @@ public class FacebookMessengerService implements DisposableBean {
                 // Session files are cleared by preparePersistentProfileDir() to prevent URL restoration.
                 preparePersistentProfileDir();
 
+                boolean hasDisplay2 = new java.io.File("/tmp/.X99-lock").exists() ||
+                        System.getenv("DISPLAY") != null;
+
                 BrowserType.LaunchPersistentContextOptions pOptions = new BrowserType.LaunchPersistentContextOptions()
-                        .setHeadless(true)
+                        .setHeadless(!hasDisplay2)
                         .setArgs(CHROMIUM_ARGS)
+                        .setEnv(hasDisplay2 ? java.util.Map.of("DISPLAY", ":99") : java.util.Map.of())
                         .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
                         .setViewportSize(1920, 1080);
 

@@ -293,15 +293,6 @@ public class FacebookMessengerService implements DisposableBean {
             try (BrowserContext context = playwright.chromium().launchPersistentContext(Paths.get(PROFILE_DIR_PATH), pOptions)) {
                 context.addInitScript(WEBDRIVER_STEALTH_SCRIPT);
 
-                context.route("**/*", route -> {
-                    String rt = route.request().resourceType();
-                    if ("image".equals(rt) || "media".equals(rt) || "font".equals(rt) || "stylesheet".equals(rt)) {
-                        route.abort();
-                    } else {
-                        route.fallback();
-                    }
-                });
-
                 if (cfg.getCookiesJson() != null && !cfg.getCookiesJson().isBlank()) {
                     applyCookies(context, cfg.getCookiesJson());
                 }
@@ -885,7 +876,15 @@ public class FacebookMessengerService implements DisposableBean {
                 }
             }
 
-            // Step 4: EMPIRICAL VERIFICATION — confirm message snippet is in conversation body
+            // Step 4: Save PNG screenshot for visual verification
+            try {
+                page.screenshot(new Page.ScreenshotOptions().setPath(Paths.get("/tmp/fb_send_result.png")));
+                log.info("[FB-Responder] Saved visual verification screenshot to /tmp/fb_send_result.png");
+            } catch (Exception e) {
+                log.warn("[FB-Responder] Could not save verification screenshot: {}", e.getMessage());
+            }
+
+            // Step 5: EMPIRICAL VERIFICATION — confirm message snippet is in conversation body
             Object verification = page.evaluate("(txt) => {" +
                     "  let main = document.querySelector('[role=\"main\"]') || document.body;" +
                     "  let mainText = main ? main.innerText || '' : '';" +
@@ -1413,14 +1412,6 @@ public class FacebookMessengerService implements DisposableBean {
 
                 try (BrowserContext context = playwright.chromium().launchPersistentContext(Paths.get(PROFILE_DIR_PATH), pOptions)) {
                     context.addInitScript(WEBDRIVER_STEALTH_SCRIPT);
-                    context.route("**/*", route -> {
-                        String rt = route.request().resourceType();
-                        if ("image".equals(rt) || "media".equals(rt) || "font".equals(rt) || "stylesheet".equals(rt)) {
-                            route.abort();
-                        } else {
-                            route.fallback();
-                        }
-                    });
 
                     applyCookies(context, cfg.getCookiesJson());
 

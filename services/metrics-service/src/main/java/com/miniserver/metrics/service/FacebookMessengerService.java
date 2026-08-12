@@ -562,9 +562,10 @@ public class FacebookMessengerService implements DisposableBean {
                 return false;
             }
 
-            inputBox.focus();
-            inputBox.click();
-            page.waitForTimeout(400);
+            try {
+                inputBox.focus();
+            } catch (Exception ignored) {}
+            page.waitForTimeout(300);
 
             // Execute insertText via JS execCommand & Playwright keyboard insertText
             try {

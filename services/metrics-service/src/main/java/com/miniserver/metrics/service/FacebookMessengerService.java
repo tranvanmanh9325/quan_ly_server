@@ -738,41 +738,59 @@ public class FacebookMessengerService implements DisposableBean {
 
     private boolean sendMessengerReply(Page page, String text) {
         try {
-            String combinedSelector = "div[data-lexical-editor='true'], " +
-                    "div[role='textbox'], " +
-                    "div[contenteditable='true'], " +
-                    "[aria-label*='Message'], [aria-label*='Tin nhắn'], " +
-                    "[aria-label*='Aa'], [aria-placeholder*='Aa'], " +
-                    "[aria-label*='Nhập'], [aria-label*='Type'], " +
-                    "[role='main'] footer div[contenteditable]";
+            // Only select contenteditable elements that are inside the main chat panel
+            // or the Messenger input area. We explicitly EXCLUDE the Messenger search box
+            // (which is also a div[contenteditable]) to avoid accidentally sending messages
+            // as searches when the chat panel hasn't loaded (e.g. E2EE without IndexedDB key).
+            String chatInputSelector =
+                    "[role='main'] div[data-lexical-editor='true'], " +
+                    "[role='main'] div[role='textbox'], " +
+                    "[role='main'] div[contenteditable='true'], " +
+                    "[role='main'] [aria-label*='Message'], " +
+                    "[role='main'] [aria-label*='Tin nhắn'], " +
+                    "[role='main'] [aria-label*='Aa'], " +
+                    "[role='main'] [aria-placeholder*='Aa']";
 
-            // Wait up to 12s for the message input textbox to mount in DOM
+            // Wait up to 15s for the chat input to appear
             try {
-                page.waitForSelector(combinedSelector, new Page.WaitForSelectorOptions().setTimeout(12000));
+                page.waitForSelector(chatInputSelector, new Page.WaitForSelectorOptions().setTimeout(15000));
             } catch (Exception e) {
-                log.warn("[FB-Responder] Timeout waiting for message textbox selector to appear.");
-            }
-
-            ElementHandle inputBox = page.querySelector(combinedSelector);
-
-            if (inputBox == null) {
-                Object diag = page.evaluate("() => {" +
-                        "  let editables = Array.from(document.querySelectorAll('*')).filter(el => el.isContentEditable || el.getAttribute('role') === 'textbox' || el.getAttribute('data-lexical-editor') === 'true');" +
-                        "  return editables.map(el => '<' + el.tagName + ' role=' + el.getAttribute('role') + ' aria=' + el.getAttribute('aria-label') + ' class=' + el.className + '>').join(' | ');" +
+                // Chat panel input not found — dump DOM diagnostic to determine why
+                Object diag = page.evaluate(
+                        "() => {" +
+                        "  let main = document.querySelector('[role=\"main\"]');" +
+                        "  let editables = Array.from(document.querySelectorAll('div[contenteditable], div[role=\"textbox\"]'));" +
+                        "  return JSON.stringify({" +
+                        "    url: window.location.href," +
+                        "    mainExists: !!main," +
+                        "    mainText: main ? main.innerText?.trim()?.substring(0,80) : null," +
+                        "    editables: editables.map(el => ({" +
+                        "      role: el.getAttribute('role')," +
+                        "      ariaLabel: el.getAttribute('aria-label')," +
+                        "      inMain: !!el.closest('[role=\"main\"]')," +
+                        "      lexical: el.getAttribute('data-lexical-editor')" +
+                        "    }))" +
+                        "  });" +
                         "}");
-                log.warn("[FB-Responder] Textbox null! URL: {}. Editables on page: {}", page.url(), diag);
-
-                log.warn("[FB-Responder] Attempting footer click fallback...");
-                ElementHandle footer = page.querySelector("footer, [role='main'] div[style*='bottom'], [role='region'] div[contenteditable]");
-                if (footer != null) {
-                    footer.click();
-                    page.waitForTimeout(500);
-                    inputBox = page.querySelector("div[contenteditable='true'], div[role='textbox']");
-                }
+                log.warn("[FB-Responder] Chat input NOT found in [role='main']. DOM: {}", diag);
+                return false;
             }
 
+            ElementHandle inputBox = page.querySelector(chatInputSelector);
+
             if (inputBox == null) {
-                log.warn("[FB-Responder] Could not find Messenger message textbox element.");
+                log.warn("[FB-Responder] Chat input selector returned null after waitForSelector succeeded. URL: {}", page.url());
+                return false;
+            }
+
+            // Confirm this element is truly inside the chat panel before typing
+            Boolean isInMain = (Boolean) inputBox.evaluate(
+                    "el => !!el.closest('[role=\"main\"]')");
+            String ariaLabel = (String) inputBox.evaluate("el => el.getAttribute('aria-label') || ''");
+            log.info("[FB-Responder] Chat input found. inMain={} ariaLabel='{}' URL={}", isInMain, ariaLabel, page.url());
+
+            if (!Boolean.TRUE.equals(isInMain)) {
+                log.warn("[FB-Responder] Found contenteditable is NOT inside [role='main']. Refusing to send to avoid typing into search/wrong element.");
                 return false;
             }
 

@@ -312,7 +312,11 @@ public class FacebookMessengerService implements DisposableBean {
         int autoRepliesSent = 0;
 
         List<ElementHandle> threads = page.querySelectorAll(
-                "[role='gridcell'], [role='row'], a[href*='/messages/t/'], div[role='navigation'] a, div[role='listitem']");
+                "div[role='grid'] [role='row'], " +
+                "div[aria-label='Đoạn chat'] [role='row'], " +
+                "div[aria-label='Chats'] [role='row'], " +
+                "a[href*='/messages/e2ee/t/'], " +
+                "a[href*='/messages/t/']");
         log.info("[FB-Responder] Found {} potential conversation elements.", threads.size());
 
         int maxCheck = Math.min(threads.size(), 10);
@@ -929,8 +933,43 @@ public class FacebookMessengerService implements DisposableBean {
                     log.info("[FB-TestSend] Landed on URL: '{}', Title: '{}'", page.url(), page.title());
 
                     String senderName = "Phạm Minh";
+
+                    // Check if message input box is visible; if not, try clicking target thread in sidebar or searching
+                    ElementHandle checkInput = page.querySelector("div[data-lexical-editor='true'], div[role='textbox'], div[contenteditable='true'], [aria-label*='Aa']");
+                    if (checkInput == null) {
+                        log.info("[FB-TestSend] Message input not immediately found. Searching for 'Phạm Minh' in sidebar...");
+                        List<ElementHandle> sidebarThreads = page.querySelectorAll("div[role='grid'] [role='row'], a[href*='/messages/']");
+                        boolean clicked = false;
+                        for (ElementHandle st : sidebarThreads) {
+                            String txt = st.innerText() != null ? st.innerText() : "";
+                            if (txt.contains("Phạm Minh") || txt.contains("Minh")) {
+                                st.click();
+                                page.waitForTimeout(3000);
+                                clicked = true;
+                                log.info("[FB-TestSend] Clicked sidebar thread for 'Phạm Minh'");
+                                break;
+                            }
+                        }
+
+                        if (!clicked) {
+                            log.info("[FB-TestSend] Target not in top sidebar. Using Messenger Search box for 'Phạm Minh'...");
+                            ElementHandle searchBox = page.querySelector("input[aria-label*='Tìm kiếm'], input[placeholder*='Tìm kiếm'], input[aria-label*='Search']");
+                            if (searchBox != null) {
+                                searchBox.click();
+                                searchBox.fill("Phạm Minh");
+                                page.waitForTimeout(2000);
+                                ElementHandle firstResult = page.querySelector("[role='listbox'] [role='option'], div[role='grid'] [role='row']");
+                                if (firstResult != null) {
+                                    firstResult.click();
+                                    page.waitForTimeout(3000);
+                                    log.info("[FB-TestSend] Clicked search result for 'Phạm Minh'");
+                                }
+                            }
+                        }
+                    }
+
                     ElementHandle headerElem = page.querySelector("h2, [role='main'] header span");
-                    if (headerElem != null && headerElem.textContent() != null) {
+                    if (headerElem != null && headerElem.textContent() != null && !headerElem.textContent().isBlank()) {
                         senderName = headerElem.textContent().trim();
                     }
 

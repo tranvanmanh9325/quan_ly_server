@@ -339,6 +339,9 @@ public class FacebookMessengerService implements DisposableBean {
 
         // 2. Query sidebar threads
         List<ElementHandle> threads = page.querySelectorAll(
+                "div[role='navigation'] [role='gridcell'], " +
+                "div[role='navigation'] [role='row'], " +
+                "div[role='grid'] [role='gridcell'], " +
                 "div[role='grid'] [role='row'], " +
                 "div[aria-label*='Đoạn chat'] [role='row'], " +
                 "div[aria-label*='Chats'] [role='row'], " +
@@ -346,19 +349,7 @@ public class FacebookMessengerService implements DisposableBean {
                 "a[href*='/messages/t/']");
 
         if (threads.isEmpty()) {
-            // Attempt to expand/focus sidebar by clicking Messenger nav / button
-            try {
-                ElementHandle navBtn = page.querySelector("a[href*='/messages/'], [aria-label*='Tin nhắn'], [aria-label*='Chats']");
-                if (navBtn != null) {
-                    navBtn.click();
-                    page.waitForTimeout(2000);
-                    threads = page.querySelectorAll(
-                            "div[role='grid'] [role='row'], " +
-                            "[role='row'], " +
-                            "a[href*='/messages/e2ee/t/'], " +
-                            "a[href*='/messages/t/']");
-                }
-            } catch (Exception ignored) {}
+            threads = page.querySelectorAll("[role='row'], [role='gridcell']");
         }
 
         log.info("[FB-Responder] Found {} potential conversation elements.", threads.size());
@@ -369,9 +360,12 @@ public class FacebookMessengerService implements DisposableBean {
                 ElementHandle thread = threads.get(i);
 
                 String threadItemText = thread.innerText() != null ? thread.innerText().toLowerCase() : "";
-                if (threadItemText.contains("đã thêm") || threadItemText.contains("ảnh nhóm")
+                if (threadItemText.contains("menu") || threadItemText.contains("thông báo")
+                        || threadItemText.contains("cài đặt") || threadItemText.contains("trang cá nhân")
+                        || threadItemText.contains("chuyển đến")
+                        || threadItemText.contains("đã thêm") || threadItemText.contains("ảnh nhóm")
                         || threadItemText.contains("đổi tên") || threadItemText.contains("rời khỏi")) {
-                    log.info("[FB-Responder] Skipping thread #{} (Group/Community sidebar marker)", i);
+                    log.info("[FB-Responder] Skipping item #{} (Navigation/Group marker: '{}')", i, threadItemText.substring(0, Math.min(30, threadItemText.length())).replace('\n', ' '));
                     continue;
                 }
 

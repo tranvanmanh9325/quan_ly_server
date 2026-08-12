@@ -282,20 +282,15 @@ public class FacebookMessengerService implements DisposableBean {
 
                 // Dismiss popups/modals if any
                 try {
-                    List<ElementHandle> dialogBtns = page.querySelectorAll(
-                            "div[role='dialog'] [role='button'], " +
-                            "div[role='dialog'] [aria-label*='Đóng'], " +
-                            "div[role='dialog'] [aria-label*='Close'], " +
-                            "div[role='dialog'] button");
+                    page.keyboard().press("Escape");
+                    page.waitForTimeout(300);
+
+                    List<ElementHandle> dialogBtns = page.querySelectorAll("div[role='dialog'] [role='button'], div[role='dialog'] button");
                     for (ElementHandle btn : dialogBtns) {
                         try {
-                            String txt = btn.innerText() != null ? btn.innerText().toLowerCase() : "";
-                            String aria = btn.getAttribute("aria-label") != null ? btn.getAttribute("aria-label").toLowerCase() : "";
-                            if (txt.contains("đóng") || txt.contains("tiếp tục") || txt.contains("tôi đã hiểu") || txt.contains("ok") || txt.contains("bỏ qua") || txt.contains("close") || txt.contains("not now") || aria.contains("đóng") || aria.contains("close")) {
-                                btn.click();
-                                page.waitForTimeout(500);
-                                log.info("[FB-Responder] Dismissed dialog overlay button: '{}' / aria: '{}'", txt, aria);
-                            }
+                            btn.click();
+                            page.waitForTimeout(400);
+                            log.info("[FB-Responder] Clicked dialog button to clear modal overlay.");
                         } catch (Exception ignored) {}
                     }
                 } catch (Exception ignored) {}
@@ -325,14 +320,11 @@ public class FacebookMessengerService implements DisposableBean {
 
         if (threads.isEmpty()) {
             Object diag = page.evaluate("() => {" +
-                    "  let all = Array.from(document.querySelectorAll('*'));" +
-                    "  let rows = all.filter(el => el.getAttribute('role') === 'row');" +
-                    "  let grids = all.filter(el => el.getAttribute('role') === 'grid');" +
-                    "  let links = all.filter(el => (el.getAttribute('href') || '').includes('/messages/'));" +
+                    "  let dialogs = document.querySelectorAll('div[role=\"dialog\"]');" +
+                    "  let btns = Array.from(document.querySelectorAll('button, [role=\"button\"]')).map(b => b.innerText || b.getAttribute('aria-label') || '').filter(Boolean);" +
                     "  return JSON.stringify({" +
-                    "    rowsCount: rows.length," +
-                    "    gridsCount: grids.length," +
-                    "    linksCount: links.length," +
+                    "    dialogCount: dialogs.length," +
+                    "    buttonTexts: btns.slice(0, 15)," +
                     "    bodySnippet: (document.body.innerText || '').substring(0, 300).replace(/\\n/g, ' ')" +
                     "  });" +
                     "}");

@@ -215,6 +215,7 @@ public class FacebookMessengerService implements DisposableBean {
 
         scanRunning.set(true);
         lastScanResult = null;
+        cooldownMap.clear();
         scanExecutor.submit(() -> {
             try {
                 int count = processMessengerChats(cfg);
@@ -378,25 +379,16 @@ public class FacebookMessengerService implements DisposableBean {
                 // Extract the unique path/ID part of the thread (e.g. "t/100045592363397/" or "e2ee/t/1019980833988260/")
                 String threadPath = href.replaceAll(".*/messages/", "");
 
-                // Dispatch bubbling MouseEvent click to trigger React's root event delegation
-                Boolean clickDispatched = (Boolean) page.evaluate("(path) => {" +
-                        "  let a = document.querySelector('a[href*=\"' + path + '\"]');" +
-                        "  if (!a) return false;" +
-                        "  let evt = new MouseEvent('click', { bubbles: true, cancelable: true, view: window });" +
-                        "  a.dispatchEvent(evt);" +
-                        "  let parent = a.closest('[role=\"row\"], [role=\"link\"], [role=\"button\"]');" +
-                        "  if (parent) parent.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));" +
-                        "  return true;" +
-                        "}", threadPath);
-
-                if (!Boolean.TRUE.equals(clickDispatched)) {
-                    // Fallback to direct navigation if element not found
-                    try {
-                        page.navigate(href, new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED).setTimeout(10000));
-                    } catch (Exception ignored) {}
+                // Navigate directly to thread URL to guarantee React mounts the active conversation window
+                try {
+                    page.navigate(href, new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED).setTimeout(12000));
+                } catch (Exception e) {
+                    log.warn("[FB-Responder] Navigation to '{}' failed/timed out: {}", href, e.getMessage());
                 }
 
-                // Poll up to 6s for the active chat panel header to render after SPA transition.
+                page.waitForTimeout(1000);
+
+                // Poll up to 6s for the active chat panel header to render after navigation.
                 String senderName = waitForChatHeaderToLoad(page, 6000);
 
                 // Handle E2EE PIN screen if it appears after opening a conversation.

@@ -591,44 +591,6 @@ public class FacebookMessengerService implements DisposableBean {
         }
     }
 
-    private void preparePersistentProfileDir() {
-        try {
-            Path profileDir = Paths.get(PROFILE_DIR_PATH);
-            if (!Files.exists(profileDir)) {
-                Files.createDirectories(profileDir);
-            }
-        } catch (Exception e) {
-            log.warn("[FB-Responder] Could not create persistent profile directory {}: {}", PROFILE_DIR_PATH, e.getMessage());
-        }
-    }
-
-    private void applyCookies(BrowserContext context, String cookiesJson) {
-        try {
-            JsonNode arrayNode = objectMapper.readTree(cookiesJson);
-            if (!arrayNode.isArray()) return;
-
-            List<Cookie> cookies = new ArrayList<>();
-            for (JsonNode node : arrayNode) {
-                String name = node.path("name").asText("");
-                String value = node.path("value").asText("");
-                String domain = node.path("domain").asText(".facebook.com");
-                String path = node.path("path").asText("/");
-
-                if (!name.isBlank() && !value.isBlank()) {
-                    Cookie c = new Cookie(name, value);
-                    c.setDomain(domain);
-                    c.setPath(path);
-                    cookies.add(c);
-                }
-            }
-            if (!cookies.isEmpty()) {
-                context.addCookies(cookies);
-                log.info("[FB-Responder] Successfully imported {} cookies into ephemeral browser context.", cookies.size());
-            }
-        } catch (Exception e) {
-            log.warn("[FB-Responder] Failed to parse/apply cookies JSON: {}", e.getMessage());
-        }
-    }
 
     private boolean isCooldownExpired(String senderName, int cooldownMinutes) {
         Instant lastTime = cooldownMap.get(senderName);

@@ -532,9 +532,9 @@ public class FacebookMessengerService implements DisposableBean {
                     "[aria-label*='Nhập'], [aria-label*='Type'], " +
                     "[role='main'] footer div[contenteditable]";
 
-            // Wait up to 5s for the message input textbox to mount in DOM
+            // Wait up to 12s for the message input textbox to mount in DOM
             try {
-                page.waitForSelector(combinedSelector, new Page.WaitForSelectorOptions().setTimeout(5000));
+                page.waitForSelector(combinedSelector, new Page.WaitForSelectorOptions().setTimeout(12000));
             } catch (Exception e) {
                 log.warn("[FB-Responder] Timeout waiting for message textbox selector to appear.");
             }

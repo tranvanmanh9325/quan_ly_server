@@ -82,6 +82,8 @@ services:
           memory: 1536M
         reservations:
           memory: 512M
+    volumes:
+      - fb_profile_data:/var/lib/fb_browser_profile
 
   file-service:
     build:
@@ -148,3 +150,4 @@ networks:
 
 volumes:
   postgres_data:
+  fb_profile_data:

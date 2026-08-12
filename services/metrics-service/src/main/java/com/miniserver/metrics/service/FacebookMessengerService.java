@@ -44,6 +44,43 @@ public class FacebookMessengerService implements DisposableBean {
 
     private static final Logger log = LoggerFactory.getLogger(FacebookMessengerService.class);
 
+    private static final String PROFILE_DIR_PATH;
+
+    static {
+        String envDir = System.getenv("FB_PROFILE_DIR");
+        if (envDir != null && !envDir.isBlank()) {
+            PROFILE_DIR_PATH = envDir;
+        } else if (Paths.get("/var/lib/fb_browser_profile").toFile().exists() || Paths.get("/var/lib").toFile().canWrite()) {
+            PROFILE_DIR_PATH = "/var/lib/fb_browser_profile";
+        } else {
+            PROFILE_DIR_PATH = "/tmp/fb_persistent_profile";
+        }
+    }
+
+    private static void preparePersistentProfileDir() {
+        try {
+            java.io.File dir = new java.io.File(PROFILE_DIR_PATH);
+            if (!dir.exists()) {
+                boolean created = dir.mkdirs();
+                log.info("[FB-Responder] Created persistent profile directory at {}: {}", PROFILE_DIR_PATH, created);
+            }
+            // Remove ONLY stale lock files if previous process crashed. DO NOT wipe IndexedDB / LocalStorage / E2EE keys!
+            new java.io.File(dir, "SingletonLock").delete();
+            new java.io.File(dir, "SingletonSocket").delete();
+            new java.io.File(dir, "SingletonCookie").delete();
+        } catch (Exception e) {
+            log.warn("[FB-Responder] Error preparing persistent profile directory: {}", e.getMessage());
+        }
+    }
+
+    private static boolean isPortOpen(String host, int port) {
+        try (Socket s = new Socket(host, port)) {
+            return s.isConnected();
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     // Lean Chromium args for headless automation — disables all non-essential features
     private static final List<String> CHROMIUM_ARGS = List.of(
             "--no-sandbox",
@@ -180,82 +217,95 @@ public class FacebookMessengerService implements DisposableBean {
         env.put("PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH", "/usr/bin/chromium");
         env.put("PLAYWRIGHT_NODEJS_PATH", "/usr/bin/node");
 
-        // try-with-resources guarantees browser is closed no matter what happens
         try (Playwright playwright = Playwright.create(new Playwright.CreateOptions().setEnv(env))) {
 
-            BrowserType.LaunchOptions launchOptions = new BrowserType.LaunchOptions()
+            // Case 1: Active VNC browser is running on CDP port 9222 -> connect to live Chromium
+            if (isPortOpen("localhost", 9222)) {
+                log.info("[FB-Responder] Active VNC browser session detected on CDP port 9222. Inspecting live browser context.");
+                try {
+                    Browser browser = playwright.chromium().connectOverCDP("http://localhost:9222");
+                    if (!browser.contexts().isEmpty()) {
+                        BrowserContext ctx = browser.contexts().get(0);
+                        Page page = ctx.pages().isEmpty() ? ctx.newPage() : ctx.pages().get(0);
+                        return inspectAndReply(page, cfg);
+                    }
+                } catch (Exception e) {
+                    log.warn("[FB-Responder] Failed to connect to CDP session on port 9222: {}", e.getMessage());
+                }
+            }
+
+            // Case 2: Standalone check using persistent browser context (preserves IndexedDB / E2EE PIN keys)
+            preparePersistentProfileDir();
+
+            BrowserType.LaunchPersistentContextOptions pOptions = new BrowserType.LaunchPersistentContextOptions()
                     .setHeadless(true)
-                    .setArgs(CHROMIUM_ARGS);
+                    .setArgs(CHROMIUM_ARGS)
+                    .setUserAgent("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36")
+                    .setViewportSize(1280, 800);
 
             if (Paths.get("/usr/bin/chromium").toFile().exists()) {
-                launchOptions.setExecutablePath(Paths.get("/usr/bin/chromium"));
+                pOptions.setExecutablePath(Paths.get("/usr/bin/chromium"));
             } else if (Paths.get("/usr/bin/chromium-browser").toFile().exists()) {
-                launchOptions.setExecutablePath(Paths.get("/usr/bin/chromium-browser"));
+                pOptions.setExecutablePath(Paths.get("/usr/bin/chromium-browser"));
             }
 
-            try (Browser browser = playwright.chromium().launch(launchOptions)) {
-                Browser.NewContextOptions ctxOptions = new Browser.NewContextOptions()
-                        .setUserAgent("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36")
-                        .setViewportSize(1280, 800);
+            try (BrowserContext context = playwright.chromium().launchPersistentContext(Paths.get(PROFILE_DIR_PATH), pOptions)) {
+                // Block heavy resources — images/media/fonts/stylesheets have no value for DOM automation
+                context.route("**/*", route -> {
+                    String rt = route.request().resourceType();
+                    if ("image".equals(rt) || "media".equals(rt) || "font".equals(rt) || "stylesheet".equals(rt)) {
+                        route.abort();
+                    } else {
+                        route.fallback();
+                    }
+                });
 
-                try (BrowserContext context = browser.newContext(ctxOptions)) {
-                    // Block heavy resources — images/media/fonts/stylesheets have no value for DOM automation
-                    context.route("**/*", route -> {
-                        String rt = route.request().resourceType();
-                        if ("image".equals(rt) || "media".equals(rt) || "font".equals(rt) || "stylesheet".equals(rt)) {
-                            route.abort();
-                        } else {
-                            route.fallback();
-                        }
-                    });
-
+                if (cfg.getCookiesJson() != null && !cfg.getCookiesJson().isBlank()) {
                     applyCookies(context, cfg.getCookiesJson());
-                    Page page = context.newPage();
-
-                    page.navigate("https://www.facebook.com/messages/t/",
-                            new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED));
-                    page.waitForTimeout(4000);
-
-                    String currentUrl = page.url();
-                    if (currentUrl.contains("login") || page.title().contains("Log in") || page.title().contains("Đăng nhập")) {
-                        log.warn("[FB-Responder] Cookies expired or invalid. Redirected to login page.");
-                        updateStatus(cfg, "Lỗi: Session Cookies hết hạn hoặc không hợp lệ. Vui lòng cập nhật Cookies mới.",
-                                LocalDateTime.now(java.time.ZoneId.of("Asia/Ho_Chi_Minh")));
-                        return 0;
-                    }
-
-                    log.info("[FB-Responder] Ephemeral browser ready. Current URL: {}", currentUrl);
-
-                    // Dismiss popups if any
-                    try {
-                        List<ElementHandle> closeBtns = page.querySelectorAll(
-                                "div[role='dialog'] div[role='button']:has-text('Not now'), " +
-                                "div[role='dialog'] div[role='button']:has-text('Không phải bây giờ'), " +
-                                "div[role='dialog'] div[aria-label='Close'], " +
-                                "div[role='dialog'] div[aria-label='Đóng']");
-                        for (ElementHandle btn : closeBtns) {
-                            if (btn.isVisible()) {
-                                btn.click();
-                                page.waitForTimeout(500);
-                            }
-                        }
-                    } catch (Exception ignored) {}
-
-                    // Wait for conversation list to render
-                    try {
-                        page.waitForSelector("[role='gridcell'], [role='row'], a[href*='/messages/t/'], div[role='navigation'] a",
-                                new Page.WaitForSelectorOptions().setTimeout(8000));
-                    } catch (Exception e) {
-                        log.warn("[FB-Responder] Wait for thread list selector timed out, attempting query fallback...");
-                    }
-
-                    return inspectAndReply(page, cfg);
                 }
-                // BrowserContext auto-closed here
+
+                Page page = context.pages().isEmpty() ? context.newPage() : context.pages().get(0);
+
+                page.navigate("https://www.facebook.com/messages/t/",
+                        new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED));
+                page.waitForTimeout(4000);
+
+                String currentUrl = page.url();
+                if (currentUrl.contains("login") || page.title().contains("Log in") || page.title().contains("Đăng nhập")) {
+                    log.warn("[FB-Responder] Cookies expired or invalid. Redirected to login page.");
+                    updateStatus(cfg, "Lỗi: Session Cookies hết hạn hoặc không hợp lệ. Vui lòng cập nhật Cookies mới.",
+                            LocalDateTime.now(java.time.ZoneId.of("Asia/Ho_Chi_Minh")));
+                    return 0;
+                }
+
+                log.info("[FB-Responder] Persistent browser ready. Current URL: {}", currentUrl);
+
+                // Dismiss popups if any
+                try {
+                    List<ElementHandle> closeBtns = page.querySelectorAll(
+                            "div[role='dialog'] div[role='button']:has-text('Not now'), " +
+                            "div[role='dialog'] div[role='button']:has-text('Không phải bây giờ'), " +
+                            "div[role='dialog'] div[aria-label='Close'], " +
+                            "div[role='dialog'] div[aria-label='Đóng']");
+                    for (ElementHandle btn : closeBtns) {
+                        if (btn.isVisible()) {
+                            btn.click();
+                            page.waitForTimeout(500);
+                        }
+                    }
+                } catch (Exception ignored) {}
+
+                // Wait for conversation list to render
+                try {
+                    page.waitForSelector("[role='gridcell'], [role='row'], a[href*='/messages/t/'], div[role='navigation'] a",
+                            new Page.WaitForSelectorOptions().setTimeout(8000));
+                } catch (Exception e) {
+                    log.warn("[FB-Responder] Wait for thread list selector timed out, attempting query fallback...");
+                }
+
+                return inspectAndReply(page, cfg);
             }
-            // Browser auto-closed here → Chromium Renderer process is killed immediately
         }
-        // Playwright driver auto-closed here
     }
 
     private int inspectAndReply(Page page, FacebookConfig cfg) {
@@ -472,9 +522,8 @@ public class FacebookMessengerService implements DisposableBean {
                     .orElse(null);
             boolean hasSavedSession = savedCookiesJson != null;
 
-            // Always clear the stale profile to avoid remembered tiny window geometry.
-            // Session state is persisted in the DB as cookies and re-injected via CDP asynchronously.
-            new ProcessBuilder("sh", "-c", "rm -rf /tmp/fb_interactive_profile").start().waitFor();
+            // Prepare persistent profile directory (preserve IndexedDB, LocalStorage & E2EE PIN keys)
+            preparePersistentProfileDir();
 
             // 1. Start Xvfb virtual framebuffer on :99 (Full HD 1920x1080)
             new ProcessBuilder("Xvfb", ":99", "-screen", "0", "1920x1080x24", "-ac", "+extension", "RANDR").start();
@@ -520,7 +569,7 @@ public class FacebookMessengerService implements DisposableBean {
                     "--disable-breakpad",
                     "--disable-component-extensions-with-background-pages",
                     "--disable-renderer-backgrounding",
-                    "--user-data-dir=/tmp/fb_interactive_profile",
+                    "--user-data-dir=" + PROFILE_DIR_PATH,
                     "--remote-debugging-port=9222",
                     initialUrl
             );

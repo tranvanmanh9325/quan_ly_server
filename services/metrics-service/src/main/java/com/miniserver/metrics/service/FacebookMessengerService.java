@@ -424,14 +424,22 @@ public class FacebookMessengerService implements DisposableBean {
 
     private boolean sendMessengerReply(Page page, String text) {
         try {
-            // Expanded selectors covering Lexical editor, aria-label, role=textbox, contenteditable, placeholder, and Aa button
-            ElementHandle inputBox = page.querySelector(
-                    "div[data-lexical-editor='true'], " +
+            String combinedSelector = "div[data-lexical-editor='true'], " +
                     "div[role='textbox'], " +
                     "div[contenteditable='true'], " +
                     "[aria-label*='Message'], [aria-label*='Tin nhắn'], " +
                     "[aria-label*='Aa'], [aria-placeholder*='Aa'], " +
-                    "[aria-label*='Nhập'], [aria-label*='Type']");
+                    "[aria-label*='Nhập'], [aria-label*='Type'], " +
+                    "[role='main'] footer div[contenteditable]";
+
+            // Wait up to 5s for the message input textbox to mount in DOM
+            try {
+                page.waitForSelector(combinedSelector, new Page.WaitForSelectorOptions().setTimeout(5000));
+            } catch (Exception e) {
+                log.warn("[FB-Responder] Timeout waiting for message textbox selector to appear.");
+            }
+
+            ElementHandle inputBox = page.querySelector(combinedSelector);
 
             if (inputBox == null) {
                 // Fallback: try clicking footer / main chat area to focus input
@@ -439,7 +447,7 @@ public class FacebookMessengerService implements DisposableBean {
                 ElementHandle footer = page.querySelector("footer, [role='main'] div[style*='bottom'], [role='region'] div[contenteditable]");
                 if (footer != null) {
                     footer.click();
-                    page.waitForTimeout(300);
+                    page.waitForTimeout(500);
                     inputBox = page.querySelector("div[contenteditable='true'], div[role='textbox']");
                 }
             }

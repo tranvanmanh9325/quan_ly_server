@@ -40,7 +40,7 @@ public class FacebookConfig {
     private String customMessage = "";
 
 
-    @Column(name = "last_status", nullable = false)
+    @Column(name = "last_status", nullable = false, columnDefinition = "TEXT")
     private String lastStatus = "Tắt";
 
     @Column(name = "last_check_at")

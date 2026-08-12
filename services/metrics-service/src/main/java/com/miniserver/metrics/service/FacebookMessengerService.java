@@ -942,6 +942,9 @@ public class FacebookMessengerService implements DisposableBean {
     }
 
     private void updateStatus(FacebookConfig cfg, String status, LocalDateTime checkAt) {
+        if (status != null && status.length() > 245) {
+            status = status.substring(0, 242) + "...";
+        }
         cfg.setLastStatus(status);
         if (checkAt != null) cfg.setLastCheckAt(checkAt);
         configRepository.save(cfg);

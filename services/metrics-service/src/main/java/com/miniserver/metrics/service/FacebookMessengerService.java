@@ -93,6 +93,39 @@ public class FacebookMessengerService implements DisposableBean {
         }
     }
 
+    /**
+     * Ensures Xvfb is running on display :99. If the lock file is missing, starts a new Xvfb
+     * process. This is required so that launchPersistentContext can run in headed (non-headless)
+     * mode — Facebook detects --headless and suppresses the Messenger chat panel DOM.
+     *
+     * @return the DISPLAY value to use (":99") if Xvfb is available, null otherwise
+     */
+    private static String ensureXvfbRunning() {
+        // Check if Xvfb is already running on :99
+        if (new java.io.File("/tmp/.X99-lock").exists()) {
+            log.info("[FB-Responder] Xvfb already running on :99");
+            return ":99";
+        }
+        // Try to start Xvfb on :99
+        try {
+            ProcessBuilder pb = new ProcessBuilder(
+                    "Xvfb", ":99", "-screen", "0", "1920x1080x24", "-ac", "+extension", "GLX"
+            );
+            pb.environment().put("DISPLAY", ":99");
+            pb.redirectErrorStream(true);
+            Process xvfb = pb.start();
+            // Give Xvfb 1.5s to bind the display
+            Thread.sleep(1500);
+            if (new java.io.File("/tmp/.X99-lock").exists()) {
+                log.info("[FB-Responder] Xvfb started on :99 (PID={})", xvfb.pid());
+                return ":99";
+            }
+        } catch (Exception e) {
+            log.warn("[FB-Responder] Could not start Xvfb: {}", e.getMessage());
+        }
+        return null;
+    }
+
     // Lean Chromium args for headless automation — disables all non-essential features.
     private static final List<String> CHROMIUM_ARGS = List.of(
             "--no-sandbox",
@@ -283,13 +316,15 @@ public class FacebookMessengerService implements DisposableBean {
             // and DOM render suppression) and does NOT render the full Messenger chat panel —
             // only h1=Messenger appears. Running on :99 (already running for VNC) makes Facebook
             // treat the browser as a normal GUI browser and render the complete chat panel DOM.
-            boolean hasDisplay = new java.io.File("/tmp/.X99-lock").exists() ||
-                    System.getenv("DISPLAY") != null;
+            // Ensure Xvfb is running, then run Chromium in headed mode to bypass Facebook's
+            // headless detection which suppresses the Messenger chat panel DOM.
+            String display = ensureXvfbRunning();
+            boolean hasDisplay = display != null;
 
             BrowserType.LaunchPersistentContextOptions pOptions = new BrowserType.LaunchPersistentContextOptions()
-                    .setHeadless(!hasDisplay)   // headed on Xvfb, headless as last resort
+                    .setHeadless(!hasDisplay)
                     .setArgs(CHROMIUM_ARGS)
-                    .setEnv(hasDisplay ? java.util.Map.of("DISPLAY", ":99") : java.util.Map.of())
+                    .setEnv(hasDisplay ? java.util.Map.of("DISPLAY", display) : java.util.Map.of())
                     .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
                     .setViewportSize(1920, 1080);
 
@@ -1334,13 +1369,13 @@ public class FacebookMessengerService implements DisposableBean {
                 // Session files are cleared by preparePersistentProfileDir() to prevent URL restoration.
                 preparePersistentProfileDir();
 
-                boolean hasDisplay2 = new java.io.File("/tmp/.X99-lock").exists() ||
-                        System.getenv("DISPLAY") != null;
+                String display2 = ensureXvfbRunning();
+                boolean hasDisplay2 = display2 != null;
 
                 BrowserType.LaunchPersistentContextOptions pOptions = new BrowserType.LaunchPersistentContextOptions()
                         .setHeadless(!hasDisplay2)
                         .setArgs(CHROMIUM_ARGS)
-                        .setEnv(hasDisplay2 ? java.util.Map.of("DISPLAY", ":99") : java.util.Map.of())
+                        .setEnv(hasDisplay2 ? java.util.Map.of("DISPLAY", display2) : java.util.Map.of())
                         .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
                         .setViewportSize(1920, 1080);
 

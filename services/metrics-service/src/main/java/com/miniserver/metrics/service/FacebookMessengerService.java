@@ -752,6 +752,8 @@ public class FacebookMessengerService implements DisposableBean {
         Object countResult = page.evaluate("() => {" +
                 "  let main = document.querySelector('[role=\"main\"]');" +
                 "  if (!main) return 0;" +
+                "  let mainRect = main.getBoundingClientRect();" +
+                "  let mainMidX = mainRect.left + (mainRect.width / 2);" +
                 "  let rows = Array.from(main.querySelectorAll('[role=\"row\"], [data-scope=\"messages_table\"]'));" +
                 "  if (rows.length === 0) {" +
                 "    rows = Array.from(main.querySelectorAll('div[dir=\"auto\"]')).map(el => el.closest('div[style*=\"flex\"]') || el).filter(Boolean);" +
@@ -763,24 +765,21 @@ public class FacebookMessengerService implements DisposableBean {
                 "    if (!text) continue;" +
                 "    let isOutgoing = false;" +
                 "    let aria = (row.getAttribute('aria-label') || '') + ' ' + (row.querySelector('[aria-label]')?.getAttribute('aria-label') || '');" +
-                "    if (aria.includes('B\u1ea1n \u0111\u00e3 g\u1eedi') || aria.includes('You sent') || aria.includes('\u0110\u00e3 g\u1eedi') || aria.includes('Sent')) {" +
+                "    if (aria.includes('B\u1ea1n \u0111\u00e3 g\u1eedi') || aria.includes('You sent') || aria.includes('\u0110\u00e3 g\u1eedi') || aria.includes('Sent') || aria.includes('\u0110\u00e3 xem') || aria.includes('Seen')) {" +
                 "      isOutgoing = true;" +
                 "    }" +
                 "    if (!isOutgoing) {" +
-                "      let flexParent = row.closest('div[style*=\"flex-end\"]') || row;" +
-                "      let comp = window.getComputedStyle(flexParent);" +
-                "      if (comp.alignItems === 'flex-end' || comp.justifyContent === 'flex-end') {" +
+                "      let rect = row.getBoundingClientRect();" +
+                "      let rowCenterX = rect.left + (rect.width / 2);" +
+                "      if (rect.width > 0 && rowCenterX > mainMidX) {" +
                 "        isOutgoing = true;" +
                 "      }" +
                 "    }" +
                 "    if (!isOutgoing) {" +
-                "      let bubbles = row.querySelectorAll('div[dir=\"auto\"]');" +
-                "      for (let b of bubbles) {" +
-                "        let bg = window.getComputedStyle(b).backgroundColor;" +
-                "        if (bg.includes('rgb(0,') || bg.includes('rgb(10,') || bg.includes('rgb(45, 136, 255)') || bg.includes('rgb(0, 132, 255)')) {" +
-                "          isOutgoing = true;" +
-                "          break;" +
-                "        }" +
+                "      let flexParent = row.closest('div[style*=\"flex-end\"]') || row;" +
+                "      let comp = window.getComputedStyle(flexParent);" +
+                "      if (comp.alignItems === 'flex-end' || comp.justifyContent === 'flex-end' || comp.flexDirection === 'row-reverse') {" +
+                "        isOutgoing = true;" +
                 "      }" +
                 "    }" +
                 "    if (isOutgoing) {" +

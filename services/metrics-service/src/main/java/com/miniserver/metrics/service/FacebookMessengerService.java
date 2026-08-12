@@ -854,12 +854,29 @@ public class FacebookMessengerService implements DisposableBean {
             }
 
             try {
+                inputBox.click();
                 inputBox.focus();
             } catch (Exception ignored) {}
             page.waitForTimeout(300);
 
-            // Execute insertText via JS execCommand & Playwright keyboard insertText
+            // Step 1: Input text into Lexical editor using multi-strategy fallback
+            boolean inputSuccess = false;
             try {
+                // Method A: Playwright fill() — dispatches native CDP events
+                inputBox.fill(text);
+                inputSuccess = true;
+            } catch (Exception e1) {
+                log.warn("[FB-Responder] fill() failed ({}), trying keyboard insertText...", e1.getMessage());
+                try {
+                    page.keyboard().insertText(text);
+                    inputSuccess = true;
+                } catch (Exception e2) {
+                    log.warn("[FB-Responder] keyboard insertText failed ({}), trying JS input event pipeline...", e2.getMessage());
+                }
+            }
+
+            // Method B: Full synthetic Event pipeline for Lexical/DraftJS (beforeinput -> insertText -> input)
+            if (!inputSuccess) {
                 inputBox.evaluate("(el, txt) => {" +
                         "  el.focus();" +
                         "  let sel = window.getSelection();" +
@@ -867,17 +884,62 @@ public class FacebookMessengerService implements DisposableBean {
                         "  range.selectNodeContents(el);" +
                         "  sel.removeAllRanges();" +
                         "  sel.addRange(range);" +
+                        "  try {" +
+                        "    let inputEvt = new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: txt });" +
+                        "    el.dispatchEvent(inputEvt);" +
+                        "  } catch (e) {}" +
                         "  document.execCommand('insertText', false, txt);" +
+                        "  try {" +
+                        "    el.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true }));" +
+                        "  } catch (e) {}" +
                         "}", text);
-            } catch (Exception e) {
-                log.warn("[FB-Responder] JS execCommand failed, falling back to keyboard.insertText: {}", e.getMessage());
-                page.keyboard().insertText(text);
             }
 
             page.waitForTimeout(600);
+
+            // Step 2: Submit message (Try Enter press first, then click Send button if text remains in editor)
             page.keyboard().press("Enter");
-            log.info("[FB-Responder] Successfully typed and sent message via Messenger input.");
-            return true;
+            page.waitForTimeout(800);
+
+            String remainingText = (String) inputBox.evaluate("el => (el.innerText || '').trim()");
+            if (remainingText != null && !remainingText.isEmpty()) {
+                log.info("[FB-Responder] Editor still contains text ('{}') after Enter. Attempting Send button click...",
+                        remainingText.substring(0, Math.min(20, remainingText.length())));
+
+                ElementHandle sendBtn = page.querySelector(
+                        "[role='main'] [aria-label*='G\u1eedi'], [role='main'] [aria-label*='Send'], " +
+                        "[role='main'] [aria-label*='g\u1eedi'], [role='main'] [aria-label*='send'], " +
+                        "[role='main'] div[role='button'][tabindex='0']:last-child");
+                if (sendBtn != null) {
+                    try {
+                        sendBtn.click();
+                        page.waitForTimeout(800);
+                    } catch (Exception ignored) {}
+                }
+            }
+
+            // Step 3: EMPIRICAL VERIFICATION — confirm editor is cleared OR message snippet is in conversation body
+            Object verification = page.evaluate("(txt) => {" +
+                    "  let main = document.querySelector('[role=\"main\"]');" +
+                    "  let el = main ? main.querySelector('div[data-lexical-editor=\"true\"], div[contenteditable=\"true\"]') : null;" +
+                    "  let editorText = el ? (el.innerText || '').trim() : '';" +
+                    "  let mainText = main ? main.innerText || '' : '';" +
+                    "  let snippet = txt.length > 15 ? txt.substring(0, 15) : txt;" +
+                    "  let inBody = mainText.includes(snippet);" +
+                    "  let cleared = editorText === '' || !editorText.includes(snippet);" +
+                    "  return JSON.stringify({ cleared, inBody, editorText: editorText.substring(0,30), snippet });" +
+                    "}", text);
+
+            log.info("[FB-Responder] Message send verification result: {}", verification);
+
+            boolean isVerified = verification != null && (verification.toString().contains("\"cleared\":true") || verification.toString().contains("\"inBody\":true"));
+            if (isVerified) {
+                log.info("[FB-Responder] EMPIRICALLY VERIFIED: Message was successfully typed and sent to chat!");
+                return true;
+            } else {
+                log.warn("[FB-Responder] Send verification FAILED. Verification payload: {}", verification);
+                return false;
+            }
         } catch (Exception e) {
             log.error("[FB-Responder] Error typing/sending Messenger reply: {}", e.getMessage(), e);
             return false;

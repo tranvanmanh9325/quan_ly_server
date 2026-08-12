@@ -64,10 +64,22 @@ public class FacebookMessengerService implements DisposableBean {
                 boolean created = dir.mkdirs();
                 log.info("[FB-Responder] Created persistent profile directory at {}: {}", PROFILE_DIR_PATH, created);
             }
-            // Remove ONLY stale lock files if previous process crashed. DO NOT wipe IndexedDB / LocalStorage / E2EE keys!
+            // Remove stale lock files if previous process crashed.
             new java.io.File(dir, "SingletonLock").delete();
             new java.io.File(dir, "SingletonSocket").delete();
             new java.io.File(dir, "SingletonCookie").delete();
+
+            // Clear Chromium's session restoration files so it doesn't restore the last-visited
+            // thread URL on next launch. Without this, launchPersistentContext reopens the specific
+            // thread URL instead of the inbox root, which prevents the sidebar from loading.
+            // IMPORTANT: we do NOT touch IndexedDB or LocalStorage — that's where E2EE PIN keys live.
+            java.io.File defaultDir = new java.io.File(dir, "Default");
+            if (defaultDir.exists()) {
+                new java.io.File(defaultDir, "Current Session").delete();
+                new java.io.File(defaultDir, "Current Tabs").delete();
+                new java.io.File(defaultDir, "Last Session").delete();
+                new java.io.File(defaultDir, "Last Tabs").delete();
+            }
         } catch (Exception e) {
             log.warn("[FB-Responder] Error preparing persistent profile directory: {}", e.getMessage());
         }
@@ -252,83 +264,74 @@ public class FacebookMessengerService implements DisposableBean {
                 }
             }
 
-            // Case 2: Standalone ephemeral check.
-            // IMPORTANT: We use an ephemeral BrowserContext (NOT launchPersistentContext) to prevent
-            // Chromium from restoring the last session URL. The persistent context was causing Chromium
-            // to reopen the last-visited thread URL directly, which skips the inbox root navigation
-            // and leaves the sidebar anchor links unpopulated.
-            // Auth state is injected via cookies from the DB on every run — no persistent profile needed.
-            BrowserType.LaunchOptions launchOpts = new BrowserType.LaunchOptions()
+            // Case 2: Standalone check using persistent browser context.
+            // We use launchPersistentContext (NOT ephemeral) so IndexedDB is preserved.
+            // IndexedDB stores the E2EE PIN key for Messenger's end-to-end encrypted conversations.
+            // Without it, Facebook shows a "Enter PIN" screen on every conversation open.
+            // Session restoration files are cleared in preparePersistentProfileDir() so Chromium
+            // always starts at the URL we navigate to, not at the last-visited thread URL.
+            preparePersistentProfileDir();
+
+            BrowserType.LaunchPersistentContextOptions pOptions = new BrowserType.LaunchPersistentContextOptions()
                     .setHeadless(true)
-                    .setArgs(CHROMIUM_ARGS);
+                    .setArgs(CHROMIUM_ARGS)
+                    .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
+                    .setViewportSize(1920, 1080);
 
             if (Paths.get("/usr/bin/chromium").toFile().exists()) {
-                launchOpts.setExecutablePath(Paths.get("/usr/bin/chromium"));
+                pOptions.setExecutablePath(Paths.get("/usr/bin/chromium"));
             } else if (Paths.get("/usr/bin/chromium-browser").toFile().exists()) {
-                launchOpts.setExecutablePath(Paths.get("/usr/bin/chromium-browser"));
+                pOptions.setExecutablePath(Paths.get("/usr/bin/chromium-browser"));
             }
 
-            try (Browser browser = playwright.chromium().launch(launchOpts)) {
-                Browser.NewContextOptions ctxOpts = new Browser.NewContextOptions()
-                        .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
-                        .setViewportSize(1920, 1080);
+            try (BrowserContext context = playwright.chromium().launchPersistentContext(Paths.get(PROFILE_DIR_PATH), pOptions)) {
+                context.addInitScript(WEBDRIVER_STEALTH_SCRIPT);
 
-                try (BrowserContext context = browser.newContext(ctxOpts)) {
-                    // Inject stealth script before any scripts execute
-                    context.addInitScript(WEBDRIVER_STEALTH_SCRIPT);
-
-                    // Block heavy resources — images/media/fonts/stylesheets have no automation value
-                    context.route("**/*", route -> {
-                        String rt = route.request().resourceType();
-                        if ("image".equals(rt) || "media".equals(rt) || "font".equals(rt) || "stylesheet".equals(rt)) {
-                            route.abort();
-                        } else {
-                            route.fallback();
-                        }
-                    });
-
-                    if (cfg.getCookiesJson() != null && !cfg.getCookiesJson().isBlank()) {
-                        applyCookies(context, cfg.getCookiesJson());
+                context.route("**/*", route -> {
+                    String rt = route.request().resourceType();
+                    if ("image".equals(rt) || "media".equals(rt) || "font".equals(rt) || "stylesheet".equals(rt)) {
+                        route.abort();
+                    } else {
+                        route.fallback();
                     }
+                });
 
-                    Page page = context.newPage();
-
-                    // Navigate to Messenger inbox root. With an ephemeral context there is no saved
-                    // session URL to restore, so we always land on the page we requested.
-                    page.navigate("https://www.facebook.com/messages/t/",
-                            new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED).setTimeout(20000));
-                    page.waitForTimeout(3000);
-
-                    String currentUrl = page.url();
-                    log.info("[FB-Responder] Navigated to inbox. Current URL: {}", currentUrl);
-
-                    if (currentUrl.contains("login") || page.title().contains("Log in") || page.title().contains("Đăng nhập")) {
-                        log.warn("[FB-Responder] Cookies expired or invalid. Redirected to login page.");
-                        updateStatus(cfg, "Lỗi: Session Cookies hết hạn hoặc không hợp lệ. Vui lòng cập nhật Cookies mới.",
-                                LocalDateTime.now(java.time.ZoneId.of("Asia/Ho_Chi_Minh")));
-                        return 0;
-                    }
-
-                    // Wait for conversation sidebar anchor links to appear in DOM
-                    try {
-                        page.waitForSelector(
-                                "a[href*='/messages/t/'], a[href*='/messages/e2ee/t/']",
-                                new Page.WaitForSelectorOptions().setTimeout(12000));
-                        log.info("[FB-Responder] Sidebar loaded. URL: {}", page.url());
-                    } catch (Exception e) {
-                        // Log DOM diagnostic to understand what actually rendered
-                        Object diagResult = page.evaluate(
-                                "() => { let links = document.querySelectorAll('a[href]'); " +
-                                "let msgLinks = Array.from(links).filter(a => a.href.includes('/messages/')).map(a => a.href); " +
-                                "return JSON.stringify({ url: window.location.href, title: document.title, msgLinks: msgLinks.slice(0,5), totalLinks: links.length }); }");
-                        log.warn("[FB-Responder] Sidebar timeout. DOM diag: {}", diagResult);
-                    }
-
-                    // Dismiss any blocking modals/popups
-                    try { page.keyboard().press("Escape"); page.waitForTimeout(200); } catch (Exception ignored) {}
-
-                    return inspectAndReply(page, cfg);
+                if (cfg.getCookiesJson() != null && !cfg.getCookiesJson().isBlank()) {
+                    applyCookies(context, cfg.getCookiesJson());
                 }
+
+                Page page = context.pages().isEmpty() ? context.newPage() : context.pages().get(0);
+
+                page.navigate("https://www.facebook.com/messages/t/",
+                        new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED).setTimeout(20000));
+                page.waitForTimeout(3000);
+
+                String currentUrl = page.url();
+                log.info("[FB-Responder] Navigated to inbox. Current URL: {}", currentUrl);
+
+                if (currentUrl.contains("login") || page.title().contains("Log in") || page.title().contains("Đăng nhập")) {
+                    log.warn("[FB-Responder] Cookies expired or invalid. Redirected to login page.");
+                    updateStatus(cfg, "Lỗi: Session Cookies hết hạn hoặc không hợp lệ. Vui lòng cập nhật Cookies mới.",
+                            LocalDateTime.now(java.time.ZoneId.of("Asia/Ho_Chi_Minh")));
+                    return 0;
+                }
+
+                try {
+                    page.waitForSelector(
+                            "a[href*='/messages/t/'], a[href*='/messages/e2ee/t/']",
+                            new Page.WaitForSelectorOptions().setTimeout(12000));
+                    log.info("[FB-Responder] Sidebar loaded. URL: {}", page.url());
+                } catch (Exception e) {
+                    Object diagResult = page.evaluate(
+                            "() => { let links = document.querySelectorAll('a[href]'); " +
+                            "let msgLinks = Array.from(links).filter(a => a.href.includes('/messages/')).map(a => a.href); " +
+                            "return JSON.stringify({ url: window.location.href, title: document.title, msgLinks: msgLinks.slice(0,5), totalLinks: links.length }); }");
+                    log.warn("[FB-Responder] Sidebar timeout. DOM diag: {}", diagResult);
+                }
+
+                try { page.keyboard().press("Escape"); page.waitForTimeout(200); } catch (Exception ignored) {}
+
+                return inspectAndReply(page, cfg);
             }
         }
     }
@@ -428,8 +431,6 @@ public class FacebookMessengerService implements DisposableBean {
      */
     private boolean openTargetThreadInSidebar(Page page, String threadId, String contactName) {
         // Step 1: Look for the thread's anchor link in the current sidebar.
-        // This is the most reliable method — clicking an existing sidebar link triggers the SPA
-        // router correctly and the chat panel hydrates with the full conversation.
         log.info("[FB-TestSend] Searching sidebar for thread link containing '{}'", threadId);
         List<ElementHandle> anchors = page.querySelectorAll(
                 "a[href*='/messages/t/"+threadId+"'], a[href*='/messages/e2ee/t/"+threadId+"']");
@@ -439,11 +440,23 @@ public class FacebookMessengerService implements DisposableBean {
                 log.info("[FB-TestSend] Found sidebar link for thread '{}'. Clicking...", threadId);
                 anchors.get(0).click();
                 page.waitForTimeout(3000);
+
+                // Detect E2EE PIN screen — this blocks the conversation in a headless context
+                // that doesn't have the PIN stored in IndexedDB (ephemeral context).
+                // When the PIN screen appears, skip to the compose fallback which opens a
+                // different conversation window (non-E2EE) via the New Message flow.
+                String header = extractCurrentChatHeaderName(page);
+                if (header != null && (header.contains("PIN") || header.contains("mã") || header.contains("khôi phục"))) {
+                    log.warn("[FB-TestSend] E2EE PIN screen detected (header='{}')! This conversation requires a PIN key stored in IndexedDB.", header);
+                    log.warn("[FB-TestSend] To fix: open the browser via the VNC panel, enter the PIN once, and save the session. The PIN key will then be stored in the persistent profile.");
+                    return false;
+                }
+
                 if (verifyRecipientIdentity(page, contactName)) {
                     log.info("[FB-TestSend] Sidebar click SUCCESS. Verified chat header for '{}'", contactName);
                     return true;
                 }
-                log.warn("[FB-TestSend] Sidebar click done but header mismatch. Header: '{}'", extractCurrentChatHeaderName(page));
+                log.warn("[FB-TestSend] Sidebar click done but header mismatch. Header: '{}'", header);
             } catch (Exception e) {
                 log.warn("[FB-TestSend] Sidebar anchor click failed: {}", e.getMessage());
             }
@@ -1169,82 +1182,81 @@ public class FacebookMessengerService implements DisposableBean {
             env.put("PLAYWRIGHT_NODEJS_PATH", "/usr/bin/node");
 
             try (Playwright playwright = Playwright.create(new Playwright.CreateOptions().setEnv(env))) {
-                // Use ephemeral browser (NOT launchPersistentContext) so Chromium doesn't restore
-                // the last-visited thread URL and correctly loads the inbox root.
-                BrowserType.LaunchOptions launchOpts = new BrowserType.LaunchOptions()
+                // Use persistent context so IndexedDB (E2EE PIN keys) is preserved.
+                // Session restoration files are wiped by preparePersistentProfileDir() so Chromium
+                // always opens to the inbox root URL, not the last-visited thread URL.
+                preparePersistentProfileDir();
+
+                BrowserType.LaunchPersistentContextOptions pOptions = new BrowserType.LaunchPersistentContextOptions()
                         .setHeadless(true)
-                        .setArgs(CHROMIUM_ARGS);
+                        .setArgs(CHROMIUM_ARGS)
+                        .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
+                        .setViewportSize(1920, 1080);
 
                 if (Paths.get("/usr/bin/chromium").toFile().exists()) {
-                    launchOpts.setExecutablePath(Paths.get("/usr/bin/chromium"));
+                    pOptions.setExecutablePath(Paths.get("/usr/bin/chromium"));
                 } else if (Paths.get("/usr/bin/chromium-browser").toFile().exists()) {
-                    launchOpts.setExecutablePath(Paths.get("/usr/bin/chromium-browser"));
+                    pOptions.setExecutablePath(Paths.get("/usr/bin/chromium-browser"));
                 }
 
-                try (Browser browser = playwright.chromium().launch(launchOpts)) {
-                    Browser.NewContextOptions ctxOpts = new Browser.NewContextOptions()
-                            .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
-                            .setViewportSize(1920, 1080);
-
-                    try (BrowserContext context = browser.newContext(ctxOpts)) {
-                        context.addInitScript(WEBDRIVER_STEALTH_SCRIPT);
-                        context.route("**/*", route -> {
-                            String rt = route.request().resourceType();
-                            if ("image".equals(rt) || "media".equals(rt) || "font".equals(rt) || "stylesheet".equals(rt)) {
-                                route.abort();
-                            } else {
-                                route.fallback();
-                            }
-                        });
-
-                        applyCookies(context, cfg.getCookiesJson());
-                        Page page = context.newPage();
-
-                        // Step 1: Navigate to inbox root so SPA hydrates correctly
-                        log.info("[FB-TestSend] Navigating to Messenger inbox root to bootstrap SPA...");
-                        page.navigate("https://www.facebook.com/messages/t/",
-                                new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED).setTimeout(20000));
-                        page.waitForTimeout(3000);
-
-                        String landedUrl = page.url();
-                        log.info("[FB-TestSend] Landed on URL: {}", landedUrl);
-                        if (landedUrl.contains("login")) {
-                            log.warn("[FB-TestSend] ABORTED: Redirected to login. Cookies may have expired.");
-                            return;
+                try (BrowserContext context = playwright.chromium().launchPersistentContext(Paths.get(PROFILE_DIR_PATH), pOptions)) {
+                    context.addInitScript(WEBDRIVER_STEALTH_SCRIPT);
+                    context.route("**/*", route -> {
+                        String rt = route.request().resourceType();
+                        if ("image".equals(rt) || "media".equals(rt) || "font".equals(rt) || "stylesheet".equals(rt)) {
+                            route.abort();
+                        } else {
+                            route.fallback();
                         }
+                    });
 
-                        // Wait for sidebar to render
-                        try {
-                            page.waitForSelector(
-                                    "a[href*='/messages/t/'], a[href*='/messages/e2ee/t/']",
-                                    new Page.WaitForSelectorOptions().setTimeout(12000));
-                            log.info("[FB-TestSend] Inbox sidebar loaded. URL: {}", page.url());
-                        } catch (Exception e) {
-                            Object diagResult = page.evaluate(
-                                    "() => { let links = document.querySelectorAll('a[href]'); " +
-                                    "let msgLinks = Array.from(links).filter(a => a.href.includes('/messages/')).map(a => a.href); " +
-                                    "return JSON.stringify({ url: window.location.href, title: document.title, msgLinks: msgLinks.slice(0,5), totalLinks: links.length }); }");
-                            log.warn("[FB-TestSend] Sidebar timeout. DOM diag: {}", diagResult);
-                        }
+                    applyCookies(context, cfg.getCookiesJson());
+                    Page page = context.pages().isEmpty() ? context.newPage() : context.pages().get(0);
 
-                        // Step 2: Open the target thread via sidebar click or New Message compose
-                        boolean opened = openTargetThreadInSidebar(page, finalThreadId, contactName);
-                        if (!opened) {
-                            log.warn("[FB-TestSend] ABORTED: Could not open verified chat window for '{}'", contactName);
-                            return;
-                        }
+                    // Step 1: Navigate to inbox root so SPA hydrates correctly.
+                    log.info("[FB-TestSend] Navigating to Messenger inbox root to bootstrap SPA...");
+                    page.navigate("https://www.facebook.com/messages/t/",
+                            new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED).setTimeout(20000));
+                    page.waitForTimeout(3000);
 
-                        // Step 3: Read the verified contact name from the header
-                        String verifiedName = extractCurrentChatHeaderName(page);
-                        if (verifiedName == null || verifiedName.isBlank()) verifiedName = contactName;
-
-                        // Step 4: Generate and send the AI away-message
-                        String testMsg = generateAwayMessage(verifiedName, 1, cfg.getCustomMessage());
-                        log.info("[FB-TestSend] Sending test message to verified recipient '{}': {}", verifiedName, testMsg);
-
-                        boolean sent = sendMessengerReply(page, testMsg);
-                        log.info("[FB-TestSend] Send result for '{}': {}", verifiedName, sent);
+                    String landedUrl = page.url();
+                    log.info("[FB-TestSend] Landed on URL: {}", landedUrl);
+                    if (landedUrl.contains("login")) {
+                        log.warn("[FB-TestSend] ABORTED: Redirected to login. Cookies may have expired.");
+                        return;
                     }
+
+                    // Step 2: Wait for sidebar to render
+                    try {
+                        page.waitForSelector(
+                                "a[href*='/messages/t/'], a[href*='/messages/e2ee/t/']",
+                                new Page.WaitForSelectorOptions().setTimeout(12000));
+                        log.info("[FB-TestSend] Inbox sidebar loaded. URL: {}", page.url());
+                    } catch (Exception e) {
+                        Object diagResult = page.evaluate(
+                                "() => { let links = document.querySelectorAll('a[href]'); " +
+                                "let msgLinks = Array.from(links).filter(a => a.href.includes('/messages/')).map(a => a.href); " +
+                                "return JSON.stringify({ url: window.location.href, title: document.title, msgLinks: msgLinks.slice(0,5), totalLinks: links.length }); }");
+                        log.warn("[FB-TestSend] Sidebar timeout. DOM diag: {}", diagResult);
+                    }
+
+                    // Step 3: Open the target thread via sidebar click or New Message compose
+                    boolean opened = openTargetThreadInSidebar(page, finalThreadId, contactName);
+                    if (!opened) {
+                        log.warn("[FB-TestSend] ABORTED: Could not open verified chat window for '{}'", contactName);
+                        return;
+                    }
+
+                    // Step 4: Read the verified contact name from the header
+                    String verifiedName = extractCurrentChatHeaderName(page);
+                    if (verifiedName == null || verifiedName.isBlank()) verifiedName = contactName;
+
+                    // Step 5: Generate and send the AI away-message
+                    String testMsg = generateAwayMessage(verifiedName, 1, cfg.getCustomMessage());
+                    log.info("[FB-TestSend] Sending test message to verified recipient '{}': {}", verifiedName, testMsg);
+
+                    boolean sent = sendMessengerReply(page, testMsg);
+                    log.info("[FB-TestSend] Send result for '{}': {}", verifiedName, sent);
                 }
             } catch (Exception e) {
                 log.error("[FB-TestSend] Error in sendTestToThread for '{}': {}", contactName, e.getMessage(), e);
@@ -1252,7 +1264,6 @@ public class FacebookMessengerService implements DisposableBean {
                 scanRunning.set(false);
             }
         });
-
 
         return Map.of("status", "started", "message", "Đã khởi động tiến trình gửi tin nhắn thử nghiệm có xác thực tới " + contactName);
     }

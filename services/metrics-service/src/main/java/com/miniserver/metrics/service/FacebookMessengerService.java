@@ -383,12 +383,20 @@ public class FacebookMessengerService implements DisposableBean {
                 String href = (String) anchor.evaluate("el => el.href");
                 if (href == null || href.isBlank()) continue;
 
-                // Click the anchor link — this triggers the SPA router to mount the chat panel correctly.
-                anchor.click();
+                // Click the outer role=row / role=link container to trigger React's click handler.
+                try {
+                    anchor.evaluate("el => (el.closest('[role=\"row\"], [role=\"link\"], [role=\"button\"]') || el).click()");
+                } catch (Exception ignored) {
+                    anchor.click();
+                }
+                page.waitForTimeout(500);
+                if (!page.url().contains(href.replaceAll(".*/messages/", ""))) {
+                    try {
+                        page.navigate(href, new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED).setTimeout(10000));
+                    } catch (Exception ignored) {}
+                }
 
                 // Poll up to 6s for the active chat panel header to render after the SPA route change.
-                // Previously, waitForSelector("h1...") matched sidebar h1 instantly, causing
-                // extractCurrentChatHeaderName() to run before React rendered the main chat panel header.
                 String senderName = waitForChatHeaderToLoad(page, 6000);
 
                 // Handle E2EE PIN screen if it appears after clicking a conversation.
@@ -543,7 +551,18 @@ public class FacebookMessengerService implements DisposableBean {
         if (!anchors.isEmpty()) {
             try {
                 log.info("[FB-TestSend] Found sidebar link for thread '{}'. Clicking...", threadId);
-                anchors.get(0).click();
+                try {
+                    anchors.get(0).evaluate("el => (el.closest('[role=\"row\"], [role=\"link\"], [role=\"button\"]') || el).click()");
+                } catch (Exception ignored) {
+                    anchors.get(0).click();
+                }
+                page.waitForTimeout(500);
+                if (!page.url().contains(threadId)) {
+                    try {
+                        page.navigate("https://www.facebook.com/messages/t/" + threadId + "/",
+                                new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED).setTimeout(10000));
+                    } catch (Exception ignored) {}
+                }
 
                 // Poll up to 6s for the chat panel header to appear after the SPA route change.
                 String header = waitForChatHeaderToLoad(page, 6000);

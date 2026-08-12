@@ -349,7 +349,18 @@ public class FacebookMessengerService implements DisposableBean {
                 "a[href*='/messages/t/']");
 
         if (threads.isEmpty()) {
-            threads = page.querySelectorAll("[role='row'], [role='gridcell']");
+            try {
+                log.info("[FB-Responder] Sidebar empty on E2EE URL. Navigating to https://www.facebook.com/ to inspect Contacts and Chat Popups...");
+                page.navigate("https://www.facebook.com/", new Page.NavigateOptions().setWaitUntil(WaitUntilState.COMMIT).setTimeout(10000));
+                page.waitForTimeout(4000);
+
+                threads = page.querySelectorAll(
+                        "div[aria-label='Người liên hệ'] [role='button'], " +
+                        "div[aria-label='Contacts'] [role='button'], " +
+                        "div[role='navigation'] [role='gridcell'], " +
+                        "div[role='grid'] [role='gridcell'], " +
+                        "[role='row']");
+            } catch (Exception ignored) {}
         }
 
         log.info("[FB-Responder] Found {} potential conversation elements.", threads.size());

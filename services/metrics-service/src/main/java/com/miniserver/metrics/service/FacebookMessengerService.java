@@ -694,9 +694,6 @@ public class FacebookMessengerService implements DisposableBean {
                     "      return line.substring('cu\u1ed9c tr\u00f2 chuy\u1ec7n v\u1edbi '.length).trim();" +
                     "    }" +
                     "  }" +
-                    "  if (lines.length > 0 && !lines[0].toLowerCase().startsWith('tin nh\u1eafn') && !lines[0].toLowerCase().startsWith('messenger')) {" +
-                    "    return lines[0];" +
-                    "  }" +
                     "  return null;" +
                     "}");
             return result instanceof String s ? s : null;

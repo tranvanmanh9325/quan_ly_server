@@ -797,20 +797,17 @@ public class FacebookMessengerService implements DisposableBean {
 
     private boolean sendMessengerReply(Page page, String text) {
         try {
-            // Target the bottom-most contenteditable input box inside [role='main']
-            // Messenger's message input editor is ALWAYS located at the very bottom of the main container,
-            // below all message history bubbles. Sorting by getBoundingClientRect().top descending guarantees
-            // we select the actual message input box rather than an editable message history bubble.
+            // Target the bottom-most LEAF-NODE contenteditable input box inside [role='main']
+            // Wrapper containers (like [aria-label*='Tin nhắn trong cuộc trò chuyện']) contain nested editables,
+            // so filtering for leaf nodes (elements with 0 child editables) excludes wrapper containers and selects
+            // the exact text input box at the bottom of the chat window.
             JSHandle handle = page.evaluateHandle("() => {" +
                     "  let main = document.querySelector('[role=\"main\"]') || document.body;" +
-                    "  let footerEditables = Array.from(main.querySelectorAll('footer div[contenteditable=\"true\"], footer div[data-lexical-editor=\"true\"], footer div[role=\"textbox\"]'));" +
-                    "  if (footerEditables.length > 0) return footerEditables[footerEditables.length - 1];" +
-                    "  let inputByAria = main.querySelector('[aria-label*=\"Tin nh\u1eafn trong cu\u1ed9c tr\u00f2 chuy\u1ec7n\"], [aria-label*=\"Message in conversation\"], [aria-placeholder*=\"Aa\"], [aria-label*=\"Aa\"]');" +
-                    "  if (inputByAria) return inputByAria;" +
-                    "  let allEditables = Array.from(main.querySelectorAll('div[contenteditable=\"true\"], div[data-lexical-editor=\"true\"], div[role=\"textbox\"]'));" +
-                    "  if (allEditables.length > 0) {" +
-                    "    allEditables.sort((a, b) => b.getBoundingClientRect().top - a.getBoundingClientRect().top);" +
-                    "    return allEditables[0];" +
+                    "  let editables = Array.from(main.querySelectorAll('div[contenteditable=\"true\"], div[data-lexical-editor=\"true\"], [role=\"textbox\"]'));" +
+                    "  let leafEditables = editables.filter(el => el.querySelectorAll('div[contenteditable=\"true\"], div[role=\"textbox\"]').length === 0);" +
+                    "  if (leafEditables.length > 0) {" +
+                    "    leafEditables.sort((a, b) => b.getBoundingClientRect().top - a.getBoundingClientRect().top);" +
+                    "    return leafEditables[0];" +
                     "  }" +
                     "  return null;" +
                     "}");

@@ -157,6 +157,11 @@ public class FacebookMessengerService implements DisposableBean {
             return;
         }
 
+        if (!scanRunning.compareAndSet(false, true)) {
+            log.info("[FB-Responder] Scheduled scan skipped: another scan or test send is currently running.");
+            return;
+        }
+
         try {
             int repliesSent = processMessengerChats(cfg);
             LocalDateTime vnNow = LocalDateTime.now(java.time.ZoneId.of("Asia/Ho_Chi_Minh"));
@@ -167,6 +172,8 @@ public class FacebookMessengerService implements DisposableBean {
         } catch (Exception e) {
             log.error("[FB-Responder] Error during Messenger check: {}", e.getMessage(), e);
             updateStatus(cfg, "Lỗi: " + e.getMessage(), LocalDateTime.now(java.time.ZoneId.of("Asia/Ho_Chi_Minh")));
+        } finally {
+            scanRunning.set(false);
         }
     }
 
@@ -991,6 +998,10 @@ public class FacebookMessengerService implements DisposableBean {
             return Map.of("status", "error", "message", "Chưa cấu hình Cookies Facebook.");
         }
 
+        if (!scanRunning.compareAndSet(false, true)) {
+            return Map.of("status", "running", "message", "Đang có tiến trình quét Messenger khác chạy. Vui lòng thử lại sau vài giây.");
+        }
+
         String searchName = (expectedTargetName != null && !expectedTargetName.isBlank()) ? expectedTargetName : "Trần Văn Mạnh";
         String targetUrl = threadTarget.startsWith("http")
                 ? threadTarget
@@ -1084,6 +1095,8 @@ public class FacebookMessengerService implements DisposableBean {
                 }
             } catch (Exception e) {
                 log.error("[FB-TestSend] Error sending to target thread {}: {}", targetUrl, e.getMessage(), e);
+            } finally {
+                scanRunning.set(false);
             }
         });
 

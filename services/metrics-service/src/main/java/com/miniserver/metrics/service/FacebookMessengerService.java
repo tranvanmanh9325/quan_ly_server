@@ -664,18 +664,38 @@ public class FacebookMessengerService implements DisposableBean {
         try {
             Object result = page.evaluate(
                     "() => {" +
+                    "  let main = document.querySelector('[role=\"main\"]');" +
+                    "  if (!main) return null;" +
                     "  let selectors = [" +
                     "    '[role=\"main\"] header h1'," +
                     "    '[role=\"main\"] header h2'," +
                     "    '[role=\"main\"] header [dir=\"auto\"]'," +
-                    "    '[role=\"main\"] h1'," +
-                    "    '[role=\"main\"] h2'," +
-                    "    '[role=\"main\"] header span'," +
+                    "    '[role=\"main\"] [role=\"heading\"]'," +
+                    "    '[role=\"main\"] a[href*=\"facebook.com/\"] span'," +
+                    "    '[role=\"main\"] a[href*=\"facebook.com/\"]'," +
+                    "    '[role=\"main\"] span[dir=\"auto\"]'," +
+                    "    '[role=\"main\"] div[dir=\"auto\"]'," +
                     "    'h2[dir=\"auto\"]'" +
                     "  ];" +
                     "  for (let sel of selectors) {" +
                     "    let el = document.querySelector(sel);" +
-                    "    if (el && el.innerText && el.innerText.trim()) return el.innerText.trim();" +
+                    "    if (el && el.innerText && el.innerText.trim()) {" +
+                    "      let txt = el.innerText.trim();" +
+                    "      let lower = txt.toLowerCase();" +
+                    "      if (!lower.startsWith('cu\u1ed9c tr\u00f2 chuy\u1ec7n') && !lower.startsWith('tin nh\u1eafn') && !lower.startsWith('messenger')) {" +
+                    "        return txt;" +
+                    "      }" +
+                    "    }" +
+                    "  }" +
+                    "  let text = main.innerText || '';" +
+                    "  let lines = text.split('\\n').map(l => l.trim()).filter(l => l.length > 0);" +
+                    "  for (let line of lines) {" +
+                    "    if (line.toLowerCase().startsWith('cu\u1ed9c tr\u00f2 chuy\u1ec7n v\u1edbi ')) {" +
+                    "      return line.substring('cu\u1ed9c tr\u00f2 chuy\u1ec7n v\u1edbi '.length).trim();" +
+                    "    }" +
+                    "  }" +
+                    "  if (lines.length > 0 && !lines[0].toLowerCase().startsWith('tin nh\u1eafn') && !lines[0].toLowerCase().startsWith('messenger')) {" +
+                    "    return lines[0];" +
                     "  }" +
                     "  return null;" +
                     "}");

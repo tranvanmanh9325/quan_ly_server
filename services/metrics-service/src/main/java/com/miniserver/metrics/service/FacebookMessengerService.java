@@ -81,7 +81,8 @@ public class FacebookMessengerService implements DisposableBean {
         }
     }
 
-    // Lean Chromium args for headless automation — disables all non-essential features
+    // Lean Chromium args for headless automation — disables all non-essential features.
+    // --headless=new uses the modern Chrome headless renderer (less detectable, fixes blank-page bugs in older --headless mode).
     private static final List<String> CHROMIUM_ARGS = List.of(
             "--no-sandbox",
             "--disable-setuid-sandbox",
@@ -98,9 +99,15 @@ public class FacebookMessengerService implements DisposableBean {
             "--disable-ipc-flooding-protection",
             "--disable-blink-features=AutomationControlled",
             "--disable-features=IsolateOrigins,site-per-process",
-            "--process-per-site",
-            "--renderer-process-limit=1"
+            "--window-size=1920,1080"
     );
+
+    // JS injected into every new page to hide Playwright's automation fingerprint from Facebook's bot detection.
+    private static final String WEBDRIVER_STEALTH_SCRIPT =
+            "Object.defineProperty(navigator, 'webdriver', { get: () => undefined });" +
+            "window.chrome = { runtime: {} };" +
+            "Object.defineProperty(navigator, 'plugins', { get: () => [1,2,3,4,5] });" +
+            "Object.defineProperty(navigator, 'languages', { get: () => ['vi-VN','vi','en-US','en'] });";
 
     private final FacebookConfigRepository configRepository;
     private final AiChatService aiChatService;
@@ -216,7 +223,11 @@ public class FacebookMessengerService implements DisposableBean {
     /**
      * Core check logic: starts an ephemeral Playwright browser, injects cookies,
      * inspects Messenger inbox, sends auto-replies, then closes browser immediately.
-     * The browser lives only for the duration of this method (~5-15 seconds).
+     *
+     * Navigation strategy: always land on inbox root (/messages/t/) first so the Facebook SPA
+     * can fully hydrate its React state before we interact with any specific thread.
+     * Direct navigation to a thread URL in a fresh headless context causes a blank chat panel
+     * because React's client-side router needs the root route to bootstrap global state first.
      */
     private int processMessengerChats(FacebookConfig cfg) {
         Map<String, String> env = new HashMap<>(System.getenv());
@@ -241,14 +252,15 @@ public class FacebookMessengerService implements DisposableBean {
                 }
             }
 
-            // Case 2: Standalone check using persistent browser context (preserves IndexedDB / E2EE PIN keys)
+            // Case 2: Standalone ephemeral check using persistent browser context
             preparePersistentProfileDir();
 
             BrowserType.LaunchPersistentContextOptions pOptions = new BrowserType.LaunchPersistentContextOptions()
                     .setHeadless(true)
                     .setArgs(CHROMIUM_ARGS)
-                    .setUserAgent("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36")
-                    .setViewportSize(1280, 800);
+                    // Use a recent Windows Chrome UA — Linux UA strings are more likely flagged as bots
+                    .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
+                    .setViewportSize(1920, 1080);
 
             if (Paths.get("/usr/bin/chromium").toFile().exists()) {
                 pOptions.setExecutablePath(Paths.get("/usr/bin/chromium"));
@@ -257,7 +269,11 @@ public class FacebookMessengerService implements DisposableBean {
             }
 
             try (BrowserContext context = playwright.chromium().launchPersistentContext(Paths.get(PROFILE_DIR_PATH), pOptions)) {
-                // Block heavy resources — images/media/fonts/stylesheets have no value for DOM automation
+                // Inject stealth script into every page before any scripts execute.
+                // This hides navigator.webdriver and other bot-detection signals.
+                context.addInitScript(WEBDRIVER_STEALTH_SCRIPT);
+
+                // Block heavy resources — images/media/fonts/stylesheets have no automation value
                 context.route("**/*", route -> {
                     String rt = route.request().resourceType();
                     if ("image".equals(rt) || "media".equals(rt) || "font".equals(rt) || "stylesheet".equals(rt)) {
@@ -273,9 +289,12 @@ public class FacebookMessengerService implements DisposableBean {
 
                 Page page = context.pages().isEmpty() ? context.newPage() : context.pages().get(0);
 
+                // CRITICAL: Navigate to the Messenger inbox root, NOT a specific thread URL.
+                // The Facebook SPA needs to bootstrap from the root route to correctly mount
+                // global state (auth, E2EE keys, contact list). Navigating directly to a thread
+                // URL in a fresh headless context causes the chat panel to render as an empty shell.
                 page.navigate("https://www.facebook.com/messages/t/",
-                        new Page.NavigateOptions().setWaitUntil(WaitUntilState.COMMIT).setTimeout(10000));
-                page.waitForTimeout(4000);
+                        new Page.NavigateOptions().setWaitUntil(WaitUntilState.COMMIT).setTimeout(15000));
 
                 String currentUrl = page.url();
                 if (currentUrl.contains("login") || page.title().contains("Log in") || page.title().contains("Đăng nhập")) {
@@ -285,135 +304,86 @@ public class FacebookMessengerService implements DisposableBean {
                     return 0;
                 }
 
-                log.info("[FB-Responder] Persistent browser ready. Current URL: {}", currentUrl);
+                // Wait for conversation sidebar anchor links to appear in DOM
+                try {
+                    page.waitForSelector(
+                            "a[href*='/messages/t/'], a[href*='/messages/e2ee/t/']",
+                            new Page.WaitForSelectorOptions().setTimeout(10000));
+                    log.info("[FB-Responder] Messenger sidebar loaded. Current URL: {}", page.url());
+                } catch (Exception e) {
+                    log.warn("[FB-Responder] Sidebar anchor links not found after 10s. Will attempt DOM fallback. URL: {}", page.url());
+                }
 
-                // Dismiss popups/modals if any
+                // Dismiss any blocking modals/popups
                 try {
                     page.keyboard().press("Escape");
                     page.waitForTimeout(300);
-
-                    List<ElementHandle> dialogBtns = page.querySelectorAll("div[role='dialog'] [role='button'], div[role='dialog'] button");
-                    for (ElementHandle btn : dialogBtns) {
-                        try {
-                            btn.click();
-                            page.waitForTimeout(400);
-                            log.info("[FB-Responder] Clicked dialog button to clear modal overlay.");
-                        } catch (Exception ignored) {}
-                    }
                 } catch (Exception ignored) {}
-
-                // Wait for conversation list to render
-                try {
-                    page.waitForSelector("[role='grid'] [role='row'], [role='row'], a[href*='/messages/t/'], a[href*='/messages/e2ee/t/']",
-                            new Page.WaitForSelectorOptions().setTimeout(8000));
-                } catch (Exception e) {
-                    log.warn("[FB-Responder] Wait for thread list selector timed out, attempting query fallback...");
-                }
 
                 return inspectAndReply(page, cfg);
             }
         }
     }
 
+    /**
+     * Scans the Messenger inbox sidebar for unread DM threads and sends AI away-replies.
+     *
+     * Uses anchor tag links (a[href*='/messages/t/']) as the thread selector — these are more
+     * reliable than role-based selectors because:
+     * 1. The href attribute explicitly identifies the thread and lets us extract the thread ID.
+     * 2. Anchor tags are structurally stable across Facebook DOM updates.
+     * 3. We can skip group chats by checking if the href belongs to a known group pattern.
+     */
     private int inspectAndReply(Page page, FacebookConfig cfg) {
         int autoRepliesSent = 0;
 
-        // 1. Check if an active chat window is already open on screen
-        try {
-            ElementHandle activeHeader = page.querySelector("h2, [role='main'] header span");
-            if (activeHeader != null && activeHeader.textContent() != null && !activeHeader.textContent().isBlank()) {
-                String activeSender = activeHeader.textContent().trim();
-                if (!isGroupOrCommunityChat(page) && verifyRecipientIdentity(page, activeSender)) {
-                    int unreplied = countUnrepliedIncomingMessages(page);
-                    log.info("[FB-Responder] Currently open active chat with '{}': {} unreplied incoming message(s).", activeSender, unreplied);
-                    if (unreplied >= cfg.getThreshold()) {
-                        if (isCooldownExpired(activeSender, cfg.getCooldownMinutes())) {
-                            log.info("[FB-Responder] Triggering AI Away reply for active chat '{}'", activeSender);
-                            String awayReply = generateAwayMessage(activeSender, unreplied, cfg.getCustomMessage());
-                            boolean sent = sendMessengerReply(page, awayReply);
-                            if (sent) {
-                                autoRepliesSent++;
-                                cooldownMap.put(activeSender, Instant.now());
-                                log.info("[FB-Responder] AUTO-REPLY SENT to active chat '{}': {}", activeSender, awayReply);
-                            }
-                        }
-                    }
-                }
-            }
-        } catch (Exception e) {
-            log.debug("[FB-Responder] Active chat inspection fallback: {}", e.getMessage());
+        // Query all DM + E2EE conversation anchor links from the sidebar.
+        // Anchor tags with /messages/t/ or /messages/e2ee/t/ are individual conversations.
+        List<ElementHandle> threadLinks = page.querySelectorAll(
+                "a[href*='/messages/t/'], a[href*='/messages/e2ee/t/']");
+
+        log.info("[FB-Responder] Found {} conversation anchor links in sidebar.", threadLinks.size());
+
+        if (threadLinks.isEmpty()) {
+            log.warn("[FB-Responder] No thread anchor links found. Sidebar may not have loaded correctly. URL: {}", page.url());
+            return 0;
         }
 
-        // 2. Query sidebar threads
-        List<ElementHandle> threads = page.querySelectorAll(
-                "div[role='navigation'] [role='gridcell'], " +
-                "div[role='navigation'] [role='row'], " +
-                "div[role='grid'] [role='gridcell'], " +
-                "div[role='grid'] [role='row'], " +
-                "div[aria-label*='Đoạn chat'] [role='row'], " +
-                "div[aria-label*='Chats'] [role='row'], " +
-                "a[href*='/messages/e2ee/t/'], " +
-                "a[href*='/messages/t/']");
-
-        if (threads.isEmpty()) {
-            try {
-                log.info("[FB-Responder] Sidebar empty on E2EE URL. Navigating to https://www.facebook.com/ to inspect Contacts and Chat Popups...");
-                page.navigate("https://www.facebook.com/", new Page.NavigateOptions().setWaitUntil(WaitUntilState.COMMIT).setTimeout(10000));
-                page.waitForTimeout(4000);
-
-                threads = page.querySelectorAll(
-                        "div[aria-label='Người liên hệ'] [role='button'], " +
-                        "div[aria-label='Contacts'] [role='button'], " +
-                        "div[role='navigation'] [role='gridcell'], " +
-                        "div[role='grid'] [role='gridcell'], " +
-                        "[role='row']");
-            } catch (Exception ignored) {}
-        }
-
-        log.info("[FB-Responder] Found {} potential conversation elements.", threads.size());
-
-        int maxCheck = Math.min(threads.size(), 10);
+        // Scan up to 20 threads to reach past group chats at the top of the inbox
+        int maxCheck = Math.min(threadLinks.size(), 20);
         for (int i = 0; i < maxCheck; i++) {
             try {
-                ElementHandle thread = threads.get(i);
+                ElementHandle anchor = threadLinks.get(i);
+                String href = (String) anchor.evaluate("el => el.href");
+                if (href == null || href.isBlank()) continue;
 
-                String threadItemText = thread.innerText() != null ? thread.innerText().toLowerCase() : "";
-                if (threadItemText.contains("menu") || threadItemText.contains("thông báo")
-                        || threadItemText.contains("cài đặt") || threadItemText.contains("trang cá nhân")
-                        || threadItemText.contains("chuyển đến") || threadItemText.contains("bài viết")
-                        || threadItemText.contains("bạn đang nghĩ gì") || threadItemText.contains("tìm kiếm")
-                        || threadItemText.contains("phím tắt") || threadItemText.contains("trợ giúp")
-                        || threadItemText.contains("xem thêm") || threadItemText.contains("bạn bè")
-                        || threadItemText.contains("watch") || threadItemText.contains("marketplace")
-                        || threadItemText.contains("đã thêm") || threadItemText.contains("ảnh nhóm")
-                        || threadItemText.contains("đổi tên") || threadItemText.contains("rời khỏi")) {
-                    log.info("[FB-Responder] Skipping item #{} (Non-contact marker: '{}')", i, threadItemText.substring(0, Math.min(30, threadItemText.length())).replace('\n', ' '));
-                    continue;
-                }
-
-                thread.click();
-                page.waitForTimeout(2000);
+                // Click the anchor link — this triggers the SPA router to mount the chat panel correctly.
+                // This is the key fix: SPA routing via user-click properly hydrates the React component tree,
+                // whereas page.navigate() to a thread URL in a fresh context often leaves the panel blank.
+                anchor.click();
+                page.waitForTimeout(2500);
 
                 boolean isGroup = isGroupOrCommunityChat(page);
                 if (isGroup) {
-                    log.info("[FB-Responder] Thread #{} is a GROUP CHAT / COMMUNITY. Skipping.", i);
+                    log.info("[FB-Responder] Thread #{} [{}] is a GROUP CHAT. Skipping.", i, href);
                     continue;
                 }
 
-                String senderName = "User_" + i;
-                ElementHandle headerElem = page.querySelector("h2, [role='main'] header span");
-                if (headerElem != null && headerElem.textContent() != null) {
-                    senderName = headerElem.textContent().trim();
+                // Extract sender name from the now-active chat header
+                String senderName = extractCurrentChatHeaderName(page);
+                if (senderName == null || senderName.isBlank()) {
+                    log.info("[FB-Responder] Thread #{}: empty header after click. Skipping.", i);
+                    continue;
                 }
 
-                // Strict Recipient Identity Verification before proceeding
+                // Safety: verify header matches a real contact name (blocks spurious clicks on nav elements)
                 if (!verifyRecipientIdentity(page, senderName)) {
-                    log.warn("[FB-Responder] Safety check failed for thread #{} header '{}'. Skipping.", i, senderName);
+                    log.warn("[FB-Responder] Thread #{} header '{}' failed identity check. Skipping.", i, senderName);
                     continue;
                 }
 
                 int unrepliedCount = countUnrepliedIncomingMessages(page);
-                log.info("[FB-Responder] Personal Chat with '{}': {} unreplied incoming message(s).", senderName, unrepliedCount);
+                log.info("[FB-Responder] DM with '{}': {} unreplied incoming message(s).", senderName, unrepliedCount);
 
                 if (unrepliedCount >= cfg.getThreshold()) {
                     if (isCooldownExpired(senderName, cfg.getCooldownMinutes())) {
@@ -438,28 +408,192 @@ public class FacebookMessengerService implements DisposableBean {
         return autoRepliesSent;
     }
 
+    /**
+     * Opens a specific Messenger thread by finding and clicking its sidebar anchor link.
+     * If the thread is not present in the sidebar (no prior conversation), falls back to the
+     * "New Message" compose flow to search for the contact by name.
+     *
+     * @param page           active Playwright page, already on the Messenger inbox root
+     * @param threadId       numeric Facebook user/thread ID (e.g. "100045592363397")
+     * @param contactName    display name to verify after opening (e.g. "Trần Văn Mạnh")
+     * @return true if the chat window was opened and identity was verified
+     */
+    private boolean openTargetThreadInSidebar(Page page, String threadId, String contactName) {
+        // Step 1: Look for the thread's anchor link in the current sidebar.
+        // This is the most reliable method — clicking an existing sidebar link triggers the SPA
+        // router correctly and the chat panel hydrates with the full conversation.
+        log.info("[FB-TestSend] Searching sidebar for thread link containing '{}'", threadId);
+        List<ElementHandle> anchors = page.querySelectorAll(
+                "a[href*='/messages/t/"+threadId+"'], a[href*='/messages/e2ee/t/"+threadId+"']");
+
+        if (!anchors.isEmpty()) {
+            try {
+                log.info("[FB-TestSend] Found sidebar link for thread '{}'. Clicking...", threadId);
+                anchors.get(0).click();
+                page.waitForTimeout(3000);
+                if (verifyRecipientIdentity(page, contactName)) {
+                    log.info("[FB-TestSend] Sidebar click SUCCESS. Verified chat header for '{}'", contactName);
+                    return true;
+                }
+                log.warn("[FB-TestSend] Sidebar click done but header mismatch. Header: '{}'", extractCurrentChatHeaderName(page));
+            } catch (Exception e) {
+                log.warn("[FB-TestSend] Sidebar anchor click failed: {}", e.getMessage());
+            }
+        } else {
+            log.info("[FB-TestSend] No sidebar link found for thread '{}'. Will use New Message compose.", threadId);
+        }
+
+        // Step 2: New Message compose fallback.
+        // Click the "New message" / "Tạo đoạn chat mới" button, type the contact name,
+        // and select the matching result from the dropdown.
+        try {
+            log.info("[FB-TestSend] Attempting New Message compose flow for contact '{}'", contactName);
+
+            // Find the "New message" / "Pencil" compose button in the Messenger sidebar
+            ElementHandle composeBtn = page.querySelector(
+                    "[aria-label*='Tạo đoạn chat mới'], [aria-label*='New message'], " +
+                    "[aria-label*='Compose'], [aria-label*='Cuộc trò chuyện mới'], " +
+                    "svg[aria-label*='Chỉnh sửa'], a[href*='/messages/new']");
+
+            if (composeBtn != null) {
+                composeBtn.click();
+                page.waitForTimeout(1500);
+                log.info("[FB-TestSend] Clicked New Message compose button.");
+            } else {
+                // Fallback: navigate to facebook.com/messages/new if compose button not found
+                log.info("[FB-TestSend] Compose button not found; navigating to /messages/new");
+                page.navigate("https://www.facebook.com/messages/new",
+                        new Page.NavigateOptions().setWaitUntil(WaitUntilState.COMMIT).setTimeout(10000));
+                page.waitForTimeout(2000);
+            }
+
+            // Type contact name into the "To:" search field
+            ElementHandle toField = null;
+            try {
+                page.waitForSelector(
+                        "input[aria-label*='Tìm kiếm'], input[placeholder*='Tìm kiếm'], " +
+                        "input[aria-label*='Search'], input[placeholder*='To:'], " +
+                        "div[role='dialog'] input, input[aria-label*='Người nhận']",
+                        new Page.WaitForSelectorOptions().setTimeout(5000));
+                toField = page.querySelector(
+                        "input[aria-label*='Tìm kiếm'], input[placeholder*='Tìm kiếm'], " +
+                        "input[aria-label*='Search'], input[placeholder*='To:'], " +
+                        "div[role='dialog'] input, input[aria-label*='Người nhận']");
+            } catch (Exception e) {
+                log.warn("[FB-TestSend] To: field not found in compose dialog.");
+            }
+
+            if (toField != null) {
+                toField.click();
+                page.waitForTimeout(300);
+                toField.fill(contactName);
+                page.waitForTimeout(2500);
+                log.info("[FB-TestSend] Typed '{}' into compose To: field.", contactName);
+
+                // Click the first matching result in the dropdown
+                List<ElementHandle> results = page.querySelectorAll(
+                        "[role='listbox'] [role='option'], [role='listbox'] li, " +
+                        "div[role='dialog'] [role='option'], ul li[role='option']");
+
+                for (ElementHandle res : results) {
+                    String txt = res.innerText() != null ? res.innerText() : "";
+                    // Match any word from the contact name (e.g. "Mạnh", "Trần", "Văn")
+                    String[] words = contactName.split("\\s+");
+                    boolean matched = false;
+                    for (String w : words) {
+                        if (w.length() > 1 && txt.contains(w)) {
+                            matched = true;
+                            break;
+                        }
+                    }
+                    if (matched) {
+                        log.info("[FB-TestSend] Found compose result: '{}'. Clicking.", txt.replace("\n", " ").substring(0, Math.min(60, txt.length())));
+                        res.click();
+                        page.waitForTimeout(1000);
+                        break;
+                    }
+                }
+
+                // Click the "Open" / "Mở" / "Next" button to open the conversation
+                ElementHandle openBtn = page.querySelector(
+                        "[aria-label*='Mở đoạn chat'], [aria-label*='Open chat'], " +
+                        "div[role='dialog'] [role='button']:last-child, " +
+                        "button[type='submit']");
+                if (openBtn != null) {
+                    openBtn.click();
+                    page.waitForTimeout(3000);
+                    log.info("[FB-TestSend] Clicked Open/Submit button in compose dialog.");
+                }
+            }
+
+            // Verify the chat window opened with the correct contact
+            if (verifyRecipientIdentity(page, contactName)) {
+                log.info("[FB-TestSend] New Message compose SUCCESS. Verified chat header for '{}'", contactName);
+                return true;
+            }
+
+            log.warn("[FB-TestSend] Compose flow finished but header verification failed. Header: '{}'",
+                    extractCurrentChatHeaderName(page));
+        } catch (Exception e) {
+            log.warn("[FB-TestSend] New Message compose flow error: {}", e.getMessage());
+        }
+
+        return false;
+    }
+
+    /** Reads the current active chat's header name from the DOM. Returns null if not found. */
+    private String extractCurrentChatHeaderName(Page page) {
+        try {
+            Object result = page.evaluate(
+                    "() => {" +
+                    "  let selectors = [" +
+                    "    '[role=\"main\"] header h1'," +
+                    "    '[role=\"main\"] header h2'," +
+                    "    '[role=\"main\"] header [dir=\"auto\"]'," +
+                    "    'h2[dir=\"auto\"]'," +
+                    "    '[role=\"main\"] header span'" +
+                    "  ];" +
+                    "  for (let sel of selectors) {" +
+                    "    let el = document.querySelector(sel);" +
+                    "    if (el && el.innerText && el.innerText.trim()) return el.innerText.trim();" +
+                    "  }" +
+                    "  return null;" +
+                    "}");
+            return result instanceof String s ? s : null;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
     private boolean verifyRecipientIdentity(Page page, String expectedTarget) {
+        // When expectedTarget is blank, we are scanning the inbox generically — skip name check
         if (expectedTarget == null || expectedTarget.isBlank()) {
-            log.warn("[FB-Responder] Target recipient verification skipped: Expected target is empty.");
             return true;
         }
 
         Object checkResult = page.evaluate("(expected) => {" +
-                "  let header = document.querySelector('[role=\"main\"] header h1, [role=\"main\"] header span, [role=\"main\"] header, h2, [role=\"complementary\"] header');" +
-                "  let headerText = header ? (header.innerText || '').trim() : '';" +
+                // Try multiple selectors in priority order — h1 inside main header is the most specific
+                "  let selectors = ['[role=\"main\"] header h1','[role=\"main\"] header h2','[role=\"main\"] header [dir=\"auto\"]','h2[dir=\"auto\"]','[role=\"main\"] header span'];" +
+                "  let headerText = '';" +
+                "  for (let sel of selectors) {" +
+                "    let el = document.querySelector(sel);" +
+                "    if (el && el.innerText && el.innerText.trim()) { headerText = el.innerText.trim(); break; }" +
+                "  }" +
                 "  let currentUrl = window.location.href || '';" +
                 "  if (!headerText) {" +
                 "    return JSON.stringify({ valid: false, reason: 'Header text is empty - no active chat window open', headerText: '', currentUrl });" +
                 "  }" +
-                "  let invalidKeywords = ['menu', 'thông báo', 'cài đặt', 'trang cá nhân', 'bài viết', 'bảng tin', 'tìm kiếm', 'phím tắt', 'bạn bè', 'xem thêm', 'trợ giúp'];" +
+                "  let invalidKeywords = ['menu', 'thông báo', 'cài đặt', 'trang cá nhân', 'bài viết', 'bảng tin', 'tìm kiếm', 'phím tắt', 'bạn bè', 'xem thêm', 'trợ giúp', 'messenger'];" +
                 "  let headerLower = headerText.toLowerCase();" +
                 "  for (let kw of invalidKeywords) {" +
                 "    if (headerLower.includes(kw)) return JSON.stringify({ valid: false, reason: 'Header contains non-contact keyword: ' + kw, headerText, currentUrl });" +
                 "  }" +
+                // When called from inspectAndReply, expectedTarget IS the extracted header name,
+                // so a direct contains-check is sufficient.
                 "  let exp = expected.toLowerCase().trim();" +
                 "  let matchName = headerLower.includes(exp);" +
-                "  let words = exp.split(/\\s+/);" +
-                "  let anyWordMatch = words.some(w => w.length > 2 && headerLower.includes(w));" +
+                "  let words = exp.split(/\\s+/).filter(w => w.length > 1);" +
+                "  let anyWordMatch = words.some(w => headerLower.includes(w));" +
                 "  if (!matchName && !anyWordMatch) {" +
                 "    return JSON.stringify({ valid: false, reason: 'Header \"' + headerText + '\" does not match target \"' + expected + '\"', headerText, currentUrl });" +
                 "  }" +
@@ -987,11 +1121,21 @@ public class FacebookMessengerService implements DisposableBean {
         log.warn("[FB-Responder] Port {} still open after {}s cleanup wait — proceeding anyway.", port, timeoutSeconds);
     }
 
-    /** Direct test send to a target thread URL (e.g. https://www.facebook.com/messages/t/100045592363397) */
+    /** Direct test send to a target thread (overload with default contact name) */
     public Map<String, String> sendTestToThread(String threadTarget) {
         return sendTestToThread(threadTarget, "Trần Văn Mạnh");
     }
 
+    /**
+     * Sends a test AI away-message to a specific Messenger thread.
+     *
+     * Strategy (correct order):
+     * 1. Navigate to Messenger inbox root (/messages/t/) — SPA bootstraps global state.
+     * 2. Call openTargetThreadInSidebar() — finds the thread's sidebar anchor and clicks it,
+     *    so the SPA router mounts the correct chat panel. Falls back to New Message compose.
+     * 3. Verify chat header shows the correct contact name.
+     * 4. Send the AI-generated away message.
+     */
     public Map<String, String> sendTestToThread(String threadTarget, String expectedTargetName) {
         FacebookConfig cfg = configRepository.getConfig().orElseGet(FacebookConfig::new);
         if (cfg.getCookiesJson() == null || cfg.getCookiesJson().isBlank()) {
@@ -1002,10 +1146,13 @@ public class FacebookMessengerService implements DisposableBean {
             return Map.of("status", "running", "message", "Đang có tiến trình quét Messenger khác chạy. Vui lòng thử lại sau vài giây.");
         }
 
-        String searchName = (expectedTargetName != null && !expectedTargetName.isBlank()) ? expectedTargetName : "Trần Văn Mạnh";
-        String targetUrl = threadTarget.startsWith("http")
-                ? threadTarget
-                : "https://www.facebook.com/messages/t/" + threadTarget;
+        String contactName = (expectedTargetName != null && !expectedTargetName.isBlank()) ? expectedTargetName : "Trần Văn Mạnh";
+
+        // Extract numeric thread ID from the URL (e.g. "100045592363397" from ".../t/100045592363397")
+        String threadId = threadTarget.replaceAll(".*/t/", "").replaceAll("/.*", "").trim();
+        if (threadId.isBlank()) threadId = threadTarget;
+
+        final String finalThreadId = threadId;
 
         scanExecutor.submit(() -> {
             Map<String, String> env = new HashMap<>(System.getenv());
@@ -1019,8 +1166,8 @@ public class FacebookMessengerService implements DisposableBean {
                 BrowserType.LaunchPersistentContextOptions pOptions = new BrowserType.LaunchPersistentContextOptions()
                         .setHeadless(true)
                         .setArgs(CHROMIUM_ARGS)
-                        .setUserAgent("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36")
-                        .setViewportSize(1280, 800);
+                        .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
+                        .setViewportSize(1920, 1080);
 
                 if (Paths.get("/usr/bin/chromium").toFile().exists()) {
                     pOptions.setExecutablePath(Paths.get("/usr/bin/chromium"));
@@ -1029,81 +1176,65 @@ public class FacebookMessengerService implements DisposableBean {
                 }
 
                 try (BrowserContext context = playwright.chromium().launchPersistentContext(Paths.get(PROFILE_DIR_PATH), pOptions)) {
+                    context.addInitScript(WEBDRIVER_STEALTH_SCRIPT);
+                    context.route("**/*", route -> {
+                        String rt = route.request().resourceType();
+                        if ("image".equals(rt) || "media".equals(rt) || "font".equals(rt) || "stylesheet".equals(rt)) {
+                            route.abort();
+                        } else {
+                            route.fallback();
+                        }
+                    });
+
                     applyCookies(context, cfg.getCookiesJson());
                     Page page = context.pages().isEmpty() ? context.newPage() : context.pages().get(0);
 
-                    log.info("[FB-TestSend] Direct navigating to target thread: {} (Expected: '{}')", targetUrl, searchName);
-                    page.navigate(targetUrl, new Page.NavigateOptions().setWaitUntil(WaitUntilState.COMMIT).setTimeout(10000));
-                    page.waitForTimeout(5000);
-                    log.info("[FB-TestSend] Landed on URL: '{}', Title: '{}'", page.url(), page.title());
+                    // Step 1: Navigate to inbox root so SPA hydrates correctly
+                    log.info("[FB-TestSend] Navigating to Messenger inbox root to bootstrap SPA...");
+                    page.navigate("https://www.facebook.com/messages/t/",
+                            new Page.NavigateOptions().setWaitUntil(WaitUntilState.COMMIT).setTimeout(15000));
 
-                    // Check if message input box is visible and recipient identity is verified
-                    if (!verifyRecipientIdentity(page, searchName)) {
-                        log.info("[FB-TestSend] Target chat window for '{}' not verified open. Trying Messenger Search box...", searchName);
-                        ElementHandle searchBox = page.querySelector("input[aria-label*='Tìm kiếm'], input[placeholder*='Tìm kiếm'], input[aria-label*='Search']");
-                        if (searchBox != null) {
-                            searchBox.focus();
-                            searchBox.click();
-                            page.waitForTimeout(300);
-                            searchBox.fill(searchName);
-                            page.waitForTimeout(2500);
-
-                            List<ElementHandle> searchResults = page.querySelectorAll("[role='listbox'] [role='option'], div[role='grid'] [role='row'], div[role='navigation'] [role='row']");
-                            for (ElementHandle res : searchResults) {
-                                String resTxt = res.innerText() != null ? res.innerText() : "";
-                                if (resTxt.contains(searchName) || resTxt.contains("Mạnh") || resTxt.contains("Manh")) {
-                                    res.click();
-                                    page.waitForTimeout(3000);
-                                    log.info("[FB-TestSend] Clicked search result element for '{}'", searchName);
-                                    break;
-                                }
-                            }
-                        }
-
-                        if (!verifyRecipientIdentity(page, searchName)) {
-                            log.info("[FB-TestSend] Searching Contacts list / Sidebar for '{}'...", searchName);
-                            List<ElementHandle> contacts = page.querySelectorAll(
-                                    "div[aria-label='Người liên hệ'] [role='button'], " +
-                                    "div[aria-label='Contacts'] [role='button'], " +
-                                    "div[role='grid'] [role='row'], " +
-                                    "a[href*='/messages/']");
-                            for (ElementHandle c : contacts) {
-                                String txt = c.innerText() != null ? c.innerText() : "";
-                                if (txt.contains(searchName) || txt.contains("Mạnh") || txt.contains("Manh")) {
-                                    c.click();
-                                    page.waitForTimeout(3000);
-                                    log.info("[FB-TestSend] Clicked Contact/Sidebar item for '{}'", searchName);
-                                    break;
-                                }
-                            }
-                        }
-                    }
-
-                    // STRICT SAFETY RECIPIENT VERIFICATION
-                    if (!verifyRecipientIdentity(page, searchName)) {
-                        log.warn("[FB-TestSend] ABORTED: Open chat window failed identity verification for recipient '{}'", searchName);
+                    String landedUrl = page.url();
+                    if (landedUrl.contains("login")) {
+                        log.warn("[FB-TestSend] ABORTED: Redirected to login. Cookies may have expired.");
                         return;
                     }
 
-                    String senderName = searchName;
-                    ElementHandle headerElem = page.querySelector("h2, [role='main'] header span");
-                    if (headerElem != null && headerElem.textContent() != null && !headerElem.textContent().isBlank()) {
-                        senderName = headerElem.textContent().trim();
+                    // Wait for sidebar to render
+                    try {
+                        page.waitForSelector(
+                                "a[href*='/messages/t/'], a[href*='/messages/e2ee/t/']",
+                                new Page.WaitForSelectorOptions().setTimeout(10000));
+                        log.info("[FB-TestSend] Inbox sidebar loaded. URL: {}", page.url());
+                    } catch (Exception e) {
+                        log.warn("[FB-TestSend] Sidebar did not fully load within 10s. Proceeding anyway. URL: {}", page.url());
                     }
 
-                    String testMsg = generateAwayMessage(senderName, 1, cfg.getCustomMessage());
-                    log.info("[FB-TestSend] Generated AI away message for Verified Recipient '{}': {}", senderName, testMsg);
+                    // Step 2: Open the target thread via sidebar click or New Message compose
+                    boolean opened = openTargetThreadInSidebar(page, finalThreadId, contactName);
+                    if (!opened) {
+                        log.warn("[FB-TestSend] ABORTED: Could not open verified chat window for '{}'", contactName);
+                        return;
+                    }
+
+                    // Step 3: Read the verified contact name from the header
+                    String verifiedName = extractCurrentChatHeaderName(page);
+                    if (verifiedName == null || verifiedName.isBlank()) verifiedName = contactName;
+
+                    // Step 4: Generate and send the AI away-message
+                    String testMsg = generateAwayMessage(verifiedName, 1, cfg.getCustomMessage());
+                    log.info("[FB-TestSend] Sending test message to verified recipient '{}': {}", verifiedName, testMsg);
 
                     boolean sent = sendMessengerReply(page, testMsg);
-                    log.info("[FB-TestSend] Direct send result for Verified Recipient '{}': {}", senderName, sent);
+                    log.info("[FB-TestSend] Send result for '{}': {}", verifiedName, sent);
                 }
             } catch (Exception e) {
-                log.error("[FB-TestSend] Error sending to target thread {}: {}", targetUrl, e.getMessage(), e);
+                log.error("[FB-TestSend] Error in sendTestToThread for '{}': {}", contactName, e.getMessage(), e);
             } finally {
                 scanRunning.set(false);
             }
         });
 
-        return Map.of("status", "started", "message", "Đã khởi động tiến trình gửi tin nhắn thử nghiệm có xác thực tới " + searchName);
+        return Map.of("status", "started", "message", "Đã khởi động tiến trình gửi tin nhắn thử nghiệm có xác thực tới " + contactName);
     }
 }

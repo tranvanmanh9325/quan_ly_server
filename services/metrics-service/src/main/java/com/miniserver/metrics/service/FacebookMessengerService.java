@@ -385,7 +385,17 @@ public class FacebookMessengerService implements DisposableBean {
 
                 // Click the anchor link — this triggers the SPA router to mount the chat panel correctly.
                 anchor.click();
-                page.waitForTimeout(2500);
+
+                // Wait for the chat panel heading to appear before reading header name.
+                // Without this, extractCurrentChatHeaderName() returns null because React hasn't
+                // rendered the chat panel yet after the SPA route change.
+                try {
+                    page.waitForSelector(
+                            "h1, header a[href], [role='main'] h2, [role='heading']",
+                            new Page.WaitForSelectorOptions().setTimeout(6000));
+                } catch (Exception ignored) {
+                    page.waitForTimeout(2000);
+                }
 
                 // Handle E2EE PIN screen if it appears after clicking a conversation.
                 // This is needed when the persistent profile doesn’t yet have the E2EE key in IndexedDB.
@@ -401,7 +411,7 @@ public class FacebookMessengerService implements DisposableBean {
                 // Extract sender name from the now-active chat header
                 String senderName = extractCurrentChatHeaderName(page);
                 if (senderName == null || senderName.isBlank()) {
-                    log.info("[FB-Responder] Thread #{}: empty header after click. Skipping.", i);
+                    log.info("[FB-Responder] Thread #{} [{}]: empty header after click. Skipping.", i, href);
                     continue;
                 }
 

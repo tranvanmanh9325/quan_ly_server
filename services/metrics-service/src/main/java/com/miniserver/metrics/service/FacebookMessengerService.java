@@ -788,9 +788,9 @@ public class FacebookMessengerService implements DisposableBean {
                 "      isOutgoing = true;" +
                 "    }" +
                 "    if (!isOutgoing) {" +
-                "      let rect = row.getBoundingClientRect();" +
-                "      let rowCenterX = rect.left + (rect.width / 2);" +
-                "      if (rect.width > 0 && rowCenterX > mainMidX) {" +
+                "      let bubble = row.querySelector('div[dir=\"auto\"], div[style*=\"background\"], div[role=\"none\"]') || row;" +
+                "      let bRect = bubble.getBoundingClientRect();" +
+                "      if (bRect.width > 0 && bRect.left > mainMidX - 50) {" +
                 "        isOutgoing = true;" +
                 "      }" +
                 "    }" +

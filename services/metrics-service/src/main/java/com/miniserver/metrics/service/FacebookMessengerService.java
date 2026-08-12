@@ -776,7 +776,6 @@ public class FacebookMessengerService implements DisposableBean {
                 "  if (rawRows.length === 0) {" +
                 "    rawRows = Array.from(main.querySelectorAll('div[dir=\"auto\"]')).map(el => el.closest('div[style*=\"flex\"]') || el).filter(Boolean);" +
                 "  }" +
-                "  // Filter out nested child elements so we only count top-level message row containers" +
                 "  let rows = rawRows.filter(el => !rawRows.some(parent => parent !== el && parent.contains(el)));" +
                 "  let count = 0;" +
                 "  for (let i = rows.length - 1; i >= 0; i--) {" +

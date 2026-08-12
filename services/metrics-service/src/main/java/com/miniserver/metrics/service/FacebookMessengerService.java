@@ -429,8 +429,16 @@ public class FacebookMessengerService implements DisposableBean {
                 log.warn("[FB-Responder] Could not find Messenger message textbox element.");
                 return false;
             }
-            inputBox.focus();
-            inputBox.fill(text);
+            inputBox.click();
+            page.waitForTimeout(300);
+
+            // Use document.execCommand('insertText') & keyboard.insertText for React/Lexical contenteditable divs
+            try {
+                inputBox.evaluate("(el, txt) => { el.focus(); document.execCommand('insertText', false, txt); }", text);
+            } catch (Exception ignored) {
+                page.keyboard().insertText(text);
+            }
+
             page.waitForTimeout(500);
             page.keyboard().press("Enter");
             page.waitForTimeout(1000);

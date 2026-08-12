@@ -654,7 +654,7 @@ public class FacebookMessengerService implements DisposableBean {
                     "      if (titleEl && titleEl.innerText && titleEl.innerText.trim()) {" +
                     "        let txt = titleEl.innerText.trim();" +
                     "        let lower = txt.toLowerCase();" +
-                    "        if (!lower.startsWith('cu\u1ed9c tr\u00f2 chuy\u1ec7n') && !lower.startsWith('tin nh\u1eafn') && !lower.startsWith('messenger')) {" +
+                    "        if (!lower.startsWith('cu\u1ed9c tr\u00f2 chuy\u1ec7n') && !lower.startsWith('tin nh\u1eafn') && !lower.includes('messenger') && !lower.startsWith('(')) {" +
                     "          return txt;" +
                     "        }" +
                     "      }" +
@@ -669,14 +669,22 @@ public class FacebookMessengerService implements DisposableBean {
                     "      if (sidebarLink) {" +
                     "        let nameEl = sidebarLink.querySelector('span[dir=\"auto\"], span');" +
                     "        if (nameEl && nameEl.innerText && nameEl.innerText.trim()) {" +
-                    "          return nameEl.innerText.trim();" +
+                    "          let stxt = nameEl.innerText.trim();" +
+                    "          let lower = stxt.toLowerCase();" +
+                    "          if (!lower.includes('messenger') && !lower.startsWith('(')) return stxt;" +
                     "        }" +
                     "      }" +
                     "    }" +
                     "  }" +
                     "  let docTitle = document.title || '';" +
-                    "  if (docTitle.includes('|')) return docTitle.split('|')[0].trim();" +
-                    "  if (docTitle.includes('-')) return docTitle.split('-')[0].trim();" +
+                    "  let candidate = '';" +
+                    "  if (docTitle.includes('|')) candidate = docTitle.split('|')[0].trim();" +
+                    "  else if (docTitle.includes('-')) candidate = docTitle.split('-')[0].trim();" +
+                    "  else candidate = docTitle.trim();" +
+                    "  let lowerCand = candidate.toLowerCase();" +
+                    "  if (candidate.length > 0 && !lowerCand.includes('messenger') && !lowerCand.startsWith('(') && !lowerCand.startsWith('tin nh\u1eafn')) {" +
+                    "    return candidate;" +
+                    "  }" +
                     "  return null;" +
                     "}");
             return result instanceof String s ? s : null;

@@ -645,38 +645,38 @@ public class FacebookMessengerService implements DisposableBean {
     /** Reads the current active chat's header name from the DOM. Returns null if not found. */
     private String extractCurrentChatHeaderName(Page page) {
         try {
-            Object result = page.evaluate(
-                    "() => {" +
+            Object result = page.evaluate("() => {" +
                     "  let main = document.querySelector('[role=\"main\"]');" +
-                    "  if (!main) return null;" +
-                    "  let selectors = [" +
-                    "    '[role=\"main\"] header h1'," +
-                    "    '[role=\"main\"] header h2'," +
-                    "    '[role=\"main\"] header [dir=\"auto\"]'," +
-                    "    '[role=\"main\"] [role=\"heading\"]'," +
-                    "    '[role=\"main\"] a[href*=\"facebook.com/\"] span'," +
-                    "    '[role=\"main\"] a[href*=\"facebook.com/\"]'," +
-                    "    '[role=\"main\"] span[dir=\"auto\"]'," +
-                    "    '[role=\"main\"] div[dir=\"auto\"]'," +
-                    "    'h2[dir=\"auto\"]'" +
-                    "  ];" +
-                    "  for (let sel of selectors) {" +
-                    "    let el = document.querySelector(sel);" +
-                    "    if (el && el.innerText && el.innerText.trim()) {" +
-                    "      let txt = el.innerText.trim();" +
-                    "      let lower = txt.toLowerCase();" +
-                    "      if (!lower.startsWith('cu\u1ed9c tr\u00f2 chuy\u1ec7n') && !lower.startsWith('tin nh\u1eafn') && !lower.startsWith('messenger')) {" +
-                    "        return txt;" +
+                    "  if (main) {" +
+                    "    let header = main.querySelector('header, [role=\"banner\"]');" +
+                    "    if (header) {" +
+                    "      let titleEl = header.querySelector('h1, h2, [role=\"heading\"], a[href*=\"facebook.com/\"] span, span[dir=\"auto\"]');" +
+                    "      if (titleEl && titleEl.innerText && titleEl.innerText.trim()) {" +
+                    "        let txt = titleEl.innerText.trim();" +
+                    "        let lower = txt.toLowerCase();" +
+                    "        if (!lower.startsWith('cu\u1ed9c tr\u00f2 chuy\u1ec7n') && !lower.startsWith('tin nh\u1eafn') && !lower.startsWith('messenger')) {" +
+                    "          return txt;" +
+                    "        }" +
                     "      }" +
                     "    }" +
                     "  }" +
-                    "  let text = main.innerText || '';" +
-                    "  let lines = text.split('\\n').map(l => l.trim()).filter(l => l.length > 0);" +
-                    "  for (let line of lines) {" +
-                    "    if (line.toLowerCase().startsWith('cu\u1ed9c tr\u00f2 chuy\u1ec7n v\u1edbi ')) {" +
-                    "      return line.substring('cu\u1ed9c tr\u00f2 chuy\u1ec7n v\u1edbi '.length).trim();" +
+                    "  let currentPath = window.location.pathname || '';" +
+                    "  if (currentPath.includes('/messages/t/')) {" +
+                    "    let parts = currentPath.split('/messages/t/');" +
+                    "    if (parts.length > 1) {" +
+                    "      let threadId = parts[1].replace(/\\//g, '');" +
+                    "      let sidebarLink = document.querySelector('a[href*=\"' + threadId + '\"]');" +
+                    "      if (sidebarLink) {" +
+                    "        let nameEl = sidebarLink.querySelector('span[dir=\"auto\"], span');" +
+                    "        if (nameEl && nameEl.innerText && nameEl.innerText.trim()) {" +
+                    "          return nameEl.innerText.trim();" +
+                    "        }" +
+                    "      }" +
                     "    }" +
                     "  }" +
+                    "  let docTitle = document.title || '';" +
+                    "  if (docTitle.includes('|')) return docTitle.split('|')[0].trim();" +
+                    "  if (docTitle.includes('-')) return docTitle.split('-')[0].trim();" +
                     "  return null;" +
                     "}");
             return result instanceof String s ? s : null;

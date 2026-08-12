@@ -363,43 +363,39 @@ public class FacebookMessengerService implements DisposableBean {
     private int inspectAndReply(Page page, FacebookConfig cfg) {
         int autoRepliesSent = 0;
 
-        // Query all DM + E2EE conversation anchor links from the sidebar.
-        // Anchor tags with /messages/t/ or /messages/e2ee/t/ are individual conversations.
-        List<ElementHandle> threadLinks = page.querySelectorAll(
-                "a[href*='/messages/t/'], a[href*='/messages/e2ee/t/']");
+        // Query all DM + E2EE conversation URLs from the sidebar.
+        @SuppressWarnings("unchecked")
+        List<String> threadHrefs = (List<String>) page.evaluate("() => {" +
+                "  let links = Array.from(document.querySelectorAll('a[href*=\"/messages/t/\"], a[href*=\"/messages/e2ee/t/\"]'));" +
+                "  return links.map(a => a.href).filter(h => h && h.trim().length > 0);" +
+                "}");
 
-        log.info("[FB-Responder] Found {} conversation anchor links in sidebar.", threadLinks.size());
+        log.info("[FB-Responder] Found {} conversation URLs in sidebar.", threadHrefs != null ? threadHrefs.size() : 0);
 
-        if (threadLinks.isEmpty()) {
-            log.warn("[FB-Responder] No thread anchor links found. Sidebar may not have loaded correctly. URL: {}", page.url());
+        if (threadHrefs == null || threadHrefs.isEmpty()) {
+            log.warn("[FB-Responder] No thread URLs found. Sidebar may not have loaded correctly. URL: {}", page.url());
             return 0;
         }
 
         // Scan up to 20 threads to reach past group chats at the top of the inbox
-        int maxCheck = Math.min(threadLinks.size(), 20);
+        int maxCheck = Math.min(threadHrefs.size(), 20);
         for (int i = 0; i < maxCheck; i++) {
             try {
-                ElementHandle anchor = threadLinks.get(i);
-                String href = (String) anchor.evaluate("el => el.href");
+                String href = threadHrefs.get(i);
                 if (href == null || href.isBlank()) continue;
 
-                // Click the outer role=row / role=link container to trigger React's click handler.
+                // Navigate directly to thread URL to trigger React Router and mount chat panel cleanly.
                 try {
-                    anchor.evaluate("el => (el.closest('[role=\"row\"], [role=\"link\"], [role=\"button\"]') || el).click()");
-                } catch (Exception ignored) {
-                    anchor.click();
-                }
-                page.waitForTimeout(500);
-                if (!page.url().contains(href.replaceAll(".*/messages/", ""))) {
-                    try {
-                        page.navigate(href, new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED).setTimeout(10000));
-                    } catch (Exception ignored) {}
+                    page.navigate(href, new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED).setTimeout(12000));
+                } catch (Exception e) {
+                    log.warn("[FB-Responder] Navigation to thread #{} [{}] failed: {}", i, href, e.getMessage());
+                    continue;
                 }
 
-                // Poll up to 6s for the active chat panel header to render after the SPA route change.
+                // Poll up to 6s for the active chat panel header to render after navigation.
                 String senderName = waitForChatHeaderToLoad(page, 6000);
 
-                // Handle E2EE PIN screen if it appears after clicking a conversation.
+                // Handle E2EE PIN screen if it appears after opening a conversation.
                 handleE2eePinScreen(page);
 
                 if (senderName == null || senderName.isBlank()) {
@@ -413,7 +409,7 @@ public class FacebookMessengerService implements DisposableBean {
                 }
 
                 if (senderName == null || senderName.isBlank()) {
-                    log.info("[FB-Responder] Thread #{} [{}]: empty header after click. Skipping.", i, href);
+                    log.info("[FB-Responder] Thread #{} [{}]: empty header after navigate. Skipping.", i, href);
                     continue;
                 }
 

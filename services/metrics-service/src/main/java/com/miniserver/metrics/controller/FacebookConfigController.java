@@ -82,4 +82,11 @@ public class FacebookConfigController {
     public ResponseEntity<Map<String, Boolean>> isVncReady() {
         return ResponseEntity.ok(Map.of("ready", messengerService.isVncReady()));
     }
+
+    @PostMapping("/test-send-target")
+    public ResponseEntity<Map<String, String>> testSendTarget(@RequestBody Map<String, String> body) {
+        String targetUrl = body.getOrDefault("targetUrl", "https://www.facebook.com/messages/t/100084961920667");
+        Map<String, String> res = messengerService.sendTestToThread(targetUrl);
+        return ResponseEntity.ok(res);
+    }
 }

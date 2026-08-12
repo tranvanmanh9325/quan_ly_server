@@ -424,24 +424,55 @@ public class FacebookMessengerService implements DisposableBean {
 
     private boolean sendMessengerReply(Page page, String text) {
         try {
-            ElementHandle inputBox = page.querySelector("[role='textbox'], [contenteditable='true'], [aria-label*='Message'], [aria-label*='Tin nhắn']");
+            // Expanded selectors covering Lexical editor, aria-label, role=textbox, contenteditable, placeholder, and Aa button
+            ElementHandle inputBox = page.querySelector(
+                    "div[data-lexical-editor='true'], " +
+                    "div[role='textbox'], " +
+                    "div[contenteditable='true'], " +
+                    "[aria-label*='Message'], [aria-label*='Tin nhắn'], " +
+                    "[aria-label*='Aa'], [aria-placeholder*='Aa'], " +
+                    "[aria-label*='Nhập'], [aria-label*='Type']");
+
+            if (inputBox == null) {
+                // Fallback: try clicking footer / main chat area to focus input
+                log.warn("[FB-Responder] Primary textbox selector null. Attempting footer click fallback...");
+                ElementHandle footer = page.querySelector("footer, [role='main'] div[style*='bottom'], [role='region'] div[contenteditable]");
+                if (footer != null) {
+                    footer.click();
+                    page.waitForTimeout(300);
+                    inputBox = page.querySelector("div[contenteditable='true'], div[role='textbox']");
+                }
+            }
+
             if (inputBox == null) {
                 log.warn("[FB-Responder] Could not find Messenger message textbox element.");
                 return false;
             }
-            inputBox.click();
-            page.waitForTimeout(300);
 
-            // Use document.execCommand('insertText') & keyboard.insertText for React/Lexical contenteditable divs
+            inputBox.focus();
+            inputBox.click();
+            page.waitForTimeout(400);
+
+            // Execute insertText via JS execCommand & Playwright keyboard insertText
             try {
-                inputBox.evaluate("(el, txt) => { el.focus(); document.execCommand('insertText', false, txt); }", text);
-            } catch (Exception ignored) {
+                inputBox.evaluate("(el, txt) => {" +
+                        "  el.focus();" +
+                        "  let sel = window.getSelection();" +
+                        "  let range = document.createRange();" +
+                        "  range.selectNodeContents(el);" +
+                        "  sel.removeAllRanges();" +
+                        "  sel.addRange(range);" +
+                        "  document.execCommand('insertText', false, txt);" +
+                        "}", text);
+            } catch (Exception e) {
+                log.warn("[FB-Responder] JS execCommand failed, falling back to keyboard.insertText: {}", e.getMessage());
                 page.keyboard().insertText(text);
             }
 
-            page.waitForTimeout(500);
+            page.waitForTimeout(600);
             page.keyboard().press("Enter");
-            page.waitForTimeout(1000);
+            page.waitForTimeout(1500);
+            log.info("[FB-Responder] Successfully typed and sent message via Messenger input.");
             return true;
         } catch (Exception e) {
             log.error("[FB-Responder] Failed to send Messenger reply: {}", e.getMessage());
@@ -841,5 +872,65 @@ public class FacebookMessengerService implements DisposableBean {
             }
         }
         log.warn("[FB-Responder] Port {} still open after {}s cleanup wait — proceeding anyway.", port, timeoutSeconds);
+    }
+
+    /** Direct test send to a target thread URL (e.g. https://www.facebook.com/messages/t/100084961920667) */
+    public Map<String, String> sendTestToThread(String threadTarget) {
+        FacebookConfig cfg = configRepository.getConfig().orElseGet(FacebookConfig::new);
+        if (cfg.getCookiesJson() == null || cfg.getCookiesJson().isBlank()) {
+            return Map.of("status", "error", "message", "Chưa cấu hình Cookies Facebook.");
+        }
+
+        String targetUrl = threadTarget.startsWith("http")
+                ? threadTarget
+                : "https://www.facebook.com/messages/t/" + threadTarget;
+
+        scanExecutor.submit(() -> {
+            Map<String, String> env = new HashMap<>(System.getenv());
+            env.put("PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD", "1");
+            env.put("PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH", "/usr/bin/chromium");
+            env.put("PLAYWRIGHT_NODEJS_PATH", "/usr/bin/node");
+
+            try (Playwright playwright = Playwright.create(new Playwright.CreateOptions().setEnv(env))) {
+                preparePersistentProfileDir();
+
+                BrowserType.LaunchPersistentContextOptions pOptions = new BrowserType.LaunchPersistentContextOptions()
+                        .setHeadless(true)
+                        .setArgs(CHROMIUM_ARGS)
+                        .setUserAgent("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36")
+                        .setViewportSize(1280, 800);
+
+                if (Paths.get("/usr/bin/chromium").toFile().exists()) {
+                    pOptions.setExecutablePath(Paths.get("/usr/bin/chromium"));
+                } else if (Paths.get("/usr/bin/chromium-browser").toFile().exists()) {
+                    pOptions.setExecutablePath(Paths.get("/usr/bin/chromium-browser"));
+                }
+
+                try (BrowserContext context = playwright.chromium().launchPersistentContext(Paths.get(PROFILE_DIR_PATH), pOptions)) {
+                    applyCookies(context, cfg.getCookiesJson());
+                    Page page = context.pages().isEmpty() ? context.newPage() : context.pages().get(0);
+
+                    log.info("[FB-TestSend] Direct navigating to target thread: {}", targetUrl);
+                    page.navigate(targetUrl, new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED));
+                    page.waitForTimeout(5000);
+
+                    String senderName = "Phạm Minh";
+                    ElementHandle headerElem = page.querySelector("h2, [role='main'] header span");
+                    if (headerElem != null && headerElem.textContent() != null) {
+                        senderName = headerElem.textContent().trim();
+                    }
+
+                    String testMsg = generateAwayMessage(senderName, 1, cfg.getCustomMessage());
+                    log.info("[FB-TestSend] Generated AI away message for '{}': {}", senderName, testMsg);
+
+                    boolean sent = sendMessengerReply(page, testMsg);
+                    log.info("[FB-TestSend] Direct send result for '{}': {}", senderName, sent);
+                }
+            } catch (Exception e) {
+                log.error("[FB-TestSend] Error sending to target thread {}: {}", targetUrl, e.getMessage(), e);
+            }
+        });
+
+        return Map.of("status", "started", "message", "Đã khởi động tiến trình gửi tin nhắn thử nghiệm tới " + targetUrl);
     }
 }

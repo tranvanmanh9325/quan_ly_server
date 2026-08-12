@@ -285,6 +285,8 @@ export default function SettingsPage() {
   const [tgTesting, setTgTesting] = useState(false);
   const [tgTestResult, setTgTestResult] = useState(null); // { status, message }
   const [tgLoading, setTgLoading]   = useState(true);
+  // Guard ref: skip auto-save on the very first mount (when API data is loaded)
+  const tgMountedRef = useRef(false);
   // ── Facebook state ───────────────────────────────────────────────────────
   const [fbConfig, setFbConfig] = useState({
     enabled: false,
@@ -347,8 +349,30 @@ export default function SettingsPage() {
         }));
       })
       .catch(() => {})
-      .finally(() => setTgLoading(false));
+      .finally(() => {
+        setTgLoading(false);
+        // Allow auto-save to fire AFTER initial data is populated
+        tgMountedRef.current = true;
+      });
   }, []);
+
+  // Auto-save the 'enabled' toggle immediately when it changes (no Save button needed)
+  useEffect(() => {
+    if (!tgMountedRef.current) return;
+    const payload = {
+      enabled:         tgConfig.enabled,
+      cpuThreshold:    tgConfig.cpuThreshold,
+      ramThreshold:    tgConfig.ramThreshold,
+      diskThreshold:   tgConfig.diskThreshold,
+      cooldownMinutes: tgConfig.cooldownMinutes,
+    };
+    axios.post('/api/telegram/config', payload)
+      .then(() => {
+        setTgSaved(true);
+        setTimeout(() => setTgSaved(false), 2000);
+      })
+      .catch(() => {});
+  }, [tgConfig.enabled]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load Facebook config from backend
   useEffect(() => {

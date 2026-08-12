@@ -820,13 +820,57 @@ public class FacebookMessengerService implements DisposableBean {
 
         String prompt = "Bạn là 'Tiểu Bảo Bảo' - trợ lý AI của anh Mạnh (Cua). "
                 + "Người dùng cá nhân tên \"" + senderName + "\" đã gửi cho anh Mạnh (Cua) " + unrepliedCount + " tin nhắn liên tiếp trong lúc anh ấy vắng mặt. "
-                + "Hãy viết 1 câu trả lời ngắn gọn (1-2 câu), xưng là 'Tiểu Bảo Bảo trợ lí của Mạnh (Cua)', thông báo rằng anh Mạnh (Cua) hiện đang vắng mặt và đã nhận được " + unrepliedCount + " tin nhắn của họ, sẽ báo lại anh ấy ngay khi quay lại.";
+                + "Hãy viết 1 câu trả lời ngắn gọn (1-2 câu), xưng là 'Tiểu Bảo Bảo trợ lí của Mạnh (Cua)', thông báo rằng anh Mạnh (Cua) hiện đang vắng mặt và đã nhận được " + unrepliedCount + " tin nhắn của họ, sẽ báo lại anh ấy ngay khi quay lại. "
+                + "LƯU Ý QUAN TRỌNG: CHỈ TRẢ LỜI BẰNG CHỮ THƯỜNG THUẦN TÚY (PLAIN TEXT), KHÔNG DÙNG ĐỊNH DẠNG JSON, KHÔNG DÙNG THẺ XML, KHÔNG DÙNG THẺ FUNCTION/TOOL.";
 
         try {
-            return aiChatService.chat("fb-away-" + senderName.hashCode(), prompt);
+            String raw = aiChatService.chat("fb-away-" + senderName.hashCode(), prompt);
+            String cleaned = cleanAwayMessageText(raw);
+            if (cleaned != null && !cleaned.isBlank()) {
+                return cleaned;
+            }
         } catch (Exception e) {
-            return "Chào bạn, mình là Tiểu Bảo Bảo trợ lí của Mạnh (Cua). Hiện tại anh Mạnh (Cua) đang đi vắng và đã nhận được " + unrepliedCount + " tin nhắn của bạn. Mình sẽ báo lại anh ấy ngay khi quay lại nhé!";
+            log.warn("[FB-Responder] AI Chat Service error, using fallback away message: {}", e.getMessage());
         }
+
+        return "Chào bạn, mình là Tiểu Bảo Bảo trợ lí của Mạnh (Cua). Hiện tại anh Mạnh (Cua) đang đi vắng và đã nhận được " + unrepliedCount + " tin nhắn của bạn. Mình sẽ báo lại anh ấy ngay khi quay lại nhé!";
+    }
+
+    private String cleanAwayMessageText(String rawText) {
+        if (rawText == null || rawText.isBlank()) {
+            return "";
+        }
+        String text = rawText;
+
+        // 1. Remove XML/Function tags like <function>...</function>, <tool_call>...</tool_call>, </function>
+        text = text.replaceAll("(?i)<function[^>]*>", "")
+                   .replaceAll("(?i)</function>", "")
+                   .replaceAll("(?i)<tool_call[^>]*>", "")
+                   .replaceAll("(?i)</tool_call>", "");
+
+        // 2. Remove markdown code fence blocks like ```json ... ```
+        text = text.replaceAll("```[a-zA-Z]*", "").replaceAll("```", "");
+
+        // 3. Extract text inside JSON object if LLM returned {"message": "...", "text": "..."}
+        if (text.trim().startsWith("{") && text.contains("}")) {
+            try {
+                java.util.regex.Matcher strMatcher = java.util.regex.Pattern.compile("\"([^\"]{10,})\"").matcher(text);
+                if (strMatcher.find()) {
+                    text = strMatcher.group(1);
+                }
+            } catch (Exception ignored) {}
+        }
+
+        // 4. Remove leading/trailing quotes
+        text = text.trim();
+        if (text.startsWith("\"") && text.endsWith("\"") && text.length() > 2) {
+            text = text.substring(1, text.length() - 1).trim();
+        }
+
+        // 5. Clean escaped quotes, newlines, extra spaces
+        text = text.replace("\\n", " ").replace("\\\"", "\"").replace("\\t", " ").replaceAll("\\s+", " ").trim();
+
+        return text;
     }
 
     private boolean sendMessengerReply(Page page, String text) {

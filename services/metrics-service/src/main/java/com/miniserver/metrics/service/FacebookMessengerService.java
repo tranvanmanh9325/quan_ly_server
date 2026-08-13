@@ -150,10 +150,13 @@ public class FacebookMessengerService implements SchedulingConfigurer, Disposabl
             "--disable-blink-features=AutomationControlled",
 
             // --- Site isolation: skip per-process overhead (ok for single-site use) ---
-            "--disable-features=IsolateOrigins,site-per-process,PaintHolding,TranslateUI,BlinkGenPropertyTrees",
+            "--disable-features=IsolateOrigins,site-per-process,PaintHolding,TranslateUI,BlinkGenPropertyTrees,NetworkServiceInProcess2",
 
             // --- V8 JavaScript engine memory cap ---
-            "--js-flags=--max-old-space-size=192 --no-compilation-cache",
+            "--js-flags=--max-old-space-size=192 --no-compilation-cache --no-opt",
+
+            // --- Blink rendering: disable all visual effects (headless-only optimizations) ---
+            "--blink-settings=imagesEnabled=false,preferredColorScheme=1",
 
             // --- Viewport and session ---
             "--window-size=1280,800",
@@ -222,28 +225,48 @@ public class FacebookMessengerService implements SchedulingConfigurer, Disposabl
     }
 
     /**
-     * Reads /proc/stat to calculate the system-wide CPU idle percentage.
-     * Returns -1 if the value cannot be determined (e.g., non-Linux environment).
+     * Reads /proc/stat twice with a 200ms gap to calculate an accurate delta-based
+     * CPU idle percentage. A single-snapshot read gives the cumulative ratio since
+     * boot (nearly always high), which is misleading for a real-time load guard.
+     * Delta gives the actual CPU activity in the last 200ms.
      */
     private double getCpuIdlePercent() {
         try {
             java.io.File stat = new java.io.File("/proc/stat");
             if (!stat.exists()) return -1;
-            String line = new java.io.BufferedReader(new java.io.FileReader(stat)).readLine();
-            // Format: cpu <user> <nice> <system> <idle> <iowait> <irq> <softirq> ...
-            String[] parts = line.trim().split("\\s+");
-            if (parts.length < 5) return -1;
-            long user    = Long.parseLong(parts[1]);
-            long nice    = Long.parseLong(parts[2]);
-            long system  = Long.parseLong(parts[3]);
-            long idle    = Long.parseLong(parts[4]);
-            long iowait  = parts.length > 5 ? Long.parseLong(parts[5]) : 0;
-            long total   = user + nice + system + idle + iowait;
-            return total == 0 ? -1 : (idle * 100.0 / total);
+
+            // First sample
+            long[] s1 = readCpuStats(stat);
+            Thread.sleep(200);
+            // Second sample
+            long[] s2 = readCpuStats(stat);
+
+            if (s1 == null || s2 == null) return -1;
+            // s1/s2: [user, nice, system, idle, iowait, irq, softirq]
+            long idleDelta  = s2[3] - s1[3];
+            long totalDelta = 0;
+            for (int i = 0; i < s2.length; i++) totalDelta += s2[i] - s1[i];
+            return totalDelta == 0 ? -1 : (idleDelta * 100.0 / totalDelta);
         } catch (Exception ex) {
             return -1;
         }
     }
+
+    /** Reads the first 'cpu' line of /proc/stat and returns the 7 counters as a long[]. */
+    private long[] readCpuStats(java.io.File stat) {
+        try (java.io.BufferedReader br = new java.io.BufferedReader(new java.io.FileReader(stat))) {
+            String line = br.readLine();
+            if (line == null || !line.startsWith("cpu ")) return null;
+            String[] parts = line.trim().split("\\s+");
+            if (parts.length < 8) return null;
+            long[] vals = new long[7];
+            for (int i = 0; i < 7; i++) vals[i] = Long.parseLong(parts[i + 1]);
+            return vals;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
 
     private final FacebookConfigRepository configRepository;
     private final AiChatService aiChatService;
@@ -640,18 +663,18 @@ public class FacebookMessengerService implements SchedulingConfigurer, Disposabl
 
         if (threadItems == null || threadItems.isEmpty()) {
             // Take a diagnostic screenshot + dump ALL anchor links to understand what Facebook rendered
-            try {
-                page.screenshot(new Page.ScreenshotOptions().setPath(java.nio.file.Paths.get("/tmp/fb_e2ee_diag.png")));
-                Object domDiag = page.evaluate("() => {" +
-                        "  let allA = Array.from(document.querySelectorAll('a[href]')).map(a => ({ href: a.href, text: (a.innerText||'').substring(0,40) }));" +
-                        "  let url = window.location.href;" +
-                        "  let title = document.title;" +
-                        "  let bodySnippet = (document.body.innerText || '').substring(0, 300);" +
-                        "  return JSON.stringify({ url, title, bodySnippet, linkCount: allA.length, links: allA.slice(0, 25) });" +
-                        "}");
-                log.warn("[FB-Responder] No thread items. Full DOM diag for '{}': {}", page.url(), domDiag);
-            } catch (Exception ignored) {}
-            return 0;
+            // Take a DOM dump to understand what Facebook rendered (no screenshot to save disk I/O)
+                try {
+                    Object domDiag = page.evaluate("() => {" +
+                            "  let allA = Array.from(document.querySelectorAll('a[href]')).map(a => ({ href: a.href, text: (a.innerText||'').substring(0,40) }));" +
+                            "  let url = window.location.href;" +
+                            "  let title = document.title;" +
+                            "  let bodySnippet = (document.body.innerText || '').substring(0, 300);" +
+                            "  return JSON.stringify({ url, title, bodySnippet, linkCount: allA.length, links: allA.slice(0, 25) });" +
+                            "}");
+                    log.warn("[FB-Responder] No thread items. Full DOM diag for '{}': {}", page.url(), domDiag);
+                } catch (Exception ignored) {}
+                return 0;
         }
 
         // Scan up to 20 threads to reach past group chats at the top of the inbox
@@ -696,7 +719,9 @@ public class FacebookMessengerService implements SchedulingConfigurer, Disposabl
                             "  return !spinner;" +
                             "}", new Page.WaitForFunctionOptions().setTimeout(10000));
                 } catch (Exception ignored) {}
-                page.waitForTimeout(1500);
+                // Short random delay (300-700ms) between thread navigations to mimic human behavior
+                // and avoid Facebook rate-limiting the session during rapid consecutive page loads.
+                page.waitForTimeout(300 + (long)(Math.random() * 400));
 
                 // Poll up to 6s for the active chat panel header to render after navigation.
                 String senderName = waitForChatHeaderToLoad(page, 6000);
@@ -746,10 +771,6 @@ public class FacebookMessengerService implements SchedulingConfigurer, Disposabl
                             page.waitForFunction("() => !document.querySelector('[aria-busy=\"true\"], [data-visualcompletion=\"loading-state\"]')",
                                     new Page.WaitForFunctionOptions().setTimeout(8000));
                         } catch (Exception ignored) {}
-                        page.waitForTimeout(2000); // additional buffer for React hydration
-
-                        page.screenshot(new Page.ScreenshotOptions()
-                                .setPath(java.nio.file.Paths.get("/tmp/fb_before_accept.png")));
                         log.info("[FB-Responder] Request thread detected for '{}'. Attempting Accept...", senderName);
 
                         // Strategy 1: Find button/div[role=button] whose textContent contains "Chấp nhận" or "Accept".

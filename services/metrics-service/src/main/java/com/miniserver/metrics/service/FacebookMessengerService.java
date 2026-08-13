@@ -8,9 +8,7 @@ import com.microsoft.playwright.options.Cookie;
 import com.microsoft.playwright.options.SameSiteAttribute;
 import com.microsoft.playwright.options.WaitUntilState;
 import com.miniserver.metrics.model.FacebookConfig;
-import com.miniserver.metrics.model.FacebookCooldown;
 import com.miniserver.metrics.repository.FacebookConfigRepository;
-import com.miniserver.metrics.repository.FacebookCooldownRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.DisposableBean;
@@ -19,10 +17,8 @@ import org.springframework.stereotype.Service;
 
 import java.net.Socket;
 import java.nio.file.Paths;
-import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.*;
-import org.springframework.transaction.annotation.Transactional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -130,7 +126,6 @@ public class FacebookMessengerService implements DisposableBean {
             "Object.defineProperty(navigator, 'languages', { get: () => ['vi-VN','vi','en-US','en'] });";
 
     private final FacebookConfigRepository configRepository;
-    private final FacebookCooldownRepository cooldownRepository;
     private final AiChatService aiChatService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -149,10 +144,8 @@ public class FacebookMessengerService implements DisposableBean {
     private volatile String lastScanResult = null;
 
     public FacebookMessengerService(FacebookConfigRepository configRepository,
-                                    FacebookCooldownRepository cooldownRepository,
                                     AiChatService aiChatService) {
         this.configRepository = configRepository;
-        this.cooldownRepository = cooldownRepository;
         this.aiChatService = aiChatService;
     }
 
@@ -218,9 +211,6 @@ public class FacebookMessengerService implements DisposableBean {
 
         scanRunning.set(true);
         lastScanResult = null;
-        // NOTE: We intentionally do NOT clear cooldowns here.
-        // Cooldown is per-sender and persisted in DB — clearing would let the bot
-        // spam the same user multiple times by rapidly clicking "Scan Now".
         scanExecutor.submit(() -> {
             try {
                 int count = processMessengerChats(cfg);
@@ -566,7 +556,6 @@ public class FacebookMessengerService implements DisposableBean {
                 log.info("[FB-Responder] DM with '{}': {} unreplied incoming message(s) (pre-accept).", senderName, unrepliedCount);
 
                 if (unrepliedCount >= cfg.getThreshold()) {
-                    if (isCooldownExpired(senderName, cfg.getCooldownMinutes())) {
                         log.info("[FB-Responder] Triggering AI Away reply for '{}' (Unreplied: {} >= Threshold: {})",
                                 senderName, unrepliedCount, cfg.getThreshold());
 
@@ -642,13 +631,8 @@ public class FacebookMessengerService implements DisposableBean {
                         boolean sent = sendMessengerReply(page, awayReply);
                         if (sent) {
                             autoRepliesSent++;
-                            String senderKey = senderName.toLowerCase().trim();
-                            cooldownRepository.upsert(senderKey, Instant.now());
                             log.info("[FB-Responder] AUTO-REPLY SENT to '{}': {}", senderName, awayReply);
                         }
-                    } else {
-                        log.info("[FB-Responder] Sender '{}' is on cooldown; skipping.", senderName);
-                    }
                 }
             } catch (Exception ex) {
                 log.warn("[FB-Responder] Error processing thread #{}: {}", i, ex.getMessage());
@@ -1300,14 +1284,6 @@ public class FacebookMessengerService implements DisposableBean {
         } catch (Exception e) {
             log.warn("[FB-Responder] Failed to parse/apply cookies JSON: {}", e.getMessage());
         }
-    }
-
-
-    private boolean isCooldownExpired(String senderName, int cooldownMinutes) {
-        String senderKey = senderName.toLowerCase().trim();
-        return cooldownRepository.findBySenderKey(senderKey)
-                .map(c -> Instant.now().isAfter(c.getRepliedAt().plusSeconds((long) cooldownMinutes * 60)))
-                .orElse(true); // No record = never replied = cooldown expired
     }
 
     private void updateStatus(FacebookConfig cfg, String status, LocalDateTime checkAt) {

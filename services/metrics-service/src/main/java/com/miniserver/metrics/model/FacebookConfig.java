@@ -27,10 +27,6 @@ public class FacebookConfig {
     @Column(name = "threshold", nullable = false)
     private int threshold = 5;
 
-    /** Minimum minutes before sending another auto-reply to the same user */
-    @Column(name = "cooldown_minutes", nullable = false)
-    private int cooldownMinutes = 120;
-
     /** Facebook Session cookies formatted as JSON string */
     @Column(name = "cookies_json", nullable = false, columnDefinition = "TEXT")
     private String cookiesJson = "";

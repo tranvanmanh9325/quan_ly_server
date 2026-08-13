@@ -291,7 +291,6 @@ export default function SettingsPage() {
   const [fbConfig, setFbConfig] = useState({
     enabled: false,
     threshold: 5,
-    cooldownMinutes: 120,
     cookiesJson: '',
     customMessage: '',
     lastStatus: 'Tắt',
@@ -388,7 +387,6 @@ export default function SettingsPage() {
           setFbConfig({
             enabled:         d.enabled         ?? false,
             threshold:       d.threshold       ?? 5,
-            cooldownMinutes: d.cooldownMinutes ?? 120,
             cookiesJson:     d.cookiesJson     || '',
             customMessage:   d.customMessage   || '',
             lastStatus:      d.lastStatus      || 'Tắt',
@@ -560,7 +558,6 @@ export default function SettingsPage() {
           setFbConfig({
             enabled:         cfgRes.data.enabled         ?? false,
             threshold:       cfgRes.data.threshold       ?? 5,
-            cooldownMinutes: cfgRes.data.cooldownMinutes ?? 120,
             cookiesJson:     cfgRes.data.cookiesJson     || '',
             customMessage:   cfgRes.data.customMessage   || '',
             lastStatus:      cfgRes.data.lastStatus      || 'Tắt',
@@ -969,19 +966,6 @@ export default function SettingsPage() {
             <SettingRow label={t('settings.facebook.threshold')} desc={t('settings.facebook.thresholdDesc')}>
               <ThresholdSlider id="fb-threshold" min={1} max={20} unit={` ${t('settings.facebook.thresholdUnit')}`} value={fbConfig.threshold}
                 onChange={v => updateFb('threshold', v)} color="var(--accent-purple)" />
-            </SettingRow>
-
-            <SettingRow label={t('settings.facebook.cooldown')} desc={t('settings.facebook.cooldownDesc')}>
-              <SciFiSelect
-                value={fbConfig.cooldownMinutes}
-                onChange={v => updateFb('cooldownMinutes', v)}
-                options={[
-                  { value: 30,  label: t('settings.facebook.cd30') },
-                  { value: 60,  label: t('settings.facebook.cd60') },
-                  { value: 120, label: t('settings.facebook.cd120') },
-                  { value: 240, label: t('settings.facebook.cd240') },
-                ]}
-              />
             </SettingRow>
 
             <SettingRow label={t('settings.facebook.systemStatus')} desc={t('settings.facebook.systemStatusDesc')}>

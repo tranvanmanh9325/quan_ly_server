@@ -345,7 +345,13 @@ public class FacebookMessengerService implements DisposableBean {
                     log.info("[FB-Responder] Navigating to Message Requests inbox (Tin nhắn đang chờ)...");
                     page.navigate("https://www.facebook.com/messages/requests/",
                             new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED).setTimeout(15000));
-                    page.waitForTimeout(5000);
+                    page.waitForTimeout(3000);
+                    page.evaluate("() => {" +
+                            "  let tabs = Array.from(document.querySelectorAll('[role=\"tab\"], div[role=\"button\"], span'));" +
+                            "  let target = tabs.find(t => (t.innerText || '').includes('C\u00f3 th\u1ec3 b\u1ea1n bi\u1ebft') || (t.innerText || '').includes('You may know'));" +
+                            "  if (target) target.click();" +
+                            "}");
+                    page.waitForTimeout(2000);
                     totalReplies += inspectAndReply(page, cfg);
                 } catch (Exception e) {
                     log.warn("[FB-Responder] Scanning Message Requests tab encountered notice: {}", e.getMessage());
@@ -356,7 +362,13 @@ public class FacebookMessengerService implements DisposableBean {
                     log.info("[FB-Responder] Navigating to Spam Requests inbox (Tin nhắn Spam)...");
                     page.navigate("https://www.facebook.com/messages/requests/spam/",
                             new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED).setTimeout(15000));
-                    page.waitForTimeout(5000);
+                    page.waitForTimeout(3000);
+                    page.evaluate("() => {" +
+                            "  let tabs = Array.from(document.querySelectorAll('[role=\"tab\"], div[role=\"button\"], span'));" +
+                            "  let target = tabs.find(t => (t.innerText || '').includes('Spam'));" +
+                            "  if (target) target.click();" +
+                            "}");
+                    page.waitForTimeout(2000);
                     totalReplies += inspectAndReply(page, cfg);
                 } catch (Exception e) {
                     log.warn("[FB-Responder] Scanning Spam Requests tab encountered notice: {}", e.getMessage());

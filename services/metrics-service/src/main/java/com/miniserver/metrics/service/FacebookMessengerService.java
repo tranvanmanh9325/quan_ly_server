@@ -371,10 +371,20 @@ public class FacebookMessengerService implements DisposableBean {
                             "  if (tab) { tab.click(); return true; }" +
                             "  return false;" +
                             "}");
-                    page.waitForTimeout(3000);
                     log.info("[FB-Responder] 'Có thể bạn biết' tab clicked: {}", tabClicked);
 
-                    // Screenshot to visually verify sidebar after tab click
+                    // Wait generously for sidebar skeleton loading to finish and actual conversation items to appear
+                    page.waitForTimeout(5000);
+
+                    // Explicitly wait for actual conversation anchor links to appear (not skeleton placeholders)
+                    try {
+                        page.waitForSelector(
+                                "a[href*='/messages/requests/t/'], a[href*='/messages/t/']",
+                                new Page.WaitForSelectorOptions().setTimeout(8000));
+                    } catch (Exception ignored) {}
+                    page.waitForTimeout(2000);
+
+                    // Screenshot to visually verify sidebar after tab click and load
                     page.screenshot(new Page.ScreenshotOptions().setPath(java.nio.file.Paths.get("/tmp/fb_cothethanbieet_tab.png")));
 
                     totalReplies += inspectAndReply(page, cfg);

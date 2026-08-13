@@ -485,13 +485,27 @@ public class FacebookMessengerService implements SchedulingConfigurer, Disposabl
                         } catch (Exception e) { log.warn("[FB-DirectReply] Cached nav failed: {}", e.getMessage()); }
                     }
 
-                    // Fallback: click matching sidebar link
+                    // Fallback path 1: click matching link in current sidebar (all thread types incl. requests)
                     if (!navigatedToThread) {
                         Boolean found = (Boolean) page.evaluate(
-                                "(name) => { let links = Array.from(document.querySelectorAll('a[href*=\"/messages/t/\"], a[href*=\"/messages/e2ee/t/\"]')); let m = links.find(a => (a.innerText||'').toLowerCase().includes(name.toLowerCase())); if (m) { m.click(); return true; } return false; }",
+                                "(name) => { let links = Array.from(document.querySelectorAll('a[href*=\"/messages/\"]')); let m = links.find(a => (a.innerText||'').toLowerCase().includes(name.toLowerCase())); if (m) { m.click(); return true; } return false; }",
                                 recipientName);
                         if (Boolean.TRUE.equals(found)) {
                             page.waitForTimeout(2000); handleE2eePinScreen(page); navigatedToThread = true;
+                        }
+                    }
+
+                    // Fallback path 2: navigate to requests inbox and retry sidebar click
+                    if (!navigatedToThread) {
+                        log.info("[FB-DirectReply] Sidebar click failed; navigating requests inbox for '{}'", recipientName);
+                        page.navigate("https://www.facebook.com/messages/requests/",
+                                new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED).setTimeout(15000));
+                        page.waitForTimeout(2500);
+                        Boolean found = (Boolean) page.evaluate(
+                                "(name) => { let links = Array.from(document.querySelectorAll('a[href*=\"/messages/\"]')); let m = links.find(a => (a.innerText||'').toLowerCase().includes(name.toLowerCase())); if (m) { m.click(); return true; } return false; }",
+                                recipientName);
+                        if (Boolean.TRUE.equals(found)) {
+                            page.waitForTimeout(2500); handleE2eePinScreen(page); navigatedToThread = true;
                         }
                     }
 

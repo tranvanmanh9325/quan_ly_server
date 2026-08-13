@@ -1023,7 +1023,6 @@ public class FacebookMessengerService implements DisposableBean {
                 "      let isOut = lbl.startsWith('tin nh\\u1eafn do b\\u1ea1n') ||" +
                 "                  /^l\\u00fac \\d{1,2}:\\d{2}, b\\u1ea1n:/.test(lbl);" +
                 "      details.push({ txt: text.substring(0, 40), isOut, lbl: lbl.substring(0, 50) });" +
-                "      if (isNotice) continue;" +
                 "      if (isOut) break;" +
                 "      count++;" +
                 "    }" +

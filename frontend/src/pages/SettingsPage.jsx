@@ -971,29 +971,33 @@ export default function SettingsPage() {
             </SettingRow>
 
             <SettingRow label={t('settings.facebook.scanInterval')} desc={t('settings.facebook.scanIntervalDesc')}>
-              <select
-                value={fbConfig.scanIntervalMinutes}
-                onChange={e => updateFb('scanIntervalMinutes', Number(e.target.value))}
-                style={{
-                  background: 'rgba(0,0,0,0.4)',
-                  border: '1px solid rgba(187,0,255,0.4)',
-                  borderRadius: '4px',
-                  color: 'var(--accent-cyan)',
-                  fontFamily: 'Share Tech Mono',
-                  fontSize: '0.85rem',
-                  padding: '4px 8px',
-                  outline: 'none',
-                  cursor: 'pointer',
-                }}
-              >
-                <option value={1}>1 {t('settings.facebook.minutesUnit')}</option>
-                <option value={2}>2 {t('settings.facebook.minutesUnit')}</option>
-                <option value={3}>3 {t('settings.facebook.minutesUnit')}</option>
-                <option value={5}>5 {t('settings.facebook.minutesUnit')}</option>
-                <option value={10}>10 {t('settings.facebook.minutesUnit')}</option>
-                <option value={15}>15 {t('settings.facebook.minutesUnit')}</option>
-                <option value={30}>30 {t('settings.facebook.minutesUnit')}</option>
-              </select>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '8px' }}>
+                <ThresholdSlider id="fb-scan-interval" min={1} max={30} unit={` ${t('settings.facebook.minutesUnit')}`} value={fbConfig.scanIntervalMinutes}
+                  onChange={v => updateFb('scanIntervalMinutes', v)} color="var(--accent-cyan)" />
+                <div style={{ display: 'flex', gap: '4px' }}>
+                  {[1, 2, 5, 10, 15, 30].map(m => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => updateFb('scanIntervalMinutes', m)}
+                      style={{
+                        background: fbConfig.scanIntervalMinutes === m ? 'rgba(0, 242, 254, 0.2)' : 'rgba(0,0,0,0.4)',
+                        border: fbConfig.scanIntervalMinutes === m ? '1px solid var(--accent-cyan)' : '1px solid rgba(255,255,255,0.1)',
+                        borderRadius: '3px',
+                        color: fbConfig.scanIntervalMinutes === m ? 'var(--accent-cyan)' : 'var(--text-secondary)',
+                        fontFamily: 'Share Tech Mono',
+                        fontSize: '0.72rem',
+                        padding: '2px 6px',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s ease',
+                        boxShadow: fbConfig.scanIntervalMinutes === m ? '0 0 8px rgba(0, 242, 254, 0.4)' : 'none',
+                      }}
+                    >
+                      {m}m
+                    </button>
+                  ))}
+                </div>
+              </div>
             </SettingRow>
 
             <SettingRow label={t('settings.facebook.systemStatus')} desc={t('settings.facebook.systemStatusDesc')}>

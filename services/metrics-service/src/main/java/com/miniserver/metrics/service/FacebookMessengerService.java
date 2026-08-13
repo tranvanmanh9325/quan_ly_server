@@ -382,7 +382,7 @@ public class FacebookMessengerService implements DisposableBean {
         // Scroll sidebar to hydrate all threads in virtualized list
         try {
             page.evaluate("() => {" +
-                    "  let sidebar = document.querySelector('[role=\"navigation\"], div[aria-label*=\"\u0110o\u1ea1n chat\"], div[aria-label*=\"Tin nh\u1eafn\"], div[aria-label*=\"Chats\"]');" +
+                    "  let sidebar = document.querySelector('[role=\"navigation\"], div[aria-label*=\"\u0110o\u1ea1n chat\"], div[aria-label*=\"Tin nh\u1eafn\"], div[aria-label*=\"Chats\"], div[aria-label*=\"Tin nh\u1eafn \u0111ang ch\u1edd\"], div[aria-label*=\"Message requests\"]');" +
                     "  if (sidebar) { sidebar.scrollTop = 0; sidebar.scrollBy(0, 400); }" +
                     "}");
             page.waitForTimeout(500);
@@ -391,8 +391,21 @@ public class FacebookMessengerService implements DisposableBean {
         // Query all DM + E2EE + Message Requests + Spam conversation URLs from the sidebar.
         @SuppressWarnings("unchecked")
         List<String> threadHrefs = (List<String>) page.evaluate("() => {" +
-                "  let links = Array.from(document.querySelectorAll('a[href*=\"/messages/t/\"], a[href*=\"/messages/e2ee/t/\"], a[href*=\"/messages/requests/\"], a[href*=\"/messages/read/\"]'));" +
-                "  return links.map(a => a.href).filter(h => h && h.trim().length > 0 && !h.endsWith('/messages/t/') && !h.endsWith('/messages/requests/') && !h.endsWith('/messages/requests') && !h.endsWith('/messages/requests/spam/') && !h.endsWith('/messages/requests/spam'));" +
+                "  let allLinks = Array.from(document.querySelectorAll('a[href]'));" +
+                "  let msgLinks = allLinks.filter(a => {" +
+                "    let href = a.getAttribute('href') || '';" +
+                "    return href.includes('/messages/t/') || href.includes('/messages/e2ee/t/') || href.includes('/messages/requests/') || href.includes('/messages/read/');" +
+                "  }).map(a => a.href);" +
+                "  let rootUrls = [" +
+                "    'https://www.facebook.com/messages/'," +
+                "    'https://www.facebook.com/messages/t/'," +
+                "    'https://www.facebook.com/messages/requests/'," +
+                "    'https://www.facebook.com/messages/requests'," +
+                "    'https://www.facebook.com/messages/requests/spam/'," +
+                "    'https://www.facebook.com/messages/requests/spam'" +
+                "  ];" +
+                "  let filtered = msgLinks.filter(h => h && !rootUrls.some(r => h === r || h + '/' === r));" +
+                "  return Array.from(new Set(filtered));" +
                 "}");
 
         log.info("[FB-Responder] Found {} conversation URLs in sidebar.", threadHrefs != null ? threadHrefs.size() : 0);

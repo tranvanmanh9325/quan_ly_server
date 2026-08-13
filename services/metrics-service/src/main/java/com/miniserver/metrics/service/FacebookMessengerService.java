@@ -325,7 +325,7 @@ public class FacebookMessengerService implements DisposableBean {
 
                 try {
                     page.waitForSelector(
-                            "a[href*='/messages/t/'], a[href*='/messages/e2ee/t/']",
+                            "a[href*='/messages/t/'], a[href*='/messages/e2ee/t/'], a[href*='/messages/requests/']",
                             new Page.WaitForSelectorOptions().setTimeout(12000));
                     log.info("[FB-Responder] Sidebar loaded. URL: {}", page.url());
                 } catch (Exception e) {
@@ -338,7 +338,20 @@ public class FacebookMessengerService implements DisposableBean {
 
                 try { page.keyboard().press("Escape"); page.waitForTimeout(200); } catch (Exception ignored) {}
 
-                return inspectAndReply(page, cfg);
+                int totalReplies = inspectAndReply(page, cfg);
+
+                // Also scan Message Requests tab (Tin nhắn đang chờ) for non-friends/strangers
+                try {
+                    log.info("[FB-Responder] Navigating to Message Requests inbox (Tin nhắn đang chờ)...");
+                    page.navigate("https://www.facebook.com/messages/requests/",
+                            new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED).setTimeout(15000));
+                    page.waitForTimeout(3000);
+                    totalReplies += inspectAndReply(page, cfg);
+                } catch (Exception e) {
+                    log.warn("[FB-Responder] Scanning Message Requests tab encountered notice: {}", e.getMessage());
+                }
+
+                return totalReplies;
             }
         }
     }
@@ -355,10 +368,10 @@ public class FacebookMessengerService implements DisposableBean {
     private int inspectAndReply(Page page, FacebookConfig cfg) {
         int autoRepliesSent = 0;
 
-        // Query all DM + E2EE conversation URLs from the sidebar.
+        // Query all DM + E2EE + Message Requests conversation URLs from the sidebar.
         @SuppressWarnings("unchecked")
         List<String> threadHrefs = (List<String>) page.evaluate("() => {" +
-                "  let links = Array.from(document.querySelectorAll('a[href*=\"/messages/t/\"], a[href*=\"/messages/e2ee/t/\"]'));" +
+                "  let links = Array.from(document.querySelectorAll('a[href*=\"/messages/t/\"], a[href*=\"/messages/e2ee/t/\"], a[href*=\"/messages/requests/\"]'));" +
                 "  return links.map(a => a.href).filter(h => h && h.trim().length > 0);" +
                 "}");
 

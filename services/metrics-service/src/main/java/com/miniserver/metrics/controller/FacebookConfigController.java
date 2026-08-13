@@ -89,4 +89,10 @@ public class FacebookConfigController {
         Map<String, String> res = messengerService.sendTestToThread(targetUrl, targetName);
         return ResponseEntity.ok(res);
     }
+
+    @PostMapping("/capture-chat-screenshots")
+    public ResponseEntity<Map<String, String>> captureChatScreenshots() {
+        return ResponseEntity.ok(messengerService.captureChatScreenshots());
+    }
 }
+

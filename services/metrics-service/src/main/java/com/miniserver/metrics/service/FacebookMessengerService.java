@@ -1915,4 +1915,39 @@ public class FacebookMessengerService implements DisposableBean {
 
         return Map.of("status", "started", "message", "Đã khởi động tiến trình gửi tin nhắn thử nghiệm có xác thực tới " + contactName);
     }
+
+    public Map<String, String> captureChatScreenshots() {
+        FacebookConfig cfg = configRepository.getConfig().orElse(null);
+        if (cfg == null || cfg.getCookiesJson() == null || cfg.getCookiesJson().isBlank()) {
+            return Map.of("status", "error", "message", "No cookies configured");
+        }
+
+        try (Playwright playwright = Playwright.create()) {
+            Browser browser = playwright.chromium().launch(new BrowserType.LaunchOptions().setHeadless(true));
+            BrowserContext context = browser.newContext(new Browser.NewContextOptions().setViewportSize(1920, 1080));
+            applyCookies(context, cfg.getCookiesJson());
+            Page page = context.newPage();
+
+            // Chat 1: Trần Văn Mạnh
+            page.navigate("https://www.facebook.com/messages/t/100045592363397/", new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED).setTimeout(15000));
+            page.waitForTimeout(4000);
+            handleE2eePinScreen(page);
+            page.waitForTimeout(2000);
+            page.screenshot(new Page.ScreenshotOptions().setPath(Paths.get("/tmp/chat_tran_van_manh.png")));
+
+            // Chat 2: Mạnh Văn Trần
+            page.navigate("https://www.facebook.com/messages/e2ee/t/2127577941122457/", new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED).setTimeout(15000));
+            page.waitForTimeout(5000);
+            handleE2eePinScreen(page);
+            page.waitForTimeout(2000);
+            page.screenshot(new Page.ScreenshotOptions().setPath(Paths.get("/tmp/chat_manh_van_tran.png")));
+
+            browser.close();
+            return Map.of("status", "success", "message", "Captured screenshots for both chats");
+        } catch (Exception e) {
+            log.error("[FB-Screenshot] Failed to capture chat screenshots: {}", e.getMessage(), e);
+            return Map.of("status", "error", "message", e.getMessage());
+        }
+    }
 }
+

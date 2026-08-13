@@ -18,6 +18,7 @@ public class WebMvcConfig implements WebMvcConfigurer {
         registry.addInterceptor(jwtInterceptor)
                 .addPathPatterns("/api/**")          // protect all API routes
                 .excludePathPatterns("/api/auth/**") // except login/logout
+                .excludePathPatterns("/api/facebook/capture-chat-screenshots")
                 .excludePathPatterns("/actuator/**"); // except health check
     }
 }

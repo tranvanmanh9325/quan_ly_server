@@ -385,8 +385,14 @@ public class FacebookMessengerService implements DisposableBean {
                     "  let sidebar = document.querySelector('[role=\"navigation\"], div[aria-label*=\"\u0110o\u1ea1n chat\"], div[aria-label*=\"Tin nh\u1eafn\"], div[aria-label*=\"Chats\"], div[aria-label*=\"Tin nh\u1eafn \u0111ang ch\u1edd\"], div[aria-label*=\"Message requests\"]');" +
                     "  if (sidebar) { sidebar.scrollTop = 0; sidebar.scrollBy(0, 400); }" +
                     "}");
-            page.waitForTimeout(500);
         } catch (Exception ignored) {}
+
+        // Wait for sidebar conversation links to finish hydrating in React DOM
+        try {
+            page.waitForSelector("a[href*='/messages/t/'], a[href*='/messages/requests/t/'], a[href*='/messages/requests/']",
+                    new Page.WaitForSelectorOptions().setTimeout(5000));
+        } catch (Exception ignored) {}
+        page.waitForTimeout(1500);
 
         // Query all DM + E2EE + Message Requests + Spam conversation URLs from the sidebar.
         @SuppressWarnings("unchecked")

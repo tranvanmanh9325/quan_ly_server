@@ -730,41 +730,76 @@ public class FacebookMessengerService implements DisposableBean {
                     "  });" +
                     "}");
 
-            if (Boolean.TRUE.equals(pinScreenPresent)) {
-                log.info("[FB-Responder] E2EE PIN modal detected. Attempting automatic PIN entry / modal dismissal...");
-
-                Boolean filled = (Boolean) page.evaluate(
-                        "() => {" +
-                        "  let inputs = Array.from(document.querySelectorAll('input'));" +
-                        "  if (inputs.length >= 6) {" +
-                        "    let pin = '090325';" +
-                        "    inputs.slice(0, 6).forEach((inp, idx) => {" +
-                        "      inp.focus(); inp.value = pin[idx] || '0';" +
-                        "      inp.dispatchEvent(new Event('input', { bubbles: true }));" +
-                        "    });" +
-                        "    return true;" +
-                        "  }" +
-                        "  let singleInp = document.querySelector('input[type=password], input[type=number], input[inputmode=numeric]');" +
-                        "  if (singleInp) { singleInp.focus(); singleInp.value = '090325'; singleInp.dispatchEvent(new Event('input', { bubbles: true })); return true; }" +
-                        "  return false;" +
-                        "}");
-
-                page.waitForTimeout(1500);
-
-                // If modal is still present, click the X (Close) button or press Escape to reveal the chat history
-                Boolean closed = (Boolean) page.evaluate(
-                        "() => {" +
-                        "  let closeBtn = document.querySelector('[aria-label=\"\u0110\u00f3ng\"], [aria-label=\"Close\"], [aria-label=\"Hu\u1ef7\"], [aria-label=\"Cancel\"]');" +
-                        "  if (closeBtn) { closeBtn.click(); return true; }" +
-                        "  return false;" +
-                        "}");
-
-                if (Boolean.FALSE.equals(closed)) {
-                    page.keyboard().press("Escape");
-                }
-                page.waitForTimeout(2000);
-                log.info("[FB-Responder] E2EE PIN modal handling completed. Filled: {}, Closed: {}", filled, closed);
+            if (!Boolean.TRUE.equals(pinScreenPresent)) {
+                return;
             }
+
+            log.info("[FB-Responder] E2EE PIN modal detected. Auto-filling fixed PIN '090325'...");
+
+            // Strategy A: Playwright Keyboard Typing into the first input field
+            try {
+                var inputs = page.locator("input");
+                if (inputs.count() > 0) {
+                    inputs.first().click();
+                    page.waitForTimeout(300);
+                    page.keyboard().type("090325", new Keyboard.TypeOptions().setDelay(150));
+                    page.waitForTimeout(500);
+                    page.keyboard().press("Enter");
+                }
+            } catch (Exception ex) {
+                log.warn("[FB-Responder] Keyboard PIN typing exception: {}", ex.getMessage());
+            }
+
+            // Strategy B: JS React Native Setter fallback for 6 input boxes or single input
+            Boolean jsFilled = (Boolean) page.evaluate(
+                    "() => {" +
+                    "  const pin = '090325';" +
+                    "  const setReactValue = (input, val) => {" +
+                    "    try {" +
+                    "      const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;" +
+                    "      nativeInputValueSetter.call(input, val);" +
+                    "    } catch (e) { input.value = val; }" +
+                    "    input.dispatchEvent(new Event('input', { bubbles: true }));" +
+                    "    input.dispatchEvent(new Event('change', { bubbles: true }));" +
+                    "  };" +
+                    "  let inputs = Array.from(document.querySelectorAll('input'));" +
+                    "  if (inputs.length >= 6) {" +
+                    "    inputs.slice(0, 6).forEach((inp, idx) => {" +
+                    "      inp.focus();" +
+                    "      setReactValue(inp, pin[idx] || '0');" +
+                    "    });" +
+                    "    return true;" +
+                    "  } else if (inputs.length > 0) {" +
+                    "    let inp = inputs[0];" +
+                    "    inp.focus();" +
+                    "    setReactValue(inp, pin);" +
+                    "    return true;" +
+                    "  }" +
+                    "  return false;" +
+                    "}");
+
+            log.info("[FB-Responder] JS React Native Setter executed: {}. Submitting PIN...", jsFilled);
+            page.waitForTimeout(1000);
+            page.keyboard().press("Enter");
+
+            // Look for any Submit/Confirm button (e.g. "Tiếp theo", "Xác nhận", "Gửi") if Enter is not auto-triggered
+            try {
+                Boolean submitClicked = (Boolean) page.evaluate(
+                        "() => {" +
+                        "  let btns = Array.from(document.querySelectorAll('div[role=\"button\"], button'));" +
+                        "  let sub = btns.find(b => {" +
+                        "    let t = (b.textContent || '').trim().toLowerCase();" +
+                        "    return t.includes('ti\u1ebfp theo') || t.includes('x\u00e1c nh\u1eadn') || t.includes('continue') || t.includes('submit');" +
+                        "  });" +
+                        "  if (sub) { sub.click(); return true; }" +
+                        "  return false;" +
+                        "}");
+                log.info("[FB-Responder] Submit button click result: {}", submitClicked);
+            } catch (Exception ignored) {}
+
+            // Wait for Facebook to verify PIN 090325 and load/decrypt the conversation history
+            page.waitForTimeout(4000);
+            log.info("[FB-Responder] PIN 090325 auto-fill & submission completed.");
         } catch (Exception e) {
             log.warn("[FB-Responder] Error handling E2EE PIN screen: {}", e.getMessage());
         }

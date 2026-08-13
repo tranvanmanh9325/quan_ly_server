@@ -818,6 +818,14 @@ public class FacebookMessengerService implements DisposableBean {
                 "    let row = rows[i];" +
                 "    let text = (row.innerText || '').trim();" +
                 "    if (!text) continue;" +
+                "    let lowerText = text.toLowerCase();" +
+                "    let isNoticeBanner = lowerText.includes('mu\u1ed1n g\u1eedi tin nh\u1eafn') || " +
+                "                         lowerText.includes('mu\u1ed1n k\u1ebft n\u1ed1i') || " +
+                "                         lowerText.includes('m\u00e3 h\u00f3a \u0111\u1ea7u cu\u1ed1i') || " +
+                "                         lowerText.includes('t\u00ednh n\u0103ng m\u00e3 h\u00f3a') || " +
+                "                         lowerText.includes('t\u00ecm hi\u1ec3u th\u00eam') || " +
+                "                         lowerText.includes('b\u1ea3o m\u1eadt b\u1eb1ng');" +
+                "    if (isNoticeBanner) continue;" +
                 "    let isOutgoing = false;" +
                 "    let aria = (row.getAttribute('aria-label') || '') + ' ' + (row.querySelector('[aria-label]')?.getAttribute('aria-label') || '');" +
                 "    if (aria.includes('B\u1ea1n \u0111\u00e3 g\u1eedi') || aria.includes('You sent') || aria.includes('\u0110\u00e3 g\u1eedi') || aria.includes('Sent') || aria.includes('\u0110\u00e3 xem') || aria.includes('Seen')) {" +

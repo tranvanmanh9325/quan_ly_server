@@ -1923,21 +1923,28 @@ public class FacebookMessengerService implements DisposableBean {
         }
 
         try (Playwright playwright = Playwright.create()) {
-            Browser browser = playwright.chromium().launch(new BrowserType.LaunchOptions().setHeadless(true));
+            BrowserType.LaunchOptions options = new BrowserType.LaunchOptions().setHeadless(true);
+            if (Paths.get("/usr/bin/chromium").toFile().exists()) {
+                options.setExecutablePath(Paths.get("/usr/bin/chromium"));
+            } else if (Paths.get("/usr/bin/chromium-browser").toFile().exists()) {
+                options.setExecutablePath(Paths.get("/usr/bin/chromium-browser"));
+            }
+
+            Browser browser = playwright.chromium().launch(options);
             BrowserContext context = browser.newContext(new Browser.NewContextOptions().setViewportSize(1920, 1080));
             applyCookies(context, cfg.getCookiesJson());
             Page page = context.newPage();
 
             // Chat 1: Trần Văn Mạnh
             page.navigate("https://www.facebook.com/messages/t/100045592363397/", new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED).setTimeout(15000));
-            page.waitForTimeout(4000);
+            page.waitForTimeout(5000);
             handleE2eePinScreen(page);
             page.waitForTimeout(2000);
             page.screenshot(new Page.ScreenshotOptions().setPath(Paths.get("/tmp/chat_tran_van_manh.png")));
 
             // Chat 2: Mạnh Văn Trần
             page.navigate("https://www.facebook.com/messages/e2ee/t/2127577941122457/", new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED).setTimeout(15000));
-            page.waitForTimeout(5000);
+            page.waitForTimeout(6000);
             handleE2eePinScreen(page);
             page.waitForTimeout(2000);
             page.screenshot(new Page.ScreenshotOptions().setPath(Paths.get("/tmp/chat_manh_van_tran.png")));

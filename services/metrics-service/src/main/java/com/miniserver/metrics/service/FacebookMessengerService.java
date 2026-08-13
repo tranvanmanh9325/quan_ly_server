@@ -392,16 +392,6 @@ public class FacebookMessengerService implements DisposableBean {
                     log.warn("[FB-Responder] Scanning 'Có thể bạn biết' tab encountered notice: {}", e.getMessage());
                 }
 
-                // Scan Spam Requests tab (Tin nhắn Spam / Bị ẩn)
-                try {
-                    log.info("[FB-Responder] Navigating to Spam Requests inbox (/messages/requests/spam/)...");
-                    page.navigate("https://www.facebook.com/messages/requests/spam/",
-                            new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED).setTimeout(15000));
-                    page.waitForTimeout(3000);
-                    totalReplies += inspectAndReply(page, cfg);
-                } catch (Exception e) {
-                    log.warn("[FB-Responder] Scanning /messages/requests/spam/ encountered notice: {}", e.getMessage());
-                }
 
                 return totalReplies;
             }

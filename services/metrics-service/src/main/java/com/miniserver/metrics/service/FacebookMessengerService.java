@@ -836,6 +836,7 @@ public class FacebookMessengerService implements DisposableBean {
                 "    let allAuto = Array.from(main.querySelectorAll('div[dir=\"auto\"]'));" +
                 "    if (allAuto.length === 0) allAuto = Array.from(main.querySelectorAll('span[dir=\"auto\"]'));" +
                 "    rows = allAuto.filter(el => {" +
+                "      if (el.closest('[role=\"navigation\"], [role=\"complementary\"]')) return false;" +
                 "      let txt = (el.innerText || '').trim();" +
                 "      if (!txt || txt.length === 0) return false;" +
                 "      if (editables.some(ed => ed.contains(el))) return false;" +

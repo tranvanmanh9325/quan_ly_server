@@ -549,91 +549,91 @@ public class FacebookMessengerService implements DisposableBean {
                     continue;
                 }
 
-                // Count unreplied messages BEFORE accept block so we have baseline count.
-                // For E2EE threads: the count may be limited (1) because not all bubbles are rendered
-                // until after Accept. We re-count below AFTER accepting to get the accurate number.
-                int unrepliedCount = countUnrepliedIncomingMessages(page);
-                log.info("[FB-Responder] DM with '{}': {} unreplied incoming message(s) (pre-accept).", senderName, unrepliedCount);
+                String threadUrl = page.url();
+                boolean isRequestThread = threadUrl.contains("/messages/requests/")
+                        || threadUrl.contains("/messages/e2ee/requests/");
 
-                if (unrepliedCount >= cfg.getThreshold()) {
-                        log.info("[FB-Responder] Triggering AI Away reply for '{}' (Unreplied: {} >= Threshold: {})",
-                                senderName, unrepliedCount, cfg.getThreshold());
+                // ── STEP 1: Accept (for request threads only) ────────────────────────────
+                // E2EE and regular request threads hide all message bubbles behind the Accept gate.
+                // Counting BEFORE accept always returns 0, so we MUST accept first.
+                // We do NOT require a minimum count before accepting — any message request is worth processing.
+                boolean wasAccepted = false;
+                if (isRequestThread) {
+                    try {
+                        page.screenshot(new Page.ScreenshotOptions()
+                                .setPath(java.nio.file.Paths.get("/tmp/fb_before_accept.png")));
+                        log.info("[FB-Responder] Request thread detected for '{}'. Attempting Accept...", senderName);
 
-                        // For Message Requests (E2EE or regular), click "Chấp nhận" (Accept) BEFORE sending.
-                        // After accepting, Facebook converts the thread to a normal conversation and shows the input box.
-                        String currentUrl = page.url();
-                        if (currentUrl.contains("/messages/requests/") || currentUrl.contains("/messages/e2ee/requests/")) {
+                        // JS click: find leaf element with exact 'Chấp nhận' or 'Accept' text
+                        Boolean accepted = (Boolean) page.evaluate("() => {" +
+                                "  let all = Array.from(document.querySelectorAll('*'));" +
+                                "  let btn = all.find(e => {" +
+                                "    let txt = (e.innerText || '').trim();" +
+                                "    return (txt === 'Ch\\u1ea5p nh\\u1eadn' || txt === 'Accept') && e.children.length === 0;" +
+                                "  });" +
+                                "  if (!btn) btn = all.find(e => {" +
+                                "    let txt = (e.innerText || '').trim();" +
+                                "    return txt === 'Ch\\u1ea5p nh\\u1eadn' || txt === 'Accept';" +
+                                "  });" +
+                                "  if (btn) { btn.click(); return true; }" +
+                                "  return false;" +
+                                "}");
+
+                        // Fallback: Playwright locator if JS click fails
+                        if (Boolean.FALSE.equals(accepted)) {
                             try {
-                                // Screenshot BEFORE accept attempt so we can see what Facebook renders
-                                page.screenshot(new Page.ScreenshotOptions().setPath(java.nio.file.Paths.get("/tmp/fb_before_accept.png")));
-
-                                // Dump ALL elements containing 'nhận' or 'Accept' for diagnostic
-                                Object dumpResult = page.evaluate("() => {" +
-                                        "  return Array.from(document.querySelectorAll('*'))" +
-                                        "    .filter(e => { let t = (e.innerText||'').trim(); return t.includes('nh\\u1eadn') || t === 'Accept'; })" +
-                                        "    .map(e => ({ tag: e.tagName, role: e.getAttribute('role'), txt: (e.innerText||'').trim().substring(0,30), kids: e.children.length }))" +
-                                        "    .slice(0, 20);" +
-                                        "}");
-                                log.info("[FB-Responder] DOM dump for Accept elements of '{}': {}", senderName, dumpResult);
-
-                                // Search ALL elements for "Chấp nhận" text — Facebook may use custom tags
-                                Boolean accepted = (Boolean) page.evaluate("() => {" +
-                                        "  let all = Array.from(document.querySelectorAll('*'));" +
-                                        "  let btn = all.find(e => {" +
-                                        "    let txt = (e.innerText || '').trim();" +
-                                        "    return (txt === 'Ch\\u1ea5p nh\\u1eadn' || txt === 'Accept') && e.children.length === 0;" +
-                                        "  });" +
-                                        "  if (!btn) {" +
-                                        "    btn = all.find(e => {" +
-                                        "      let txt = (e.innerText || '').trim();" +
-                                        "      return txt === 'Ch\\u1ea5p nh\\u1eadn' || txt === 'Accept';" +
-                                        "    });" +
-                                        "  }" +
-                                        "  if (btn) { btn.click(); return true; }" +
-                                        "  return false;" +
-                                        "}");
-
-                                // Fallback: try Playwright locator if JS click fails
-                                if (Boolean.FALSE.equals(accepted)) {
-                                    try {
-                                        var btn = page.locator("text=/Chấp nhận|Accept/").first();
-                                        if (btn.isVisible()) {
-                                            btn.click();
-                                            accepted = true;
-                                        }
-                                    } catch (Exception ex) {}
-                                }
-
-                                log.info("[FB-Responder] Accept button clicked for '{}': {}", senderName, accepted);
-                                if (Boolean.TRUE.equals(accepted)) {
-                                    // After accepting, Facebook re-renders the conversation with the full message list.
-                                    // Wait for the DOM to stabilize before re-counting and querying the input box.
-                                    page.waitForTimeout(4000);
-
-                                    // Re-count unreplied messages AFTER accept — E2EE threads now show full history
-                                    int postAcceptCount = countUnrepliedIncomingMessages(page);
-                                    if (postAcceptCount > unrepliedCount) {
-                                        log.info("[FB-Responder] Post-accept recount for '{}': {} (was {}). Using updated count.",
-                                                senderName, postAcceptCount, unrepliedCount);
-                                        unrepliedCount = postAcceptCount;
-                                    }
-
-                                    // Screenshot to verify the input box is now available
-                                    page.screenshot(new Page.ScreenshotOptions().setPath(java.nio.file.Paths.get("/tmp/fb_after_accept.png")));
-                                    log.info("[FB-Responder] Screenshot saved after Accept. URL: {}", page.url());
-                                }
-                            } catch (Exception ex) {
-                                log.warn("[FB-Responder] Error clicking Accept for '{}': {}", senderName, ex.getMessage());
-                            }
+                                var btn = page.locator("text=/Ch\\u1ea5p nh\\u1eadn|Accept/").first();
+                                if (btn.isVisible()) { btn.click(); accepted = true; }
+                            } catch (Exception ex) {}
                         }
 
-                        String awayReply = generateAwayMessage(senderName, unrepliedCount, cfg.getCustomMessage());
-                        boolean sent = sendMessengerReply(page, awayReply);
-                        if (sent) {
-                            autoRepliesSent++;
-                            log.info("[FB-Responder] AUTO-REPLY SENT to '{}': {}", senderName, awayReply);
+                        log.info("[FB-Responder] Accept button clicked for '{}': {}", senderName, accepted);
+                        wasAccepted = Boolean.TRUE.equals(accepted);
+
+                        if (wasAccepted) {
+                            // Wait for Facebook to re-render the full conversation after Accept
+                            page.waitForTimeout(4000);
+                            page.screenshot(new Page.ScreenshotOptions()
+                                    .setPath(java.nio.file.Paths.get("/tmp/fb_after_accept.png")));
+                            log.info("[FB-Responder] After-accept screenshot saved. URL: {}", page.url());
                         }
+                    } catch (Exception ex) {
+                        log.warn("[FB-Responder] Error clicking Accept for '{}': {}", senderName, ex.getMessage());
+                    }
                 }
+
+                // ── STEP 2: Count unreplied messages ─────────────────────────────────────
+                // For request threads: count AFTER accept so all bubbles are visible.
+                // For regular DMs: count normally (bubbles always visible).
+                int unrepliedCount = countUnrepliedIncomingMessages(page);
+                log.info("[FB-Responder] DM with '{}': {} unreplied incoming message(s) (post-accept={}).",
+                        senderName, unrepliedCount, wasAccepted);
+
+                // ── STEP 3: Threshold check → reply ──────────────────────────────────────
+                // For request threads that were accepted but count=0, use minimum count of 1
+                // so we always reply when a user has been accepted (they clearly sent something).
+                int effectiveCount = unrepliedCount;
+                if (isRequestThread && wasAccepted && effectiveCount < 1) {
+                    effectiveCount = 1; // fallback: at minimum 1 message triggered the accept
+                    log.info("[FB-Responder] Count=0 after accept for '{}'; using effectiveCount=1.", senderName);
+                }
+
+                if (effectiveCount >= cfg.getThreshold()) {
+                    log.info("[FB-Responder] Triggering AI Away reply for '{}' (Count: {} >= Threshold: {})",
+                            senderName, effectiveCount, cfg.getThreshold());
+                    String awayReply = generateAwayMessage(senderName, effectiveCount, cfg.getCustomMessage());
+                    boolean sent = sendMessengerReply(page, awayReply);
+                    if (sent) {
+                        autoRepliesSent++;
+                        log.info("[FB-Responder] AUTO-REPLY SENT to '{}': {}", senderName, awayReply);
+                        page.screenshot(new Page.ScreenshotOptions()
+                                .setPath(java.nio.file.Paths.get("/tmp/fb_reply_sent.png")));
+                    }
+                } else {
+                    log.info("[FB-Responder] '{}' count {} below threshold {}. No reply sent.",
+                            senderName, effectiveCount, cfg.getThreshold());
+                }
+
             } catch (Exception ex) {
                 log.warn("[FB-Responder] Error processing thread #{}: {}", i, ex.getMessage());
             }

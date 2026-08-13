@@ -921,6 +921,11 @@ public class FacebookMessengerService implements DisposableBean {
                 "  let chatRegion = main.querySelector('[role=\"region\"], [aria-label*=\"Tin nhắn\"], [aria-label*=\"Messages\"]') || main;" +
                 "  let regionRect = chatRegion.getBoundingClientRect();" +
                 "  let mainMidX = regionRect.left + (regionRect.width / 2);" +
+                "  rows = rows.filter(el => {" +
+                "    let r = el.getBoundingClientRect();" +
+                "    if (r.width > 0 && r.left > mainMidX + 180) return false;" +
+                "    return true;" +
+                "  });" +
                 "  let details = [];" +
                 "  let count = 0;" +
                 "  for (let i = rows.length - 1; i >= 0; i--) {" +

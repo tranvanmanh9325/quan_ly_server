@@ -1008,35 +1008,52 @@ public class FacebookMessengerService implements DisposableBean {
     private int countUnrepliedIncomingMessages(Page page) {
         Object countResult = page.evaluate("() => {" +
                 "  let main = document.querySelector('[role=\"main\"]') || document.querySelector('[role=\"region\"]') || document.body;" +
-                "  let rows = Array.from(main.querySelectorAll('[role=\"row\"]'));" +
-                "  if (rows.length === 0) {" +
-                "    let editables = Array.from(main.querySelectorAll('[contenteditable=\"true\"]'));" +
-                "    let allAuto = Array.from(main.querySelectorAll('div[dir=\"auto\"]'));" +
-                "    if (allAuto.length === 0) allAuto = Array.from(main.querySelectorAll('span[dir=\"auto\"]'));" +
-                "    rows = allAuto.filter(el => {" +
-                "      if (el.closest('[role=\"navigation\"], [role=\"complementary\"]')) return false;" +
-                "      let txt = (el.innerText || '').trim();" +
-                "      if (!txt || txt.length === 0) return false;" +
-                "      if (editables.some(ed => ed.contains(el))) return false;" +
-                "      if (allAuto.some(other => other !== el && other.contains(el))) return false;" +
-                "      return true;" +
-                "    });" +
-                "  } else {" +
-                "    rows = rows.filter(el => !rows.some(parent => parent !== el && parent.contains(el)));" +
+                // Strategy 1: Find message bubbles by aria-label pattern 'Tin nhắn do X lúc HH:MM' or 'X lúc HH:MM'
+                // Facebook sets these for screen-reader accessibility on every message container.
+                "  let bubbles = Array.from(main.querySelectorAll('[aria-label]')).filter(el => {" +
+                "    let lbl = (el.getAttribute('aria-label') || '').toLowerCase();" +
+                "    return lbl.includes(' l\\u00fac ') && (" +
+                "      lbl.startsWith('tin nh\\u1eafn do ') || " +
+                "      /^[a-z\\u00c0-\\u1ef9 ]+ l\\u00fac \\d/.test(lbl)" +
+                "    );" +
+                "  });" +
+                "  if (bubbles.length > 0) {" +
+                "    let details = [];" +
+                "    let count = 0;" +
+                "    for (let i = bubbles.length - 1; i >= 0; i--) {" +
+                "      let el = bubbles[i];" +
+                "      let lbl = (el.getAttribute('aria-label') || '').toLowerCase();" +
+                "      let text = (el.innerText || '').trim();" +
+                "      let isOut = lbl.startsWith('tin nh\\u1eafn do b\\u1ea1n') || lbl.startsWith('b\\u1ea1n l\\u00fac');" +
+                "      let isNotice = false;" +
+                "      details.push({ txt: text.substring(0, 40), isOut, lbl: lbl.substring(0, 40) });" +
+                "      if (isNotice) continue;" +
+                "      if (isOut) break;" +
+                "      count++;" +
+                "    }" +
+                "    return JSON.stringify({ count, totalRows: bubbles.length, strategy: 'aria-label', details: details.slice(0, 10) });" +
                 "  }" +
+                // Strategy 2: Fallback — use div[dir=auto] leaf nodes with computed style check for outgoing
+                "  let editables = Array.from(main.querySelectorAll('[contenteditable=\"true\"]'));" +
+                "  let allAuto = Array.from(main.querySelectorAll('div[dir=\"auto\"]'));" +
+                "  if (allAuto.length === 0) allAuto = Array.from(main.querySelectorAll('span[dir=\"auto\"]'));" +
+                "  let rows = allAuto.filter(el => {" +
+                "    if (el.closest('[role=\"navigation\"], [role=\"complementary\"]')) return false;" +
+                "    let txt = (el.innerText || '').trim();" +
+                "    if (!txt || txt.length === 0) return false;" +
+                "    if (editables.some(ed => ed.contains(el))) return false;" +
+                "    if (allAuto.some(other => other !== el && other.contains(el))) return false;" +
+                "    return true;" +
+                "  });" +
                 "  function isOutgoing(el) {" +
                 "    let cur = el;" +
-                "    for (let depth = 0; depth < 8; depth++) {" +
-                "      if (!cur) break;" +
-                "      let ariaLabel = (cur.getAttribute('aria-label') || '').toLowerCase();" +
-                "      if (ariaLabel.startsWith('b\u1ea1n l\u00fac') || ariaLabel.startsWith('b\u1ea1n \u0111\u00e3 g\u1eedi') || ariaLabel.startsWith('you sent')) return true;" +
-                "      let style = window.getComputedStyle(cur);" +
-                "      if (style.justifyContent === 'flex-end' || style.alignSelf === 'flex-end') return true;" +
-                "      if (style.marginLeft === 'auto' && style.marginRight !== 'auto') return true;" +
+                "    for (let depth = 0; depth < 10; depth++) {" +
+                "      if (!cur || cur === main) break;" +
+                "      let lbl = (cur.getAttribute('aria-label') || '').toLowerCase();" +
+                "      if (lbl.startsWith('tin nh\\u1eafn do b\\u1ea1n') || lbl.startsWith('b\\u1ea1n l\\u00fac')) return true;" +
                 "      cur = cur.parentElement;" +
                 "    }" +
-                "    let domAriaFull = (el.getAttribute('aria-label') || '') + ' ' + (el.querySelector('[aria-label]')?.getAttribute('aria-label') || '');" +
-                "    return domAriaFull.includes('B\u1ea1n \u0111\u00e3 g\u1eedi') || domAriaFull.includes('You sent') || domAriaFull.toLowerCase().includes('b\u1ea1n l\u00fac');" +
+                "    return false;" +
                 "  }" +
                 "  let details = [];" +
                 "  let count = 0;" +
@@ -1045,21 +1062,17 @@ public class FacebookMessengerService implements DisposableBean {
                 "    let text = (row.innerText || '').trim();" +
                 "    if (!text) continue;" +
                 "    let lowerText = text.toLowerCase();" +
-                "    let isNotice = lowerText.includes('mu\u1ed1n g\u1eedi tin nh\u1eafn') || " +
-                "                         lowerText.includes('mu\u1ed1n k\u1ebft n\u1ed1i') || " +
-                "                         lowerText.includes('m\u00e3 h\u00f3a \u0111\u1ea7u cu\u1ed1i') || " +
-                "                         lowerText.includes('t\u00ednh n\u0103ng m\u00e3 h\u00f3a') || " +
-                "                         lowerText.includes('t\u00ecm hi\u1ec3u th\u00eam') || " +
-                "                         lowerText.includes('b\u1ea3o m\u1eadt b\u1eb1ng') ||" +
-                "                         lowerText.includes('n\u1ebfu b\u1ea1n ch\u1ea5p nh\u1eadn');" +
-                "    let bRect = row.getBoundingClientRect();" +
+                "    let isNotice = lowerText.includes('mu\u1ed1n g\u1eedi tin nh\u1eafn') ||" +
+                "                   lowerText.includes('m\u00e3 h\u00f3a \u0111\u1ea7u cu\u1ed1i') ||" +
+                "                   lowerText.includes('t\u00ecm hi\u1ec3u th\u00eam') ||" +
+                "                   lowerText.includes('n\u1ebfu b\u1ea1n ch\u1ea5p nh\u1eadn');" +
                 "    let isOut = isOutgoing(row);" +
-                "    details.push({ txt: text.substring(0, 30), isNotice, isOut, left: Math.round(bRect.left) });" +
+                "    details.push({ txt: text.substring(0, 30), isNotice, isOut });" +
                 "    if (isNotice) continue;" +
                 "    if (isOut) break;" +
                 "    count++;" +
                 "  }" +
-                "  return JSON.stringify({ count, totalRows: rows.length, details: details.slice(0, 10) });" +
+                "  return JSON.stringify({ count, totalRows: rows.length, strategy: 'dir-auto', details: details.slice(0, 10) });" +
                 "}");
 
         log.info("[FB-Responder] Unreplied Count Diag for '{}': {}", page.url(), countResult);

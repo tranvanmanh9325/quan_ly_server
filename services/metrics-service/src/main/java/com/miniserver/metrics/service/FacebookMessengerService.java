@@ -574,29 +574,50 @@ public class FacebookMessengerService implements DisposableBean {
 
                         // For Message Requests (E2EE or regular), click "Chấp nhận" (Accept) BEFORE sending.
                         // After accepting, Facebook converts the thread to a normal conversation and shows the input box.
-                        // This MUST happen outside sendMessengerReply because accepting triggers a page state change
-                        // that requires waiting for DOM to re-render before querying contenteditable.
                         String currentUrl = page.url();
                         if (currentUrl.contains("/messages/requests/") || currentUrl.contains("/messages/e2ee/requests/")) {
                             try {
+                                // Screenshot BEFORE accept attempt so we can see what Facebook renders
+                                page.screenshot(new Page.ScreenshotOptions().setPath(java.nio.file.Paths.get("/tmp/fb_before_accept.png")));
+
+                                // Dump ALL elements containing 'nhận' or 'Accept' for diagnostic
+                                Object dumpResult = page.evaluate("() => {" +
+                                        "  return Array.from(document.querySelectorAll('*'))" +
+                                        "    .filter(e => { let t = (e.innerText||'').trim(); return t.includes('nh\\u1eadn') || t === 'Accept'; })" +
+                                        "    .map(e => ({ tag: e.tagName, role: e.getAttribute('role'), txt: (e.innerText||'').trim().substring(0,30), kids: e.children.length }))" +
+                                        "    .slice(0, 20);" +
+                                        "}");
+                                log.info("[FB-Responder] DOM dump for Accept elements of '{}': {}", senderName, dumpResult);
+
                                 // Search ALL elements for "Chấp nhận" text — Facebook may use custom tags
                                 Boolean accepted = (Boolean) page.evaluate("() => {" +
                                         "  let all = Array.from(document.querySelectorAll('*'));" +
-                                        "  let diag = all.filter(e => (e.innerText || '').includes('Chấp nhận') || (e.innerText || '').includes('Accept')).map(e => ({ tag: e.tagName, text: (e.innerText || '').trim() }));" +
-                                        "  console.log('Accept elements:', JSON.stringify(diag));" +
+                                        "  // Try leaf node first (innermost element with exact text)" +
                                         "  let btn = all.find(e => {" +
                                         "    let txt = (e.innerText || '').trim();" +
-                                        "    return (txt === 'Chấp nhận' || txt === 'Accept') && e.children.length === 0;" +
+                                        "    return (txt === 'Ch\\u1ea5p nh\\u1eadn' || txt === 'Accept') && e.children.length === 0;" +
                                         "  });" +
                                         "  if (!btn) {" +
                                         "    btn = all.find(e => {" +
                                         "      let txt = (e.innerText || '').trim();" +
-                                        "      return txt === 'Chấp nhận' || txt === 'Accept';" +
+                                        "      return txt === 'Ch\\u1ea5p nh\\u1eadn' || txt === 'Accept';" +
                                         "    });" +
                                         "  }" +
                                         "  if (btn) { btn.click(); return true; }" +
                                         "  return false;" +
                                         "}");
+
+                                // Fallback: try Playwright locator if JS click fails
+                                if (Boolean.FALSE.equals(accepted)) {
+                                    try {
+                                        var btn = page.locator("text=/Chấp nhận|Accept/").first();
+                                        if (btn.isVisible()) {
+                                            btn.click();
+                                            accepted = true;
+                                        }
+                                    } catch (Exception ex) {}
+                                }
+
                                 log.info("[FB-Responder] Accept button clicked for '{}': {}", senderName, accepted);
                                 if (Boolean.TRUE.equals(accepted)) {
                                     // After accepting, Facebook may navigate or re-render the conversation

@@ -1023,6 +1023,19 @@ public class FacebookMessengerService implements DisposableBean {
 
     private boolean sendMessengerReply(Page page, String text) {
         try {
+            // Step 0: In Message Requests / E2EE Request threads, click "Chấp nhận" (Accept) button if present to unlock chat input box
+            try {
+                page.evaluate("() => {" +
+                        "  let btns = Array.from(document.querySelectorAll('div[role=\"button\"], button, span'));" +
+                        "  let acceptBtn = btns.find(b => {" +
+                        "    let txt = (b.innerText || '').trim();" +
+                        "    return txt === 'Ch\u1ea5p nh\u1eadn' || txt === 'Accept';" +
+                        "  });" +
+                        "  if (acceptBtn) acceptBtn.click();" +
+                        "}");
+                page.waitForTimeout(2000);
+            } catch (Exception ignored) {}
+
             // Target the bottom-most LEAF-NODE contenteditable input box inside [role='main']
             // Wrapper containers (like [aria-label*='Tin nhắn trong cuộc trò chuyện']) contain nested editables,
             // so filtering for leaf nodes (elements with 0 child editables) excludes wrapper containers and selects

@@ -340,44 +340,39 @@ public class FacebookMessengerService implements DisposableBean {
 
                 int totalReplies = inspectAndReply(page, cfg);
 
-                // Also scan Message Requests tab (Tin nhắn đang chờ) for non-friends/strangers
+                // Scan non-E2EE Message Requests (Tin nhắn đang chờ thường)
                 try {
-                    log.info("[FB-Responder] Navigating to Message Requests inbox (Tin nhắn đang chờ)...");
+                    log.info("[FB-Responder] Navigating to Message Requests inbox (/messages/requests/)...");
                     page.navigate("https://www.facebook.com/messages/requests/",
                             new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED).setTimeout(15000));
                     page.waitForTimeout(3000);
-                    // Try clicking top Messenger icon + 'Tin nhắn đang chờ' flyout tab if present
-                    page.evaluate("() => {" +
-                            "  let msgBtn = document.querySelector('div[aria-label=\"Messenger\"], div[aria-label=\"Tin nh\u1eafn\"]');" +
-                            "  if (msgBtn) msgBtn.click();" +
-                            "}");
-                    page.waitForTimeout(1500);
-                    page.evaluate("() => {" +
-                            "  let items = Array.from(document.querySelectorAll('[role=\"menuitem\"], [role=\"tab\"], div[role=\"button\"], span'));" +
-                            "  let reqTab = items.find(i => (i.innerText || '').includes('Tin nh\u1eafn \u0111ang ch\u1edd') || (i.innerText || '').includes('Message requests') || (i.innerText || '').includes('C\u00f3 th\u1ec3 b\u1ea1n bi\u1ebft'));" +
-                            "  if (reqTab) reqTab.click();" +
-                            "}");
-                    page.waitForTimeout(2000);
                     totalReplies += inspectAndReply(page, cfg);
                 } catch (Exception e) {
-                    log.warn("[FB-Responder] Scanning Message Requests tab encountered notice: {}", e.getMessage());
+                    log.warn("[FB-Responder] Scanning /messages/requests/ encountered notice: {}", e.getMessage());
                 }
 
-                // Also scan Spam Requests tab (Tin nhắn Spam / Bị ẩn)
+                // Scan E2EE Message Requests — "Có thể bạn biết" tab for encrypted requests from strangers.
+                // CRITICAL: These are at a DIFFERENT URL (/messages/e2ee/requests/) and are NOT visible
+                // in /messages/requests/. Facebook uses separate endpoints for E2EE-encrypted message requests.
                 try {
-                    log.info("[FB-Responder] Navigating to Spam Requests inbox (Tin nhắn Spam)...");
+                    log.info("[FB-Responder] Navigating to E2EE Message Requests inbox (/messages/e2ee/requests/)...");
+                    page.navigate("https://www.facebook.com/messages/e2ee/requests/",
+                            new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED).setTimeout(15000));
+                    page.waitForTimeout(4000);
+                    totalReplies += inspectAndReply(page, cfg);
+                } catch (Exception e) {
+                    log.warn("[FB-Responder] Scanning /messages/e2ee/requests/ encountered notice: {}", e.getMessage());
+                }
+
+                // Scan Spam Requests tab (Tin nhắn Spam / Bị ẩn)
+                try {
+                    log.info("[FB-Responder] Navigating to Spam Requests inbox (/messages/requests/spam/)...");
                     page.navigate("https://www.facebook.com/messages/requests/spam/",
                             new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED).setTimeout(15000));
                     page.waitForTimeout(3000);
-                    page.evaluate("() => {" +
-                            "  let tabs = Array.from(document.querySelectorAll('[role=\"tab\"], div[role=\"button\"], span'));" +
-                            "  let target = tabs.find(t => (t.innerText || '').includes('Spam'));" +
-                            "  if (target) target.click();" +
-                            "}");
-                    page.waitForTimeout(2000);
                     totalReplies += inspectAndReply(page, cfg);
                 } catch (Exception e) {
-                    log.warn("[FB-Responder] Scanning Spam Requests tab encountered notice: {}", e.getMessage());
+                    log.warn("[FB-Responder] Scanning /messages/requests/spam/ encountered notice: {}", e.getMessage());
                 }
 
                 return totalReplies;
@@ -417,8 +412,8 @@ public class FacebookMessengerService implements DisposableBean {
         List<Map<String, Object>> threadItems = (List<Map<String, Object>>) page.evaluate("() => {" +
                 "  let conversationItems = [];" +
                 "  let seenKeys = new Set();" +
-                "  let rootUrls = ['/messages/', '/messages/t/', '/messages/requests/', '/messages/requests/spam/'];" +
-                "  let allLinks = Array.from(document.querySelectorAll('a[href*=\"/messages/t/\"], a[href*=\"/messages/e2ee/t/\"], a[href*=\"/messages/requests/\"], a[href*=\"/messages/read/\"]'));" +
+                "  let rootUrls = ['/messages/', '/messages/t/', '/messages/requests/', '/messages/requests/spam/', '/messages/e2ee/requests/', '/messages/e2ee/requests/spam/'];" +
+                "  let allLinks = Array.from(document.querySelectorAll('a[href*=\"/messages/t/\"], a[href*=\"/messages/e2ee/t/\"], a[href*=\"/messages/requests/t/\"], a[href*=\"/messages/e2ee/requests/t/\"], a[href*=\"/messages/read/\"]'));" +
                 "  allLinks.forEach(a => {" +
                 "    let href = a.href || '';" +
                 "    if (href && !rootUrls.some(r => href.endsWith(r) || href.endsWith(r.slice(0, -1)))) {" +

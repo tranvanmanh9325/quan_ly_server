@@ -564,8 +564,11 @@ public class FacebookMessengerService implements DisposableBean {
                     continue;
                 }
 
+                // Count unreplied messages BEFORE accept block so we have baseline count.
+                // For E2EE threads: the count may be limited (1) because not all bubbles are rendered
+                // until after Accept. We re-count below AFTER accepting to get the accurate number.
                 int unrepliedCount = countUnrepliedIncomingMessages(page);
-                log.info("[FB-Responder] DM with '{}': {} unreplied incoming message(s).", senderName, unrepliedCount);
+                log.info("[FB-Responder] DM with '{}': {} unreplied incoming message(s) (pre-accept).", senderName, unrepliedCount);
 
                 if (unrepliedCount >= cfg.getThreshold()) {
                     if (isCooldownExpired(senderName, cfg.getCooldownMinutes())) {
@@ -619,8 +622,18 @@ public class FacebookMessengerService implements DisposableBean {
 
                                 log.info("[FB-Responder] Accept button clicked for '{}': {}", senderName, accepted);
                                 if (Boolean.TRUE.equals(accepted)) {
-                                    // After accepting, Facebook may navigate or re-render the conversation
+                                    // After accepting, Facebook re-renders the conversation with the full message list.
+                                    // Wait for the DOM to stabilize before re-counting and querying the input box.
                                     page.waitForTimeout(4000);
+
+                                    // Re-count unreplied messages AFTER accept — E2EE threads now show full history
+                                    int postAcceptCount = countUnrepliedIncomingMessages(page);
+                                    if (postAcceptCount > unrepliedCount) {
+                                        log.info("[FB-Responder] Post-accept recount for '{}': {} (was {}). Using updated count.",
+                                                senderName, postAcceptCount, unrepliedCount);
+                                        unrepliedCount = postAcceptCount;
+                                    }
+
                                     // Screenshot to verify the input box is now available
                                     page.screenshot(new Page.ScreenshotOptions().setPath(java.nio.file.Paths.get("/tmp/fb_after_accept.png")));
                                     log.info("[FB-Responder] Screenshot saved after Accept. URL: {}", page.url());
@@ -1116,23 +1129,12 @@ public class FacebookMessengerService implements DisposableBean {
 
     private boolean sendMessengerReply(Page page, String text) {
         try {
-            // Step 0: In Message Requests / E2EE Request threads, click "Chấp nhận" (Accept) button if present to unlock chat input box
-            try {
-                page.evaluate("() => {" +
-                        "  let btns = Array.from(document.querySelectorAll('div[role=\"button\"], button, span'));" +
-                        "  let acceptBtn = btns.find(b => {" +
-                        "    let txt = (b.innerText || '').trim();" +
-                        "    return txt === 'Ch\u1ea5p nh\u1eadn' || txt === 'Accept';" +
-                        "  });" +
-                        "  if (acceptBtn) acceptBtn.click();" +
-                        "}");
-                page.waitForTimeout(2000);
-            } catch (Exception ignored) {}
-
-            // Target the bottom-most LEAF-NODE contenteditable input box inside [role='main']
+            // Find the bottom-most LEAF-NODE contenteditable input box inside [role='main'].
             // Wrapper containers (like [aria-label*='Tin nhắn trong cuộc trò chuyện']) contain nested editables,
-            // so filtering for leaf nodes (elements with 0 child editables) excludes wrapper containers and selects
-            // the exact text input box at the bottom of the chat window.
+            // so filtering for leaf nodes (elements with 0 child editables) selects the actual text input box.
+            // NOTE: Step 0 (clicking the Accept button) is intentionally handled UPSTREAM in inspectAndReply,
+            // with a 4-second wait for DOM to re-render before this function is called. Having it here too
+            // caused a DOM reset mid-flow that triggered the Lexical reconciler twice, producing duplicate text.
             JSHandle handle = page.evaluateHandle("() => {" +
                     "  let main = document.querySelector('[role=\"main\"]') || document.body;" +
                     "  let editables = Array.from(main.querySelectorAll('div[contenteditable=\"true\"], div[data-lexical-editor=\"true\"], [role=\"textbox\"]'));" +
@@ -1153,48 +1155,44 @@ public class FacebookMessengerService implements DisposableBean {
             String ariaLabel = (String) targetInput.evaluate("el => el.getAttribute('aria-label') || el.getAttribute('aria-placeholder') || ''");
             log.info("[FB-Responder] Target chat input box selected. ariaLabel='{}' URL={}", ariaLabel, page.url());
 
-            // Step 1: Focus and click the target input box
+            // Step 1: Click, focus, and CLEAR the editor to ensure a clean slate.
+            // Clearing is critical — if the editor has residual state (e.g., from a failed previous scan),
+            // keyboard.type() would APPEND to existing content, producing garbage messages.
             try {
                 targetInput.click();
                 targetInput.focus();
             } catch (Exception ignored) {}
             page.waitForTimeout(300);
+            page.keyboard().press("Control+A");
+            page.waitForTimeout(100);
+            page.keyboard().press("Delete");
+            page.waitForTimeout(200);
 
-            // Step 2: Inject text via JS Event Pipeline + execCommand (specifically designed for Lexical / DraftJS)
-            targetInput.evaluate("(el, txt) => {" +
-                    "  el.focus();" +
-                    "  let sel = window.getSelection();" +
-                    "  let range = document.createRange();" +
-                    "  range.selectNodeContents(el);" +
-                    "  sel.removeAllRanges();" +
-                    "  sel.addRange(range);" +
-                    "  try {" +
-                    "    let inputEvt = new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: txt });" +
-                    "    el.dispatchEvent(inputEvt);" +
-                    "  } catch (e) {}" +
-                    "  document.execCommand('insertText', false, txt);" +
-                    "  try {" +
-                    "    el.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true }));" +
-                    "  } catch (e) {}" +
-                    "}", text);
-
-            page.waitForTimeout(400);
-
-            // Check if text successfully populated into editor; if not, use keyboard.insertText with explicit focus
-            String typedText = (String) targetInput.evaluate("el => (el.innerText || '').trim()");
-            if (typedText == null || typedText.isEmpty() || !typedText.contains(text.substring(0, Math.min(10, text.length())))) {
-                log.info("[FB-Responder] JS execCommand did not populate text. Using keyboard.insertText with explicit focus...");
-                try {
-                    targetInput.click();
-                    targetInput.focus();
-                } catch (Exception ignored) {}
-                page.keyboard().insertText(text);
-                page.waitForTimeout(400);
-            }
+            // Step 2: Type text using keyboard.type() — the single reliable method for Facebook's Lexical editor.
+            //
+            // WHY NOT execCommand + keyboard.insertText combo:
+            //   - execCommand('insertText') dispatches text into the DOM synchronously.
+            //   - keyboard.insertText() does the same via Playwright's CDP layer.
+            //   - Using BOTH creates a race: execCommand fires Lexical's beforeinput handler which queues
+            //     a state update, then keyboard.insertText fires AGAIN before Lexical flushes, resulting
+            //     in the same text being committed twice → duplicate message.
+            //
+            // keyboard.type() sends individual keydown/keypress/keyup events per character — matching
+            // exactly what a human types. Lexical and DraftJS both handle this correctly without duplication.
+            page.keyboard().type(text, new Keyboard.TypeOptions().setDelay(15));
+            page.waitForTimeout(500);
 
             // Verify text is now present in editor before submitting
-            typedText = (String) targetInput.evaluate("el => (el.innerText || '').trim()");
+            String typedText = (String) targetInput.evaluate("el => (el.innerText || '').trim()");
             log.info("[FB-Responder] Editor content before submit: '{}'", typedText != null && typedText.length() > 30 ? typedText.substring(0, 30) : typedText);
+
+            // If text is empty even after typing — last resort: use execCommand
+            if (typedText == null || typedText.isEmpty()) {
+                log.warn("[FB-Responder] keyboard.type() did not populate text. Falling back to execCommand...");
+                targetInput.evaluate("(el, txt) => { el.focus(); document.execCommand('insertText', false, txt); }", text);
+                page.waitForTimeout(400);
+                typedText = (String) targetInput.evaluate("el => (el.innerText || '').trim()");
+            }
 
             // Step 3: Submit message (Press Enter, then fallback to Send button if needed)
             page.keyboard().press("Enter");

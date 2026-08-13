@@ -394,48 +394,68 @@ public class FacebookMessengerService implements DisposableBean {
         } catch (Exception ignored) {}
         page.waitForTimeout(1500);
 
-        // Query all DM + E2EE + Message Requests + Spam conversation URLs from the sidebar.
+        // Query all DM + E2EE + Message Requests + Spam conversation items (links or unlinked rows) from the sidebar.
         @SuppressWarnings("unchecked")
-        List<String> threadHrefs = (List<String>) page.evaluate("() => {" +
+        List<Map<String, Object>> threadItems = (List<Map<String, Object>>) page.evaluate("() => {" +
+                "  let results = [];" +
+                "  let seenHrefs = new Set();" +
+                "  let rootUrls = ['/messages/', '/messages/t/', '/messages/requests/', '/messages/requests/spam/'];" +
                 "  let allLinks = Array.from(document.querySelectorAll('a[href]'));" +
-                "  let msgLinks = allLinks.filter(a => {" +
+                "  allLinks.forEach(a => {" +
                 "    let href = a.getAttribute('href') || '';" +
-                "    return href.includes('/messages/t/') || href.includes('/messages/e2ee/t/') || href.includes('/messages/requests/') || href.includes('/messages/read/');" +
-                "  }).map(a => a.href);" +
-                "  let rootUrls = [" +
-                "    'https://www.facebook.com/messages/'," +
-                "    'https://www.facebook.com/messages/t/'," +
-                "    'https://www.facebook.com/messages/requests/'," +
-                "    'https://www.facebook.com/messages/requests'," +
-                "    'https://www.facebook.com/messages/requests/spam/'," +
-                "    'https://www.facebook.com/messages/requests/spam'" +
-                "  ];" +
-                "  let filtered = msgLinks.filter(h => h && !rootUrls.some(r => h === r || h + '/' === r));" +
-                "  return Array.from(new Set(filtered));" +
+                "    if ((href.includes('/messages/t/') || href.includes('/messages/e2ee/t/') || href.includes('/messages/requests/') || href.includes('/messages/read/'))" +
+                "         && !rootUrls.some(r => href === r || href === r.slice(0, -1))) {" +
+                "      if (!seenHrefs.has(a.href)) {" +
+                "        seenHrefs.add(a.href);" +
+                "        results.push({ href: a.href, isLink: true });" +
+                "      }" +
+                "    }" +
+                "  });" +
+                "  let rows = Array.from(document.querySelectorAll('[role=\"navigation\"] [role=\"row\"], [role=\"navigation\"] [role=\"button\"]'));" +
+                "  rows.forEach((row, idx) => {" +
+                "    let hasLink = row.querySelector('a[href*=\"/messages/\"]');" +
+                "    if (!hasLink) {" +
+                "      let txt = (row.innerText || '').trim();" +
+                "      if (txt.length > 0 && !txt.includes('C\u00f3 th\u1ec3 b\u1ea1n bi\u1ebft') && !txt.includes('Spam') && !txt.includes('Xem t\u1ea5t c\u1ea3')) {" +
+                "        results.push({ rowIndex: idx, isLink: false, text: txt });" +
+                "      }" +
+                "    }" +
+                "  });" +
+                "  return results;" +
                 "}");
 
-        log.info("[FB-Responder] Found {} conversation URLs in sidebar.", threadHrefs != null ? threadHrefs.size() : 0);
+        log.info("[FB-Responder] Found {} conversation items in sidebar.", threadItems != null ? threadItems.size() : 0);
 
-        if (threadHrefs == null || threadHrefs.isEmpty()) {
-            log.warn("[FB-Responder] No thread URLs found. Sidebar may not have loaded correctly. URL: {}", page.url());
+        if (threadItems == null || threadItems.isEmpty()) {
+            log.warn("[FB-Responder] No thread items found. Sidebar may not have loaded correctly. URL: {}", page.url());
             return 0;
         }
 
         // Scan up to 20 threads to reach past group chats at the top of the inbox
-        int maxCheck = Math.min(threadHrefs.size(), 20);
+        int maxCheck = Math.min(threadItems.size(), 20);
         for (int i = 0; i < maxCheck; i++) {
             try {
-                String href = threadHrefs.get(i);
-                if (href == null || href.isBlank()) continue;
+                Map<String, Object> item = threadItems.get(i);
+                if (item == null) continue;
 
-                // Extract the unique path/ID part of the thread (e.g. "t/100045592363397/" or "e2ee/t/1019980833988260/")
-                String threadPath = href.replaceAll(".*/messages/", "");
+                boolean isLink = Boolean.TRUE.equals(item.get("isLink"));
+                String href = (String) item.get("href");
 
-                // Navigate directly to thread URL to guarantee React mounts the active conversation window
-                try {
-                    page.navigate(href, new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED).setTimeout(12000));
-                } catch (Exception e) {
-                    log.warn("[FB-Responder] Navigation to '{}' failed/timed out: {}", href, e.getMessage());
+                if (isLink && href != null && !href.isBlank()) {
+                    try {
+                        page.navigate(href, new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED).setTimeout(12000));
+                    } catch (Exception e) {
+                        log.warn("[FB-Responder] Navigation to '{}' failed/timed out: {}", href, e.getMessage());
+                    }
+                } else {
+                    Number rowIdxNum = (Number) item.get("rowIndex");
+                    if (rowIdxNum != null) {
+                        int rIdx = rowIdxNum.intValue();
+                        page.evaluate("(idx) => {" +
+                                "  let rows = Array.from(document.querySelectorAll('[role=\"navigation\"] [role=\"row\"], [role=\"navigation\"] [role=\"button\"]'));" +
+                                "  if (rows[idx]) rows[idx].click();" +
+                                "}", rIdx);
+                    }
                 }
 
                 // Wait for message bubbles to finish mounting in DOM

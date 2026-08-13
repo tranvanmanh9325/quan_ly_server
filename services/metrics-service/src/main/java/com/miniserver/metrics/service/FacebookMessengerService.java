@@ -485,27 +485,37 @@ public class FacebookMessengerService implements SchedulingConfigurer, Disposabl
                         } catch (Exception e) { log.warn("[FB-DirectReply] Cached nav failed: {}", e.getMessage()); }
                     }
 
-                    // Fallback path 1: click matching link in current sidebar (all thread types incl. requests)
+                    // Fallback path 1: extract href from current sidebar and navigate directly
+                    // (avoid click() which requires element to be interactable/in-viewport)
                     if (!navigatedToThread) {
-                        Boolean found = (Boolean) page.evaluate(
-                                "(name) => { let links = Array.from(document.querySelectorAll('a[href*=\"/messages/\"]')); let m = links.find(a => (a.innerText||'').toLowerCase().includes(name.toLowerCase())); if (m) { m.click(); return true; } return false; }",
+                        Object hrefObj1 = page.evaluate(
+                                "(name) => { let links = Array.from(document.querySelectorAll('a[href*=\"/messages/\"]')); let m = links.find(a => (a.innerText||'').toLowerCase().includes(name.toLowerCase())); return m ? m.href : null; }",
                                 recipientName);
-                        if (Boolean.TRUE.equals(found)) {
+                        if (hrefObj1 instanceof String href1 && !href1.isBlank()) {
+                            log.info("[FB-DirectReply] Sidebar href found for '{}': {}", recipientName, href1);
+                            page.navigate(href1, new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED).setTimeout(12000));
                             page.waitForTimeout(2000); handleE2eePinScreen(page); navigatedToThread = true;
                         }
                     }
 
-                    // Fallback path 2: navigate to requests inbox and retry sidebar click
+                    // Fallback path 2: navigate to requests inbox, wait for React hydration, then navigate directly
                     if (!navigatedToThread) {
-                        log.info("[FB-DirectReply] Sidebar click failed; navigating requests inbox for '{}'", recipientName);
+                        log.info("[FB-DirectReply] Main inbox miss; checking /messages/requests/ for '{}'", recipientName);
                         page.navigate("https://www.facebook.com/messages/requests/",
                                 new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED).setTimeout(15000));
-                        page.waitForTimeout(2500);
-                        Boolean found = (Boolean) page.evaluate(
-                                "(name) => { let links = Array.from(document.querySelectorAll('a[href*=\"/messages/\"]')); let m = links.find(a => (a.innerText||'').toLowerCase().includes(name.toLowerCase())); if (m) { m.click(); return true; } return false; }",
+                        try {
+                            // Wait for sidebar links to appear (React hydration)
+                            page.waitForSelector("a[href*=\"/messages/requests/t/\"]",
+                                    new Page.WaitForSelectorOptions().setTimeout(6000));
+                        } catch (Exception ignored) {}
+                        page.waitForTimeout(1000);
+                        Object hrefObj2 = page.evaluate(
+                                "(name) => { let links = Array.from(document.querySelectorAll('a[href*=\"/messages/\"]')); let m = links.find(a => (a.innerText||'').toLowerCase().includes(name.toLowerCase())); return m ? m.href : null; }",
                                 recipientName);
-                        if (Boolean.TRUE.equals(found)) {
-                            page.waitForTimeout(2500); handleE2eePinScreen(page); navigatedToThread = true;
+                        if (hrefObj2 instanceof String href2 && !href2.isBlank()) {
+                            log.info("[FB-DirectReply] Requests inbox href found for '{}': {}", recipientName, href2);
+                            page.navigate(href2, new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED).setTimeout(12000));
+                            page.waitForTimeout(2000); handleE2eePinScreen(page); navigatedToThread = true;
                         }
                     }
 

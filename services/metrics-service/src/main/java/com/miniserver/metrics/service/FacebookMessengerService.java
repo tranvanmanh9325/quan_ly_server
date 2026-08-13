@@ -824,13 +824,14 @@ public class FacebookMessengerService implements DisposableBean {
 
     private int countUnrepliedIncomingMessages(Page page) {
         Object countResult = page.evaluate("() => {" +
-                "  let main = document.querySelector('[role=\"main\"]');" +
-                "  if (!main) return JSON.stringify({ count: 0, reason: 'no main' });" +
+                "  let main = document.querySelector('[role=\"main\"]') || document.querySelector('[role=\"region\"]') || document.body;" +
                 "  let rows = Array.from(main.querySelectorAll('[role=\"row\"]'));" +
                 "  if (rows.length === 0) {" +
                 "    let editables = Array.from(main.querySelectorAll('[contenteditable=\"true\"]'));" +
                 "    let allAuto = Array.from(main.querySelectorAll('div[dir=\"auto\"], span[dir=\"auto\"]'));" +
                 "    rows = allAuto.filter(el => {" +
+                "      let txt = (el.innerText || '').trim();" +
+                "      if (!txt || txt.length === 0) return false;" +
                 "      if (editables.some(ed => ed.contains(el))) return false;" +
                 "      if (el.querySelector('div[dir=\"auto\"], span[dir=\"auto\"]')) return false;" +
                 "      return true;" +

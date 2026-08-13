@@ -97,30 +97,65 @@ public class FacebookMessengerService implements SchedulingConfigurer, Disposabl
 
     // Lean Chromium args for headless automation — disables all non-essential features and caps memory.
     private static final List<String> CHROMIUM_ARGS = List.of(
+            // --- Security/sandbox (required for Docker) ---
             "--no-sandbox",
             "--disable-setuid-sandbox",
             "--disable-dev-shm-usage",
+
+            // --- GPU/rendering: disable all hardware and software rendering paths ---
             "--disable-gpu",
             "--disable-software-rasterizer",
+            "--disable-gpu-compositing",
+            "--disable-gpu-memory-buffer-compositor-resources",
+            "--disable-gpu-rasterization",
+            "--disable-webgl",
+            "--disable-webgl2",
+            "--disable-3d-apis",
+
+            // --- Rasterization: single thread, no tile workers ---
+            "--num-raster-threads=1",
+            "--disable-canvas-aa",
+            "--disable-composited-antialiasing",
+
+            // --- Animations and visual effects ---
+            "--animation-duration-scale=0",
+            "--force-prefers-reduced-motion",
+
+            // --- Audio/speech ---
             "--mute-audio",
             "--disable-speech-api",
+            "--disable-speech-synthesis-api",
+
+            // --- Background tasks ---
             "--disable-background-networking",
             "--disable-background-timer-throttling",
             "--disable-backgrounding-occluded-windows",
             "--disable-renderer-backgrounding",
-            "--disable-component-extensions-with-background-pages",
-            "--disable-ipc-flooding-protection",
-            "--disable-blink-features=AutomationControlled",
-            "--disable-features=IsolateOrigins,site-per-process",
-            "--js-flags=--max-old-space-size=256",
+
+            // --- Extensions and component services ---
             "--disable-extensions",
+            "--disable-component-extensions-with-background-pages",
             "--disable-component-update",
             "--disable-default-apps",
+
+            // --- Network / telemetry noise ---
             "--disable-domain-reliability",
             "--disable-sync",
             "--disable-translate",
             "--metrics-recording-only",
             "--no-pings",
+            "--disable-ipc-flooding-protection",
+
+            // --- Bot detection bypass ---
+            "--disable-blink-features=AutomationControlled",
+
+            // --- Site isolation: skip per-process overhead (ok for single-site use) ---
+            "--disable-features=IsolateOrigins,site-per-process,PaintHolding,TranslateUI,BlinkGenPropertyTrees",
+
+            // --- V8 JavaScript engine memory cap ---
+            "--js-flags=--max-old-space-size=192 --no-compilation-cache",
+
+            // --- Viewport and session ---
             "--window-size=1280,800",
             "--no-first-run",
             "--no-default-browser-check",

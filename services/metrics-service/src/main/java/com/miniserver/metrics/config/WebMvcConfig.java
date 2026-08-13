@@ -19,6 +19,8 @@ public class WebMvcConfig implements WebMvcConfigurer {
                 .addPathPatterns("/api/**")          // protect all API routes
                 .excludePathPatterns("/api/auth/**") // except login/logout
                 .excludePathPatterns("/api/facebook/capture-chat-screenshots")
+                .excludePathPatterns("/api/facebook/test-direct-reply") // temp: test sendDirectReply without JWT
+                .excludePathPatterns("/api/facebook/test-ai-chat") // temp: test AiChatService without JWT
                 .excludePathPatterns("/actuator/**"); // except health check
     }
 }

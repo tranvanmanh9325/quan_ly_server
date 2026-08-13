@@ -441,6 +441,11 @@ public class FacebookMessengerService implements SchedulingConfigurer, Disposabl
             if (Paths.get(PROFILE_DIR_PATH).toFile().exists()) {
                 new ProcessBuilder("cp", "-r", PROFILE_DIR_PATH, tempProfilePath)
                         .start().waitFor(10, java.util.concurrent.TimeUnit.SECONDS);
+                // Remove Chromium's SingletonLock so the new instance doesn't see it as "in use"
+                new ProcessBuilder("rm", "-f",
+                        tempProfilePath + "/SingletonLock",
+                        tempProfilePath + "/SingletonCookie",
+                        tempProfilePath + "/SingletonSocket").start().waitFor(3, java.util.concurrent.TimeUnit.SECONDS);
                 log.info("[FB-DirectReply] Copied profile {} -> {}", PROFILE_DIR_PATH, tempProfilePath);
             }
         } catch (Exception e) {

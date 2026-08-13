@@ -480,53 +480,83 @@ public class FacebookMessengerService implements SchedulingConfigurer, Disposabl
                         log.info("[FB-DirectReply] Using cached thread for '{}': {}", recipientName, cachedThreadHref);
                         try {
                             page.navigate(cachedThreadHref,
-                                    new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED).setTimeout(12000));
-                            page.waitForTimeout(1500);
-                            String headerName = waitForChatHeaderToLoad(page, 5000);
+                                    new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED).setTimeout(15000));
+                            page.waitForTimeout(2000);
+                            String headerName = waitForChatHeaderToLoad(page, 8000);
                             handleE2eePinScreen(page);
                             navigatedToThread = headerName != null && !headerName.isBlank();
                         } catch (Exception e) { log.warn("[FB-DirectReply] Cached nav failed: {}", e.getMessage()); }
                     }
 
-                    // Fallback path 1: extract href from current sidebar and navigate directly
-                    // (avoid click() which requires element to be interactable/in-viewport)
+                    // Fallback path 1: Search box on Messenger (fastest & most reliable UI interaction)
                     if (!navigatedToThread) {
-                        Object hrefObj1 = page.evaluate(
-                                "(name) => { let links = Array.from(document.querySelectorAll('a[href*=\"/messages/\"]')); let m = links.find(a => (a.innerText||'').toLowerCase().includes(name.toLowerCase())); return m ? m.href : null; }",
-                                recipientName);
-                        if (hrefObj1 instanceof String href1 && !href1.isBlank()) {
-                            log.info("[FB-DirectReply] Sidebar href found for '{}': {}", recipientName, href1);
-                            page.navigate(href1, new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED).setTimeout(12000));
-                            page.waitForTimeout(2000); handleE2eePinScreen(page); navigatedToThread = true;
+                        try {
+                            log.info("[FB-DirectReply] Attempting Messenger search box for '{}'...", recipientName);
+                            ElementHandle searchInput = page.querySelector("input[placeholder*='Tìm kiếm'], input[aria-label*='Tìm kiếm'], input[placeholder*='Search'], input[aria-label*='Search']");
+                            if (searchInput != null) {
+                                searchInput.click();
+                                searchInput.fill(recipientName);
+                                page.waitForTimeout(1500);
+                                Boolean clicked = (Boolean) page.evaluate(
+                                        "(name) => {" +
+                                        "  let results = Array.from(document.querySelectorAll('[role=\"listbox\"] [role=\"option\"], [role=\"grid\"] [role=\"row\"], ul li, a[href*=\"/messages/\"]'));" +
+                                        "  let match = results.find(el => (el.innerText || '').toLowerCase().includes(name.toLowerCase()));" +
+                                        "  if (match) { match.click(); return true; }" +
+                                        "  return false;" +
+                                        "}", recipientName);
+                                if (Boolean.TRUE.equals(clicked)) {
+                                    page.waitForTimeout(2500);
+                                    handleE2eePinScreen(page);
+                                    String hName = waitForChatHeaderToLoad(page, 6000);
+                                    navigatedToThread = hName != null && !hName.isBlank();
+                                }
+                            }
+                        } catch (Exception e) {
+                            log.warn("[FB-DirectReply] Search box fallback error: {}", e.getMessage());
                         }
                     }
 
-                    // Fallback path 2: navigate to requests inbox, wait for React hydration, then navigate directly
+                    // Fallback path 2: Scroll sidebar & extract matching href on /messages/t/
                     if (!navigatedToThread) {
-                        log.info("[FB-DirectReply] Main inbox miss; checking /messages/requests/ for '{}'", recipientName);
-                        page.navigate("https://www.facebook.com/messages/requests/",
-                                new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED).setTimeout(15000));
                         try {
-                            // Wait for sidebar links to appear (React hydration)
-                            page.waitForSelector("a[href*='/messages/requests/t/']",
-                                    new Page.WaitForSelectorOptions().setTimeout(8000));
-                        } catch (Exception ignored) { log.warn("[FB-DirectReply] waitForSelector timeout on requests page"); }
-                        page.waitForTimeout(1000);
+                            page.navigate("https://www.facebook.com/messages/t/",
+                                    new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED).setTimeout(15000));
+                            try {
+                                page.waitForSelector("a[href*='/messages/']", new Page.WaitForSelectorOptions().setTimeout(8000));
+                                String sbSel = "[role=\"navigation\"], div[aria-label*=\"Đoạn chat\"], div[aria-label*=\"Tin nhắn\"], div[aria-label*=\"Chats\"]";
+                                for (int s = 0; s < 3; s++) {
+                                    page.evaluate("(sel) => { let sb = document.querySelector(sel); if (sb) sb.scrollBy(0, 500); }", sbSel);
+                                    page.waitForTimeout(300);
+                                }
+                            } catch (Exception ignored) {}
 
-                        // Debug: log all sidebar link texts
-                        Object allLinks = page.evaluate(
-                                "() => Array.from(document.querySelectorAll('a[href*=\"/messages/\"]')).map(a => ({href: a.href, text: (a.innerText||'').substring(0,40)}))");
-                        log.info("[FB-DirectReply] Requests page links diag: {}", allLinks);
+                            Object hrefObj1 = page.evaluate(
+                                    "(name) => { let links = Array.from(document.querySelectorAll('a[href*=\"/messages/\"]')); let m = links.find(a => (a.innerText||'').toLowerCase().includes(name.toLowerCase())); return m ? m.href : null; }",
+                                    recipientName);
+                            if (hrefObj1 instanceof String href1 && !href1.isBlank()) {
+                                log.info("[FB-DirectReply] Sidebar href found for '{}': {}", recipientName, href1);
+                                page.navigate(href1, new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED).setTimeout(12000));
+                                page.waitForTimeout(2000); handleE2eePinScreen(page); navigatedToThread = true;
+                            }
+                        } catch (Exception ignored) {}
+                    }
 
-                        Object hrefObj2 = page.evaluate(
-                                "(name) => { let links = Array.from(document.querySelectorAll('a[href*=\"/messages/\"]')); let m = links.find(a => (a.innerText||'').toLowerCase().includes(name.toLowerCase())); return m ? m.href : null; }",
-                                recipientName);
-                        log.info("[FB-DirectReply] hrefObj2 for '{}' = {}", recipientName, hrefObj2);
-                        if (hrefObj2 instanceof String href2 && !href2.isBlank()) {
-                            log.info("[FB-DirectReply] Requests inbox href found for '{}': {}", recipientName, href2);
-                            page.navigate(href2, new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED).setTimeout(12000));
-                            page.waitForTimeout(2000); handleE2eePinScreen(page); navigatedToThread = true;
-                        }
+                    // Fallback path 3: navigate to requests inbox & check
+                    if (!navigatedToThread) {
+                        try {
+                            log.info("[FB-DirectReply] Checking /messages/requests/ for '{}'", recipientName);
+                            page.navigate("https://www.facebook.com/messages/requests/",
+                                    new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED).setTimeout(15000));
+                            page.waitForTimeout(2000);
+                            Object hrefObj2 = page.evaluate(
+                                    "(name) => { let links = Array.from(document.querySelectorAll('a[href*=\"/messages/\"]')); let m = links.find(a => (a.innerText||'').toLowerCase().includes(name.toLowerCase())); return m ? m.href : null; }",
+                                    recipientName);
+                            if (hrefObj2 instanceof String href2 && !href2.isBlank()) {
+                                log.info("[FB-DirectReply] Requests inbox href found for '{}': {}", recipientName, href2);
+                                page.navigate(href2, new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED).setTimeout(12000));
+                                page.waitForTimeout(2000); handleE2eePinScreen(page); navigatedToThread = true;
+                            }
+                        } catch (Exception ignored) {}
                     }
 
                     if (!navigatedToThread) {
@@ -820,6 +850,20 @@ public class FacebookMessengerService implements SchedulingConfigurer, Disposabl
 
         log.info("[FB-Responder] Found {} conversation items in sidebar.", threadItems != null ? threadItems.size() : 0);
 
+        // Pre-cache all discovered sidebar threads so sendDirectReply and Telegram AI know their URLs immediately
+        if (threadItems != null) {
+            for (Map<String, Object> tItem : threadItems) {
+                String tHref = (String) tItem.get("href");
+                String tText = (String) tItem.get("text");
+                if (tHref != null && tText != null && !tText.isBlank()) {
+                    String cleanName = tText.split("(?i)\\s*(?:bạn:|tin nhắn|đã gửi)\\s*")[0].trim();
+                    if (!cleanName.isBlank()) {
+                        messageCache.addOrUpdate(cleanName, tText, tHref, false);
+                    }
+                }
+            }
+        }
+
         if (threadItems == null || threadItems.isEmpty()) {
             // Take a diagnostic screenshot + dump ALL anchor links to understand what Facebook rendered
             // Take a DOM dump to understand what Facebook rendered (no screenshot to save disk I/O)
@@ -921,6 +965,9 @@ public class FacebookMessengerService implements SchedulingConfigurer, Disposabl
                     log.warn("[FB-Responder] Thread #{} header '{}' failed identity check. Skipping.", i, senderName);
                     continue;
                 }
+
+                // Always cache verified thread URL for AI direct replies
+                messageCache.addOrUpdate(senderName, "", href != null ? href : page.url(), false);
 
                 String threadUrl = page.url();
                 boolean isRequestThread = threadUrl.contains("/messages/requests/")

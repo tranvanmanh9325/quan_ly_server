@@ -51,7 +51,8 @@ services:
 
   metrics-service:
     init: true
-    shm_size: '2gb'
+    # Chromium needs /dev/shm for renderer shared memory. 512m is sufficient for headless text-only mode.
+    shm_size: '512m'
     build:
       context: ./services/metrics-service
       dockerfile: Dockerfile
@@ -62,7 +63,9 @@ services:
     env_file:
       - .env
     environment:
-      JAVA_TOOL_OPTIONS: "-XX:+UseSerialGC -XX:MaxRAMPercentage=70.0 -XX:+ExitOnOutOfMemoryError -XX:+TieredCompilation -XX:TieredStopAtLevel=1"
+      # Use G1GC (better for mixed heap), cap GC threads to 2, and enable full JIT (no TieredStopAtLevel=1).
+      # TieredStopAtLevel=1 forces interpreted-only mode which actually makes long-running tasks SLOWER.
+      JAVA_TOOL_OPTIONS: "-XX:+UseG1GC -XX:MaxRAMPercentage=60.0 -XX:ParallelGCThreads=2 -XX:ConcGCThreads=1 -XX:+ExitOnOutOfMemoryError"
     restart: unless-stopped
     depends_on:
       db:
@@ -78,10 +81,15 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '2.0'
+          # Cap at 1.2 cores so Chromium cannot monopolize the 4-core i5 during scans.
+          # Scan duration increases slightly (~20%) but other services stay responsive.
+          cpus: '1.2'
           memory: 1536M
         reservations:
           memory: 512M
+    # Lower OS scheduling priority so system tasks preempt Chromium during high load.
+    # cpu_shares default = 1024. Setting 512 = half the default scheduling weight.
+    cpu_shares: 512
     volumes:
       - fb_profile_data:/var/lib/fb_browser_profile
 

@@ -579,12 +579,21 @@ public class FacebookMessengerService implements DisposableBean {
                         String currentUrl = page.url();
                         if (currentUrl.contains("/messages/requests/") || currentUrl.contains("/messages/e2ee/requests/")) {
                             try {
+                                // Search ALL elements for "Chấp nhận" text — Facebook may use custom tags
                                 Boolean accepted = (Boolean) page.evaluate("() => {" +
-                                        "  let btns = Array.from(document.querySelectorAll('div[role=\"button\"], button, span'));" +
-                                        "  let btn = btns.find(b => {" +
-                                        "    let txt = (b.innerText || '').trim();" +
-                                        "    return txt === 'Chấp nhận' || txt === 'Accept';" +
+                                        "  let all = Array.from(document.querySelectorAll('*'));" +
+                                        "  let diag = all.filter(e => (e.innerText || '').includes('Chấp nhận') || (e.innerText || '').includes('Accept')).map(e => ({ tag: e.tagName, text: (e.innerText || '').trim() }));" +
+                                        "  console.log('Accept elements:', JSON.stringify(diag));" +
+                                        "  let btn = all.find(e => {" +
+                                        "    let txt = (e.innerText || '').trim();" +
+                                        "    return (txt === 'Chấp nhận' || txt === 'Accept') && e.children.length === 0;" +
                                         "  });" +
+                                        "  if (!btn) {" +
+                                        "    btn = all.find(e => {" +
+                                        "      let txt = (e.innerText || '').trim();" +
+                                        "      return txt === 'Chấp nhận' || txt === 'Accept';" +
+                                        "    });" +
+                                        "  }" +
                                         "  if (btn) { btn.click(); return true; }" +
                                         "  return false;" +
                                         "}");

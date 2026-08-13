@@ -284,7 +284,9 @@ public class FacebookMessengerService implements SchedulingConfigurer, Disposabl
         t.setDaemon(true);
         return t;
     });
-    private final AtomicBoolean scanRunning = new AtomicBoolean(false);
+    private final AtomicBoolean scanRunning  = new AtomicBoolean(false);
+    /** Separate lock for sendDirectReply — uses its own temp profile, safe to run concurrently with scan. */
+    private final AtomicBoolean replyRunning = new AtomicBoolean(false);
     private volatile String lastScanResult = null;
 
     public FacebookMessengerService(FacebookConfigRepository configRepository,
@@ -426,16 +428,15 @@ public class FacebookMessengerService implements SchedulingConfigurer, Disposabl
             return "Loi: Chua cau hinh cookies Facebook. Khong the gui tin nhan.";
         }
 
-        // Wait for any running scan to finish (max 180s = covers a full scan cycle) to avoid Chromium conflict
-        long waitStart = System.currentTimeMillis();
-        while (scanRunning.get() && System.currentTimeMillis() - waitStart < 180_000) {
-            try { Thread.sleep(500); } catch (InterruptedException e) { Thread.currentThread().interrupt(); break; }
+        // No need to wait for scan: we use a separate temp profile dir, not the shared PROFILE_DIR_PATH
+        // Use a dedicated lock so concurrent sendDirectReply calls still queue properly
+        if (!replyRunning.compareAndSet(false, true)) {
+            return "Loi: Da co mot lenh gui tin nhan dang chay. Vui long thu lai sau 30 giay.";
         }
-        if (scanRunning.get()) return "Loi: Dang co scan chay song song. Thu lai sau 60 giay.";
-
-        if (!scanRunning.compareAndSet(false, true)) return "Loi: Khong the lay lock. Vui long thu lai.";
 
         String screenshotPath = "/tmp/fb_direct_reply_" + System.currentTimeMillis() + ".png";
+        // Use a separate temp profile per call to avoid locking the shared scan profile
+        String tempProfilePath = "/tmp/fb_reply_profile_" + System.currentTimeMillis();
         try {
             String cachedThreadHref = messageCache.findThreadHref(recipientName);
             Map<String, String> env = new HashMap<>(System.getenv());
@@ -444,7 +445,6 @@ public class FacebookMessengerService implements SchedulingConfigurer, Disposabl
             env.put("PLAYWRIGHT_NODEJS_PATH", "/usr/bin/node");
 
             try (Playwright playwright = Playwright.create(new Playwright.CreateOptions().setEnv(env))) {
-                preparePersistentProfileDir();
                 BrowserType.LaunchPersistentContextOptions pOptions = new BrowserType.LaunchPersistentContextOptions()
                         .setHeadless(true).setArgs(CHROMIUM_ARGS)
                         .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
@@ -454,7 +454,7 @@ public class FacebookMessengerService implements SchedulingConfigurer, Disposabl
                 else if (Paths.get("/usr/bin/chromium-browser").toFile().exists())
                     pOptions.setExecutablePath(Paths.get("/usr/bin/chromium-browser"));
 
-                try (BrowserContext context = playwright.chromium().launchPersistentContext(Paths.get(PROFILE_DIR_PATH), pOptions)) {
+                try (BrowserContext context = playwright.chromium().launchPersistentContext(Paths.get(tempProfilePath), pOptions)) {
                     context.addInitScript(WEBDRIVER_STEALTH_SCRIPT);
                     applyCookies(context, cfg.getCookiesJson());
                     for (Page p : context.pages()) { try { p.close(); } catch (Exception ignored) {} }
@@ -546,7 +546,9 @@ public class FacebookMessengerService implements SchedulingConfigurer, Disposabl
             log.error("[FB-DirectReply] Error: {}", e.getMessage(), e);
             return "Loi khi gui toi \"" + recipientName + "\": " + e.getMessage();
         } finally {
-            scanRunning.set(false);
+            replyRunning.set(false);
+            // Cleanup temp profile dir to avoid disk accumulation
+            try { new ProcessBuilder("rm", "-rf", tempProfilePath).start().waitFor(); } catch (Exception ignored) {}
             System.gc();
         }
     }

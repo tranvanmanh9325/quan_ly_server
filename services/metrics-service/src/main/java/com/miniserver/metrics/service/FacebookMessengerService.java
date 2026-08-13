@@ -723,36 +723,46 @@ public class FacebookMessengerService implements DisposableBean {
         try {
             Boolean pinScreenPresent = (Boolean) page.evaluate(
                     "() => {" +
-                    "  let headings = Array.from(document.querySelectorAll('h1,h2,h3,h4,[role=heading],div'));" +
-                    "  return headings.some(h => {" +
-                    "    let t = (h.innerText || h.textContent || '').toLowerCase();" +
-                    "    return t.includes('nh\u1eadp m\u00e3 pin') || t.includes('kh\u00f4i ph\u1ee5c \u0111o\u1ea1n chat') || t.includes('enter pin');" +
-                    "  });" +
+                    "  let dialog = document.querySelector('[role=\"dialog\"]');" +
+                    "  if (!dialog) return false;" +
+                    "  let t = (dialog.innerText || dialog.textContent || '').toLowerCase();" +
+                    "  return t.includes('nh\u1eadp m\u00e3 pin') || t.includes('kh\u00f4i ph\u1ee5c \u0111o\u1ea1n chat') || t.includes('restore') || t.includes('pin');" +
                     "}");
 
             if (!Boolean.TRUE.equals(pinScreenPresent)) {
                 return;
             }
 
-            log.info("[FB-Responder] E2EE PIN modal detected. Auto-filling fixed PIN '090325'...");
+            log.info("[FB-Responder] E2EE PIN modal detected in [role=dialog]. Target PIN: '090325'...");
 
-            // Strategy A: Playwright Keyboard Typing into the first input field
-            try {
-                var inputs = page.locator("input");
-                if (inputs.count() > 0) {
-                    inputs.first().click();
-                    page.waitForTimeout(300);
-                    page.keyboard().type("090325", new Keyboard.TypeOptions().setDelay(150));
-                    page.waitForTimeout(500);
-                    page.keyboard().press("Enter");
-                }
-            } catch (Exception ex) {
-                log.warn("[FB-Responder] Keyboard PIN typing exception: {}", ex.getMessage());
+            // 1. Click specifically on the first input inside [role=dialog] (NOT sidebar search input!)
+            Boolean focused = (Boolean) page.evaluate(
+                    "() => {" +
+                    "  let dialog = document.querySelector('[role=\"dialog\"]');" +
+                    "  if (!dialog) return false;" +
+                    "  let inputs = Array.from(dialog.querySelectorAll('input'));" +
+                    "  if (inputs.length > 0) {" +
+                    "    inputs[0].focus();" +
+                    "    inputs[0].click();" +
+                    "    return true;" +
+                    "  }" +
+                    "  return false;" +
+                    "}");
+
+            page.waitForTimeout(300);
+
+            // 2. Playwright keyboard type "090325" into the focused dialog input
+            if (Boolean.TRUE.equals(focused)) {
+                page.keyboard().type("090325", new Keyboard.TypeOptions().setDelay(150));
+                page.waitForTimeout(500);
+                page.keyboard().press("Enter");
             }
 
-            // Strategy B: JS React Native Setter fallback for 6 input boxes or single input
+            // 3. React Native Setter fallback scoped strictly to [role=dialog] inputs
             Boolean jsFilled = (Boolean) page.evaluate(
                     "() => {" +
+                    "  let dialog = document.querySelector('[role=\"dialog\"]');" +
+                    "  if (!dialog) return false;" +
                     "  const pin = '090325';" +
                     "  const setReactValue = (input, val) => {" +
                     "    try {" +
@@ -762,7 +772,7 @@ public class FacebookMessengerService implements DisposableBean {
                     "    input.dispatchEvent(new Event('input', { bubbles: true }));" +
                     "    input.dispatchEvent(new Event('change', { bubbles: true }));" +
                     "  };" +
-                    "  let inputs = Array.from(document.querySelectorAll('input'));" +
+                    "  let inputs = Array.from(dialog.querySelectorAll('input'));" +
                     "  if (inputs.length >= 6) {" +
                     "    inputs.slice(0, 6).forEach((inp, idx) => {" +
                     "      inp.focus();" +
@@ -778,28 +788,25 @@ public class FacebookMessengerService implements DisposableBean {
                     "  return false;" +
                     "}");
 
-            log.info("[FB-Responder] JS React Native Setter executed: {}. Submitting PIN...", jsFilled);
+            log.info("[FB-Responder] Dialog PIN 090325 filled (JS: {}). Submitting...", jsFilled);
             page.waitForTimeout(1000);
             page.keyboard().press("Enter");
 
-            // Look for any Submit/Confirm button (e.g. "Tiếp theo", "Xác nhận", "Gửi") if Enter is not auto-triggered
-            try {
-                Boolean submitClicked = (Boolean) page.evaluate(
-                        "() => {" +
-                        "  let btns = Array.from(document.querySelectorAll('div[role=\"button\"], button'));" +
-                        "  let sub = btns.find(b => {" +
-                        "    let t = (b.textContent || '').trim().toLowerCase();" +
-                        "    return t.includes('ti\u1ebfp theo') || t.includes('x\u00e1c nh\u1eadn') || t.includes('continue') || t.includes('submit');" +
-                        "  });" +
-                        "  if (sub) { sub.click(); return true; }" +
-                        "  return false;" +
-                        "}");
-                log.info("[FB-Responder] Submit button click result: {}", submitClicked);
-            } catch (Exception ignored) {}
+            // 4. Click any submit/confirm button inside [role=dialog]
+            page.evaluate(
+                    "() => {" +
+                    "  let dialog = document.querySelector('[role=\"dialog\"]');" +
+                    "  if (!dialog) return;" +
+                    "  let btns = Array.from(dialog.querySelectorAll('div[role=\"button\"], button'));" +
+                    "  let sub = btns.find(b => {" +
+                    "    let t = (b.textContent || '').trim().toLowerCase();" +
+                    "    return t.includes('ti\u1ebfp theo') || t.includes('x\u00e1c nh\u1eadn') || t.includes('restore') || t.includes('continue');" +
+                    "  });" +
+                    "  if (sub) sub.click();" +
+                    "}");
 
-            // Wait for Facebook to verify PIN 090325 and load/decrypt the conversation history
             page.waitForTimeout(4000);
-            log.info("[FB-Responder] PIN 090325 auto-fill & submission completed.");
+            log.info("[FB-Responder] PIN 090325 dialog submission completed.");
         } catch (Exception e) {
             log.warn("[FB-Responder] Error handling E2EE PIN screen: {}", e.getMessage());
         }

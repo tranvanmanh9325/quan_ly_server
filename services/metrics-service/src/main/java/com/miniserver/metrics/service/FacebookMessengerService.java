@@ -351,17 +351,35 @@ public class FacebookMessengerService implements DisposableBean {
                     log.warn("[FB-Responder] Scanning /messages/requests/ encountered notice: {}", e.getMessage());
                 }
 
-                // Scan E2EE Message Requests — "Có thể bạn biết" tab for encrypted requests from strangers.
-                // CRITICAL: These are at a DIFFERENT URL (/messages/e2ee/requests/) and are NOT visible
-                // in /messages/requests/. Facebook uses separate endpoints for E2EE-encrypted message requests.
+                // Scan "Có thể bạn biết" tab inside Message Requests.
+                // This tab contains E2EE-encrypted requests from strangers and is only visible AFTER clicking
+                // the "Có thể bạn biết" tab explicitly. It does NOT have its own URL — all tabs live under
+                // /messages/requests/ and are rendered client-side via tab selection.
                 try {
-                    log.info("[FB-Responder] Navigating to E2EE Message Requests inbox (/messages/e2ee/requests/)...");
-                    page.navigate("https://www.facebook.com/messages/e2ee/requests/",
+                    log.info("[FB-Responder] Clicking 'Có thể bạn biết' tab on /messages/requests/...");
+                    page.navigate("https://www.facebook.com/messages/requests/",
                             new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED).setTimeout(15000));
                     page.waitForTimeout(4000);
+
+                    // Click "Có thể bạn biết" tab to switch to the E2EE/People You May Know filter
+                    Boolean tabClicked = (Boolean) page.evaluate("() => {" +
+                            "  let tabs = Array.from(document.querySelectorAll('[role=\"tab\"], [role=\"button\"], span, div'));" +
+                            "  let tab = tabs.find(t => {" +
+                            "    let txt = (t.innerText || '').trim();" +
+                            "    return txt === 'Có thể bạn biết' || txt === 'People You May Know';" +
+                            "  });" +
+                            "  if (tab) { tab.click(); return true; }" +
+                            "  return false;" +
+                            "}");
+                    page.waitForTimeout(3000);
+                    log.info("[FB-Responder] 'Có thể bạn biết' tab clicked: {}", tabClicked);
+
+                    // Screenshot to visually verify sidebar after tab click
+                    page.screenshot(new Page.ScreenshotOptions().setPath(java.nio.file.Paths.get("/tmp/fb_cothethanbieet_tab.png")));
+
                     totalReplies += inspectAndReply(page, cfg);
                 } catch (Exception e) {
-                    log.warn("[FB-Responder] Scanning /messages/e2ee/requests/ encountered notice: {}", e.getMessage());
+                    log.warn("[FB-Responder] Scanning 'Có thể bạn biết' tab encountered notice: {}", e.getMessage());
                 }
 
                 // Scan Spam Requests tab (Tin nhắn Spam / Bị ẩn)

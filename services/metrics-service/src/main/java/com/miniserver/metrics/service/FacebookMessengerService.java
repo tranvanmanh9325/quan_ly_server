@@ -346,10 +346,16 @@ public class FacebookMessengerService implements DisposableBean {
                     page.navigate("https://www.facebook.com/messages/requests/",
                             new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED).setTimeout(15000));
                     page.waitForTimeout(3000);
+                    // Try clicking top Messenger icon + 'Tin nhắn đang chờ' flyout tab if present
                     page.evaluate("() => {" +
-                            "  let tabs = Array.from(document.querySelectorAll('[role=\"tab\"], div[role=\"button\"], span'));" +
-                            "  let target = tabs.find(t => (t.innerText || '').includes('C\u00f3 th\u1ec3 b\u1ea1n bi\u1ebft') || (t.innerText || '').includes('You may know'));" +
-                            "  if (target) target.click();" +
+                            "  let msgBtn = document.querySelector('div[aria-label=\"Messenger\"], div[aria-label=\"Tin nh\u1eafn\"]');" +
+                            "  if (msgBtn) msgBtn.click();" +
+                            "}");
+                    page.waitForTimeout(1500);
+                    page.evaluate("() => {" +
+                            "  let items = Array.from(document.querySelectorAll('[role=\"menuitem\"], [role=\"tab\"], div[role=\"button\"], span'));" +
+                            "  let reqTab = items.find(i => (i.innerText || '').includes('Tin nh\u1eafn \u0111ang ch\u1edd') || (i.innerText || '').includes('Message requests') || (i.innerText || '').includes('C\u00f3 th\u1ec3 b\u1ea1n bi\u1ebft'));" +
+                            "  if (reqTab) reqTab.click();" +
                             "}");
                     page.waitForTimeout(2000);
                     totalReplies += inspectAndReply(page, cfg);

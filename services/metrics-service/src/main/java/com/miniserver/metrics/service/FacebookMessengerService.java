@@ -400,26 +400,36 @@ public class FacebookMessengerService implements DisposableBean {
                 "  let results = [];" +
                 "  let seenHrefs = new Set();" +
                 "  let rootUrls = ['/messages/', '/messages/t/', '/messages/requests/', '/messages/requests/spam/'];" +
-                "  let main = document.querySelector('[role=\"main\"]') || document.body;" +
-                "  let mainRect = main.getBoundingClientRect();" +
-                "  let mainLeft = mainRect.left;" +
-                "  let sidebar = document.querySelector('[role=\"navigation\"], [aria-label*=\"Tin nhắn\"], [aria-label*=\"Chats\"], [data-pagelet*=\"Sidebar\"]') || document.body;" +
-                "  let rows = Array.from(sidebar.querySelectorAll('[role=\"row\"], [role=\"button\"], a[href*=\"/messages/\"]'));" +
-                "  rows.forEach((row, idx) => {" +
-                "    let rRect = row.getBoundingClientRect();" +
-                "    if (rRect.left > mainLeft + 250) return;" +
-                "    let a = row.tagName === 'A' ? row : row.querySelector('a[href]');" +
-                "    if (a) {" +
-                "      let href = a.href || '';" +
-                "      if (!seenHrefs.has(href) && href.includes('/messages/') && !rootUrls.some(r => href === r || href === r.slice(0, -1))) {" +
+                "  let allMsgLinks = Array.from(document.querySelectorAll('a[href*=\"/messages/\"]'));" +
+                "  allMsgLinks.forEach(a => {" +
+                "    let href = a.href || '';" +
+                "    if ((href.includes('/messages/t/') || href.includes('/messages/e2ee/t/') || href.includes('/messages/requests/') || href.includes('/messages/read/'))" +
+                "         && !rootUrls.some(r => href.endsWith(r) || href.endsWith(r.slice(0, -1)))) {" +
+                "      if (!seenHrefs.has(href)) {" +
                 "        seenHrefs.add(href);" +
-                "        results.push({ href: href, isLink: true, text: (row.innerText || '').substring(0, 40) });" +
+                "        results.push({ href: href, isLink: true, text: (a.innerText || '').substring(0, 40) });" +
                 "      }" +
-                "    } else {" +
-                "      let txt = (row.innerText || '').trim();" +
-                "      let lower = txt.toLowerCase();" +
-                "      if (txt.length > 0 && !lower.includes('c\u00f3 th\u1ec3 b\u1ea1n bi\u1ebft') && !lower.includes('spam') && !lower.includes('xem t\u1ea5t c\u1ea3') && !lower.includes('tin nh\u1eafn \u0111ang ch\u1edd')) {" +
-                "        results.push({ rowIndex: idx, isLink: false, text: txt.substring(0, 40) });" +
+                "    }" +
+                "  });" +
+                "  let main = document.querySelector('[role=\"main\"]');" +
+                "  let mainLeft = main ? main.getBoundingClientRect().left : 360;" +
+                "  let candidateRows = Array.from(document.querySelectorAll('div[aria-label*=\"\u0110o\u1ea1n chat\"] [role=\"row\"], div[aria-label*=\"Tin nh\u1eafn\"] [role=\"row\"], div[role=\"grid\"] [role=\"row\"], [data-pagelet*=\"Sidebar\"] [role=\"row\"], [role=\"row\"]'));" +
+                "  candidateRows.forEach((row, idx) => {" +
+                "    let rRect = row.getBoundingClientRect();" +
+                "    if (rRect.width > 50 && rRect.left < mainLeft + 50) {" +
+                "      let a = row.querySelector('a[href*=\"/messages/\"]');" +
+                "      if (a) {" +
+                "        let href = a.href || '';" +
+                "        if (!seenHrefs.has(href) && href.includes('/messages/') && !rootUrls.some(r => href.endsWith(r) || href.endsWith(r.slice(0, -1)))) {" +
+                "          seenHrefs.add(href);" +
+                "          results.push({ href: href, isLink: true, text: (row.innerText || '').substring(0, 40) });" +
+                "        }" +
+                "      } else {" +
+                "        let txt = (row.innerText || '').trim();" +
+                "        let lower = txt.toLowerCase();" +
+                "        if (txt.length > 0 && !lower.includes('c\u00f3 th\u1ec3 b\u1ea1n bi\u1ebft') && !lower.includes('spam') && !lower.includes('xem t\u1ea5t c\u1ea3') && !lower.includes('tin nh\u1eafn \u0111ang ch\u1edd')) {" +
+                "          results.push({ rowIndex: idx, isLink: false, text: txt.substring(0, 40) });" +
+                "        }" +
                 "      }" +
                 "    }" +
                 "  });" +

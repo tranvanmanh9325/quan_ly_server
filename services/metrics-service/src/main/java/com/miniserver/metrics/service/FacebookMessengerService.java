@@ -571,6 +571,36 @@ public class FacebookMessengerService implements DisposableBean {
                     if (isCooldownExpired(senderName, cfg.getCooldownMinutes())) {
                         log.info("[FB-Responder] Triggering AI Away reply for '{}' (Unreplied: {} >= Threshold: {})",
                                 senderName, unrepliedCount, cfg.getThreshold());
+
+                        // For Message Requests (E2EE or regular), click "Chấp nhận" (Accept) BEFORE sending.
+                        // After accepting, Facebook converts the thread to a normal conversation and shows the input box.
+                        // This MUST happen outside sendMessengerReply because accepting triggers a page state change
+                        // that requires waiting for DOM to re-render before querying contenteditable.
+                        String currentUrl = page.url();
+                        if (currentUrl.contains("/messages/requests/") || currentUrl.contains("/messages/e2ee/requests/")) {
+                            try {
+                                Boolean accepted = (Boolean) page.evaluate("() => {" +
+                                        "  let btns = Array.from(document.querySelectorAll('div[role=\"button\"], button, span'));" +
+                                        "  let btn = btns.find(b => {" +
+                                        "    let txt = (b.innerText || '').trim();" +
+                                        "    return txt === 'Chấp nhận' || txt === 'Accept';" +
+                                        "  });" +
+                                        "  if (btn) { btn.click(); return true; }" +
+                                        "  return false;" +
+                                        "}");
+                                log.info("[FB-Responder] Accept button clicked for '{}': {}", senderName, accepted);
+                                if (Boolean.TRUE.equals(accepted)) {
+                                    // After accepting, Facebook may navigate or re-render the conversation
+                                    page.waitForTimeout(4000);
+                                    // Screenshot to verify the input box is now available
+                                    page.screenshot(new Page.ScreenshotOptions().setPath(java.nio.file.Paths.get("/tmp/fb_after_accept.png")));
+                                    log.info("[FB-Responder] Screenshot saved after Accept. URL: {}", page.url());
+                                }
+                            } catch (Exception ex) {
+                                log.warn("[FB-Responder] Error clicking Accept for '{}': {}", senderName, ex.getMessage());
+                            }
+                        }
+
                         String awayReply = generateAwayMessage(senderName, unrepliedCount, cfg.getCustomMessage());
                         boolean sent = sendMessengerReply(page, awayReply);
                         if (sent) {

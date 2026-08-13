@@ -1006,26 +1006,12 @@ public class FacebookMessengerService implements DisposableBean {
     }
 
     private int countUnrepliedIncomingMessages(Page page) {
-        // Diagnostic: dump all aria-labels containing 'lúc' to find the exact pattern Facebook uses
-        Object ariaLabelDiag = page.evaluate("() => {" +
-                "  let main = document.querySelector('[role=\"main\"]') || document.body;" +
-                "  return Array.from(main.querySelectorAll('[aria-label]'))" +
-                "    .map(e => e.getAttribute('aria-label'))" +
-                "    .filter(l => l && (l.toLowerCase().includes('l\\u00fac') || l.toLowerCase().includes('tin nh\\u1eafn')))" +
-                "    .slice(0, 15);" +
-                "}");
-        log.info("[FB-Responder] Aria-label diag for '{}': {}", page.url(), ariaLabelDiag);
-
         Object countResult = page.evaluate("() => {" +
                 "  let main = document.querySelector('[role=\"main\"]') || document.querySelector('[role=\"region\"]') || document.body;" +
-                // Strategy 1: Find message bubbles by aria-label pattern 'Tin nhắn do X lúc HH:MM' or 'X lúc HH:MM'
-                // Facebook sets these for screen-reader accessibility on every message container.
                 "  let bubbles = Array.from(main.querySelectorAll('[aria-label]')).filter(el => {" +
                 "    let lbl = (el.getAttribute('aria-label') || '').toLowerCase();" +
-                "    return lbl.includes(' l\\u00fac ') && (" +
-                "      lbl.startsWith('tin nh\\u1eafn do ') || " +
-                "      /^[a-z\\u00c0-\\u1ef9 ]+ l\\u00fac \\d/.test(lbl)" +
-                "    );" +
+                "    return (lbl.startsWith('tin nh\\u1eafn do ') && lbl.includes(' g\\u1eedi l\\u00fac ')) ||" +
+                "           /^l\\u00fac \\d{1,2}:\\d{2},.+:/.test(lbl);" +
                 "  });" +
                 "  if (bubbles.length > 0) {" +
                 "    let details = [];" +
@@ -1034,9 +1020,9 @@ public class FacebookMessengerService implements DisposableBean {
                 "      let el = bubbles[i];" +
                 "      let lbl = (el.getAttribute('aria-label') || '').toLowerCase();" +
                 "      let text = (el.innerText || '').trim();" +
-                "      let isOut = lbl.startsWith('tin nh\\u1eafn do b\\u1ea1n') || lbl.startsWith('b\\u1ea1n l\\u00fac');" +
-                "      let isNotice = false;" +
-                "      details.push({ txt: text.substring(0, 40), isOut, lbl: lbl.substring(0, 40) });" +
+                "      let isOut = lbl.startsWith('tin nh\\u1eafn do b\\u1ea1n') ||" +
+                "                  /^l\\u00fac \\d{1,2}:\\d{2}, b\\u1ea1n:/.test(lbl);" +
+                "      details.push({ txt: text.substring(0, 40), isOut, lbl: lbl.substring(0, 50) });" +
                 "      if (isNotice) continue;" +
                 "      if (isOut) break;" +
                 "      count++;" +

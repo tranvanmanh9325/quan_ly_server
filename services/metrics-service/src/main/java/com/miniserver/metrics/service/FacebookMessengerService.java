@@ -514,32 +514,45 @@ public class FacebookMessengerService implements SchedulingConfigurer, Disposabl
                     } catch (Exception ignored) {
                         page.waitForTimeout(1500);
                     }
-                    // Scan standard requests
-                    totalReplies += inspectAndReply(page, cfg);
 
-                    // Click 'Có thể bạn biết' tab (E2EE requests from People You May Know)
-                    log.info("[FB-Responder] Clicking 'Có thể bạn biết' tab...");
-                    Boolean tabClicked = (Boolean) page.evaluate("() => {" +
-                            "  let tabs = Array.from(document.querySelectorAll('[role=\"tab\"], [role=\"button\"], span, div'));" +
-                            "  let tab = tabs.find(t => {" +
-                            "    let txt = (t.innerText || '').trim();" +
-                            "    return txt === 'Có thể bạn biết' || txt === 'People You May Know';" +
-                            "  });" +
-                            "  if (tab) { tab.click(); return true; }" +
-                            "  return false;" +
-                            "}");
-                    log.info("[FB-Responder] 'Có thể bạn biết' tab clicked: {}", tabClicked);
+                    // Rate-limit guard: Facebook blocks rapid navigation with "Bạn tạm thời bị chặn".
+                    // Detect and skip gracefully instead of wasting the next 15s on a timeout.
+                    String pageBodyText = (String) page.evaluate("() => document.body ? document.body.innerText : ''");
+                    boolean isRateLimited = pageBodyText != null && (
+                            pageBodyText.contains("tạm thời bị chặn") ||
+                            pageBodyText.contains("temporarily blocked") ||
+                            pageBodyText.contains("using it too fast"));
 
-                    if (Boolean.TRUE.equals(tabClicked)) {
-                        // Smart wait for tab content to load
-                        try {
-                            page.waitForSelector(
-                                    "a[href*='/messages/requests/t/'], a[href*='/messages/e2ee/requests/t/']",
-                                    new Page.WaitForSelectorOptions().setTimeout(6000));
-                        } catch (Exception ignored) {
-                            page.waitForTimeout(1500);
-                        }
+                    if (isRateLimited) {
+                        log.warn("[FB-Responder] Facebook rate-limit on /messages/requests/ — skipping requests scan this cycle.");
+                    } else {
+                        // Scan standard requests
                         totalReplies += inspectAndReply(page, cfg);
+
+                        // Click 'Có thể bạn biết' tab (E2EE requests from People You May Know)
+                        log.info("[FB-Responder] Clicking 'Có thể bạn biết' tab...");
+                        Boolean tabClicked = (Boolean) page.evaluate("() => {" +
+                                "  let tabs = Array.from(document.querySelectorAll('[role=\"tab\"], [role=\"button\"], span, div'));" +
+                                "  let tab = tabs.find(t => {" +
+                                "    let txt = (t.innerText || '').trim();" +
+                                "    return txt === 'Có thể bạn biết' || txt === 'People You May Know';" +
+                                "  });" +
+                                "  if (tab) { tab.click(); return true; }" +
+                                "  return false;" +
+                                "}");
+                        log.info("[FB-Responder] 'Có thể bạn biết' tab clicked: {}", tabClicked);
+
+                        if (Boolean.TRUE.equals(tabClicked)) {
+                            // Smart wait for tab content to load
+                            try {
+                                page.waitForSelector(
+                                        "a[href*='/messages/requests/t/'], a[href*='/messages/e2ee/requests/t/']",
+                                        new Page.WaitForSelectorOptions().setTimeout(6000));
+                            } catch (Exception ignored) {
+                                page.waitForTimeout(1500);
+                            }
+                            totalReplies += inspectAndReply(page, cfg);
+                        }
                     }
                 } catch (Exception e) {
                     log.warn("[FB-Responder] Scanning requests inbox encountered notice: {}", e.getMessage());

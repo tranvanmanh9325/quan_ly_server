@@ -511,12 +511,22 @@ public class FacebookMessengerService implements DisposableBean {
                     }
                 }
 
-                // Wait for message bubbles to finish mounting in DOM
+                // Wait for message bubbles to finish mounting in DOM (do NOT include header, which mounts immediately)
                 try {
-                    page.waitForSelector("[role='main'] div[dir='auto'], [role='main'] span[dir='auto'], [role='region'] div[dir='auto'], [role='main'] header",
+                    page.waitForSelector("[role='main'] [role='grid'], [role='main'] [role='list'], [role='main'] [role='log'], [role='main'] div[dir='auto']",
                             new Page.WaitForSelectorOptions().setTimeout(6000));
                 } catch (Exception ignored) {}
-                page.waitForTimeout(2000);
+
+                // Wait for E2EE decryption/loading spinner to clear
+                try {
+                    page.waitForFunction("() => {" +
+                            "  let main = document.querySelector('[role=\"main\"]') || document.querySelector('[role=\"region\"]');" +
+                            "  if (!main) return true;" +
+                            "  let spinner = main.querySelector('[role=\"progressbar\"], [aria-busy=\"true\"], svg[aria-label*=\"Đang tải\"], svg[aria-label*=\"Loading\"]');" +
+                            "  return !spinner;" +
+                            "}", new Page.WaitForFunctionOptions().setTimeout(10000));
+                } catch (Exception ignored) {}
+                page.waitForTimeout(1500);
 
                 // Poll up to 6s for the active chat panel header to render after navigation.
                 String senderName = waitForChatHeaderToLoad(page, 6000);
@@ -1109,7 +1119,55 @@ public class FacebookMessengerService implements DisposableBean {
         try {
             if (countResult != null) {
                 com.fasterxml.jackson.databind.JsonNode node = new com.fasterxml.jackson.databind.ObjectMapper().readTree(countResult.toString());
-                if (node.has("count")) return node.get("count").asInt();
+                int totalRows = node.has("totalRows") ? node.get("totalRows").asInt() : 0;
+                int count = node.has("count") ? node.get("count").asInt() : 0;
+
+                // Retry once if totalRows is 0 (E2EE React component mounted slightly late)
+                if (totalRows == 0) {
+                    page.waitForTimeout(3000);
+                    Object retryResult = page.evaluate("() => {" +
+                            "  let main = document.querySelector('[role=\"main\"]') || document.querySelector('[role=\"region\"]') || document.body;" +
+                            "  let bubbles = Array.from(main.querySelectorAll('[aria-label]')).filter(el => {" +
+                            "    let lbl = (el.getAttribute('aria-label') || '').toLowerCase();" +
+                            "    return (lbl.startsWith('tin nh\u1eafn do ') && lbl.includes(' g\u1eedi l\u00fac ')) || /^l\u00fac \\d{1,2}:\\d{2},.+:/.test(lbl);" +
+                            "  });" +
+                            "  if (bubbles.length > 0) {" +
+                            "    let count = 0;" +
+                            "    for (let i = bubbles.length - 1; i >= 0; i--) {" +
+                            "      let lbl = (bubbles[i].getAttribute('aria-label') || '').toLowerCase();" +
+                            "      if (lbl.startsWith('tin nh\u1eafn do b\u1ea1n') || /^l\u00fac \\d{1,2}:\\d{2}, b\u1ea1n:/.test(lbl)) break;" +
+                            "      count++;" +
+                            "    }" +
+                            "    return JSON.stringify({ count, totalRows: bubbles.length });" +
+                            "  }" +
+                            "  let chatScope = main.querySelector('[role=\"grid\"], [role=\"list\"], [role=\"log\"]') || main;" +
+                            "  let editables = Array.from(chatScope.querySelectorAll('[contenteditable=\"true\"]'));" +
+                            "  let allAuto = Array.from(chatScope.querySelectorAll('div[dir=\"auto\"]'));" +
+                            "  if (allAuto.length === 0) allAuto = Array.from(chatScope.querySelectorAll('span[dir=\"auto\"]'));" +
+                            "  let rows = allAuto.filter(el => {" +
+                            "    if (el.closest('[role=\"navigation\"], [role=\"complementary\"], aside')) return false;" +
+                            "    let txt = (el.innerText || '').trim();" +
+                            "    if (!txt || txt.length === 0) return false;" +
+                            "    if (editables.some(ed => ed.contains(el))) return false;" +
+                            "    if (allAuto.some(other => other !== el && other.contains(el))) return false;" +
+                            "    return true;" +
+                            "  });" +
+                            "  let count = 0;" +
+                            "  for (let i = rows.length - 1; i >= 0; i--) {" +
+                            "    let text = (rows[i].innerText || '').trim().toLowerCase();" +
+                            "    if (text.includes('m\u00e3 h\u00f3a \u0111\u1ea7u cu\u1ed1i') || text.includes('t\u00ecm hi\u1ec3u th\u00eam')) continue;" +
+                            "    count++;" +
+                            "  }" +
+                            "  return JSON.stringify({ count, totalRows: rows.length });" +
+                            "}");
+                    if (retryResult != null) {
+                        com.fasterxml.jackson.databind.JsonNode retryNode = new com.fasterxml.jackson.databind.ObjectMapper().readTree(retryResult.toString());
+                        log.info("[FB-Responder] Count retry result for '{}': {}", page.url(), retryResult);
+                        if (retryNode.has("count")) return retryNode.get("count").asInt();
+                    }
+                }
+
+                return count;
             }
         } catch (Exception ignored) {}
         return 0;

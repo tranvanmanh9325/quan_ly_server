@@ -1935,19 +1935,31 @@ public class FacebookMessengerService implements DisposableBean {
             applyCookies(context, cfg.getCookiesJson());
             Page page = context.newPage();
 
-            // Chat 1: Trần Văn Mạnh
-            page.navigate("https://www.facebook.com/messages/t/100045592363397/", new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED).setTimeout(15000));
+            // First navigate to root inbox to hydrate React state
+            page.navigate("https://www.facebook.com/messages/", new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED).setTimeout(30000));
             page.waitForTimeout(5000);
-            handleE2eePinScreen(page);
-            page.waitForTimeout(2000);
-            page.screenshot(new Page.ScreenshotOptions().setPath(Paths.get("/tmp/chat_tran_van_manh.png")));
+
+            // Chat 1: Trần Văn Mạnh
+            try {
+                page.navigate("https://www.facebook.com/messages/t/100045592363397/", new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED).setTimeout(30000));
+                page.waitForTimeout(5000);
+                handleE2eePinScreen(page);
+                page.waitForTimeout(2000);
+                page.screenshot(new Page.ScreenshotOptions().setPath(Paths.get("/tmp/chat_tran_van_manh.png")));
+            } catch (Exception ex) {
+                log.warn("[FB-Screenshot] Failed chat 1: {}", ex.getMessage());
+            }
 
             // Chat 2: Mạnh Văn Trần
-            page.navigate("https://www.facebook.com/messages/e2ee/t/2127577941122457/", new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED).setTimeout(15000));
-            page.waitForTimeout(6000);
-            handleE2eePinScreen(page);
-            page.waitForTimeout(2000);
-            page.screenshot(new Page.ScreenshotOptions().setPath(Paths.get("/tmp/chat_manh_van_tran.png")));
+            try {
+                page.navigate("https://www.facebook.com/messages/e2ee/t/2127577941122457/", new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED).setTimeout(30000));
+                page.waitForTimeout(6000);
+                handleE2eePinScreen(page);
+                page.waitForTimeout(2000);
+                page.screenshot(new Page.ScreenshotOptions().setPath(Paths.get("/tmp/chat_manh_van_tran.png")));
+            } catch (Exception ex) {
+                log.warn("[FB-Screenshot] Failed chat 2: {}", ex.getMessage());
+            }
 
             browser.close();
             return Map.of("status", "success", "message", "Captured screenshots for both chats");

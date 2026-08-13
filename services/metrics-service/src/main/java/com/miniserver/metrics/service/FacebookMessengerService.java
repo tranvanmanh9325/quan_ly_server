@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.microsoft.playwright.*;
+import com.microsoft.playwright.options.AriaRole;
 import com.microsoft.playwright.options.Cookie;
 import com.microsoft.playwright.options.SameSiteAttribute;
 import com.microsoft.playwright.options.WaitUntilState;
@@ -556,37 +557,79 @@ public class FacebookMessengerService implements DisposableBean {
                 // ── STEP 1: Accept (for request threads only) ────────────────────────────
                 // E2EE and regular request threads hide all message bubbles behind the Accept gate.
                 // Counting BEFORE accept always returns 0, so we MUST accept first.
-                // We do NOT require a minimum count before accepting — any message request is worth processing.
                 boolean wasAccepted = false;
                 if (isRequestThread) {
                     try {
+                        // Wait for the page to stabilize (loading spinner gone) before looking for the Accept button.
+                        // Facebook renders the Accept UI asynchronously; clicking too early finds nothing.
+                        try {
+                            page.waitForFunction("() => !document.querySelector('[aria-busy=\"true\"], [data-visualcompletion=\"loading-state\"]')",
+                                    new Page.WaitForFunctionOptions().setTimeout(8000));
+                        } catch (Exception ignored) {}
+                        page.waitForTimeout(2000); // additional buffer for React hydration
+
                         page.screenshot(new Page.ScreenshotOptions()
                                 .setPath(java.nio.file.Paths.get("/tmp/fb_before_accept.png")));
                         log.info("[FB-Responder] Request thread detected for '{}'. Attempting Accept...", senderName);
 
-                        // JS click: find leaf element with exact 'Chấp nhận' or 'Accept' text
+                        // Strategy 1: Find button/div[role=button] whose textContent contains "Chấp nhận" or "Accept".
+                        // Facebook renders text inside deeply nested React spans — use textContent, not innerText on leaves.
                         Boolean accepted = (Boolean) page.evaluate("() => {" +
-                                "  let all = Array.from(document.querySelectorAll('*'));" +
-                                "  let btn = all.find(e => {" +
-                                "    let txt = (e.innerText || '').trim();" +
-                                "    return (txt === 'Ch\\u1ea5p nh\\u1eadn' || txt === 'Accept') && e.children.length === 0;" +
+                                "  const ACCEPT_TEXT = ['Ch\u1ea5p nh\u1eadn', 'Accept', 'OK'];" +
+                                "  let candidates = Array.from(document.querySelectorAll('div[role=\"button\"], button, a[role=\"button\"]'));" +
+                                "  let btn = candidates.find(el => {" +
+                                "    let t = (el.textContent || '').trim();" +
+                                "    return ACCEPT_TEXT.some(a => t === a || t.startsWith(a));" +
                                 "  });" +
-                                "  if (!btn) btn = all.find(e => {" +
-                                "    let txt = (e.innerText || '').trim();" +
-                                "    return txt === 'Ch\\u1ea5p nh\\u1eadn' || txt === 'Accept';" +
-                                "  });" +
-                                "  if (btn) { btn.click(); return true; }" +
+                                // Strategy 2: broader innerText search on any element
+                                "  if (!btn) {" +
+                                "    btn = Array.from(document.querySelectorAll('*')).find(el => {" +
+                                "      let t = (el.innerText || el.textContent || '').trim();" +
+                                "      return ACCEPT_TEXT.includes(t) && el.offsetParent !== null;" +
+                                "    });" +
+                                "  }" +
+                                // Strategy 3: aria-label
+                                "  if (!btn) {" +
+                                "    btn = document.querySelector('[aria-label=\"Ch\u1ea5p nh\u1eadn\"], [aria-label=\"Accept\"]');" +
+                                "  }" +
+                                "  if (btn) {" +
+                                "    btn.scrollIntoView();" +
+                                "    btn.click();" +
+                                "    return true;" +
+                                "  }" +
+                                // Diagnostic: log all button texts for debugging
+                                "  let diag = candidates.slice(0,20).map(el => (el.textContent||'').trim().substring(0,30));" +
+                                "  console.log('FB-Accept-Diag buttons:', JSON.stringify(diag));" +
                                 "  return false;" +
                                 "}");
 
-                        // Fallback: Playwright locator if JS click fails
+                        // Strategy 4: Playwright locator as final fallback
                         if (Boolean.FALSE.equals(accepted)) {
                             try {
-                                var btn = page.locator("text=/Ch\\u1ea5p nh\\u1eadn|Accept/").first();
-                                if (btn.isVisible()) { btn.click(); accepted = true; }
+                                // Try role=button with name
+                                var btn = page.getByRole(AriaRole.BUTTON, new Page.GetByRoleOptions().setName("Ch\u1ea5p nh\u1eadn"));
+                                if (btn.count() > 0 && btn.first().isVisible()) {
+                                    btn.first().click();
+                                    accepted = true;
+                                }
+                            } catch (Exception ex) {}
+                        }
+                        if (Boolean.FALSE.equals(accepted)) {
+                            try {
+                                var btn = page.getByRole(AriaRole.BUTTON, new Page.GetByRoleOptions().setName("Accept"));
+                                if (btn.count() > 0 && btn.first().isVisible()) {
+                                    btn.first().click();
+                                    accepted = true;
+                                }
                             } catch (Exception ex) {}
                         }
 
+                        // Dump DOM diagnostic to log for debugging
+                        Object domDump = page.evaluate("() => {" +
+                                "  let btns = Array.from(document.querySelectorAll('div[role=\"button\"], button'));" +
+                                "  return btns.slice(0,15).map(e => ({ tag: e.tagName, txt: (e.textContent||'').trim().substring(0,40), aria: e.getAttribute('aria-label') }));" +
+                                "}");
+                        log.info("[FB-Responder] Accept DOM dump for '{}': {}", senderName, domDump);
                         log.info("[FB-Responder] Accept button clicked for '{}': {}", senderName, accepted);
                         wasAccepted = Boolean.TRUE.equals(accepted);
 

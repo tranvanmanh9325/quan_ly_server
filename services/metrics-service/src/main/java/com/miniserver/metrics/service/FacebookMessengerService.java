@@ -505,13 +505,20 @@ public class FacebookMessengerService implements SchedulingConfigurer, Disposabl
                                 new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED).setTimeout(15000));
                         try {
                             // Wait for sidebar links to appear (React hydration)
-                            page.waitForSelector("a[href*=\"/messages/requests/t/\"]",
-                                    new Page.WaitForSelectorOptions().setTimeout(6000));
-                        } catch (Exception ignored) {}
+                            page.waitForSelector("a[href*='/messages/requests/t/']",
+                                    new Page.WaitForSelectorOptions().setTimeout(8000));
+                        } catch (Exception ignored) { log.warn("[FB-DirectReply] waitForSelector timeout on requests page"); }
                         page.waitForTimeout(1000);
+
+                        // Debug: log all sidebar link texts
+                        Object allLinks = page.evaluate(
+                                "() => Array.from(document.querySelectorAll('a[href*=\"/messages/\"]')).map(a => ({href: a.href, text: (a.innerText||'').substring(0,40)}))");
+                        log.info("[FB-DirectReply] Requests page links diag: {}", allLinks);
+
                         Object hrefObj2 = page.evaluate(
                                 "(name) => { let links = Array.from(document.querySelectorAll('a[href*=\"/messages/\"]')); let m = links.find(a => (a.innerText||'').toLowerCase().includes(name.toLowerCase())); return m ? m.href : null; }",
                                 recipientName);
+                        log.info("[FB-DirectReply] hrefObj2 for '{}' = {}", recipientName, hrefObj2);
                         if (hrefObj2 instanceof String href2 && !href2.isBlank()) {
                             log.info("[FB-DirectReply] Requests inbox href found for '{}': {}", recipientName, href2);
                             page.navigate(href2, new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED).setTimeout(12000));

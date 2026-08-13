@@ -1024,14 +1024,20 @@ public class FacebookMessengerService implements DisposableBean {
                 "  } else {" +
                 "    rows = rows.filter(el => !rows.some(parent => parent !== el && parent.contains(el)));" +
                 "  }" +
-                "  let chatRegion = main.querySelector('[role=\"region\"], [aria-label*=\"Tin nhắn\"], [aria-label*=\"Messages\"]') || main;" +
-                "  let regionRect = chatRegion.getBoundingClientRect();" +
-                "  let mainMidX = regionRect.left + (regionRect.width / 2);" +
-                "  rows = rows.filter(el => {" +
-                "    let r = el.getBoundingClientRect();" +
-                "    if (r.width > 0 && r.left > mainMidX + 180) return false;" +
-                "    return true;" +
-                "  });" +
+                "  function isOutgoing(el) {" +
+                "    let cur = el;" +
+                "    for (let depth = 0; depth < 8; depth++) {" +
+                "      if (!cur) break;" +
+                "      let ariaLabel = (cur.getAttribute('aria-label') || '').toLowerCase();" +
+                "      if (ariaLabel.startsWith('b\u1ea1n l\u00fac') || ariaLabel.startsWith('b\u1ea1n \u0111\u00e3 g\u1eedi') || ariaLabel.startsWith('you sent')) return true;" +
+                "      let style = window.getComputedStyle(cur);" +
+                "      if (style.justifyContent === 'flex-end' || style.alignSelf === 'flex-end') return true;" +
+                "      if (style.marginLeft === 'auto' && style.marginRight !== 'auto') return true;" +
+                "      cur = cur.parentElement;" +
+                "    }" +
+                "    let domAriaFull = (el.getAttribute('aria-label') || '') + ' ' + (el.querySelector('[aria-label]')?.getAttribute('aria-label') || '');" +
+                "    return domAriaFull.includes('B\u1ea1n \u0111\u00e3 g\u1eedi') || domAriaFull.includes('You sent') || domAriaFull.toLowerCase().includes('b\u1ea1n l\u00fac');" +
+                "  }" +
                 "  let details = [];" +
                 "  let count = 0;" +
                 "  for (let i = rows.length - 1; i >= 0; i--) {" +
@@ -1044,11 +1050,11 @@ public class FacebookMessengerService implements DisposableBean {
                 "                         lowerText.includes('m\u00e3 h\u00f3a \u0111\u1ea7u cu\u1ed1i') || " +
                 "                         lowerText.includes('t\u00ednh n\u0103ng m\u00e3 h\u00f3a') || " +
                 "                         lowerText.includes('t\u00ecm hi\u1ec3u th\u00eam') || " +
-                "                         lowerText.includes('b\u1ea3o m\u1eadt b\u1eb1ng');" +
-                "    let aria = (row.getAttribute('aria-label') || '') + ' ' + (row.querySelector('[aria-label]')?.getAttribute('aria-label') || '');" +
+                "                         lowerText.includes('b\u1ea3o m\u1eadt b\u1eb1ng') ||" +
+                "                         lowerText.includes('n\u1ebfu b\u1ea1n ch\u1ea5p nh\u1eadn');" +
                 "    let bRect = row.getBoundingClientRect();" +
-                "    let isOut = (bRect.width > 0 && bRect.left > mainMidX + 20) || aria.includes('B\u1ea1n \u0111\u00e3 g\u1eedi') || aria.includes('You sent');" +
-                "    details.push({ txt: text.substring(0, 30), isNotice, isOut, left: Math.round(bRect.left), midX: Math.round(mainMidX) });" +
+                "    let isOut = isOutgoing(row);" +
+                "    details.push({ txt: text.substring(0, 30), isNotice, isOut, left: Math.round(bRect.left) });" +
                 "    if (isNotice) continue;" +
                 "    if (isOut) break;" +
                 "    count++;" +

@@ -435,8 +435,17 @@ public class FacebookMessengerService implements SchedulingConfigurer, Disposabl
         }
 
         String screenshotPath = "/tmp/fb_direct_reply_" + System.currentTimeMillis() + ".png";
-        // Use a separate temp profile per call to avoid locking the shared scan profile
+        // Copy persistent profile to temp dir so we inherit LocalStorage/IndexedDB (cookies alone are not enough)
         String tempProfilePath = "/tmp/fb_reply_profile_" + System.currentTimeMillis();
+        try {
+            if (Paths.get(PROFILE_DIR_PATH).toFile().exists()) {
+                new ProcessBuilder("cp", "-r", PROFILE_DIR_PATH, tempProfilePath)
+                        .start().waitFor(10, java.util.concurrent.TimeUnit.SECONDS);
+                log.info("[FB-DirectReply] Copied profile {} -> {}", PROFILE_DIR_PATH, tempProfilePath);
+            }
+        } catch (Exception e) {
+            log.warn("[FB-DirectReply] Could not copy profile, using empty dir: {}", e.getMessage());
+        }
         try {
             String cachedThreadHref = messageCache.findThreadHref(recipientName);
             Map<String, String> env = new HashMap<>(System.getenv());

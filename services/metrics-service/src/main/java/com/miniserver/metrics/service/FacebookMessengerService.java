@@ -721,67 +721,49 @@ public class FacebookMessengerService implements DisposableBean {
      */
     private void handleE2eePinScreen(Page page) {
         try {
-            // Fast-path check: evaluate JS to see if a PIN screen is present.
-            // We look for an input field of type 'password', 'number', or 'text' that is
-            // adjacent to heading text containing PIN-related keywords.
             Boolean pinScreenPresent = (Boolean) page.evaluate(
                     "() => {" +
-                    "  const heading = document.querySelector('h2,h3,h4,[role=heading]');" +
-                    "  if (!heading) return false;" +
-                    "  const text = (heading.innerText || '').toLowerCase();" +
-                    "  if (!text.includes('pin') && !text.includes('kh\u00f4i ph\u1ee5c') && !text.includes('recover') && !text.includes('m\u00e3')) return false;" +
-                    "  const inp = document.querySelector('input[type=password], input[type=number], input[inputmode=numeric], input[aria-label*=PIN]');" +
-                    "  return inp !== null;" +
+                    "  let headings = Array.from(document.querySelectorAll('h1,h2,h3,h4,[role=heading],div'));" +
+                    "  return headings.some(h => {" +
+                    "    let t = (h.innerText || h.textContent || '').toLowerCase();" +
+                    "    return t.includes('nh\u1eadp m\u00e3 pin') || t.includes('kh\u00f4i ph\u1ee5c \u0111o\u1ea1n chat') || t.includes('enter pin');" +
+                    "  });" +
                     "}");
 
-            if (!Boolean.TRUE.equals(pinScreenPresent)) {
-                return; // No PIN screen — nothing to do
-            }
+            if (Boolean.TRUE.equals(pinScreenPresent)) {
+                log.info("[FB-Responder] E2EE PIN modal detected. Attempting automatic PIN entry / modal dismissal...");
 
-            log.info("[FB-Responder] E2EE PIN screen detected. Attempting automatic PIN entry (090325)...");
+                Boolean filled = (Boolean) page.evaluate(
+                        "() => {" +
+                        "  let inputs = Array.from(document.querySelectorAll('input'));" +
+                        "  if (inputs.length >= 6) {" +
+                        "    let pin = '090325';" +
+                        "    inputs.slice(0, 6).forEach((inp, idx) => {" +
+                        "      inp.focus(); inp.value = pin[idx] || '0';" +
+                        "      inp.dispatchEvent(new Event('input', { bubbles: true }));" +
+                        "    });" +
+                        "    return true;" +
+                        "  }" +
+                        "  let singleInp = document.querySelector('input[type=password], input[type=number], input[inputmode=numeric]');" +
+                        "  if (singleInp) { singleInp.focus(); singleInp.value = '090325'; singleInp.dispatchEvent(new Event('input', { bubbles: true })); return true; }" +
+                        "  return false;" +
+                        "}");
 
-            // Find the PIN input field — try multiple selectors in order of specificity
-            ElementHandle pinInput = page.querySelector(
-                    "input[type='password'], input[type='number'], input[inputmode='numeric'], " +
-                    "input[aria-label*='PIN'], input[aria-label*='pin'], input[aria-label*='M\u00e3']");
-
-            if (pinInput == null) {
-                // Fallback: find any input visible near the PIN heading
-                pinInput = page.querySelector("input");
-            }
-
-            if (pinInput != null) {
-                pinInput.click();
-                page.waitForTimeout(200);
-                pinInput.fill("090325");
-                page.waitForTimeout(500);
-
-                // Submit: try pressing Enter, then look for a submit/continue button
-                page.keyboard().press("Enter");
                 page.waitForTimeout(1500);
 
-                // If still on PIN screen (Enter didn’t work), click the confirm button
-                ElementHandle confirmBtn = page.querySelector(
-                        "[aria-label*='Tiếp theo'], [aria-label*='Xác nhập'], [aria-label*='Continue'], " +
-                        "[aria-label*='OK'], [aria-label*='Submit'], [role='button']:not([aria-label*='Huỷ']):not([aria-label*='Cancel'])");
-                if (confirmBtn != null) {
-                    confirmBtn.click();
-                    page.waitForTimeout(2000);
-                }
+                // If modal is still present, click the X (Close) button or press Escape to reveal the chat history
+                Boolean closed = (Boolean) page.evaluate(
+                        "() => {" +
+                        "  let closeBtn = document.querySelector('[aria-label=\"\u0110\u00f3ng\"], [aria-label=\"Close\"], [aria-label=\"Hu\u1ef7\"], [aria-label=\"Cancel\"]');" +
+                        "  if (closeBtn) { closeBtn.click(); return true; }" +
+                        "  return false;" +
+                        "}");
 
-                log.info("[FB-Responder] PIN submitted. Waiting for conversation to unlock...");
+                if (Boolean.FALSE.equals(closed)) {
+                    page.keyboard().press("Escape");
+                }
                 page.waitForTimeout(2000);
-
-                String headerAfterPin = extractCurrentChatHeaderName(page);
-                if (headerAfterPin != null && !headerAfterPin.isBlank()
-                        && !headerAfterPin.toLowerCase().contains("pin")
-                        && !headerAfterPin.toLowerCase().contains("kh\u00f4i ph\u1ee5c")) {
-                    log.info("[FB-Responder] PIN entry SUCCESS. Conversation header: '{}'", headerAfterPin);
-                } else {
-                    log.warn("[FB-Responder] PIN entry may have failed. Header after PIN: '{}'", headerAfterPin);
-                }
-            } else {
-                log.warn("[FB-Responder] PIN screen detected but no input field found. Cannot auto-fill.");
+                log.info("[FB-Responder] E2EE PIN modal handling completed. Filled: {}, Closed: {}", filled, closed);
             }
         } catch (Exception e) {
             log.warn("[FB-Responder] Error handling E2EE PIN screen: {}", e.getMessage());

@@ -428,29 +428,16 @@ public class FacebookMessengerService implements SchedulingConfigurer, Disposabl
             return "Loi: Chua cau hinh cookies Facebook. Khong the gui tin nhan.";
         }
 
-        // No need to wait for scan: we use a separate temp profile dir, not the shared PROFILE_DIR_PATH
-        // Use a dedicated lock so concurrent sendDirectReply calls still queue properly
-        if (!replyRunning.compareAndSet(false, true)) {
-            return "Loi: Da co mot lenh gui tin nhan dang chay. Vui long thu lai sau 30 giay.";
+        // Facebook cannot run 2 browser sessions simultaneously — wait for scan to finish (up to 120s)
+        long waitStart = System.currentTimeMillis();
+        log.info("[FB-DirectReply] Waiting for scan lock for '{}'...", recipientName);
+        while (scanRunning.get() && System.currentTimeMillis() - waitStart < 120_000) {
+            try { Thread.sleep(500); } catch (InterruptedException e) { Thread.currentThread().interrupt(); break; }
         }
+        if (scanRunning.get()) return "Loi: Scan dang chay va chua ket thuc sau 120s. Thu lai sau.";
+        if (!scanRunning.compareAndSet(false, true)) return "Loi: Khong the lay lock. Thu lai.";
 
         String screenshotPath = "/tmp/fb_direct_reply_" + System.currentTimeMillis() + ".png";
-        // Copy persistent profile to temp dir so we inherit LocalStorage/IndexedDB (cookies alone are not enough)
-        String tempProfilePath = "/tmp/fb_reply_profile_" + System.currentTimeMillis();
-        try {
-            if (Paths.get(PROFILE_DIR_PATH).toFile().exists()) {
-                new ProcessBuilder("cp", "-r", PROFILE_DIR_PATH, tempProfilePath)
-                        .start().waitFor(10, java.util.concurrent.TimeUnit.SECONDS);
-                // Remove Chromium's SingletonLock so the new instance doesn't see it as "in use"
-                new ProcessBuilder("rm", "-f",
-                        tempProfilePath + "/SingletonLock",
-                        tempProfilePath + "/SingletonCookie",
-                        tempProfilePath + "/SingletonSocket").start().waitFor(3, java.util.concurrent.TimeUnit.SECONDS);
-                log.info("[FB-DirectReply] Copied profile {} -> {}", PROFILE_DIR_PATH, tempProfilePath);
-            }
-        } catch (Exception e) {
-            log.warn("[FB-DirectReply] Could not copy profile, using empty dir: {}", e.getMessage());
-        }
         try {
             String cachedThreadHref = messageCache.findThreadHref(recipientName);
             Map<String, String> env = new HashMap<>(System.getenv());
@@ -459,6 +446,7 @@ public class FacebookMessengerService implements SchedulingConfigurer, Disposabl
             env.put("PLAYWRIGHT_NODEJS_PATH", "/usr/bin/node");
 
             try (Playwright playwright = Playwright.create(new Playwright.CreateOptions().setEnv(env))) {
+                preparePersistentProfileDir();
                 BrowserType.LaunchPersistentContextOptions pOptions = new BrowserType.LaunchPersistentContextOptions()
                         .setHeadless(true).setArgs(CHROMIUM_ARGS)
                         .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
@@ -468,12 +456,13 @@ public class FacebookMessengerService implements SchedulingConfigurer, Disposabl
                 else if (Paths.get("/usr/bin/chromium-browser").toFile().exists())
                     pOptions.setExecutablePath(Paths.get("/usr/bin/chromium-browser"));
 
-                try (BrowserContext context = playwright.chromium().launchPersistentContext(Paths.get(tempProfilePath), pOptions)) {
+                try (BrowserContext context = playwright.chromium().launchPersistentContext(Paths.get(PROFILE_DIR_PATH), pOptions)) {
                     context.addInitScript(WEBDRIVER_STEALTH_SCRIPT);
                     applyCookies(context, cfg.getCookiesJson());
                     for (Page p : context.pages()) { try { p.close(); } catch (Exception ignored) {} }
                     Page page = context.newPage();
                     enableResourceOptimization(page);
+
 
                     page.navigate("https://www.facebook.com/messages/t/",
                             new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED).setTimeout(20000));
@@ -560,9 +549,7 @@ public class FacebookMessengerService implements SchedulingConfigurer, Disposabl
             log.error("[FB-DirectReply] Error: {}", e.getMessage(), e);
             return "Loi khi gui toi \"" + recipientName + "\": " + e.getMessage();
         } finally {
-            replyRunning.set(false);
-            // Cleanup temp profile dir to avoid disk accumulation
-            try { new ProcessBuilder("rm", "-rf", tempProfilePath).start().waitFor(); } catch (Exception ignored) {}
+            scanRunning.set(false);
             System.gc();
         }
     }

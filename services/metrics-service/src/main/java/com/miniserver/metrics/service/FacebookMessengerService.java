@@ -270,6 +270,7 @@ public class FacebookMessengerService implements SchedulingConfigurer, Disposabl
 
     private final FacebookConfigRepository configRepository;
     private final AiChatService aiChatService;
+    private final FacebookMessageCache messageCache;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     // VNC-only singleton state (used only for interactive login session, NOT for scheduled checks)
@@ -287,9 +288,11 @@ public class FacebookMessengerService implements SchedulingConfigurer, Disposabl
     private volatile String lastScanResult = null;
 
     public FacebookMessengerService(FacebookConfigRepository configRepository,
-                                    AiChatService aiChatService) {
+                                    AiChatService aiChatService,
+                                    FacebookMessageCache messageCache) {
         this.configRepository = configRepository;
         this.aiChatService = aiChatService;
+        this.messageCache = messageCache;
     }
 
     @Override
@@ -359,6 +362,7 @@ public class FacebookMessengerService implements SchedulingConfigurer, Disposabl
 
         try {
             int repliesSent = processMessengerChats(cfg);
+            messageCache.markScanCompleted();
             LocalDateTime vnNow = LocalDateTime.now(java.time.ZoneId.of("Asia/Ho_Chi_Minh"));
             java.time.format.DateTimeFormatter fmt = java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss dd/MM/yyyy");
             String status = "Hoạt động: Đã kiểm tra lúc " + vnNow.format(fmt)
@@ -409,6 +413,113 @@ public class FacebookMessengerService implements SchedulingConfigurer, Disposabl
             return Map.of("status", "done", "message", lastScanResult);
         return Map.of("status", "idle", "message", "");
     }
+    /**
+     * Sends a direct Facebook Messenger message to the specified person.
+     * Called by the Telegram AI agent via the facebook_send_reply tool.
+     */
+    public String sendDirectReply(String recipientName, String message) {
+        if (recipientName == null || recipientName.isBlank()) return "Loi: Khong xac dinh duoc ten nguoi nhan.";
+        if (message == null || message.isBlank()) return "Loi: Noi dung tin nhan trong.";
+
+        FacebookConfig cfg = configRepository.getConfig().orElse(null);
+        if (cfg == null || cfg.getCookiesJson() == null || cfg.getCookiesJson().isBlank()) {
+            return "Loi: Chua cau hinh cookies Facebook. Khong the gui tin nhan.";
+        }
+
+        // Wait for any running scan to finish (max 30s) to avoid Chromium conflict
+        long waitStart = System.currentTimeMillis();
+        while (scanRunning.get() && System.currentTimeMillis() - waitStart < 30_000) {
+            try { Thread.sleep(500); } catch (InterruptedException e) { Thread.currentThread().interrupt(); break; }
+        }
+        if (scanRunning.get()) return "Loi: Dang co scan chay song song. Thu lai sau 30 giay.";
+
+        if (!scanRunning.compareAndSet(false, true)) return "Loi: Khong the lay lock. Vui long thu lai.";
+
+        String screenshotPath = "/tmp/fb_direct_reply_" + System.currentTimeMillis() + ".png";
+        try {
+            String cachedThreadHref = messageCache.findThreadHref(recipientName);
+            Map<String, String> env = new HashMap<>(System.getenv());
+            env.put("PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD", "1");
+            env.put("PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH", "/usr/bin/chromium");
+            env.put("PLAYWRIGHT_NODEJS_PATH", "/usr/bin/node");
+
+            try (Playwright playwright = Playwright.create(new Playwright.CreateOptions().setEnv(env))) {
+                preparePersistentProfileDir();
+                BrowserType.LaunchPersistentContextOptions pOptions = new BrowserType.LaunchPersistentContextOptions()
+                        .setHeadless(true).setArgs(CHROMIUM_ARGS)
+                        .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
+                        .setViewportSize(1280, 800);
+                if (Paths.get("/usr/bin/chromium").toFile().exists())
+                    pOptions.setExecutablePath(Paths.get("/usr/bin/chromium"));
+                else if (Paths.get("/usr/bin/chromium-browser").toFile().exists())
+                    pOptions.setExecutablePath(Paths.get("/usr/bin/chromium-browser"));
+
+                try (BrowserContext context = playwright.chromium().launchPersistentContext(Paths.get(PROFILE_DIR_PATH), pOptions)) {
+                    context.addInitScript(WEBDRIVER_STEALTH_SCRIPT);
+                    applyCookies(context, cfg.getCookiesJson());
+                    for (Page p : context.pages()) { try { p.close(); } catch (Exception ignored) {} }
+                    Page page = context.newPage();
+                    enableResourceOptimization(page);
+
+                    page.navigate("https://www.facebook.com/messages/t/",
+                            new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED).setTimeout(20000));
+                    try { page.waitForSelector("a[href*='/messages/t/']", new Page.WaitForSelectorOptions().setTimeout(8000));
+                    } catch (Exception ignored) { page.waitForTimeout(2000); }
+                    stopServiceWorkers(page);
+
+                    if (page.url().contains("login") || page.title().contains("Log in"))
+                        return "Loi: Phien Facebook da het han. Cap nhat cookies moi.";
+
+                    boolean navigatedToThread = false;
+
+                    // Fast path: use cached thread URL
+                    if (cachedThreadHref != null && !cachedThreadHref.isBlank()) {
+                        log.info("[FB-DirectReply] Using cached thread for '{}': {}", recipientName, cachedThreadHref);
+                        try {
+                            page.navigate(cachedThreadHref,
+                                    new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED).setTimeout(12000));
+                            page.waitForTimeout(1500);
+                            String headerName = waitForChatHeaderToLoad(page, 5000);
+                            handleE2eePinScreen(page);
+                            navigatedToThread = headerName != null && !headerName.isBlank();
+                        } catch (Exception e) { log.warn("[FB-DirectReply] Cached nav failed: {}", e.getMessage()); }
+                    }
+
+                    // Fallback: click matching sidebar link
+                    if (!navigatedToThread) {
+                        Boolean found = (Boolean) page.evaluate(
+                                "(name) => { let links = Array.from(document.querySelectorAll('a[href*=\"/messages/t/\"], a[href*=\"/messages/e2ee/t/\"]')); let m = links.find(a => (a.innerText||'').toLowerCase().includes(name.toLowerCase())); if (m) { m.click(); return true; } return false; }",
+                                recipientName);
+                        if (Boolean.TRUE.equals(found)) {
+                            page.waitForTimeout(2000); handleE2eePinScreen(page); navigatedToThread = true;
+                        }
+                    }
+
+                    if (!navigatedToThread) {
+                        page.screenshot(new Page.ScreenshotOptions().setPath(Paths.get(screenshotPath)));
+                        return "Khong tim thay hoi thoai voi \"" + recipientName + "\". Screenshot: " + screenshotPath;
+                    }
+
+                    boolean sent = sendMessengerReply(page, message);
+                    page.waitForTimeout(1000);
+                    page.screenshot(new Page.ScreenshotOptions().setPath(Paths.get(screenshotPath)));
+
+                    if (sent) {
+                        log.info("[FB-DirectReply] SENT to '{}': {}", recipientName, message);
+                        return "Da gui tin nhan cho \"" + recipientName + "\": \"" + message + "\" | Screenshot: " + screenshotPath;
+                    }
+                    return "Tim thay hoi thoai nhung khong go duoc tin nhan. Screenshot: " + screenshotPath;
+                }
+            }
+        } catch (Exception e) {
+            log.error("[FB-DirectReply] Error: {}", e.getMessage(), e);
+            return "Loi khi gui toi \"" + recipientName + "\": " + e.getMessage();
+        } finally {
+            scanRunning.set(false);
+            System.gc();
+        }
+    }
+
 
     /**
      * Core check logic: starts an ephemeral Playwright browser, injects cookies,
@@ -862,6 +973,16 @@ public class FacebookMessengerService implements SchedulingConfigurer, Disposabl
                     log.info("[FB-Responder] Count=0 after accept for '{}'; using effectiveCount=1.", senderName);
                 }
 
+                // Record every thread with at least 1 unreplied message into the cache
+                // so the AI can answer "ai nhắn gì lúc vắng mặt?" via Telegram.
+                if (effectiveCount >= 1) {
+                    String previewText = (String) page.evaluate(
+                            "() => { let msgs = Array.from(document.querySelectorAll('[role=main] [dir=auto]')); " +
+                            "let last = msgs.filter(m => m.innerText && m.innerText.trim()).slice(-3); " +
+                            "return last.map(m => m.innerText.trim()).join(' | ').substring(0, 100); }");
+                    messageCache.addOrUpdate(senderName, previewText, href != null ? href : page.url(), false);
+                }
+
                 if (effectiveCount >= cfg.getThreshold()) {
                     log.info("[FB-Responder] Triggering AI Away reply for '{}' (Count: {} >= Threshold: {})",
                             senderName, effectiveCount, cfg.getThreshold());
@@ -870,6 +991,10 @@ public class FacebookMessengerService implements SchedulingConfigurer, Disposabl
                     if (sent) {
                         autoRepliesSent++;
                         log.info("[FB-Responder] AUTO-REPLY SENT to '{}': {}", senderName, awayReply);
+                        // Mark as auto-replied in cache
+                        messageCache.addOrUpdate(senderName,
+                                "[Auto-reply sent: " + awayReply.substring(0, Math.min(60, awayReply.length())) + "]",
+                                href != null ? href : page.url(), true);
                         page.screenshot(new Page.ScreenshotOptions()
                                 .setPath(java.nio.file.Paths.get("/tmp/fb_reply_sent.png")));
                     }

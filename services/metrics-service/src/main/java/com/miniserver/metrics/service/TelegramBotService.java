@@ -269,16 +269,22 @@ public class TelegramBotService {
         boolean aiEnabled = aiService.isConfigured();
         return "🤖 *Tiểu Bảo Bảo — Trợ lý của Mạnh (Cua)*\n" +
                "━━━━━━━━━━━━━━━━━━\n" +
-               "📊 *Commands:*\n\n" +
+               "📊 *Server Commands:*\n\n" +
                "/status — Server uptime & load\n" +
                "/cpu    — CPU usage\n" +
                "/ram    — RAM usage\n" +
                "/disk   — Disk usage\n" +
-               "/ai     — Clear AI chat history\n" +
-               "/help   — Show this message\n\n" +
+               "/ai     — Xóa lịch sử AI\n" +
+               "/help   — Hiện tin nhắn này\n\n" +
+               "━━━━━━━━━━━━━━━━━━\n" +
+               "📱 *Facebook Messenger (AI):*\n" +
+               "\u2022 Hỏi: \"Ai nhắn Facebook lúc tôi vắng mặt?\"\n" +
+               "\u2022 Hỏi: \"Facebook có tin nhắn mới không?\"\n" +
+               "\u2022 Ra lệnh: \"Nhắn cho X là tối mai 8h họ p\"\n" +
+               "\u2022 Ra lệnh: \"Trả lời X rằng đã nhận\"\n\n" +
                "━━━━━━━━━━━━━━━━━━\n" +
                (aiEnabled
-                   ? "✨ *AI Assistant active* — just type any question!"
+                   ? "✨ *AI Assistant active* — gõ bất kỳ câu hỏi nào!"
                    : "⚠️ AI not configured (GROQ_API_KEY missing)");
     }
 

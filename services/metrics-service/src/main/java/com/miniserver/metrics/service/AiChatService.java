@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
@@ -100,16 +101,23 @@ public class AiChatService {
 
     private final SshService   sshService;
     private final GroqKeyPool  keyPool;
+    // @Lazy breaks the circular dependency: FacebookMessengerService -> AiChatService -> FacebookMessengerService
+    private final FacebookMessengerService fbMessengerService;
+    private final FacebookMessageCache     messageCache;
     private final ObjectMapper mapper = new ObjectMapper();
     private final RestClient   restClient;
 
-    // chatId → full OpenAI-format message history
+    // chatId -> full OpenAI-format message history
     private final Map<String, Deque<ObjectNode>> historyMap = new ConcurrentHashMap<>();
 
-    public AiChatService(SshService sshService, GroqKeyPool keyPool) {
-        this.sshService = sshService;
-        this.keyPool    = keyPool;
-        // 30s read timeout — LLM inference can be slow under load
+    public AiChatService(SshService sshService, GroqKeyPool keyPool,
+                         @Lazy FacebookMessengerService fbMessengerService,
+                         FacebookMessageCache messageCache) {
+        this.sshService        = sshService;
+        this.keyPool           = keyPool;
+        this.fbMessengerService = fbMessengerService;
+        this.messageCache      = messageCache;
+        // 30s read timeout - LLM inference can be slow under load
         this.restClient = RestClientFactory.create(5_000, 30_000);
     }
 
@@ -192,17 +200,32 @@ public class AiChatService {
     // ─── Tool dispatch ────────────────────────────────────────────────────────
 
     private String executeTool(String toolName, String argsJson) {
-        if (!"run_command".equals(toolName)) {
-            return "Unknown tool: " + toolName;
-        }
-        try {
-            JsonNode args    = mapper.readTree(argsJson);
-            String   command = args.path("command").asText("").trim();
-            if (command.isBlank()) return "No command provided.";
-            return executeShellCommand(command);
-        } catch (Exception e) {
-            return "Failed to parse tool arguments: " + e.getMessage();
-        }
+        return switch (toolName) {
+            case "run_command" -> {
+                try {
+                    JsonNode args = mapper.readTree(argsJson);
+                    String command = args.path("command").asText("").trim();
+                    if (command.isBlank()) yield "No command provided.";
+                    yield executeShellCommand(command);
+                } catch (Exception e) {
+                    yield "Failed to parse tool arguments: " + e.getMessage();
+                }
+            }
+            case "facebook_get_messages" -> messageCache.toAiSummary();
+            case "facebook_send_reply" -> {
+                try {
+                    JsonNode args = mapper.readTree(argsJson);
+                    String recipient = args.path("recipient_name").asText("").trim();
+                    String msg       = args.path("message").asText("").trim();
+                    if (recipient.isBlank()) yield "Loi: Thieu ten nguoi nhan (recipient_name).";
+                    if (msg.isBlank()) yield "Loi: Thieu noi dung tin nhan (message).";
+                    yield fbMessengerService.sendDirectReply(recipient, msg);
+                } catch (Exception e) {
+                    yield "Loi khi gui tin nhan Facebook: " + e.getMessage();
+                }
+            }
+            default -> "Unknown tool: " + toolName;
+        };
     }
 
     /**
@@ -312,34 +335,71 @@ public class AiChatService {
     }
 
     /**
-     * Defines the single generic tool exposed to the AI.
-     * The AI generates the shell command itself based on the user's question —
-     * no pre-registration needed for new question types.
+     * Defines all tools exposed to the Groq AI agent.
+     *
+     * Tools:
+     *   - run_command:           execute any read-only Linux shell command via SSH
+     *   - facebook_get_messages: query the in-memory cache of recent Facebook messages
+     *   - facebook_send_reply:   send a Facebook Messenger message to a specific person
      */
     private ArrayNode buildToolDefinitions() {
-        ArrayNode tools    = mapper.createArrayNode();
-        ObjectNode tool    = tools.addObject();
-        tool.put("type", "function");
-        ObjectNode fn      = tool.putObject("function");
+        ArrayNode tools = mapper.createArrayNode();
 
-        fn.put("name", "run_command");
-        fn.put("description",
+        // Tool 1: run_command
+        ObjectNode tool1 = tools.addObject();
+        tool1.put("type", "function");
+        ObjectNode fn1 = tool1.putObject("function");
+        fn1.put("name", "run_command");
+        fn1.put("description",
                 "Execute a read-only Linux shell command on the remote server via SSH. " +
                 "Use this whenever you need real-time server data to answer the user's question. " +
-                "You decide what command to run. Examples: 'date '+%Y-%m-%d %H:%M:%S %Z'', 'docker ps', 'free -h', 'df -h', " +
+                "You decide what command to run. Examples: 'date \'+%Y-%m-%d %H:%M:%S %Z\'', 'docker ps', 'free -h', 'df -h', " +
                 "'ps aux | grep java', 'ss -tlnp', 'docker logs --tail 20 <container>', " +
                 "'systemctl status nginx', 'cat /etc/hosts', etc. " +
                 "Always use single quotes (') for command arguments. Never use double quotes (\") inside the command string.");
-
-        ObjectNode params = fn.putObject("parameters");
-        params.put("type", "object");
-        ObjectNode props  = params.putObject("properties");
-        ObjectNode cmdProp = props.putObject("command");
+        ObjectNode params1 = fn1.putObject("parameters");
+        params1.put("type", "object");
+        ObjectNode props1  = params1.putObject("properties");
+        ObjectNode cmdProp = props1.putObject("command");
         cmdProp.put("type", "string");
-        cmdProp.put("description",
-                "The exact shell command to execute on the Linux server. " +
-                "Must be a single-line, read-only command. Always use single quotes (') for argument options, e.g. date '+%Y-%m-%d %H:%M:%S %Z'.");
-        params.putArray("required").add("command");
+        cmdProp.put("description", "The exact shell command to execute on the Linux server. Must be a single-line, read-only command.");
+        params1.putArray("required").add("command");
+
+        // Tool 2: facebook_get_messages
+        ObjectNode tool2 = tools.addObject();
+        tool2.put("type", "function");
+        ObjectNode fn2 = tool2.putObject("function");
+        fn2.put("name", "facebook_get_messages");
+        fn2.put("description",
+                "Get the list of Facebook Messenger messages received while the owner was away. " +
+                "Returns sender names, message previews, timestamps, and whether auto-replies were sent. " +
+                "Use this when the user asks about Facebook messages, who messaged them, " +
+                "or what happened on Facebook while they were away.");
+        ObjectNode params2 = fn2.putObject("parameters");
+        params2.put("type", "object");
+        params2.putObject("properties");
+        params2.putArray("required");
+
+        // Tool 3: facebook_send_reply
+        ObjectNode tool3 = tools.addObject();
+        tool3.put("type", "function");
+        ObjectNode fn3 = tool3.putObject("function");
+        fn3.put("name", "facebook_send_reply");
+        fn3.put("description",
+                "Send a Facebook Messenger message to a specific person by name. " +
+                "Use this when the user asks to reply, message, or send something to someone on Facebook. " +
+                "This opens a browser session, finds the conversation, and sends the message automatically. " +
+                "Takes 15-30 seconds to complete. Confirm the action before calling if the user seems uncertain.");
+        ObjectNode params3 = fn3.putObject("parameters");
+        params3.put("type", "object");
+        ObjectNode props3 = params3.putObject("properties");
+        ObjectNode recipProp = props3.putObject("recipient_name");
+        recipProp.put("type", "string");
+        recipProp.put("description", "Full or partial display name of the Facebook contact to send the message to.");
+        ObjectNode msgProp = props3.putObject("message");
+        msgProp.put("type", "string");
+        msgProp.put("description", "The message content to send. Write it naturally as if the owner is typing it.");
+        params3.putArray("required").add("recipient_name").add("message");
 
         return tools;
     }
@@ -457,6 +517,11 @@ public class AiChatService {
                 - Projects/Git: git -C /home/kirito/quan_ly_server remote -v, git -C /home/kirito/quan_ly_server log -n 5 --oneline, ls -la /home/kirito/
                 - Docker:  docker ps, docker ps -a, docker stats --no-stream, docker logs --tail 50 <name>
                 - Files:   ls -la /path, cat /etc/nginx/nginx.conf, tail -n 20 /var/log/syslog
+
+                FACEBOOK MESSENGER INTEGRATION:
+                You have 2 additional tools:
+                1. facebook_get_messages - Call this when user asks who messaged them on Facebook while away.
+                2. facebook_send_reply(recipient_name, message) - Sends a Messenger message to someone. Takes 15-30s. Only call when user explicitly asks to send.
 
                 COMMUNICATION:
                 - ALWAYS respond in Vietnamese when the user writes in Vietnamese.

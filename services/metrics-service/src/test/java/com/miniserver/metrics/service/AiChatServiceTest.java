@@ -38,7 +38,7 @@ class AiChatServiceTest {
         String groqKey = System.getenv("GROQ_API_KEY");
         GroqKeyPool keyPool = new GroqKeyPool(groqKey, "", "", "", "");
 
-        AiChatService aiChatService = new AiChatService(sshService, keyPool);
+        AiChatService aiChatService = new AiChatService(sshService, keyPool, null, new FacebookMessageCache());
         ReflectionTestUtils.setField(aiChatService, "model", "llama-3.1-8b-instant");
 
         String response = aiChatService.chat("test-chat-id", "Đã được cập nhật vào thời gian nào");

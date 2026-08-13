@@ -672,19 +672,29 @@ public class FacebookMessengerService implements DisposableBean {
                     "        }" +
                     "      }" +
                     "    }" +
+                    "    let text = main.innerText || '';" +
+                    "    let lines = text.split('\\n').map(l => l.trim()).filter(l => l.length > 0);" +
+                    "    for (let line of lines) {" +
+                    "      let lower = line.toLowerCase();" +
+                    "      if (lower.startsWith('cu\u1ed9c tr\u00f2 chuy\u1ec7n v\u1edbi ')) {" +
+                    "        return line.substring('cu\u1ed9c tr\u00f2 chuy\u1ec7n v\u1edbi '.length).trim();" +
+                    "      }" +
+                    "    }" +
                     "  }" +
                     "  let currentPath = window.location.pathname || '';" +
-                    "  if (currentPath.includes('/messages/t/')) {" +
-                    "    let parts = currentPath.split('/messages/t/');" +
+                    "  if (currentPath.includes('/messages/')) {" +
+                    "    let parts = currentPath.split('/messages/');" +
                     "    if (parts.length > 1) {" +
-                    "      let threadId = parts[1].replace(/\\//g, '');" +
-                    "      let sidebarLink = document.querySelector('a[href*=\"' + threadId + '\"]');" +
-                    "      if (sidebarLink) {" +
-                    "        let nameEl = sidebarLink.querySelector('span[dir=\"auto\"], span');" +
-                    "        if (nameEl && nameEl.innerText && nameEl.innerText.trim()) {" +
-                    "          let stxt = nameEl.innerText.trim();" +
-                    "          let lower = stxt.toLowerCase();" +
-                    "          if (!lower.includes('messenger') && !lower.startsWith('(')) return stxt;" +
+                    "      let threadId = parts[1].replace(/requests\\/|e2ee\\/|t\\//g, '').replace(/\\//g, '');" +
+                    "      if (threadId.length > 0) {" +
+                    "        let sidebarLink = document.querySelector('a[href*=\"' + threadId + '\"]');" +
+                    "        if (sidebarLink) {" +
+                    "          let nameEl = sidebarLink.querySelector('span[dir=\"auto\"], span');" +
+                    "          if (nameEl && nameEl.innerText && nameEl.innerText.trim()) {" +
+                    "            let stxt = nameEl.innerText.trim();" +
+                    "            let lower = stxt.toLowerCase();" +
+                    "            if (!lower.includes('messenger') && !lower.startsWith('(')) return stxt;" +
+                    "          }" +
                     "        }" +
                     "      }" +
                     "    }" +
@@ -722,18 +732,31 @@ public class FacebookMessengerService implements DisposableBean {
                 "        headerText = titleEl.innerText.trim();" +
                 "      }" +
                 "    }" +
+                "    if (!headerText) {" +
+                "      let text = main.innerText || '';" +
+                "      let lines = text.split('\\n').map(l => l.trim()).filter(l => l.length > 0);" +
+                "      for (let line of lines) {" +
+                "        let lower = line.toLowerCase();" +
+                "        if (lower.startsWith('cu\u1ed9c tr\u00f2 chuy\u1ec7n v\u1edbi ')) {" +
+                "          headerText = line.substring('cu\u1ed9c tr\u00f2 chuy\u1ec7n v\u1edbi '.length).trim();" +
+                "          break;" +
+                "        }" +
+                "      }" +
+                "    }" +
                 "  }" +
                 "  if (!headerText) {" +
                 "    let currentPath = window.location.pathname || '';" +
-                "    if (currentPath.includes('/messages/t/')) {" +
-                "      let parts = currentPath.split('/messages/t/');" +
+                "    if (currentPath.includes('/messages/')) {" +
+                "      let parts = currentPath.split('/messages/');" +
                 "      if (parts.length > 1) {" +
-                "        let threadId = parts[1].replace(/\\//g, '');" +
-                "        let sidebarLink = document.querySelector('a[href*=\"' + threadId + '\"]');" +
-                "        if (sidebarLink) {" +
-                "          let nameEl = sidebarLink.querySelector('span[dir=\"auto\"], span');" +
-                "          if (nameEl && nameEl.innerText && nameEl.innerText.trim()) {" +
-                "            headerText = nameEl.innerText.trim();" +
+                "        let threadId = parts[1].replace(/requests\\/|e2ee\\/|t\\//g, '').replace(/\\//g, '');" +
+                "        if (threadId.length > 0) {" +
+                "          let sidebarLink = document.querySelector('a[href*=\"' + threadId + '\"]');" +
+                "          if (sidebarLink) {" +
+                "            let nameEl = sidebarLink.querySelector('span[dir=\"auto\"], span');" +
+                "            if (nameEl && nameEl.innerText && nameEl.innerText.trim()) {" +
+                "              headerText = nameEl.innerText.trim();" +
+                "            }" +
                 "          }" +
                 "        }" +
                 "      }" +

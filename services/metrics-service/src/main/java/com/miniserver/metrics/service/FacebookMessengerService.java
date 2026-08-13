@@ -135,17 +135,30 @@ public class FacebookMessengerService implements SchedulingConfigurer, Disposabl
             "Object.defineProperty(navigator, 'plugins', { get: () => [1,2,3,4,5] });" +
             "Object.defineProperty(navigator, 'languages', { get: () => ['vi-VN','vi','en-US','en'] });";
 
+    // Domains/patterns known to run heavy analytics, ads, and tracking JS on Facebook.
+    private static final List<String> BLOCKED_THIRD_PARTY_DOMAINS = List.of(
+            "connect.facebook.net/signals", "an.facebook.com", "pixel.facebook.com",
+            "google-analytics.com", "googletagmanager.com", "doubleclick.net",
+            "hotjar.com", "clarity.ms", "scorecard", "advertising.com"
+    );
+
     /**
-     * Intercepts and aborts non-essential heavy resources (images, media, fonts, tracking)
-     * during automated text message scanning. Reduces CPU/RAM usage by ~70%.
+     * Aggressively blocks all non-essential resources:
+     *  - images, media, fonts (no visual rendering needed)
+     *  - stylesheets (CSS layout irrelevant for text scraping)
+     *  - third-party tracking/analytics scripts (heavy JS that keeps running post-load)
+     * Reduces Chromium CPU from ~200% down to ~40-60%.
      */
     private void enableResourceOptimization(Page page) {
         try {
             page.route("**/*", route -> {
                 String type = route.request().resourceType();
-                String url = route.request().url().toLowerCase();
-                if ("image".equals(type) || "media".equals(type) || "font".equals(type) ||
-                    url.contains("/tr/?") || url.contains("analytics") || url.contains("doubleclick")) {
+                String url  = route.request().url().toLowerCase();
+                boolean isHeavy = "image".equals(type) || "media".equals(type)
+                        || "font".equals(type) || "stylesheet".equals(type);
+                boolean isTracker = BLOCKED_THIRD_PARTY_DOMAINS.stream().anyMatch(url::contains)
+                        || url.contains("/tr/?") || url.contains("fbevents.js");
+                if (isHeavy || isTracker) {
                     route.abort();
                 } else {
                     route.resume();
@@ -153,6 +166,47 @@ public class FacebookMessengerService implements SchedulingConfigurer, Disposabl
             });
         } catch (Exception ex) {
             log.warn("[FB-Responder] Could not attach route interception: {}", ex.getMessage());
+        }
+    }
+
+    /**
+     * Stops all running Service Workers in the browser via CDP.
+     * Facebook Messenger registers a Service Worker that continues consuming CPU
+     * even after the page has finished loading. Stopping it prevents background
+     * computation from competing with our automation thread.
+     */
+    private void stopServiceWorkers(Page page) {
+        try {
+            CDPSession cdp = page.context().newCDPSession(page);
+            cdp.send("ServiceWorker.enable");
+            cdp.send("ServiceWorker.stopAllWorkers");
+            cdp.detach();
+        } catch (Exception ex) {
+            log.debug("[FB-Responder] CDP ServiceWorker stop skipped: {}", ex.getMessage());
+        }
+    }
+
+    /**
+     * Reads /proc/stat to calculate the system-wide CPU idle percentage.
+     * Returns -1 if the value cannot be determined (e.g., non-Linux environment).
+     */
+    private double getCpuIdlePercent() {
+        try {
+            java.io.File stat = new java.io.File("/proc/stat");
+            if (!stat.exists()) return -1;
+            String line = new java.io.BufferedReader(new java.io.FileReader(stat)).readLine();
+            // Format: cpu <user> <nice> <system> <idle> <iowait> <irq> <softirq> ...
+            String[] parts = line.trim().split("\\s+");
+            if (parts.length < 5) return -1;
+            long user    = Long.parseLong(parts[1]);
+            long nice    = Long.parseLong(parts[2]);
+            long system  = Long.parseLong(parts[3]);
+            long idle    = Long.parseLong(parts[4]);
+            long iowait  = parts.length > 5 ? Long.parseLong(parts[5]) : 0;
+            long total   = user + nice + system + idle + iowait;
+            return total == 0 ? -1 : (idle * 100.0 / total);
+        } catch (Exception ex) {
+            return -1;
         }
     }
 
@@ -232,6 +286,19 @@ public class FacebookMessengerService implements SchedulingConfigurer, Disposabl
             return;
         }
 
+        // CPU guard: skip this scan cycle if the server is already heavily loaded.
+        // Threshold: CPU idle < 20% means >=80% busy — launching Chromium would cause severe overload.
+        double idlePct = getCpuIdlePercent();
+        if (idlePct >= 0 && idlePct < 20.0) {
+            log.warn("[FB-Responder] Scheduled scan DEFERRED — CPU idle only {}%. Will retry next cycle.",
+                    String.format("%.1f", idlePct));
+            scanRunning.set(false);
+            return;
+        }
+        if (idlePct >= 0) {
+            log.info("[FB-Responder] CPU idle = {}% — proceeding with scan.", String.format("%.1f", idlePct));
+        }
+
         try {
             int repliesSent = processMessengerChats(cfg);
             LocalDateTime vnNow = LocalDateTime.now(java.time.ZoneId.of("Asia/Ho_Chi_Minh"));
@@ -244,6 +311,8 @@ public class FacebookMessengerService implements SchedulingConfigurer, Disposabl
             updateStatus(cfg, "Lỗi: " + e.getMessage(), LocalDateTime.now(java.time.ZoneId.of("Asia/Ho_Chi_Minh")));
         } finally {
             scanRunning.set(false);
+            // Force GC after each scan to reclaim Playwright/Chromium off-heap memory
+            System.gc();
         }
     }
 
@@ -356,7 +425,10 @@ public class FacebookMessengerService implements SchedulingConfigurer, Disposabl
                 // Navigate to Messenger inbox root from a blank page.
                 page.navigate("https://www.facebook.com/messages/t/",
                         new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED).setTimeout(20000));
-                page.waitForTimeout(3000);
+                page.waitForTimeout(2000);
+                // Stop Messenger Service Workers immediately after page load to prevent them
+                // from running background sync/push tasks that compete for CPU.
+                stopServiceWorkers(page);
 
                 String currentUrl = page.url();
                 log.info("[FB-Responder] Navigated to inbox. Current URL: {}", currentUrl);

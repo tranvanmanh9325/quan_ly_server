@@ -406,20 +406,30 @@ public class FacebookMessengerService implements DisposableBean {
         } catch (Exception ignored) {}
         page.waitForTimeout(1500);
 
-        // Query all DM + E2EE + Message Requests + Spam conversation items (links or unlinked cards) from the left sidebar using geometric bounding boxes.
+        // Query all DM + E2EE + Message Requests + Spam conversation items (links or unlinked cards) from document and sidebar.
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> threadItems = (List<Map<String, Object>>) page.evaluate("() => {" +
-                "  let items = Array.from(document.querySelectorAll('a[href*=\"/messages/\"], [role=\"row\"], [role=\"button\"], div[dir=\"auto\"]'));" +
                 "  let conversationItems = [];" +
                 "  let seenKeys = new Set();" +
                 "  let rootUrls = ['/messages/', '/messages/t/', '/messages/requests/', '/messages/requests/spam/'];" +
+                "  let allLinks = Array.from(document.querySelectorAll('a[href*=\"/messages/t/\"], a[href*=\"/messages/e2ee/t/\"], a[href*=\"/messages/requests/\"], a[href*=\"/messages/read/\"]'));" +
+                "  allLinks.forEach(a => {" +
+                "    let href = a.href || '';" +
+                "    if (href && !rootUrls.some(r => href.endsWith(r) || href.endsWith(r.slice(0, -1)))) {" +
+                "      if (!seenKeys.has(href)) {" +
+                "        seenKeys.add(href);" +
+                "        conversationItems.push({ href: href, isLink: true, text: (a.innerText || '').substring(0, 40) });" +
+                "      }" +
+                "    }" +
+                "  });" +
                 "  let main = document.querySelector('[role=\"main\"]');" +
                 "  let mainLeft = main ? main.getBoundingClientRect().left : 380;" +
+                "  let items = Array.from(document.querySelectorAll('[role=\"row\"], [role=\"button\"]'));" +
                 "  items.forEach((el, idx) => {" +
                 "    let rect = el.getBoundingClientRect();" +
                 "    if (rect.width > 50 && rect.height > 18 && rect.left < mainLeft - 20 && rect.top > 80 && rect.top < 900) {" +
                 "      let txt = (el.innerText || '').trim();" +
-                "      let a = el.tagName === 'A' ? el : el.querySelector('a[href*=\"/messages/\"]');" +
+                "      let a = el.querySelector('a[href*=\"/messages/\"]');" +
                 "      let href = a ? a.href : null;" +
                 "      if (href && rootUrls.some(r => href.endsWith(r) || href.endsWith(r.slice(0, -1)))) href = null;" +
                 "      let key = href || (txt.length > 5 ? txt.substring(0, 30) : null);" +
@@ -427,12 +437,7 @@ public class FacebookMessengerService implements DisposableBean {
                 "        seenKeys.add(key);" +
                 "        let lower = txt.toLowerCase();" +
                 "        if (!lower.includes('c\u00f3 th\u1ec3 b\u1ea1n bi\u1ebft') && !lower.includes('spam') && !lower.includes('xem t\u1ea5t c\u1ea3') && !lower.includes('tin nh\u1eafn \u0111ang ch\u1edd') && !lower.includes('messenger')) {" +
-                "          conversationItems.push({" +
-                "            href: href," +
-                "            isLink: !!href," +
-                "            index: idx," +
-                "            text: txt.substring(0, 40)" +
-                "          });" +
+                "          conversationItems.push({ href: href, isLink: !!href, index: idx, text: txt.substring(0, 40) });" +
                 "        }" +
                 "      }" +
                 "    }" +
@@ -441,11 +446,8 @@ public class FacebookMessengerService implements DisposableBean {
                 "}");
 
         Object diagItems = page.evaluate("() => {" +
-                "  let items = Array.from(document.querySelectorAll('a[href*=\"/messages/\"], [role=\"row\"], [role=\"button\"]'));" +
-                "  let main = document.querySelector('[role=\"main\"]');" +
-                "  let mainLeft = main ? main.getBoundingClientRect().left : 380;" +
-                "  let filtered = items.filter(el => { let r = el.getBoundingClientRect(); return r.width > 50 && r.left < mainLeft - 20 && r.top > 80; });" +
-                "  return JSON.stringify(filtered.map(el => ({ href: el.getAttribute('href'), text: (el.innerText || '').replace(/\\n/g, ' ').substring(0, 50) })).slice(0, 10));" +
+                "  let allLinks = Array.from(document.querySelectorAll('a[href*=\"/messages/\"]'));" +
+                "  return JSON.stringify(allLinks.map(a => ({ href: a.href, text: (a.innerText || '').replace(/\\n/g, ' ').substring(0, 40) })).slice(0, 10));" +
                 "}");
         log.info("[FB-Responder] Sidebar Items Diag for '{}': {}", page.url(), diagItems);
 

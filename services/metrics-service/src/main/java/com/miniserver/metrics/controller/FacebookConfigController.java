@@ -90,25 +90,5 @@ public class FacebookConfigController {
     public ResponseEntity<Map<String, String>> captureChatScreenshots() {
         return ResponseEntity.ok(messengerService.captureChatScreenshots());
     }
-
-    /** TEMP TEST - no JWT required. Tests sendDirectReply() end-to-end. */
-    @PostMapping("/test-direct-reply")
-    public ResponseEntity<Map<String, String>> testDirectReply(@RequestBody Map<String, String> body) {
-        String recipient = body.getOrDefault("recipient", "").trim();
-        String message   = body.getOrDefault("message", "").trim();
-        if (recipient.isBlank() || message.isBlank())
-            return ResponseEntity.badRequest().body(Map.of("error", "Thieu recipient hoac message"));
-        String result = messengerService.sendDirectReply(recipient, message);
-        return ResponseEntity.ok(Map.of("result", result));
-    }
-
-    /** TEMP TEST - no JWT required. Runs full AiChatService agent loop. */
-    @PostMapping("/test-ai-chat")
-    public ResponseEntity<Map<String, String>> testAiChat(@RequestBody Map<String, String> body) {
-        String message = body.getOrDefault("message", "").trim();
-        if (message.isBlank())
-            return ResponseEntity.badRequest().body(Map.of("error", "Thieu message"));
-        String reply = aiChatService.chat("internal-test-" + System.currentTimeMillis(), message);
-        return ResponseEntity.ok(Map.of("reply", reply));
-    }
 }
+

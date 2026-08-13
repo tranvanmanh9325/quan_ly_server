@@ -826,14 +826,21 @@ public class FacebookMessengerService implements DisposableBean {
         Object countResult = page.evaluate("() => {" +
                 "  let main = document.querySelector('[role=\"main\"]');" +
                 "  if (!main) return 0;" +
+                "  let rows = Array.from(main.querySelectorAll('[role=\"row\"]'));" +
+                "  if (rows.length === 0) {" +
+                "    let editables = Array.from(main.querySelectorAll('[contenteditable=\"true\"]'));" +
+                "    let allAuto = Array.from(main.querySelectorAll('div[dir=\"auto\"], span[dir=\"auto\"]'));" +
+                "    rows = allAuto.filter(el => {" +
+                "      if (editables.some(ed => ed.contains(el))) return false;" +
+                "      if (el.querySelector('div[dir=\"auto\"], span[dir=\"auto\"]')) return false;" +
+                "      return true;" +
+                "    });" +
+                "  } else {" +
+                "    rows = rows.filter(el => !rows.some(parent => parent !== el && parent.contains(el)));" +
+                "  }" +
                 "  let chatRegion = main.querySelector('[role=\"region\"], [aria-label*=\"Tin nhắn\"], [aria-label*=\"Messages\"]') || main;" +
                 "  let regionRect = chatRegion.getBoundingClientRect();" +
                 "  let mainMidX = regionRect.left + (regionRect.width / 2);" +
-                "  let rawRows = Array.from(main.querySelectorAll('[role=\"row\"], [data-scope=\"messages_table\"]'));" +
-                "  if (rawRows.length === 0) {" +
-                "    rawRows = Array.from(main.querySelectorAll('div[dir=\"auto\"]')).map(el => el.closest('div[style*=\"flex\"]') || el).filter(Boolean);" +
-                "  }" +
-                "  let rows = rawRows.filter(el => !rawRows.some(parent => parent !== el && parent.contains(el)));" +
                 "  let count = 0;" +
                 "  for (let i = rows.length - 1; i >= 0; i--) {" +
                 "    let row = rows[i];" +
@@ -853,8 +860,7 @@ public class FacebookMessengerService implements DisposableBean {
                 "      isOutgoing = true;" +
                 "    }" +
                 "    if (!isOutgoing) {" +
-                "      let bubble = row.querySelector('div[dir=\"auto\"], div[style*=\"background\"], div[role=\"none\"]') || row;" +
-                "      let bRect = bubble.getBoundingClientRect();" +
+                "      let bRect = row.getBoundingClientRect();" +
                 "      if (bRect.width > 0 && bRect.left > mainMidX + 20) {" +
                 "        isOutgoing = true;" +
                 "      }" +

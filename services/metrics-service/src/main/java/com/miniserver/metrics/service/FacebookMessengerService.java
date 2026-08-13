@@ -825,7 +825,7 @@ public class FacebookMessengerService implements DisposableBean {
     private int countUnrepliedIncomingMessages(Page page) {
         Object countResult = page.evaluate("() => {" +
                 "  let main = document.querySelector('[role=\"main\"]');" +
-                "  if (!main) return 0;" +
+                "  if (!main) return JSON.stringify({ count: 0, reason: 'no main' });" +
                 "  let rows = Array.from(main.querySelectorAll('[role=\"row\"]'));" +
                 "  if (rows.length === 0) {" +
                 "    let editables = Array.from(main.querySelectorAll('[contenteditable=\"true\"]'));" +
@@ -841,46 +841,38 @@ public class FacebookMessengerService implements DisposableBean {
                 "  let chatRegion = main.querySelector('[role=\"region\"], [aria-label*=\"Tin nhắn\"], [aria-label*=\"Messages\"]') || main;" +
                 "  let regionRect = chatRegion.getBoundingClientRect();" +
                 "  let mainMidX = regionRect.left + (regionRect.width / 2);" +
+                "  let details = [];" +
                 "  let count = 0;" +
                 "  for (let i = rows.length - 1; i >= 0; i--) {" +
                 "    let row = rows[i];" +
                 "    let text = (row.innerText || '').trim();" +
                 "    if (!text) continue;" +
                 "    let lowerText = text.toLowerCase();" +
-                "    let isNoticeBanner = lowerText.includes('mu\u1ed1n g\u1eedi tin nh\u1eafn') || " +
+                "    let isNotice = lowerText.includes('mu\u1ed1n g\u1eedi tin nh\u1eafn') || " +
                 "                         lowerText.includes('mu\u1ed1n k\u1ebft n\u1ed1i') || " +
                 "                         lowerText.includes('m\u00e3 h\u00f3a \u0111\u1ea7u cu\u1ed1i') || " +
                 "                         lowerText.includes('t\u00ednh n\u0103ng m\u00e3 h\u00f3a') || " +
                 "                         lowerText.includes('t\u00ecm hi\u1ec3u th\u00eam') || " +
                 "                         lowerText.includes('b\u1ea3o m\u1eadt b\u1eb1ng');" +
-                "    if (isNoticeBanner) continue;" +
-                "    let isOutgoing = false;" +
                 "    let aria = (row.getAttribute('aria-label') || '') + ' ' + (row.querySelector('[aria-label]')?.getAttribute('aria-label') || '');" +
-                "    if (aria.includes('B\u1ea1n \u0111\u00e3 g\u1eedi') || aria.includes('You sent') || aria.startsWith('B\u1ea1n:') || aria.includes(' B\u1ea1n:')) {" +
-                "      isOutgoing = true;" +
-                "    }" +
-                "    if (!isOutgoing) {" +
-                "      let bRect = row.getBoundingClientRect();" +
-                "      if (bRect.width > 0 && bRect.left > mainMidX + 20) {" +
-                "        isOutgoing = true;" +
-                "      }" +
-                "    }" +
-                "    if (!isOutgoing) {" +
-                "      let flexParent = row.closest('div[style*=\"flex-end\"]') || row;" +
-                "      let comp = window.getComputedStyle(flexParent);" +
-                "      if (comp.alignItems === 'flex-end' || comp.justifyContent === 'flex-end' || comp.flexDirection === 'row-reverse') {" +
-                "        isOutgoing = true;" +
-                "      }" +
-                "    }" +
-                "    if (isOutgoing) {" +
-                "      break;" +
-                "    } else {" +
-                "      count++;" +
-                "    }" +
+                "    let bRect = row.getBoundingClientRect();" +
+                "    let isOut = (bRect.width > 0 && bRect.left > mainMidX + 20) || aria.includes('B\u1ea1n \u0111\u00e3 g\u1eedi') || aria.includes('You sent');" +
+                "    details.push({ txt: text.substring(0, 30), isNotice, isOut, left: Math.round(bRect.left), midX: Math.round(mainMidX) });" +
+                "    if (isNotice) continue;" +
+                "    if (isOut) break;" +
+                "    count++;" +
                 "  }" +
-                "  return count;" +
+                "  return JSON.stringify({ count, totalRows: rows.length, details: details.slice(0, 10) });" +
                 "}");
-        if (countResult instanceof Number num) return num.intValue();
+
+        log.info("[FB-Responder] Unreplied Count Diag for '{}': {}", page.url(), countResult);
+
+        try {
+            if (countResult != null) {
+                com.fasterxml.jackson.databind.JsonNode node = new com.fasterxml.jackson.databind.ObjectMapper().readTree(countResult.toString());
+                if (node.has("count")) return node.get("count").asInt();
+            }
+        } catch (Exception ignored) {}
         return 0;
     }
 

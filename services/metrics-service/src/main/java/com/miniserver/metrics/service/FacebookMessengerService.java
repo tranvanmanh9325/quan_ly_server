@@ -411,7 +411,8 @@ public class FacebookMessengerService implements DisposableBean {
                 "      }" +
                 "    }" +
                 "  });" +
-                "  let rows = Array.from(document.querySelectorAll('[role=\"navigation\"] [role=\"row\"], [role=\"navigation\"] [role=\"button\"]'));" +
+                "  let nav = document.querySelector('[role=\"navigation\"]') || document.body;" +
+                "  let rows = Array.from(nav.querySelectorAll('[role=\"row\"]'));" +
                 "  rows.forEach((row, idx) => {" +
                 "    let hasLink = row.querySelector('a[href*=\"/messages/\"]');" +
                 "    if (!hasLink) {" +
@@ -423,6 +424,13 @@ public class FacebookMessengerService implements DisposableBean {
                 "  });" +
                 "  return results;" +
                 "}");
+
+        Object diagItems = page.evaluate("() => {" +
+                "  let nav = document.querySelector('[role=\"navigation\"]') || document.body;" +
+                "  let items = Array.from(nav.querySelectorAll('a[href], [role=\"row\"]'));" +
+                "  return JSON.stringify(items.map(el => ({ href: el.getAttribute('href'), text: (el.innerText || '').replace(/\\n/g, ' ').substring(0, 60) })).slice(0, 10));" +
+                "}");
+        log.info("[FB-Responder] Sidebar Items Diag for '{}': {}", page.url(), diagItems);
 
         log.info("[FB-Responder] Found {} conversation items in sidebar.", threadItems != null ? threadItems.size() : 0);
 

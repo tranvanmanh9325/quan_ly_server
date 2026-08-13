@@ -426,12 +426,12 @@ public class FacebookMessengerService implements SchedulingConfigurer, Disposabl
             return "Loi: Chua cau hinh cookies Facebook. Khong the gui tin nhan.";
         }
 
-        // Wait for any running scan to finish (max 30s) to avoid Chromium conflict
+        // Wait for any running scan to finish (max 180s = covers a full scan cycle) to avoid Chromium conflict
         long waitStart = System.currentTimeMillis();
-        while (scanRunning.get() && System.currentTimeMillis() - waitStart < 30_000) {
+        while (scanRunning.get() && System.currentTimeMillis() - waitStart < 180_000) {
             try { Thread.sleep(500); } catch (InterruptedException e) { Thread.currentThread().interrupt(); break; }
         }
-        if (scanRunning.get()) return "Loi: Dang co scan chay song song. Thu lai sau 30 giay.";
+        if (scanRunning.get()) return "Loi: Dang co scan chay song song. Thu lai sau 60 giay.";
 
         if (!scanRunning.compareAndSet(false, true)) return "Loi: Khong the lay lock. Vui long thu lai.";
 

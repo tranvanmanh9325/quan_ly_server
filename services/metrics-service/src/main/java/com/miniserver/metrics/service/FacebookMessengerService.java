@@ -1006,6 +1006,16 @@ public class FacebookMessengerService implements DisposableBean {
     }
 
     private int countUnrepliedIncomingMessages(Page page) {
+        // Diagnostic: dump all aria-labels containing 'lúc' to find the exact pattern Facebook uses
+        Object ariaLabelDiag = page.evaluate("() => {" +
+                "  let main = document.querySelector('[role=\"main\"]') || document.body;" +
+                "  return Array.from(main.querySelectorAll('[aria-label]'))" +
+                "    .map(e => e.getAttribute('aria-label'))" +
+                "    .filter(l => l && (l.toLowerCase().includes('l\\u00fac') || l.toLowerCase().includes('tin nh\\u1eafn')))" +
+                "    .slice(0, 15);" +
+                "}");
+        log.info("[FB-Responder] Aria-label diag for '{}': {}", page.url(), ariaLabelDiag);
+
         Object countResult = page.evaluate("() => {" +
                 "  let main = document.querySelector('[role=\"main\"]') || document.querySelector('[role=\"region\"]') || document.body;" +
                 // Strategy 1: Find message bubbles by aria-label pattern 'Tin nhắn do X lúc HH:MM' or 'X lúc HH:MM'

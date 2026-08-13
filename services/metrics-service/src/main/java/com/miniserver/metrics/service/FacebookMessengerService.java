@@ -351,6 +351,17 @@ public class FacebookMessengerService implements DisposableBean {
                     log.warn("[FB-Responder] Scanning Message Requests tab encountered notice: {}", e.getMessage());
                 }
 
+                // Also scan Spam Requests tab (Tin nhắn Spam / Bị ẩn)
+                try {
+                    log.info("[FB-Responder] Navigating to Spam Requests inbox (Tin nhắn Spam)...");
+                    page.navigate("https://www.facebook.com/messages/requests/spam/",
+                            new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED).setTimeout(15000));
+                    page.waitForTimeout(5000);
+                    totalReplies += inspectAndReply(page, cfg);
+                } catch (Exception e) {
+                    log.warn("[FB-Responder] Scanning Spam Requests tab encountered notice: {}", e.getMessage());
+                }
+
                 return totalReplies;
             }
         }
@@ -368,11 +379,20 @@ public class FacebookMessengerService implements DisposableBean {
     private int inspectAndReply(Page page, FacebookConfig cfg) {
         int autoRepliesSent = 0;
 
-        // Query all DM + E2EE + Message Requests conversation URLs from the sidebar.
+        // Scroll sidebar to hydrate all threads in virtualized list
+        try {
+            page.evaluate("() => {" +
+                    "  let sidebar = document.querySelector('[role=\"navigation\"], div[aria-label*=\"\u0110o\u1ea1n chat\"], div[aria-label*=\"Tin nh\u1eafn\"], div[aria-label*=\"Chats\"]');" +
+                    "  if (sidebar) { sidebar.scrollTop = 0; sidebar.scrollBy(0, 400); }" +
+                    "}");
+            page.waitForTimeout(500);
+        } catch (Exception ignored) {}
+
+        // Query all DM + E2EE + Message Requests + Spam conversation URLs from the sidebar.
         @SuppressWarnings("unchecked")
         List<String> threadHrefs = (List<String>) page.evaluate("() => {" +
-                "  let links = Array.from(document.querySelectorAll('a[href*=\"/messages/t/\"], a[href*=\"/messages/e2ee/t/\"], a[href*=\"/messages/requests/t/\"], a[href*=\"/messages/requests/read/\"], [role=\"row\"] a[href*=\"/messages/\"]'));" +
-                "  return links.map(a => a.href).filter(h => h && h.trim().length > 0 && !h.endsWith('/messages/t/') && !h.endsWith('/messages/requests/') && !h.endsWith('/messages/requests'));" +
+                "  let links = Array.from(document.querySelectorAll('a[href*=\"/messages/t/\"], a[href*=\"/messages/e2ee/t/\"], a[href*=\"/messages/requests/\"], a[href*=\"/messages/read/\"]'));" +
+                "  return links.map(a => a.href).filter(h => h && h.trim().length > 0 && !h.endsWith('/messages/t/') && !h.endsWith('/messages/requests/') && !h.endsWith('/messages/requests') && !h.endsWith('/messages/requests/spam/') && !h.endsWith('/messages/requests/spam'));" +
                 "}");
 
         log.info("[FB-Responder] Found {} conversation URLs in sidebar.", threadHrefs != null ? threadHrefs.size() : 0);

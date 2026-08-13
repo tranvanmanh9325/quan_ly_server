@@ -163,11 +163,21 @@ public class MetricsController {
     private final AtomicReference<Map<String, Object>> cachedBatchMetrics = new AtomicReference<>(null);
     private final AtomicLong lastCacheTimeMs = new AtomicLong(0);
 
+    // Slow cache for heavy commands (docker ps -a, journalctl) — refreshed every 60 seconds.
+    // These commands are the most expensive (docker ps hits containerd API, journalctl reads disk)
+    // but their data changes rarely, so a 60s TTL is sufficient.
+    private final AtomicReference<Map<String, Object>> cachedSlowMetrics = new AtomicReference<>(null);
+    private final AtomicLong lastSlowCacheTimeMs = new AtomicLong(0);
+    private static final long SLOW_CACHE_TTL_MS = 60_000;
+
     /**
-     * Background Poller: Automatically updates the batch metrics snapshot every 2 seconds.
-     * Prevents thundering herd / SSH command execution queues when multiple web clients connect.
+     * Background Poller: updates the batch metrics snapshot every 15 seconds.
+     *
+     * Previously ran every 3s which caused constant SSH overhead (12 commands including
+     * 'docker ps -a' and 'journalctl -n 50' every 3s = ~20 SSH invocations/minute).
+     * 15s still gives a responsive dashboard while reducing CPU cost by 5x.
      */
-    @Scheduled(fixedRate = 3000)
+    @Scheduled(fixedRate = 15_000)
     public void refreshBatchMetricsCache() {
         try {
             Map<String, Object> freshData = fetchRawBatchMetrics();
@@ -183,19 +193,24 @@ public class MetricsController {
     @GetMapping("/batch")
     public Map<String, Object> getBatchMetrics() {
         Map<String, Object> cached = cachedBatchMetrics.get();
-        // Fallback for cold start before first scheduled run completes or if stale (>10s)
-        if (cached == null || (System.currentTimeMillis() - lastCacheTimeMs.get() > 10000)) {
+        // Fallback for cold start before first scheduled run completes or if stale (>30s)
+        if (cached == null || (System.currentTimeMillis() - lastCacheTimeMs.get() > 30_000)) {
             cached = fetchRawBatchMetrics();
             if (cached != null && !cached.containsKey("error")) {
                 cachedBatchMetrics.set(cached);
                 lastCacheTimeMs.set(System.currentTimeMillis());
             }
         }
-        return cached != null ? cached : Collections.emptyMap();
+        
+        Map<String, Object> result = new HashMap<>(cached != null ? cached : Collections.emptyMap());
+        Map<String, Object> slow = getSlowMetrics();
+        result.put("logs", slow.getOrDefault("logs", safeData("")));
+        result.put("docker", slow.getOrDefault("docker", new HashMap<>()));
+        return result;
     }
 
     private Map<String, Object> fetchRawBatchMetrics() {
-        String[] cmds = {
+        String[] fastCmds = {
             "uptime", // 0
             "awk 'BEGIN{getline a < \"/proc/stat\"; close(\"/proc/stat\"); system(\"sleep 0.1\"); getline b < \"/proc/stat\"; split(a,t1); split(b,t2); u=(t2[2]+t2[4])-(t1[2]+t1[4]); i=t2[5]-t1[5]; tot=(t2[2]+t2[3]+t2[4]+t2[5]+t2[6]+t2[7]+t2[8])-(t1[2]+t1[3]+t1[4]+t1[5]+t1[6]+t1[7]+t1[8]); if(tot>0){printf \"%%Cpu(s): %.1f us, %.1f sy, 0.0 ni, %.1f id, 0.0 wa, 0.0 hi, 0.0 si, 0.0 st\\n\", ((t2[2]-t1[2])/tot)*100, ((t2[4]-t1[4])/tot)*100, (i/tot)*100} else {print \"%Cpu(s): 0.0 us, 0.0 sy, 0.0 ni, 100.0 id, 0.0 wa, 0.0 hi, 0.0 si, 0.0 st\"}}'", // 1
             "free -m", // 2
@@ -205,13 +220,11 @@ public class MetricsController {
             "if hash sensors 2>/dev/null; then sensors 2>/dev/null; else for f in /sys/class/thermal/thermal_zone*/temp; do zone=$(echo $f | grep -oP 'thermal_zone\\d+'); val=$(cat $f 2>/dev/null); [ -n \"$val\" ] && echo \"${zone}: ${val}\"; done; fi", // 6
             VOLTAGE_CMD, // 7
             "printf 'KERNEL:%s\\n' \"$(uname -r)\" && printf 'HOSTNAME:%s\\n' \"$(hostname)\" && printf 'OS:%s\\n' \"$(grep PRETTY_NAME /etc/os-release 2>/dev/null | cut -d= -f2 | tr -d '\\\"')\" && printf 'CPU_MODEL:%s\\n' \"$(lscpu 2>/dev/null | grep 'Model name' | sed 's/Model name[[:space:]]*:[[:space:]]*//')\"", // 8
-            "if [ -f /var/log/syslog ]; then tail -n 50 /var/log/syslog; elif command -v journalctl >/dev/null 2>&1; then journalctl -n 50 --no-pager; else dmesg | tail -n 50; fi", // 9
-            "if command -v docker >/dev/null 2>&1; then docker ps -a --format '{{.ID}}|{{.Names}}|{{.Image}}|{{.Status}}|{{.Ports}}'; else echo 'DOCKER_NOT_FOUND'; fi", // 10
-            "cat /proc/diskstats | awk '{print $3\"|\"$6\"|\"$10}' | grep -v 'loop' | grep -v 'ram'", // 11
-            "if command -v nvidia-smi >/dev/null 2>&1; then nvidia-smi --query-gpu=name,temperature.gpu,memory.used,memory.total,utilization.gpu --format=csv,noheader,nounits | sed 's/, /|/g'; else echo 'NO_GPU'; fi" // 12
+            "cat /proc/diskstats | awk '{print $3\"|\"$6\"|\"$10}' | grep -v 'loop' | grep -v 'ram'", // 9
+            "if command -v nvidia-smi >/dev/null 2>&1; then nvidia-smi --query-gpu=name,temperature.gpu,memory.used,memory.total,utilization.gpu --format=csv,noheader,nounits | sed 's/, /|/g'; else echo 'NO_GPU'; fi" // 10
         };
         
-        String batchCmd = String.join(" ; echo '===SEP===' ; ", cmds);
+        String batchCmd = String.join(" ; echo '===SEP===' ; ", fastCmds);
         String raw = sshService.executeCommand(batchCmd);
         
         Map<String, Object> response = new HashMap<>();
@@ -268,38 +281,74 @@ public class MetricsController {
         }
         response.put("sysinfo", sysResult);
         
-        response.put("logs", safeData(parts.length > 9 ? parts[9] : ""));
-        
-        // Docker
-        String dockerRaw = parts.length > 10 ? parts[10].trim() : "";
-        Map<String, Object> dockerMap = new HashMap<>();
-        List<Map<String, String>> containers = new ArrayList<>();
-        if (dockerRaw.equals("DOCKER_NOT_FOUND")) {
-            dockerMap.put("status", "NOT_INSTALLED");
-        } else if (!dockerRaw.isEmpty()) {
-            dockerMap.put("status", "RUNNING");
-            for (String line : dockerRaw.split("\\n")) {
-                String[] t = line.split("\\|");
-                if (t.length >= 3) {
-                    Map<String, String> cMap = new HashMap<>();
-                    cMap.put("id", t[0]);
-                    cMap.put("name", t.length > 1 ? t[1] : "");
-                    cMap.put("image", t.length > 2 ? t[2] : "");
-                    cMap.put("status", t.length > 3 ? t[3] : "");
-                    cMap.put("ports", t.length > 4 ? t[4] : "");
-                    containers.add(cMap);
-                }
-            }
-        } else {
-            dockerMap.put("status", "ERROR");
-        }
-        dockerMap.put("data", containers);
-        response.put("docker", dockerMap);
-        
-        response.put("diskIo", safeData(parts.length > 11 ? parts[11] : ""));
-        response.put("gpu", safeData(parts.length > 12 ? parts[12] : ""));
+        // logs and docker are now handled by the slow cache (60s TTL) — see getSlowMetrics()
+        // diskIo is index 9, gpu is index 10 in the fast command list
+        response.put("diskIo", safeData(parts.length > 9 ? parts[9] : ""));
+        response.put("gpu", safeData(parts.length > 10 ? parts[10] : ""));
 
         return response;
+    }
+
+    /**
+     * Fetches and caches the slow metrics (docker ps -a + system logs) with a 60s TTL.
+     * These are the two heaviest SSH commands:
+     *   - 'docker ps -a' hits the containerd API (500ms+ on busy hosts)
+     *   - 'journalctl -n 50' performs disk I/O
+     * Container state and logs rarely change in <60s, so this TTL is safe.
+     */
+    private Map<String, Object> getSlowMetrics() {
+        long now = System.currentTimeMillis();
+        Map<String, Object> cached = cachedSlowMetrics.get();
+        if (cached != null && (now - lastSlowCacheTimeMs.get()) < SLOW_CACHE_TTL_MS) {
+            return cached;
+        }
+
+        try {
+            String dockerCmd = "if command -v docker >/dev/null 2>&1; then docker ps -a --format '{{.ID}}|{{.Names}}|{{.Image}}|{{.Status}}|{{.Ports}}'; else echo 'DOCKER_NOT_FOUND'; fi";
+            String logsCmd   = "if [ -f /var/log/syslog ]; then tail -n 50 /var/log/syslog; elif command -v journalctl >/dev/null 2>&1; then journalctl -n 50 --no-pager; else dmesg | tail -n 50; fi";
+            String raw = sshService.executeCommand(dockerCmd + " ; echo '===SEP===' ; " + logsCmd);
+
+            Map<String, Object> result = new HashMap<>();
+
+            // Parse logs
+            String[] parts = raw == null ? new String[0] : raw.split("===SEP===");
+            String dockerRaw = parts.length > 0 ? parts[0].trim() : "";
+            String logsRaw   = parts.length > 1 ? parts[1] : "";
+            result.put("logs", safeData(logsRaw));
+
+            // Parse docker
+            Map<String, Object> dockerMap = new HashMap<>();
+            List<Map<String, String>> containers = new ArrayList<>();
+            if ("DOCKER_NOT_FOUND".equals(dockerRaw)) {
+                dockerMap.put("status", "NOT_INSTALLED");
+            } else if (!dockerRaw.isEmpty()) {
+                dockerMap.put("status", "RUNNING");
+                for (String line : dockerRaw.split("\n")) {
+                    String[] t = line.split("\\|");
+                    if (t.length >= 3) {
+                        Map<String, String> cMap = new HashMap<>();
+                        cMap.put("id",     t[0]);
+                        cMap.put("name",   t.length > 1 ? t[1] : "");
+                        cMap.put("image",  t.length > 2 ? t[2] : "");
+                        cMap.put("status", t.length > 3 ? t[3] : "");
+                        cMap.put("ports",  t.length > 4 ? t[4] : "");
+                        containers.add(cMap);
+                    }
+                }
+            } else {
+                dockerMap.put("status", "ERROR");
+            }
+            dockerMap.put("data", containers);
+            result.put("docker", dockerMap);
+
+            cachedSlowMetrics.set(result);
+            lastSlowCacheTimeMs.set(now);
+            return result;
+        } catch (Exception e) {
+            log.error("[MetricsCache] Failed to fetch slow metrics: {}", e.getMessage());
+            Map<String, Object> fallback = cachedSlowMetrics.get();
+            return fallback != null ? fallback : Collections.emptyMap();
+        }
     }
 
     @GetMapping("/cpu")

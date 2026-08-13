@@ -291,6 +291,7 @@ export default function SettingsPage() {
   const [fbConfig, setFbConfig] = useState({
     enabled: false,
     threshold: 5,
+    scanIntervalMinutes: 5,
     cookiesJson: '',
     customMessage: '',
     lastStatus: 'Tắt',
@@ -385,11 +386,12 @@ export default function SettingsPage() {
         const d = res.data;
         if (d) {
           setFbConfig({
-            enabled:         d.enabled         ?? false,
-            threshold:       d.threshold       ?? 5,
-            cookiesJson:     d.cookiesJson     || '',
-            customMessage:   d.customMessage   || '',
-            lastStatus:      d.lastStatus      || 'Tắt',
+            enabled:             d.enabled             ?? false,
+            threshold:           d.threshold           ?? 5,
+            scanIntervalMinutes: d.scanIntervalMinutes ?? 5,
+            cookiesJson:         d.cookiesJson         || '',
+            customMessage:       d.customMessage       || '',
+            lastStatus:          d.lastStatus          || 'Tắt',
           });
         }
       })
@@ -966,6 +968,32 @@ export default function SettingsPage() {
             <SettingRow label={t('settings.facebook.threshold')} desc={t('settings.facebook.thresholdDesc')}>
               <ThresholdSlider id="fb-threshold" min={1} max={20} unit={` ${t('settings.facebook.thresholdUnit')}`} value={fbConfig.threshold}
                 onChange={v => updateFb('threshold', v)} color="var(--accent-purple)" />
+            </SettingRow>
+
+            <SettingRow label={t('settings.facebook.scanInterval')} desc={t('settings.facebook.scanIntervalDesc')}>
+              <select
+                value={fbConfig.scanIntervalMinutes}
+                onChange={e => updateFb('scanIntervalMinutes', Number(e.target.value))}
+                style={{
+                  background: 'rgba(0,0,0,0.4)',
+                  border: '1px solid rgba(187,0,255,0.4)',
+                  borderRadius: '4px',
+                  color: 'var(--accent-cyan)',
+                  fontFamily: 'Share Tech Mono',
+                  fontSize: '0.85rem',
+                  padding: '4px 8px',
+                  outline: 'none',
+                  cursor: 'pointer',
+                }}
+              >
+                <option value={1}>1 {t('settings.facebook.minutesUnit')}</option>
+                <option value={2}>2 {t('settings.facebook.minutesUnit')}</option>
+                <option value={3}>3 {t('settings.facebook.minutesUnit')}</option>
+                <option value={5}>5 {t('settings.facebook.minutesUnit')}</option>
+                <option value={10}>10 {t('settings.facebook.minutesUnit')}</option>
+                <option value={15}>15 {t('settings.facebook.minutesUnit')}</option>
+                <option value={30}>30 {t('settings.facebook.minutesUnit')}</option>
+              </select>
             </SettingRow>
 
             <SettingRow label={t('settings.facebook.systemStatus')} desc={t('settings.facebook.systemStatusDesc')}>

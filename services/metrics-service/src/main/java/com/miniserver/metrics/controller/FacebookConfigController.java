@@ -31,6 +31,7 @@ public class FacebookConfigController {
         FacebookConfig cfg = configRepository.getConfig().orElseGet(FacebookConfig::new);
         cfg.setEnabled(input.isEnabled());
         cfg.setThreshold(Math.max(1, input.getThreshold()));
+        if (input.getScanIntervalMinutes() > 0) cfg.setScanIntervalMinutes(input.getScanIntervalMinutes());
         if (input.getCustomMessage() != null) cfg.setCustomMessage(input.getCustomMessage());
         if (input.getCookiesJson() != null && !input.getCookiesJson().isBlank()) cfg.setCookiesJson(input.getCookiesJson());
 

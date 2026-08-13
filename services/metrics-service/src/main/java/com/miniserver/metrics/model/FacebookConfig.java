@@ -27,6 +27,10 @@ public class FacebookConfig {
     @Column(name = "threshold", nullable = false)
     private int threshold = 5;
 
+    /** Frequency in minutes between automatic inbox checks (default: 5) */
+    @Column(name = "scan_interval_minutes", nullable = false)
+    private int scanIntervalMinutes = 5;
+
     /** Facebook Session cookies formatted as JSON string */
     @Column(name = "cookies_json", nullable = false, columnDefinition = "TEXT")
     private String cookiesJson = "";

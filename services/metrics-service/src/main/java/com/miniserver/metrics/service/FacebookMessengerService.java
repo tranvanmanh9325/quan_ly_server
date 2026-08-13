@@ -13,11 +13,14 @@ import com.miniserver.metrics.repository.FacebookConfigRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.DisposableBean;
-import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.scheduling.annotation.SchedulingConfigurer;
+import org.springframework.scheduling.config.ScheduledTaskRegistrar;
 import org.springframework.stereotype.Service;
 
 import java.net.Socket;
 import java.nio.file.Paths;
+import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.ExecutorService;
@@ -39,7 +42,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * not a new login event.
  */
 @Service
-public class FacebookMessengerService implements DisposableBean {
+public class FacebookMessengerService implements SchedulingConfigurer, DisposableBean {
 
     private static final Logger log = LoggerFactory.getLogger(FacebookMessengerService.class);
 
@@ -151,6 +154,25 @@ public class FacebookMessengerService implements DisposableBean {
     }
 
     @Override
+    public void configureTasks(ScheduledTaskRegistrar taskRegistrar) {
+        taskRegistrar.addTriggerTask(
+                this::scheduledCheck,
+                triggerContext -> {
+                    Optional<FacebookConfig> configOpt = configRepository.getConfig();
+                    int interval = configOpt.map(FacebookConfig::getScanIntervalMinutes).orElse(5);
+                    if (interval < 1) interval = 1;
+
+                    Instant lastCompletion = triggerContext.lastCompletion();
+                    if (lastCompletion == null) {
+                        return Instant.now().plusSeconds(15);
+                    } else {
+                        return lastCompletion.plus(Duration.ofMinutes(interval));
+                    }
+                }
+        );
+    }
+
+    @Override
     public void destroy() {
         closeActiveSession();
         scanExecutor.shutdownNow();
@@ -161,8 +183,7 @@ public class FacebookMessengerService implements DisposableBean {
     // SCHEDULED CHECK — Ephemeral browser per cycle (CPU = 0% between checks)
     // ========================================================================================
 
-    /** Scheduled check running every 5 minutes (300s) */
-    @Scheduled(fixedDelay = 300000, initialDelay = 15000)
+    /** Scheduled check running dynamically based on FacebookConfig.scanIntervalMinutes */
     public void scheduledCheck() {
         Optional<FacebookConfig> configOpt = configRepository.getConfig();
         if (configOpt.isEmpty()) return;

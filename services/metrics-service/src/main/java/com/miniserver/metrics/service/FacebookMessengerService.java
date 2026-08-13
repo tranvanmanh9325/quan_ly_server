@@ -460,7 +460,15 @@ public class FacebookMessengerService implements SchedulingConfigurer, Disposabl
                 // Navigate to Messenger inbox root from a blank page.
                 page.navigate("https://www.facebook.com/messages/t/",
                         new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED).setTimeout(20000));
-                page.waitForTimeout(2000);
+                // Use smart wait: wait for sidebar links instead of blind timeout.
+                // Falls back to 3s timeout if sidebar is slow.
+                try {
+                    page.waitForSelector(
+                            "a[href*='/messages/t/'], a[href*='/messages/e2ee/t/']",
+                            new Page.WaitForSelectorOptions().setTimeout(8000));
+                } catch (Exception ignored) {
+                    page.waitForTimeout(1500);
+                }
                 // Stop Messenger Service Workers immediately after page load to prevent them
                 // from running background sync/push tasks that compete for CPU.
                 stopServiceWorkers(page);
@@ -478,7 +486,7 @@ public class FacebookMessengerService implements SchedulingConfigurer, Disposabl
                 try {
                     page.waitForSelector(
                             "a[href*='/messages/t/'], a[href*='/messages/e2ee/t/'], a[href*='/messages/requests/']",
-                            new Page.WaitForSelectorOptions().setTimeout(12000));
+                            new Page.WaitForSelectorOptions().setTimeout(8000));
                     log.info("[FB-Responder] Sidebar loaded. URL: {}", page.url());
                 } catch (Exception e) {
                     Object diagResult = page.evaluate(
@@ -488,32 +496,29 @@ public class FacebookMessengerService implements SchedulingConfigurer, Disposabl
                     log.warn("[FB-Responder] Sidebar timeout. DOM diag: {}", diagResult);
                 }
 
-                try { page.keyboard().press("Escape"); page.waitForTimeout(200); } catch (Exception ignored) {}
+                try { page.keyboard().press("Escape"); } catch (Exception ignored) {}
 
                 int totalReplies = inspectAndReply(page, cfg);
 
-                // Scan non-E2EE Message Requests (Tin nhắn đang chờ thường)
+                // Scan Message Requests inbox (non-E2EE + E2EE tab) in one navigation.
+                // The 'Có thể bạn biết' tab is clicked client-side after landing on /messages/requests/.
                 try {
                     log.info("[FB-Responder] Navigating to Message Requests inbox (/messages/requests/)...");
                     page.navigate("https://www.facebook.com/messages/requests/",
                             new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED).setTimeout(15000));
-                    page.waitForTimeout(3000);
+                    // Smart wait: sidebar must show thread items before we proceed
+                    try {
+                        page.waitForSelector(
+                                "a[href*='/messages/requests/t/'], a[href*='/messages/t/']",
+                                new Page.WaitForSelectorOptions().setTimeout(7000));
+                    } catch (Exception ignored) {
+                        page.waitForTimeout(1500);
+                    }
+                    // Scan standard requests
                     totalReplies += inspectAndReply(page, cfg);
-                } catch (Exception e) {
-                    log.warn("[FB-Responder] Scanning /messages/requests/ encountered notice: {}", e.getMessage());
-                }
 
-                // Scan "Có thể bạn biết" tab inside Message Requests.
-                // This tab contains E2EE-encrypted requests from strangers and is only visible AFTER clicking
-                // the "Có thể bạn biết" tab explicitly. It does NOT have its own URL — all tabs live under
-                // /messages/requests/ and are rendered client-side via tab selection.
-                try {
-                    log.info("[FB-Responder] Clicking 'Có thể bạn biết' tab on /messages/requests/...");
-                    page.navigate("https://www.facebook.com/messages/requests/",
-                            new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED).setTimeout(15000));
-                    page.waitForTimeout(4000);
-
-                    // Click "Có thể bạn biết" tab to switch to the E2EE/People You May Know filter
+                    // Click 'Có thể bạn biết' tab (E2EE requests from People You May Know)
+                    log.info("[FB-Responder] Clicking 'Có thể bạn biết' tab...");
                     Boolean tabClicked = (Boolean) page.evaluate("() => {" +
                             "  let tabs = Array.from(document.querySelectorAll('[role=\"tab\"], [role=\"button\"], span, div'));" +
                             "  let tab = tabs.find(t => {" +
@@ -525,25 +530,20 @@ public class FacebookMessengerService implements SchedulingConfigurer, Disposabl
                             "}");
                     log.info("[FB-Responder] 'Có thể bạn biết' tab clicked: {}", tabClicked);
 
-                    // Wait generously for sidebar skeleton loading to finish and actual conversation items to appear
-                    page.waitForTimeout(5000);
-
-                    // Explicitly wait for actual conversation anchor links to appear (not skeleton placeholders)
-                    try {
-                        page.waitForSelector(
-                                "a[href*='/messages/requests/t/'], a[href*='/messages/t/']",
-                                new Page.WaitForSelectorOptions().setTimeout(8000));
-                    } catch (Exception ignored) {}
-                    page.waitForTimeout(2000);
-
-                    // Screenshot to visually verify sidebar after tab click and load
-                    page.screenshot(new Page.ScreenshotOptions().setPath(java.nio.file.Paths.get("/tmp/fb_cothethanbieet_tab.png")));
-
-                    totalReplies += inspectAndReply(page, cfg);
+                    if (Boolean.TRUE.equals(tabClicked)) {
+                        // Smart wait for tab content to load
+                        try {
+                            page.waitForSelector(
+                                    "a[href*='/messages/requests/t/'], a[href*='/messages/e2ee/requests/t/']",
+                                    new Page.WaitForSelectorOptions().setTimeout(6000));
+                        } catch (Exception ignored) {
+                            page.waitForTimeout(1500);
+                        }
+                        totalReplies += inspectAndReply(page, cfg);
+                    }
                 } catch (Exception e) {
-                    log.warn("[FB-Responder] Scanning 'Có thể bạn biết' tab encountered notice: {}", e.getMessage());
+                    log.warn("[FB-Responder] Scanning requests inbox encountered notice: {}", e.getMessage());
                 }
-
 
                 return totalReplies;
             }
@@ -574,8 +574,9 @@ public class FacebookMessengerService implements SchedulingConfigurer, Disposabl
         try {
             page.waitForSelector("a[href*='/messages/t/'], a[href*='/messages/requests/t/'], a[href*='/messages/requests/']",
                     new Page.WaitForSelectorOptions().setTimeout(5000));
-        } catch (Exception ignored) {}
-        page.waitForTimeout(1500);
+        } catch (Exception ignored) {
+            page.waitForTimeout(800);
+        }
 
         // Query all DM + E2EE + Message Requests + Spam conversation items (links or unlinked cards) from document and sidebar.
         @SuppressWarnings("unchecked")

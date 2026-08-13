@@ -592,7 +592,6 @@ public class FacebookMessengerService implements DisposableBean {
                                 // Search ALL elements for "Chấp nhận" text — Facebook may use custom tags
                                 Boolean accepted = (Boolean) page.evaluate("() => {" +
                                         "  let all = Array.from(document.querySelectorAll('*'));" +
-                                        "  // Try leaf node first (innermost element with exact text)" +
                                         "  let btn = all.find(e => {" +
                                         "    let txt = (e.innerText || '').trim();" +
                                         "    return (txt === 'Ch\\u1ea5p nh\\u1eadn' || txt === 'Accept') && e.children.length === 0;" +

@@ -849,7 +849,6 @@ public class FacebookMessengerService implements DisposableBean {
                 "    if (isNoticeBanner) continue;" +
                 "    let isOutgoing = false;" +
                 "    let aria = (row.getAttribute('aria-label') || '') + ' ' + (row.querySelector('[aria-label]')?.getAttribute('aria-label') || '');" +
-                "    // Outgoing messages explicitly state 'B\u1ea1n \u0111\u00e3 g\u1eedi' or 'You sent'. Generic 'Đã gửi X phút trước' is an incoming message timestamp!" +
                 "    if (aria.includes('B\u1ea1n \u0111\u00e3 g\u1eedi') || aria.includes('You sent') || aria.startsWith('B\u1ea1n:') || aria.includes(' B\u1ea1n:')) {" +
                 "      isOutgoing = true;" +
                 "    }" +

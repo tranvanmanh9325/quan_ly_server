@@ -345,7 +345,7 @@ public class FacebookMessengerService implements DisposableBean {
                     log.info("[FB-Responder] Navigating to Message Requests inbox (Tin nhắn đang chờ)...");
                     page.navigate("https://www.facebook.com/messages/requests/",
                             new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED).setTimeout(15000));
-                    page.waitForTimeout(3000);
+                    page.waitForTimeout(5000);
                     totalReplies += inspectAndReply(page, cfg);
                 } catch (Exception e) {
                     log.warn("[FB-Responder] Scanning Message Requests tab encountered notice: {}", e.getMessage());
@@ -371,8 +371,8 @@ public class FacebookMessengerService implements DisposableBean {
         // Query all DM + E2EE + Message Requests conversation URLs from the sidebar.
         @SuppressWarnings("unchecked")
         List<String> threadHrefs = (List<String>) page.evaluate("() => {" +
-                "  let links = Array.from(document.querySelectorAll('a[href*=\"/messages/t/\"], a[href*=\"/messages/e2ee/t/\"], a[href*=\"/messages/requests/\"]'));" +
-                "  return links.map(a => a.href).filter(h => h && h.trim().length > 0);" +
+                "  let links = Array.from(document.querySelectorAll('a[href*=\"/messages/t/\"], a[href*=\"/messages/e2ee/t/\"], a[href*=\"/messages/requests/t/\"], a[href*=\"/messages/requests/read/\"], [role=\"row\"] a[href*=\"/messages/\"]'));" +
+                "  return links.map(a => a.href).filter(h => h && h.trim().length > 0 && !h.endsWith('/messages/t/') && !h.endsWith('/messages/requests/') && !h.endsWith('/messages/requests'));" +
                 "}");
 
         log.info("[FB-Responder] Found {} conversation URLs in sidebar.", threadHrefs != null ? threadHrefs.size() : 0);

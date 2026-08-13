@@ -709,12 +709,26 @@ public class FacebookMessengerService implements SchedulingConfigurer, Disposabl
     private int inspectAndReply(Page page, FacebookConfig cfg) {
         int autoRepliesSent = 0;
 
-        // Scroll sidebar to hydrate all threads in virtualized list
+        // Scroll-and-collect: Facebook Messenger uses a React virtualized list that only
+        // renders threads visible in the viewport. A single 400px scroll misses threads
+        // below the fold. We scroll 4 times (600px each) and wait 600ms between passes
+        // to give React time to hydrate new DOM nodes. Total extra time: ~2.4s — acceptable.
         try {
-            page.evaluate("() => {" +
-                    "  let sidebar = document.querySelector('[role=\"navigation\"], div[aria-label*=\"\u0110o\u1ea1n chat\"], div[aria-label*=\"Tin nh\u1eafn\"], div[aria-label*=\"Chats\"], div[aria-label*=\"Tin nh\u1eafn \u0111ang ch\u1edd\"], div[aria-label*=\"Message requests\"]');" +
-                    "  if (sidebar) { sidebar.scrollTop = 0; sidebar.scrollBy(0, 400); }" +
-                    "}");
+            String sidebarSelector =
+                "[role=\"navigation\"], div[aria-label*=\"\u0110o\u1ea1n chat\"], " +
+                "div[aria-label*=\"Tin nh\u1eafn\"], div[aria-label*=\"Chats\"], " +
+                "div[aria-label*=\"Tin nh\u1eafn \u0111ang ch\u1edd\"], div[aria-label*=\"Message requests\"]";
+            // Reset scroll to top first so we always start from the beginning
+            page.evaluate("(sel) => { let sb = document.querySelector(sel); if (sb) sb.scrollTop = 0; }", sidebarSelector);
+            page.waitForTimeout(400);
+            // Scroll incrementally to trigger virtualized list hydration
+            for (int scrollPass = 0; scrollPass < 4; scrollPass++) {
+                page.evaluate("(sel) => { let sb = document.querySelector(sel); if (sb) sb.scrollBy(0, 600); }", sidebarSelector);
+                page.waitForTimeout(600);
+            }
+            // Scroll back to top so the most-recent threads are visible first
+            page.evaluate("(sel) => { let sb = document.querySelector(sel); if (sb) sb.scrollTop = 0; }", sidebarSelector);
+            page.waitForTimeout(300);
         } catch (Exception ignored) {}
 
         // Wait for sidebar conversation links to finish hydrating in React DOM
@@ -835,13 +849,21 @@ public class FacebookMessengerService implements SchedulingConfigurer, Disposabl
                 page.waitForTimeout(300 + (long)(Math.random() * 400));
 
                 // Poll up to 6s for the active chat panel header to render after navigation.
-                String senderName = waitForChatHeaderToLoad(page, 6000);
+                String senderName = waitForChatHeaderToLoad(page, 8000);
 
                 // Handle E2EE PIN screen if it appears after opening a conversation.
                 handleE2eePinScreen(page);
 
                 if (senderName == null || senderName.isBlank()) {
                     senderName = extractCurrentChatHeaderName(page);
+                }
+
+                // Guard against contaminated senderName (can happen if innerText of entire
+                // chat panel leaks into the name — take only the first line and cap at 60 chars).
+                if (senderName != null) {
+                    int nl = senderName.indexOf('\n');
+                    if (nl > 0) senderName = senderName.substring(0, nl).trim();
+                    if (senderName.length() > 60) senderName = null; // discard — not a real name
                 }
 
                 boolean isGroup = isGroupOrCommunityChat(page);
@@ -959,7 +981,14 @@ public class FacebookMessengerService implements SchedulingConfigurer, Disposabl
 
                 // ── STEP 2: Count unreplied messages ─────────────────────────────────────
                 // For request threads: count AFTER accept so all bubbles are visible.
+                // For E2EE threads: add extra 3s wait for decryption to complete before counting.
                 // For regular DMs: count normally (bubbles always visible).
+                boolean isE2ee = page.url().contains("/messages/e2ee/");
+                if (isE2ee) {
+                    // E2EE decryption is async — React only mounts message bubbles after
+                    // the IndexedDB key is resolved. 3s is enough for local key resolution.
+                    page.waitForTimeout(3000);
+                }
                 int unrepliedCount = countUnrepliedIncomingMessages(page);
                 log.info("[FB-Responder] DM with '{}': {} unreplied incoming message(s) (post-accept={}).",
                         senderName, unrepliedCount, wasAccepted);
@@ -968,9 +997,12 @@ public class FacebookMessengerService implements SchedulingConfigurer, Disposabl
                 // For request threads that were accepted but count=0, use minimum count of 1
                 // so we always reply when a user has been accepted (they clearly sent something).
                 int effectiveCount = unrepliedCount;
-                if (isRequestThread && wasAccepted && effectiveCount < 1) {
-                    effectiveCount = 1; // fallback: at minimum 1 message triggered the accept
-                    log.info("[FB-Responder] Count=0 after accept for '{}'; using effectiveCount=1.", senderName);
+                if (wasAccepted && effectiveCount < 1) {
+                    // If the user was accepted (request approved), they clearly sent at least 1 message.
+                    // E2EE decryption may still be in progress → fallback to 1 so we don't silently skip.
+                    effectiveCount = 1;
+                    log.info("[FB-Responder] Count=0 after accept for '{}' (E2EE={}, request={}); using effectiveCount=1.",
+                            senderName, isE2ee, isRequestThread);
                 }
 
                 // Record every thread with at least 1 unreplied message into the cache
@@ -1231,59 +1263,57 @@ public class FacebookMessengerService implements SchedulingConfigurer, Disposabl
         return extractCurrentChatHeaderName(page);
     }
 
-    /** Reads the current active chat's header name from the DOM. Returns null if not found. */
+    /**
+     * Reads the current active chat header name from the DOM.
+     *
+     * Strategy (ordered by reliability):
+     *   1. header > h1/h2/[role=heading]/span[dir=auto] - most precise
+     *   2. sidebar link span for the current thread ID
+     *   3. document.title parsing (strip unread count prefix)
+     *
+     * INTENTIONALLY does NOT fall back to main.innerText — that returns the
+     * entire chat panel text (hundreds of chars) which pollutes senderName.
+     * Max name length guard: 60 chars. Returns null if no clean name found.
+     */
     private String extractCurrentChatHeaderName(Page page) {
         try {
             Object result = page.evaluate("() => {" +
+                    "  const MAX = 60;" +
+                    "  const BAD = ['messenger', 'tin nh\u1eafn', 'cu\u1ed9c tr\u00f2 chuy\u1ec7n', '\u0111o\u1ea1n chat', 'chats'];" +
+                    "  function ok(t) {" +
+                    "    if (!t || t.length === 0 || t.length > MAX) return false;" +
+                    "    let lo = t.toLowerCase();" +
+                    "    if (/^\\(\\d+\\)/.test(lo)) return false;" +
+                    "    return !BAD.some(b => lo.includes(b));" +
+                    "  }" +
                     "  let main = document.querySelector('[role=\"main\"]');" +
                     "  if (main) {" +
-                    "    let header = main.querySelector('header, [role=\"banner\"]');" +
-                    "    if (header) {" +
-                    "      let titleEl = header.querySelector('h1, h2, [role=\"heading\"], a[href*=\"facebook.com/\"] span, span[dir=\"auto\"]');" +
-                    "      if (titleEl && titleEl.innerText && titleEl.innerText.trim()) {" +
-                    "        let txt = titleEl.innerText.trim();" +
-                    "        let lower = txt.toLowerCase();" +
-                    "        if (!lower.startsWith('cu\u1ed9c tr\u00f2 chuy\u1ec7n') && !lower.startsWith('tin nh\u1eafn') && !lower.includes('messenger') && !lower.startsWith('(')) {" +
-                    "          return txt;" +
-                    "        }" +
-                    "      }" +
-                    "    }" +
-                    "    let text = main.innerText || '';" +
-                    "    let lines = text.split('\\n').map(l => l.trim()).filter(l => l.length > 0);" +
-                    "    for (let line of lines) {" +
-                    "      let lower = line.toLowerCase();" +
-                    "      if (lower.startsWith('cu\u1ed9c tr\u00f2 chuy\u1ec7n v\u1edbi ')) {" +
-                    "        return line.substring('cu\u1ed9c tr\u00f2 chuy\u1ec7n v\u1edbi '.length).trim();" +
-                    "      }" +
-                    "    }" +
-                    "  }" +
-                    "  let currentPath = window.location.pathname || '';" +
-                    "  if (currentPath.includes('/messages/')) {" +
-                    "    let parts = currentPath.split('/messages/');" +
-                    "    if (parts.length > 1) {" +
-                    "      let threadId = parts[1].replace(/requests\\/|e2ee\\/|t\\//g, '').replace(/\\//g, '');" +
-                    "      if (threadId.length > 0) {" +
-                    "        let sidebarLink = document.querySelector('a[href*=\"' + threadId + '\"]');" +
-                    "        if (sidebarLink) {" +
-                    "          let nameEl = sidebarLink.querySelector('span[dir=\"auto\"], span');" +
-                    "          if (nameEl && nameEl.innerText && nameEl.innerText.trim()) {" +
-                    "            let stxt = nameEl.innerText.trim();" +
-                    "            let lower = stxt.toLowerCase();" +
-                    "            if (!lower.includes('messenger') && !lower.startsWith('(')) return stxt;" +
-                    "          }" +
+                    "    let hdr = main.querySelector('header,[role=\"banner\"]');" +
+                    "    if (hdr) {" +
+                    "      for (let sel of ['h1','h2','[role=\"heading\"]','a[href*=\"facebook.com/\"] span[dir=\"auto\"]','span[dir=\"auto\"]']) {" +
+                    "        let el = hdr.querySelector(sel);" +
+                    "        if (el) {" +
+                    "          let t = (el.innerText||'').split('\\n')[0].trim();" +
+                    "          if (ok(t)) return t;" +
                     "        }" +
                     "      }" +
                     "    }" +
                     "  }" +
-                    "  let docTitle = document.title || '';" +
-                    "  let candidate = '';" +
-                    "  if (docTitle.includes('|')) candidate = docTitle.split('|')[0].trim();" +
-                    "  else if (docTitle.includes('-')) candidate = docTitle.split('-')[0].trim();" +
-                    "  else candidate = docTitle.trim();" +
-                    "  let lowerCand = candidate.toLowerCase();" +
-                    "  if (candidate.length > 0 && !lowerCand.includes('messenger') && !lowerCand.startsWith('(') && !lowerCand.startsWith('tin nh\u1eafn')) {" +
-                    "    return candidate;" +
+                    "  let path = window.location.pathname||'';" +
+                    "  if (path.includes('/messages/')) {" +
+                    "    let tid = path.split('/messages/')[1].replace(/requests\\/|e2ee\\/|t\\//g,'').replace(/\\//g,'').split('?')[0];" +
+                    "    if (tid && tid.length > 0) {" +
+                    "      let lnk = document.querySelector('a[href*=\"'+tid+'\"]');" +
+                    "      if (lnk) {" +
+                    "        let ne = lnk.querySelector('span[dir=\"auto\"]');" +
+                    "        if (ne) { let t=(ne.innerText||'').split('\\n')[0].trim(); if(ok(t)) return t; }" +
+                    "      }" +
+                    "    }" +
                     "  }" +
+                    "  let title = document.title||'';" +
+                    "  let clean = title.replace(/^\\(\\d+\\)\\s*/,'');" +
+                    "  let cand = clean.includes('|')?clean.split('|')[0].trim():clean.includes('-')?clean.split('-')[0].trim():clean.trim();" +
+                    "  if(ok(cand)) return cand;" +
                     "  return null;" +
                     "}");
             return result instanceof String s ? s : null;

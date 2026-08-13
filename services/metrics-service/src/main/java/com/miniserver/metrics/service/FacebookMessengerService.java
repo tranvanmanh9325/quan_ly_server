@@ -455,7 +455,18 @@ public class FacebookMessengerService implements DisposableBean {
         log.info("[FB-Responder] Found {} conversation items in sidebar.", threadItems != null ? threadItems.size() : 0);
 
         if (threadItems == null || threadItems.isEmpty()) {
-            log.warn("[FB-Responder] No thread items found. Sidebar may not have loaded correctly. URL: {}", page.url());
+            // Take a diagnostic screenshot + dump ALL anchor links to understand what Facebook rendered
+            try {
+                page.screenshot(new Page.ScreenshotOptions().setPath(java.nio.file.Paths.get("/tmp/fb_e2ee_diag.png")));
+                Object domDiag = page.evaluate("() => {" +
+                        "  let allA = Array.from(document.querySelectorAll('a[href]')).map(a => ({ href: a.href, text: (a.innerText||'').substring(0,40) }));" +
+                        "  let url = window.location.href;" +
+                        "  let title = document.title;" +
+                        "  let bodySnippet = (document.body.innerText || '').substring(0, 300);" +
+                        "  return JSON.stringify({ url, title, bodySnippet, linkCount: allA.length, links: allA.slice(0, 25) });" +
+                        "}");
+                log.warn("[FB-Responder] No thread items. Full DOM diag for '{}': {}", page.url(), domDiag);
+            } catch (Exception ignored) {}
             return 0;
         }
 

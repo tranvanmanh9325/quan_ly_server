@@ -826,8 +826,9 @@ public class FacebookMessengerService implements DisposableBean {
         Object countResult = page.evaluate("() => {" +
                 "  let main = document.querySelector('[role=\"main\"]');" +
                 "  if (!main) return 0;" +
-                "  let mainRect = main.getBoundingClientRect();" +
-                "  let mainMidX = mainRect.left + (mainRect.width / 2);" +
+                "  let chatRegion = main.querySelector('[role=\"region\"], [aria-label*=\"Tin nhắn\"], [aria-label*=\"Messages\"]') || main;" +
+                "  let regionRect = chatRegion.getBoundingClientRect();" +
+                "  let mainMidX = regionRect.left + (regionRect.width / 2);" +
                 "  let rawRows = Array.from(main.querySelectorAll('[role=\"row\"], [data-scope=\"messages_table\"]'));" +
                 "  if (rawRows.length === 0) {" +
                 "    rawRows = Array.from(main.querySelectorAll('div[dir=\"auto\"]')).map(el => el.closest('div[style*=\"flex\"]') || el).filter(Boolean);" +
@@ -848,13 +849,14 @@ public class FacebookMessengerService implements DisposableBean {
                 "    if (isNoticeBanner) continue;" +
                 "    let isOutgoing = false;" +
                 "    let aria = (row.getAttribute('aria-label') || '') + ' ' + (row.querySelector('[aria-label]')?.getAttribute('aria-label') || '');" +
-                "    if (aria.includes('B\u1ea1n \u0111\u00e3 g\u1eedi') || aria.includes('You sent') || aria.includes('\u0110\u00e3 g\u1eedi') || aria.includes('Sent') || aria.includes('\u0110\u00e3 xem') || aria.includes('Seen')) {" +
+                "    // Outgoing messages explicitly state 'B\u1ea1n \u0111\u00e3 g\u1eedi' or 'You sent'. Generic 'Đã gửi X phút trước' is an incoming message timestamp!" +
+                "    if (aria.includes('B\u1ea1n \u0111\u00e3 g\u1eedi') || aria.includes('You sent') || aria.startsWith('B\u1ea1n:') || aria.includes(' B\u1ea1n:')) {" +
                 "      isOutgoing = true;" +
                 "    }" +
                 "    if (!isOutgoing) {" +
                 "      let bubble = row.querySelector('div[dir=\"auto\"], div[style*=\"background\"], div[role=\"none\"]') || row;" +
                 "      let bRect = bubble.getBoundingClientRect();" +
-                "      if (bRect.width > 0 && bRect.left > mainMidX - 50) {" +
+                "      if (bRect.width > 0 && bRect.left > mainMidX + 20) {" +
                 "        isOutgoing = true;" +
                 "      }" +
                 "    }" +

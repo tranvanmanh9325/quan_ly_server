@@ -419,7 +419,12 @@ public class FacebookMessengerService implements DisposableBean {
                     log.warn("[FB-Responder] Navigation to '{}' failed/timed out: {}", href, e.getMessage());
                 }
 
-                page.waitForTimeout(1000);
+                // Wait for message bubbles to finish mounting in DOM
+                try {
+                    page.waitForSelector("[role='main'] div[dir='auto'], [role='main'] span[dir='auto'], [role='region'] div[dir='auto'], [role='main'] header",
+                            new Page.WaitForSelectorOptions().setTimeout(6000));
+                } catch (Exception ignored) {}
+                page.waitForTimeout(2000);
 
                 // Poll up to 6s for the active chat panel header to render after navigation.
                 String senderName = waitForChatHeaderToLoad(page, 6000);
@@ -828,12 +833,13 @@ public class FacebookMessengerService implements DisposableBean {
                 "  let rows = Array.from(main.querySelectorAll('[role=\"row\"]'));" +
                 "  if (rows.length === 0) {" +
                 "    let editables = Array.from(main.querySelectorAll('[contenteditable=\"true\"]'));" +
-                "    let allAuto = Array.from(main.querySelectorAll('div[dir=\"auto\"], span[dir=\"auto\"]'));" +
+                "    let allAuto = Array.from(main.querySelectorAll('div[dir=\"auto\"]'));" +
+                "    if (allAuto.length === 0) allAuto = Array.from(main.querySelectorAll('span[dir=\"auto\"]'));" +
                 "    rows = allAuto.filter(el => {" +
                 "      let txt = (el.innerText || '').trim();" +
                 "      if (!txt || txt.length === 0) return false;" +
                 "      if (editables.some(ed => ed.contains(el))) return false;" +
-                "      if (el.querySelector('div[dir=\"auto\"], span[dir=\"auto\"]')) return false;" +
+                "      if (allAuto.some(other => other !== el && other.contains(el))) return false;" +
                 "      return true;" +
                 "    });" +
                 "  } else {" +

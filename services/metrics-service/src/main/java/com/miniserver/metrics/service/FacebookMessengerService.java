@@ -8,7 +8,9 @@ import com.microsoft.playwright.options.Cookie;
 import com.microsoft.playwright.options.SameSiteAttribute;
 import com.microsoft.playwright.options.WaitUntilState;
 import com.miniserver.metrics.model.FacebookConfig;
+import com.miniserver.metrics.model.FacebookCooldown;
 import com.miniserver.metrics.repository.FacebookConfigRepository;
+import com.miniserver.metrics.repository.FacebookCooldownRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.DisposableBean;
@@ -20,7 +22,7 @@ import java.nio.file.Paths;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
+import org.springframework.transaction.annotation.Transactional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -128,11 +130,9 @@ public class FacebookMessengerService implements DisposableBean {
             "Object.defineProperty(navigator, 'languages', { get: () => ['vi-VN','vi','en-US','en'] });";
 
     private final FacebookConfigRepository configRepository;
+    private final FacebookCooldownRepository cooldownRepository;
     private final AiChatService aiChatService;
     private final ObjectMapper objectMapper = new ObjectMapper();
-
-    // senderKey -> last auto-reply instant (per-sender cooldown)
-    private final Map<String, Instant> cooldownMap = new ConcurrentHashMap<>();
 
     // VNC-only singleton state (used only for interactive login session, NOT for scheduled checks)
     private Playwright activePlaywright;
@@ -148,8 +148,11 @@ public class FacebookMessengerService implements DisposableBean {
     private final AtomicBoolean scanRunning = new AtomicBoolean(false);
     private volatile String lastScanResult = null;
 
-    public FacebookMessengerService(FacebookConfigRepository configRepository, AiChatService aiChatService) {
+    public FacebookMessengerService(FacebookConfigRepository configRepository,
+                                    FacebookCooldownRepository cooldownRepository,
+                                    AiChatService aiChatService) {
         this.configRepository = configRepository;
+        this.cooldownRepository = cooldownRepository;
         this.aiChatService = aiChatService;
     }
 
@@ -215,7 +218,9 @@ public class FacebookMessengerService implements DisposableBean {
 
         scanRunning.set(true);
         lastScanResult = null;
-        cooldownMap.clear();
+        // NOTE: We intentionally do NOT clear cooldowns here.
+        // Cooldown is per-sender and persisted in DB — clearing would let the bot
+        // spam the same user multiple times by rapidly clicking "Scan Now".
         scanExecutor.submit(() -> {
             try {
                 int count = processMessengerChats(cfg);
@@ -637,7 +642,8 @@ public class FacebookMessengerService implements DisposableBean {
                         boolean sent = sendMessengerReply(page, awayReply);
                         if (sent) {
                             autoRepliesSent++;
-                            cooldownMap.put(senderName, Instant.now());
+                            String senderKey = senderName.toLowerCase().trim();
+                            cooldownRepository.upsert(senderKey, Instant.now());
                             log.info("[FB-Responder] AUTO-REPLY SENT to '{}': {}", senderName, awayReply);
                         }
                     } else {
@@ -998,10 +1004,17 @@ public class FacebookMessengerService implements DisposableBean {
     private int countUnrepliedIncomingMessages(Page page) {
         Object countResult = page.evaluate("() => {" +
                 "  let main = document.querySelector('[role=\"main\"]') || document.querySelector('[role=\"region\"]') || document.body;" +
+
+                // Strategy 1: Use Facebook's accessibility aria-labels on message bubble containers.
+                // Confirmed patterns from production:
+                //   Outgoing: 'tin nhắn do bạn gửi lúc HH:MM: ...'
+                //   Outgoing group header: 'lúc HH:MM, bạn: ...'
+                //   Incoming individual: 'tin nhắn do [Name] gửi lúc HH:MM: ...'
+                //   Incoming group header: 'lúc HH:MM, [Name]: ...'
                 "  let bubbles = Array.from(main.querySelectorAll('[aria-label]')).filter(el => {" +
                 "    let lbl = (el.getAttribute('aria-label') || '').toLowerCase();" +
-                "    return (lbl.startsWith('tin nh\\u1eafn do ') && lbl.includes(' g\\u1eedi l\\u00fac ')) ||" +
-                "           /^l\\u00fac \\d{1,2}:\\d{2},.+:/.test(lbl);" +
+                "    return (lbl.startsWith('tin nh\u1eafn do ') && lbl.includes(' g\u1eedi l\u00fac ')) ||" +
+                "           /^l\u00fac \\d{1,2}:\\d{2},.+:/.test(lbl);" +
                 "  });" +
                 "  if (bubbles.length > 0) {" +
                 "    let details = [];" +
@@ -1010,20 +1023,24 @@ public class FacebookMessengerService implements DisposableBean {
                 "      let el = bubbles[i];" +
                 "      let lbl = (el.getAttribute('aria-label') || '').toLowerCase();" +
                 "      let text = (el.innerText || '').trim();" +
-                "      let isOut = lbl.startsWith('tin nh\\u1eafn do b\\u1ea1n') ||" +
-                "                  /^l\\u00fac \\d{1,2}:\\d{2}, b\\u1ea1n:/.test(lbl);" +
+                "      let isOut = lbl.startsWith('tin nh\u1eafn do b\u1ea1n') ||" +
+                "                  /^l\u00fac \\d{1,2}:\\d{2}, b\u1ea1n:/.test(lbl);" +
                 "      details.push({ txt: text.substring(0, 40), isOut, lbl: lbl.substring(0, 50) });" +
                 "      if (isOut) break;" +
                 "      count++;" +
                 "    }" +
                 "    return JSON.stringify({ count, totalRows: bubbles.length, strategy: 'aria-label', details: details.slice(0, 10) });" +
                 "  }" +
-                // Strategy 2: Fallback — use div[dir=auto] leaf nodes with computed style check for outgoing
-                "  let editables = Array.from(main.querySelectorAll('[contenteditable=\"true\"]'));" +
-                "  let allAuto = Array.from(main.querySelectorAll('div[dir=\"auto\"]'));" +
-                "  if (allAuto.length === 0) allAuto = Array.from(main.querySelectorAll('span[dir=\"auto\"]'));" +
+
+                // Strategy 2: Fallback — scope to chat grid/list container to exclude right info panel.
+                // The right panel (Quyền riêng tư, Tắt thông báo...) contains dir=auto divs that caused
+                // false positives when querying the entire main element.
+                "  let chatScope = main.querySelector('[role=\"grid\"], [role=\"list\"], [role=\"log\"]') || main;" +
+                "  let editables = Array.from(chatScope.querySelectorAll('[contenteditable=\"true\"]'));" +
+                "  let allAuto = Array.from(chatScope.querySelectorAll('div[dir=\"auto\"]'));" +
+                "  if (allAuto.length === 0) allAuto = Array.from(chatScope.querySelectorAll('span[dir=\"auto\"]'));" +
                 "  let rows = allAuto.filter(el => {" +
-                "    if (el.closest('[role=\"navigation\"], [role=\"complementary\"]')) return false;" +
+                "    if (el.closest('[role=\"navigation\"], [role=\"complementary\"], aside')) return false;" +
                 "    let txt = (el.innerText || '').trim();" +
                 "    if (!txt || txt.length === 0) return false;" +
                 "    if (editables.some(ed => ed.contains(el))) return false;" +
@@ -1035,7 +1052,7 @@ public class FacebookMessengerService implements DisposableBean {
                 "    for (let depth = 0; depth < 10; depth++) {" +
                 "      if (!cur || cur === main) break;" +
                 "      let lbl = (cur.getAttribute('aria-label') || '').toLowerCase();" +
-                "      if (lbl.startsWith('tin nh\\u1eafn do b\\u1ea1n') || lbl.startsWith('b\\u1ea1n l\\u00fac')) return true;" +
+                "      if (lbl.startsWith('tin nh\u1eafn do b\u1ea1n') || lbl.startsWith('b\u1ea1n l\u00fac')) return true;" +
                 "      cur = cur.parentElement;" +
                 "    }" +
                 "    return false;" +
@@ -1287,9 +1304,10 @@ public class FacebookMessengerService implements DisposableBean {
 
 
     private boolean isCooldownExpired(String senderName, int cooldownMinutes) {
-        Instant lastTime = cooldownMap.get(senderName);
-        if (lastTime == null) return true;
-        return Instant.now().isAfter(lastTime.plusSeconds((long) cooldownMinutes * 60));
+        String senderKey = senderName.toLowerCase().trim();
+        return cooldownRepository.findBySenderKey(senderKey)
+                .map(c -> Instant.now().isAfter(c.getRepliedAt().plusSeconds((long) cooldownMinutes * 60)))
+                .orElse(true); // No record = never replied = cooldown expired
     }
 
     private void updateStatus(FacebookConfig cfg, String status, LocalDateTime checkAt) {

@@ -121,14 +121,22 @@ class FacebookService:
                     domain = c.get("domain", ".facebook.com")
                     path = c.get("path", "/")
                     if name and value:
+                        raw_same_site = str(c.get("sameSite", "Lax") or "Lax").lower()
+                        if "strict" in raw_same_site:
+                            same_site = "Strict"
+                        elif "none" in raw_same_site or "no_restriction" in raw_same_site:
+                            same_site = "None"
+                        else:
+                            same_site = "Lax"
+
                         cookies.append({
                             "name": name,
                             "value": value,
                             "domain": domain,
                             "path": path,
-                            "secure": c.get("secure", True),
-                            "httpOnly": c.get("httpOnly", False),
-                            "sameSite": c.get("sameSite", "Lax"),
+                            "secure": bool(c.get("secure", True)),
+                            "httpOnly": bool(c.get("httpOnly", False)),
+                            "sameSite": same_site,
                         })
             return cookies
         except Exception as e:

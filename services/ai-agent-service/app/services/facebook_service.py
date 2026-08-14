@@ -502,65 +502,47 @@ class FacebookService:
             () => {
               let main = document.querySelector('[role="main"]') || document.querySelector('[role="region"]') || document.body;
 
-              // 1. Primary: Facebook Messenger embeds accessibility text in <span> elements
-              // Formats:
-              //   - 'Nhập, Tin nhắn do Bạn gửi lúc 17:11: Chào anh Mạnh...' (Us)
-              //   - 'Nhập, Tin nhắn do Trần Văn Mạnh gửi lúc 17:32: sádas' (Them)
-              let allSpans = Array.from(main.querySelectorAll('span'));
-              let msgNodes = [];
+              // High-performance Reverse Subtree Walker (Bottom-Up Pruned Scan)
+              // Inspects DOM elements from bottom to top and terminates early upon reaching 'us' boundary.
+              let allElements = Array.from(main.querySelectorAll('span, [aria-label]'));
+              let incoming = [];
+              let last_sender = 'none';
+              let last_msg_text = '';
 
-              for (let s of allSpans) {
-                let t = (s.innerText || s.textContent || '').trim();
+              for (let i = allElements.length - 1; i >= 0; i--) {
+                let el = allElements[i];
+                let t = (el.getAttribute('aria-label') || el.textContent || '').trim();
+                if (!t || t.length < 5) continue;
                 let low = t.toLowerCase();
                 if (!low.includes('tin nhắn do') || !low.includes('gửi lúc')) continue;
 
                 let isUs = low.includes('do bạn gửi') || low.includes('do bạn gởi');
                 let colonIdx = t.lastIndexOf(':');
                 let msgText = colonIdx >= 0 ? t.substring(colonIdx + 1).trim() : '';
-                if (msgText) {
-                  msgNodes.push({ sender: isUs ? 'us' : 'them', text: msgText });
+                if (!msgText) continue;
+
+                // Record the very last message in thread
+                if (last_sender === 'none') {
+                  last_sender = isUs ? 'us' : 'them';
+                  last_msg_text = msgText;
                 }
-              }
 
-              // 2. Fallback: scan aria-labels if spans were not rendered
-              if (msgNodes.length === 0) {
-                let allEls = Array.from(main.querySelectorAll('[aria-label]'));
-                for (let el of allEls) {
-                  let lbl = (el.getAttribute('aria-label') || '').trim();
-                  let low = lbl.toLowerCase();
-                  if (!low.includes('tin nhắn do') || !low.includes('gửi lúc')) continue;
-
-                  let isUs = low.includes('do bạn gửi') || low.includes('do bạn gởi');
-                  let colonIdx = lbl.lastIndexOf(':');
-                  let msgText = colonIdx >= 0 ? lbl.substring(colonIdx + 1).trim() : '';
-                  if (msgText) {
-                    msgNodes.push({ sender: isUs ? 'us' : 'them', text: msgText });
+                if (isUs) {
+                  // Reached boundary where we replied -> Stop scanning older messages immediately! (Subtree Pruning)
+                  break;
+                } else {
+                  incoming.unshift(msgText);
+                  if (incoming.length >= 10) {
+                    break;
                   }
                 }
               }
 
-              if (msgNodes.length === 0) {
-                return { last_sender: 'none', consecutive_unreplied_count: 0, incoming_msgs: [], last_msg_text: '' };
-              }
-
-              let lastNode = msgNodes[msgNodes.length - 1];
-              let unreplied = 0;
-              let incoming = [];
-
-              // Count backwards consecutive incoming messages from the other person
-              for (let i = msgNodes.length - 1; i >= 0; i--) {
-                if (msgNodes[i].sender === 'us') {
-                  break;
-                }
-                unreplied++;
-                incoming.unshift(msgNodes[i].text);
-              }
-
               return {
-                last_sender: lastNode.sender,
-                consecutive_unreplied_count: unreplied,
-                incoming_msgs: incoming.slice(-10),
-                last_msg_text: lastNode.text
+                last_sender: last_sender,
+                consecutive_unreplied_count: incoming.length,
+                incoming_msgs: incoming,
+                last_msg_text: last_msg_text
               };
             }
             """

@@ -281,6 +281,7 @@ COMMUNICATION:
                 has_tool_calls = finish_reason == "tool_calls" and bool(assistant_msg.get("tool_calls"))
 
                 if has_tool_calls:
+                    history.append(assistant_msg)
                     for tc in assistant_msg["tool_calls"]:
                         call_id = tc.get("id", "call_1")
                         fn_name = tc.get("function", {}).get("name", "")
@@ -300,6 +301,20 @@ COMMUNICATION:
                 # Fallback: Check if model emitted pseudo-XML function tags in plain text
                 pseudo_calls = self._extract_pseudo_tool_calls(raw_content)
                 if pseudo_calls:
+                    assistant_msg["tool_calls"] = [
+                        {
+                            "id": f"call_pseudo_{idx}",
+                            "type": "function",
+                            "function": {
+                                "name": pc["name"],
+                                "arguments": json.dumps(pc["args"]),
+                            },
+                        }
+                        for idx, pc in enumerate(pseudo_calls)
+                    ]
+                    assistant_msg["content"] = None
+                    history.append(assistant_msg)
+
                     for idx, pc in enumerate(pseudo_calls):
                         fn_name = pc["name"]
                         fn_args = pc["args"]
@@ -311,6 +326,7 @@ COMMUNICATION:
                         })
                     continue
 
+                history.append(assistant_msg)
                 return raw_content.strip() or "Xin lỗi, tôi không thể xử lý yêu cầu lúc này."
 
             except Exception as e:

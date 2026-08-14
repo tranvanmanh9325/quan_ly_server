@@ -179,4 +179,3 @@ networks:
 
 volumes:
   postgres_data:
-  fb_profile_data:

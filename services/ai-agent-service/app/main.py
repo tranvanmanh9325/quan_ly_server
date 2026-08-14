@@ -1,0 +1,100 @@
+import asyncio
+import logging
+from contextlib import asynccontextmanager
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from app.config import settings
+from app.core.groq_pool import GroqKeyPool
+from app.core.ssh_client import SshClient
+from app.services.message_cache import FacebookMessageCache
+from app.services.facebook_service import FacebookService
+from app.services.ai_agent import AiAgentService
+from app.services.telegram_bot import TelegramBot
+from app.routers import health, facebook
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+logger = logging.getLogger("ai-agent-service")
+
+
+async def facebook_periodic_scan_loop(fb_service: FacebookService):
+    """Background task to periodically run Facebook scan cycles."""
+    logger.info("[FB-Scheduler] Started periodic scanner loop.")
+    while True:
+        try:
+            cfg = await fb_service.get_config_from_db()
+            interval_min = max(1, cfg.get("scan_interval_minutes", 5))
+            if cfg.get("enabled", False):
+                logger.info("[FB-Scheduler] Running scheduled scan cycle...")
+                await fb_service.run_scan_cycle()
+
+            await asyncio.sleep(interval_min * 60)
+        except asyncio.CancelledError:
+            logger.info("[FB-Scheduler] Scanner loop cancelled.")
+            break
+        except Exception as e:
+            logger.error("[FB-Scheduler] Unexpected error in scanner loop: %s", e)
+            await asyncio.sleep(60)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    logger.info("Starting up AI Agent Service (Python)...")
+
+    # 1. Initialize core components
+    groq_pool = GroqKeyPool(settings.groq_keys)
+    ssh_client = SshClient()
+    message_cache = FacebookMessageCache()
+
+    # 2. Initialize domain services with bidirectional wiring
+    fb_service = FacebookService(message_cache)
+    ai_agent = AiAgentService(groq_pool, ssh_client, message_cache, fb_service)
+    fb_service.set_ai_agent(ai_agent)
+    telegram_bot = TelegramBot(ai_agent, ssh_client)
+
+    # 3. Attach to app state for dependency injection in routers
+    app.state.groq_pool = groq_pool
+    app.state.ssh_client = ssh_client
+    app.state.message_cache = message_cache
+    app.state.fb_service = fb_service
+    app.state.ai_agent = ai_agent
+    app.state.telegram_bot = telegram_bot
+
+    # 4. Start background workers
+    telegram_task = asyncio.create_task(telegram_bot.start_polling())
+    fb_scan_task = asyncio.create_task(facebook_periodic_scan_loop(fb_service))
+
+    yield
+
+    logger.info("Shutting down AI Agent Service...")
+    telegram_bot.stop()
+    telegram_task.cancel()
+    fb_scan_task.cancel()
+    try:
+        await asyncio.gather(telegram_task, fb_scan_task, return_exceptions=True)
+    except Exception:
+        pass
+
+
+app = FastAPI(
+    title="AI Agent & Automation Microservice",
+    description="Python Async FastAPI microservice for AI Agent, Telegram Bot & Facebook Messenger Automation",
+    version="1.0.0",
+    lifespan=lifespan,
+)
+
+# CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Include Routers
+app.include_router(health.router)
+app.include_router(facebook.router)

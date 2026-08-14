@@ -50,22 +50,17 @@ services:
           memory: 192M
 
   metrics-service:
-    init: true
-    # Chromium needs /dev/shm for renderer shared memory. 512m is sufficient for headless text-only mode.
-    shm_size: '512m'
     build:
       context: ./services/metrics-service
       dockerfile: Dockerfile
     container_name: dashboard_metrics_service
     ports:
       - "8082:8082"
-      - "6080:6080"
     env_file:
       - .env
     environment:
-      # Use G1GC (better for mixed heap), cap GC threads to 2, and enable full JIT (no TieredStopAtLevel=1).
-      # TieredStopAtLevel=1 forces interpreted-only mode which actually makes long-running tasks SLOWER.
       JAVA_TOOL_OPTIONS: "-XX:+UseG1GC -XX:MaxRAMPercentage=60.0 -XX:ParallelGCThreads=2 -XX:ConcGCThreads=1 -XX:+ExitOnOutOfMemoryError"
+      TELEGRAM_POLLING_ENABLED: "false"
     restart: unless-stopped
     depends_on:
       db:
@@ -81,17 +76,43 @@ services:
     deploy:
       resources:
         limits:
-          # Cap at 1.2 cores so Chromium cannot monopolize the 4-core i5 during scans.
-          # Scan duration increases slightly (~20%) but other services stay responsive.
-          cpus: '1.2'
-          memory: 1536M
-        reservations:
+          cpus: '0.6'
           memory: 512M
-    # Lower OS scheduling priority so system tasks preempt Chromium during high load.
-    # cpu_shares default = 1024. Setting 512 = half the default scheduling weight.
+        reservations:
+          memory: 256M
+
+  ai-agent-service:
+    init: true
+    shm_size: '512m'
+    build:
+      context: ./services/ai-agent-service
+      dockerfile: Dockerfile
+    container_name: dashboard_ai_agent
+    ports:
+      - "8084:8084"
+    env_file:
+      - .env
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - dashboard-network
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8084/health')\""]
+      interval: 15s
+      timeout: 10s
+      retries: 6
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 768M
+        reservations:
+          memory: 256M
     cpu_shares: 512
-    volumes:
-      - fb_profile_data:/var/lib/fb_browser_profile
+
 
   file-service:
     build:

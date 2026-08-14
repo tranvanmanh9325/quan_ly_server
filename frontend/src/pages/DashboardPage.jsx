@@ -7,6 +7,7 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Legend
 } from 'recharts';
 import { Search, Zap, Server, Activity, HardDrive, Wifi } from 'lucide-react';
+import { lttbDownsample } from '../utils/lttb';
 
 /** Custom tooltip for the 24H Metric History chart */
 function CustomChartTooltip({ active, payload, label }) {
@@ -103,7 +104,8 @@ export default function DashboardPage() {
               disk: item.diskPercent ?? null,
             };
           });
-          setHistoryChart(formatted);
+          const downsampled = lttbDownsample(formatted, 120);
+          setHistoryChart(downsampled);
         }
       })
       .catch(() => { /* silently fail — DB might be empty on first run */ });

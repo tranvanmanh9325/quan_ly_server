@@ -4,10 +4,13 @@ WORKDIR /app
 
 ENV PYTHONUNBUFFERED=1
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+ENV TZ=Asia/Ho_Chi_Minh
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     ca-certificates \
+    tzdata \
+    && ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .

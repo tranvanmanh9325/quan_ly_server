@@ -700,6 +700,8 @@ class FacebookService:
                     ctx: BrowserContext = await p.chromium.launch_persistent_context(
                         str(browser_data_path),
                         headless=True,
+                        timezone_id="Asia/Ho_Chi_Minh",
+                        locale="vi-VN",
                         args=[
                             "--no-sandbox",
                             "--disable-dev-shm-usage",
@@ -964,6 +966,8 @@ class FacebookService:
                 )
                 ctx = await browser.new_context(
                     viewport={"width": 1280, "height": 850},
+                    timezone_id="Asia/Ho_Chi_Minh",
+                    locale="vi-VN",
                     user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
                 )
                 try:

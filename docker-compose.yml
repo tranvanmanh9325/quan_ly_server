@@ -92,6 +92,8 @@ services:
       - "8084:8084"
     env_file:
       - .env
+    environment:
+      - TZ=Asia/Ho_Chi_Minh
     restart: unless-stopped
     depends_on:
       db:

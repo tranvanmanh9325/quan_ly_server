@@ -624,21 +624,25 @@ class FacebookService:
             await page.keyboard.press("Backspace")
             await asyncio.sleep(0.2)
 
-            # 3. Type the message content with human-like delay for Lexical editor state sync
-            await page.keyboard.type(text, delay=25)
-            await asyncio.sleep(0.5)
+            # 3. Insert message content supporting full UTF-8, Emoji and Multiline
+            try:
+                # Playwright's insert_text natively dispatches InputEvent with exact UTF-8 / Emoji payload
+                await page.keyboard.insert_text(text)
+            except Exception as insert_err:
+                logger.warning("[FB-Service] insert_text failed (%s), falling back to keyboard.type", insert_err)
+                await page.keyboard.type(text, delay=20)
+            await asyncio.sleep(0.6)
 
             # 4. Press Enter to send
             await page.keyboard.press("Enter")
             await asyncio.sleep(1.5)
 
-            # 5. Fallback: click Send button if Enter didn't trigger submission
             await page.evaluate("""
             () => {
                 let btn = document.querySelector('[aria-label="Nhấn để gửi"], [aria-label="Press Enter to send"], [aria-label="Send"], svg[aria-label="Nhấn để gửi"]');
                 if (btn) {
                     let clickable = btn.closest('div[role="button"], button') || btn;
-                    clickable.click && clickable.click();
+                    clickable.click();
                 }
             }
             """)

@@ -550,7 +550,16 @@ class FacebookService:
                             continue
                         try:
                             logger.info("[FB-Service] Checking thread: %s", t_href)
-                            await page.goto(t_href, wait_until="domcontentloaded", timeout=15000)
+                            is_e2ee = "/messages/e2ee/t/" in t_href
+                            try:
+                                await page.goto(
+                                    t_href,
+                                    wait_until="domcontentloaded",
+                                    timeout=20000 if is_e2ee else 15000,
+                                )
+                            except Exception as nav_err:
+                                logger.warning("[FB-Service] Navigation timeout for %s: %s — skipping", t_href, nav_err)
+                                continue
                             # Wait for message input box to confirm chat is loaded
                             try:
                                 await page.wait_for_selector(

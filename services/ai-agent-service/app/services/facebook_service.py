@@ -233,12 +233,12 @@ class FacebookService:
 
     async def _handle_e2ee_pin_screen(self, page: Page) -> bool:
         """Handles Facebook's 6-digit E2EE PIN screen if it appears.
-
-        Detects both standard inputs and custom React dash boxes, types 090325,
-        waits for decryption, and automatically dismisses the modal.
+        Directly enters the 6-digit PIN 090325 into the E2EE modal,
+        waits for Facebook to decrypt and restore chat history.
+        NEVER clicks 'Không khôi phục tin nhắn'.
         """
         try:
-            # 1. Check if PIN screen is present by text or input elements
+            # 1. Check if PIN screen is present by text
             has_pin_dialog = await page.evaluate("""
             () => {
                 let txt = (document.body.innerText || '');
@@ -248,26 +248,13 @@ class FacebookService:
             }
             """)
 
-            pin_inputs = await page.query_selector_all(
-                "input[type='password'], input[maxlength='1'], input[inputmode='numeric']"
-            )
-
-            if not has_pin_dialog and len(pin_inputs) not in (1, 6):
+            if not has_pin_dialog:
                 return False
 
-            logger.info("[FB-Service] E2EE PIN screen detected. Unlocking with PIN 090325...")
+            logger.info("[FB-Service] E2EE PIN screen detected. Unlocking with PIN 090325 to restore full chat...")
             pin = "090325"
 
-            # 2. Fill standard inputs if found
-            if len(pin_inputs) == 6:
-                for i, digit in enumerate(pin):
-                    await pin_inputs[i].fill(digit)
-                    await asyncio.sleep(0.1)
-            elif len(pin_inputs) == 1:
-                await pin_inputs[0].fill(pin)
-                await asyncio.sleep(0.1)
-
-            # 3. Focus on PIN dialog container and simulate sequential keyboard typing
+            # 2. Focus on the first dash box or input inside the PIN dialog
             await page.evaluate("""
             () => {
                 let dialog = Array.from(document.querySelectorAll('div, [role="dialog"], [role="alertdialog"]')).find(d => {
@@ -275,85 +262,38 @@ class FacebookService:
                     return t.includes('Nhập mã PIN') || t.includes('khôi phục đoạn chat');
                 });
                 if (dialog) {
-                    let firstBox = dialog.querySelector('input, [tabindex], div:has(> span)') || dialog;
-                    if (firstBox.click) firstBox.click();
-                    if (firstBox.focus) firstBox.focus();
+                    let firstBox = dialog.querySelector('input, div[tabindex="0"], div[role="button"]') || dialog;
+                    if (firstBox) {
+                        firstBox.click();
+                        if (firstBox.focus) firstBox.focus();
+                    }
                 }
             }
             """)
-            await asyncio.sleep(0.3)
+            await asyncio.sleep(0.4)
 
+            # 3. Type 6 digits: 0, 9, 0, 3, 2, 5
             for digit in pin:
                 await page.keyboard.press(digit)
-                await asyncio.sleep(0.15)
+                await asyncio.sleep(0.18)
 
-            # 4. Click Submit / Tiếp tục if present
-            submit_btn = await page.query_selector(
-                "button[type='submit'], [aria-label*='Tiếp tục'], [aria-label*='Continue'], div[role='button']:has-text('Tiếp tục')"
-            )
-            if submit_btn:
-                try:
-                    await submit_btn.click()
-                except Exception:
-                    pass
+            # 4. Wait for Facebook to verify PIN and decrypt chat history (3-6s)
+            logger.info("[FB-Service] PIN 090325 entered. Waiting for E2EE decryption...")
+            await asyncio.sleep(5.0)
 
-            # Wait for decryption
-            await asyncio.sleep(4.0)
-
-            # 5. Dismiss any remaining modal overlay by clicking Close (X) button
-            await page.evaluate("""
+            # 5. Check if dialog automatically dissolved upon successful decryption
+            dialog_still_open = await page.evaluate("""
             () => {
-                let dialogs = Array.from(document.querySelectorAll('[role="dialog"], [role="alertdialog"], div')).filter(d => {
-                    let t = (d.innerText || '');
-                    return t.includes('Nhập mã PIN') || t.includes('khôi phục đoạn chat');
-                });
-                for (let d of dialogs) {
-                    let closeBtn = d.querySelector('[aria-label="Đóng"], [aria-label="Close"], [aria-label="Huỷ"], svg');
-                    if (closeBtn) {
-                        let clickTarget = closeBtn.closest('div[role="button"], button') || closeBtn;
-                        clickTarget.click();
-                        return;
-                    }
-                }
+                let txt = (document.body.innerText || '');
+                return txt.includes('Nhập mã PIN') || txt.includes('khôi phục đoạn chat');
             }
             """)
-            await asyncio.sleep(1.5)
 
-            # 6. If confirmation modal 'Tiếp tục mà không khôi phục?' appears, click 'Không khôi phục tin nhắn'
-            await page.evaluate("""
-            () => {
-                let btns = Array.from(document.querySelectorAll('button, div[role="button"], span'));
-                for (let b of btns) {
-                    let txt = (b.innerText || '').trim();
-                    if (txt === 'Không khôi phục tin nhắn' || txt === 'Continue without restoring') {
-                        (b.closest('div[role="button"], button') || b).click();
-                        return;
-                    }
-                }
-            }
-            """)
-            await asyncio.sleep(1.0)
+            if not dialog_still_open:
+                logger.info("[FB-Service] E2EE chat history successfully decrypted and unlocked with PIN 090325!")
+                return True
 
-            # 7. Final fail-safe: remove any remaining PIN modal or full-screen overlay from DOM
-            await page.evaluate("""
-            () => {
-                let all = Array.from(document.querySelectorAll('*')).filter(el => {
-                    let t = el.innerText || '';
-                    return (t.includes('Nhập mã PIN') || t.includes('khôi phục đoạn chat')) && el.parentElement;
-                });
-                for (let el of all) {
-                    let modal = el.closest('[role="dialog"], [role="alertdialog"], div[style*="position: fixed"]');
-                    if (modal) {
-                        modal.remove();
-                    } else if (el.style.position === 'fixed') {
-                        el.remove();
-                    }
-                }
-                let backdrops = document.querySelectorAll('div[style*="position: fixed"][style*="z-index"]');
-                backdrops.forEach(b => b.remove());
-            }
-            """)
-            await asyncio.sleep(0.5)
+            logger.info("[FB-Service] PIN submitted, continuing with chat view.")
             return True
 
         except Exception as e:
@@ -1001,18 +941,17 @@ class FacebookService:
 
         async def _execute_send() -> str:
             async with async_playwright() as p:
-                browser = await p.chromium.launch(
+                ctx = await p.chromium.launch_persistent_context(
+                    user_data_dir="/app/data/browser_profile",
                     headless=True,
+                    viewport={"width": 1280, "height": 850},
+                    timezone_id="Asia/Ho_Chi_Minh",
+                    locale="vi-VN",
                     args=[
                         "--no-sandbox",
                         "--disable-dev-shm-usage",
                         "--disable-blink-features=AutomationControlled",
                     ],
-                )
-                ctx = await browser.new_context(
-                    viewport={"width": 1280, "height": 850},
-                    timezone_id="Asia/Ho_Chi_Minh",
-                    locale="vi-VN",
                     user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
                 )
                 try:
@@ -1039,11 +978,12 @@ class FacebookService:
                     except Exception:
                         pass
 
-                    await asyncio.sleep(2.0)
+                    await asyncio.sleep(2.5)
 
-                    # Handle PIN screen & dismiss any modal overlays
-                    await self._handle_e2ee_pin_screen(page)
-                    await asyncio.sleep(1.0)
+                    # Handle E2EE PIN unlock with 090325 to decrypt full chat history
+                    pin_unlocked = await self._handle_e2ee_pin_screen(page)
+                    if pin_unlocked:
+                        logger.info("[FB-DirectReply] E2EE PIN 090325 successfully handled for '%s'", recipient_name)
 
                     # If on root inbox and thread was clicked, ensure open
                     if not target_href:
@@ -1087,7 +1027,6 @@ class FacebookService:
                 finally:
                     await page.close()
                     await ctx.close()
-                    await browser.close()
 
         try:
             async with self._browser_lock:

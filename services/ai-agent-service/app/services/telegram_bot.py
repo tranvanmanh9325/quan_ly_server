@@ -130,8 +130,14 @@ class TelegramBot:
         if text.startswith("/"):
             await self._handle_command(text, chat_id)
         else:
-            reply = await self.ai_agent.chat(chat_id, text)
-            await self.send_message(chat_id, reply)
+            try:
+                logger.info("[TelegramBot] Received message from %s: '%s'", chat_id, text[:60])
+                reply = await self.ai_agent.chat(chat_id, text)
+                logger.info("[TelegramBot] AI reply for %s: '%s'", chat_id, reply[:60])
+                await self.send_message(chat_id, reply)
+            except Exception as err:
+                logger.error("[TelegramBot] Error processing message from %s: %s", chat_id, err, exc_info=True)
+                await self.send_message(chat_id, "Xin lỗi, đã xảy ra lỗi trong quá trình xử lý tin nhắn. Vui lòng thử lại sau.")
 
     async def start_polling(self) -> None:
         if not self.token or not self.polling_enabled:

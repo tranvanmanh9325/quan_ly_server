@@ -211,26 +211,49 @@ class FacebookService:
         return False
 
     async def _extract_thread_name_from_page(self, page: Page) -> str:
-        """Extracts the conversation partner's name from the page title or header."""
+        """Extracts the conversation partner's name from the page header.
+
+        Facebook's page title format is '(1) Messenger | Facebook' which does NOT
+        contain the contact name. We must read the conversation header from the DOM.
+        """
+        import re
         try:
-            # Try page title (e.g. "(2) Trần Văn Mạnh | Messenger")
+            # Primary: read conversation header from DOM — the <h1> or role='heading'
+            # inside the 'main' area typically contains the contact name.
+            name_from_dom = await page.evaluate("""
+            () => {
+              // Try: header with role=link (FB renders contact as a link in header)
+              let h = document.querySelector('[role=\"main\"] [role=\"link\"] h1, [role=\"main\"] h1');
+              if (h) return (h.innerText || '').trim();
+
+              // Try: the topmost heading visible in the chat area
+              let headings = Array.from(document.querySelectorAll('h1, h2, h3, h4'));
+              for (let hel of headings) {
+                let txt = (hel.innerText || '').trim();
+                if (txt && txt.length > 1 && txt.length < 80) return txt;
+              }
+
+              // Try: aria-label on the thread navigation link
+              let navLink = document.querySelector('[aria-label*=\"Cuộc trò chuyện\"], [aria-label*=\"Conversation with\"]');
+              if (navLink) {
+                let lbl = navLink.getAttribute('aria-label') || '';
+                let m = lbl.match(/(?:Cuộc trò chuyện với|Conversation with)\\s+(.+)/);
+                if (m) return m[1].trim();
+              }
+              return '';
+            }
+            """)
+            if name_from_dom and len(name_from_dom) > 1 and name_from_dom.lower() not in ("messenger", "facebook"):
+                return name_from_dom
+
+            # Fallback: try page title — only works when title has format "Name | Messenger"
             title = await page.title()
             if title and "|" in title:
                 name = title.split("|")[0].strip()
                 # Strip unread count prefix: "(2) Trần Văn Mạnh" → "Trần Văn Mạnh"
-                import re
-                name = re.sub(r'^\(\d+\)\s*', '', name).strip()
+                name = re.sub(r"^\(\d+\)\s*", "", name).strip()
                 if name and name.lower() not in ("messenger", "facebook", ""):
                     return name
-
-            # Try aria-label on conversation header
-            header = await page.query_selector(
-                "h1, [role='banner'] [role='link'], [aria-label*='Cuộc trò chuyện']"
-            )
-            if header:
-                txt = await header.inner_text()
-                if txt and txt.strip():
-                    return txt.strip()
         except Exception as e:
             logger.debug("[FB-Service] Could not extract thread name: %s", e)
         return "Người dùng Facebook"

@@ -23,6 +23,7 @@ class CookieInput(BaseModel):
 
 class ChatTestInput(BaseModel):
     message: str = "Trần Văn Mạnh nhắn tôi gì?"
+    chat_id: Optional[str] = None
 
 
 def get_fb_service(request: Request) -> FacebookService:
@@ -88,8 +89,12 @@ async def get_scan_status(fb: FacebookService = Depends(get_fb_service)):
 async def test_ai_chat(
     input_data: ChatTestInput, ai: AiAgentService = Depends(get_ai_agent)
 ):
-    reply = await ai.chat("test-api-session", input_data.message)
+    import uuid
+    session_id = input_data.chat_id or f"test-{uuid.uuid4().hex[:8]}"
+    reply = await ai.chat(session_id, input_data.message)
     return {
+        "chat_id": session_id,
         "message": input_data.message,
         "reply": reply,
     }
+

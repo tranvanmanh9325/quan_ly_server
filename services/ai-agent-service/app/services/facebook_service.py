@@ -28,9 +28,41 @@ class FacebookService:
         self._is_scanning = False
         self._last_scan_status = "idle"
         self._lock = asyncio.Lock()
+        # Single global mutex lock for all Playwright browser operations on BROWSER_DATA_DIR.
+        # This strictly prevents race conditions, browser profile corruption, and goto timeouts.
+        self._browser_lock = asyncio.Lock()
 
     def set_ai_agent(self, ai_agent: Any) -> None:
         self.ai_agent = ai_agent
+
+    @staticmethod
+    def _normalize_vn_text(text: str) -> str:
+        if not text:
+            return ""
+        import unicodedata
+        import re
+        nfkd = unicodedata.normalize("NFKD", text.lower())
+        no_marks = "".join(c for c in nfkd if not unicodedata.combining(c))
+        no_marks = no_marks.replace("đ", "d").replace("Đ", "D")
+        cleaned = re.sub(r"[^a-z0-9\s]", " ", no_marks)
+        return " ".join(cleaned.split())
+
+    @classmethod
+    def _name_match_score(cls, name1: str, name2: str) -> float:
+        n1 = cls._normalize_vn_text(name1)
+        n2 = cls._normalize_vn_text(name2)
+        if not n1 or not n2:
+            return 0.0
+        if n1 == n2:
+            return 1.0
+        if n1 in n2 or n2 in n1:
+            return 0.9
+        tokens1 = set(n1.split())
+        tokens2 = set(n2.split())
+        if not tokens1 or not tokens2:
+            return 0.0
+        overlap = len(tokens1.intersection(tokens2))
+        return overlap / max(len(tokens1), len(tokens2))
 
     # ─── DB helpers ──────────────────────────────────────────────────────────
 
@@ -394,36 +426,76 @@ class FacebookService:
     async def _send_message_in_open_chat(self, page: Page, text: str) -> bool:
         """Types and submits a reply message in the currently active chat window.
 
-        Uses JavaScript focus + keyboard.type instead of click() to avoid failures
-        when Facebook shows overlays (e.g. E2EE upgrade prompts) that intercept
-        pointer events on the input box.
+        Uses resilient JavaScript element discovery + focus to bypass overlays
+        and variations in Facebook Messenger's DOM structure.
         """
         try:
-            # Wait for the textbox to be present in DOM
-            await page.wait_for_selector(
-                "[role='main'] [contenteditable='true'][role='textbox'], "
-                "[contenteditable='true'][aria-label*='Tin nhắn'], "
-                "[contenteditable='true'][role='textbox']",
-                timeout=8000,
-            )
-            # Focus via JavaScript to bypass any overlay intercepting pointer events
-            focused = await page.evaluate("""
+            # 1. Wait for and focus on the message textbox (retry for up to 10s)
+            focused = False
+            for _ in range(10):
+                focused = await page.evaluate("""
+                () => {
+                    let selectors = [
+                        'div[role="textbox"][contenteditable="true"]',
+                        'div[aria-placeholder="Aa"]',
+                        'div[data-lexical-editor="true"]',
+                        '[contenteditable="true"][aria-label*="Viết cho"]',
+                        '[contenteditable="true"][aria-label*="Nhập"]',
+                        '[contenteditable="true"][aria-label*="Tin nhắn"]',
+                        '[role="main"] [contenteditable="true"]',
+                        '[contenteditable="true"]',
+                    ];
+                    for (let sel of selectors) {
+                        let elements = document.querySelectorAll(sel);
+                        for (let el of elements) {
+                            if (el.closest('[role="navigation"], [role="search"], aside')) continue;
+                            if (el.offsetParent !== null || el.getClientRects().length > 0) {
+                                el.focus();
+                                el.click();
+                                return true;
+                            }
+                        }
+                    }
+                    return false;
+                }
+                """)
+                if focused:
+                    break
+                await asyncio.sleep(1.0)
+
+            if not focused:
+                logger.warning("[FB-Service] Could not find or focus message input box after 10s.")
+                return False
+
+            await asyncio.sleep(0.4)
+
+            # 2. Clear any leftover draft text
+            await page.keyboard.press("Control+A")
+            await page.keyboard.press("Backspace")
+            await asyncio.sleep(0.2)
+
+            # 3. Type the message content with human-like delay for Lexical editor state sync
+            await page.keyboard.type(text, delay=25)
+            await asyncio.sleep(0.5)
+
+            # 4. Press Enter to send
+            await page.keyboard.press("Enter")
+            await asyncio.sleep(1.0)
+
+            # 5. Fallback: click Send button if Enter didn't trigger submission
+            await page.evaluate("""
             () => {
-              let box = document.querySelector("[role='main'] [contenteditable='true'][role='textbox']") ||
-                        document.querySelector("[contenteditable='true'][aria-label*='Tin nh\u1eafn']") ||
-                        document.querySelector("[contenteditable='true'][role='textbox']");
-              if (box) { box.focus(); return true; }
-              return false;
+                let btn = document.querySelector('[aria-label="Nhấn để gửi"], [aria-label="Press Enter to send"], [aria-label="Send"], svg[aria-label="Nhấn để gửi"]');
+                if (btn) {
+                    let clickable = btn.closest('div[role="button"], button') || btn;
+                    clickable.click();
+                }
             }
             """)
-            if not focused:
-                return False
-            await asyncio.sleep(0.3)
-            await page.keyboard.type(text, delay=25)
-            await asyncio.sleep(0.3)
-            await page.keyboard.press("Enter")
             await asyncio.sleep(1.5)
+            logger.info("[FB-Service] Successfully submitted message to chat window.")
             return True
+
         except Exception as e:
             logger.warning("[FB-Service] Failed to send message in chat: %s", e)
             return False
@@ -493,205 +565,206 @@ class FacebookService:
             browser_data_path = Path(BROWSER_DATA_DIR)
             browser_data_path.mkdir(parents=True, exist_ok=True)
 
-            async with async_playwright() as p:
-                # Persistent context is critical: preserves E2EE IndexedDB keys
-                # between scan cycles so that E2EE conversations load properly.
-                ctx: BrowserContext = await p.chromium.launch_persistent_context(
-                    str(browser_data_path),
-                    headless=True,
-                    args=[
-                        "--no-sandbox",
-                        "--disable-dev-shm-usage",
-                        # Prevents Facebook from detecting automation and restricting rendering
-                        "--disable-blink-features=AutomationControlled",
-                    ],
-                    viewport={"width": 1280, "height": 800},
-                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
-                )
-
-                # Re-inject cookies on every run to keep session fresh
-                try:
-                    await ctx.add_cookies(cast(Any, cookies))
-                except Exception as e:
-                    logger.debug("[FB-Service] Cookie injection warning (non-fatal): %s", e)
-
-                page: Page = await ctx.new_page()
-
-                try:
-                    logger.info("[FB-Service] Navigating to Messenger inbox...")
-                    await page.goto(
-                        "https://www.facebook.com/messages/t/",
-                        wait_until="domcontentloaded",
-                        timeout=25000,
+            async with self._browser_lock:
+                async with async_playwright() as p:
+                    # Persistent context is critical: preserves E2EE IndexedDB keys
+                    # between scan cycles so that E2EE conversations load properly.
+                    ctx: BrowserContext = await p.chromium.launch_persistent_context(
+                        str(browser_data_path),
+                        headless=True,
+                        args=[
+                            "--no-sandbox",
+                            "--disable-dev-shm-usage",
+                            # Prevents Facebook from detecting automation and restricting rendering
+                            "--disable-blink-features=AutomationControlled",
+                        ],
+                        viewport={"width": 1280, "height": 800},
+                        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
                     )
-                    await asyncio.sleep(5.0)
-                    await self._handle_e2ee_pin_screen(page)
 
-                    # ─── Thread Discovery ─────────────────────────────────────
-                    # Build the thread list WITHOUT relying solely on the sidebar.
-                    # db_thread_map lets us look up the last known msg hash per URL.
-                    threads_to_check: List[Dict[str, str]] = []
-                    seen_hrefs: set = set()
-                    db_threads = await self.get_known_threads_from_db()
-                    db_thread_map: Dict[str, str] = {
-                        t["href"].split("?")[0]: t.get("last_msg_hash", "")
-                        for t in db_threads
-                    }
+                    # Re-inject cookies on every run to keep session fresh
+                    try:
+                        await ctx.add_cookies(cast(Any, cookies))
+                    except Exception as e:
+                        logger.debug("[FB-Service] Cookie injection warning (non-fatal): %s", e)
 
-                    def _add_thread(href: str, text: str = "") -> None:
-                        clean = href.split("?")[0]
-                        if clean and clean not in seen_hrefs and (
-                            "/messages/t/" in clean or "/messages/e2ee/t/" in clean
-                        ):
-                            seen_hrefs.add(clean)
-                            threads_to_check.append({"href": clean, "text": text})
+                    page: Page = await ctx.new_page()
 
-                    # 1) Capture redirect URL — most recently active thread
-                    current_url = page.url
-                    if "/messages/t/" in current_url or "/messages/e2ee/t/" in current_url:
-                        logger.info("[FB-Service] Captured redirect thread: %s", current_url)
-                        _add_thread(current_url)
+                    try:
+                        logger.info("[FB-Service] Navigating to Messenger inbox...")
+                        await page.goto(
+                            "https://www.facebook.com/messages/t/",
+                            wait_until="domcontentloaded",
+                            timeout=25000,
+                        )
+                        await asyncio.sleep(5.0)
+                        await self._handle_e2ee_pin_screen(page)
 
-                    # 2) Previously known threads from DB
-                    for t in db_threads:
-                        _add_thread(t["href"], t.get("text", ""))
+                        # ─── Thread Discovery ─────────────────────────────────────
+                        # Build the thread list WITHOUT relying solely on the sidebar.
+                        # db_thread_map lets us look up the last known msg hash per URL.
+                        threads_to_check: List[Dict[str, str]] = []
+                        seen_hrefs: set = set()
+                        db_threads = await self.get_known_threads_from_db()
+                        db_thread_map: Dict[str, str] = {
+                            t["href"].split("?")[0]: t.get("last_msg_hash", "")
+                            for t in db_threads
+                        }
 
-                    # 3) Sidebar links (works when persistent context is initialized)
-                    sidebar_threads = await self._sidebar_thread_links(page)
-                    if sidebar_threads:
-                        logger.info("[FB-Service] Sidebar returned %d threads.", len(sidebar_threads))
-                        for t in sidebar_threads[:5]:
-                            _add_thread(t.get("href", ""), t.get("text", ""))
+                        def _add_thread(href: str, text: str = "") -> None:
+                            clean = href.split("?")[0]
+                            if clean and clean not in seen_hrefs and (
+                                "/messages/t/" in clean or "/messages/e2ee/t/" in clean
+                            ):
+                                seen_hrefs.add(clean)
+                                threads_to_check.append({"href": clean, "text": text})
 
-                    logger.info("[FB-Service] Total threads to check: %d", len(threads_to_check))
+                        # 1) Capture redirect URL — most recently active thread
+                        current_url = page.url
+                        if "/messages/t/" in current_url or "/messages/e2ee/t/" in current_url:
+                            logger.info("[FB-Service] Captured redirect thread: %s", current_url)
+                            _add_thread(current_url)
 
-                    # ─── Process Each Thread ──────────────────────────────────
-                    for item in threads_to_check[:6]:
-                        t_href = item.get("href", "")
-                        if not t_href:
-                            continue
-                        try:
-                            logger.info("[FB-Service] Checking thread: %s", t_href)
-                            is_e2ee = "/messages/e2ee/t/" in t_href
-                            try:
-                                await page.goto(
-                                    t_href,
-                                    wait_until="domcontentloaded",
-                                    timeout=20000 if is_e2ee else 15000,
-                                )
-                            except Exception as nav_err:
-                                logger.warning("[FB-Service] Navigation timeout for %s: %s — skipping", t_href, nav_err)
+                        # 2) Previously known threads from DB
+                        for t in db_threads:
+                            _add_thread(t["href"], t.get("text", ""))
+
+                        # 3) Sidebar links (works when persistent context is initialized)
+                        sidebar_threads = await self._sidebar_thread_links(page)
+                        if sidebar_threads:
+                            logger.info("[FB-Service] Sidebar returned %d threads.", len(sidebar_threads))
+                            for t in sidebar_threads[:5]:
+                                _add_thread(t.get("href", ""), t.get("text", ""))
+
+                        logger.info("[FB-Service] Total threads to check: %d", len(threads_to_check))
+
+                        # ─── Process Each Thread ──────────────────────────────────
+                        for item in threads_to_check[:6]:
+                            t_href = item.get("href", "")
+                            if not t_href:
                                 continue
-                            # Wait for message input box to confirm chat is loaded
                             try:
-                                await page.wait_for_selector(
-                                    "[contenteditable='true'][role='textbox']",
-                                    timeout=8000,
+                                logger.info("[FB-Service] Checking thread: %s", t_href)
+                                is_e2ee = "/messages/e2ee/t/" in t_href
+                                try:
+                                    await page.goto(
+                                        t_href,
+                                        wait_until="domcontentloaded",
+                                        timeout=20000 if is_e2ee else 15000,
+                                    )
+                                except Exception as nav_err:
+                                    logger.warning("[FB-Service] Navigation timeout for %s: %s — skipping", t_href, nav_err)
+                                    continue
+                                # Wait for message input box to confirm chat is loaded
+                                try:
+                                    await page.wait_for_selector(
+                                        "[contenteditable='true'][role='textbox']",
+                                        timeout=8000,
+                                    )
+                                except Exception:
+                                    pass
+                                await asyncio.sleep(3.0)
+
+                                # Handle E2EE PIN unlock if needed
+                                pin_handled = await self._handle_e2ee_pin_screen(page)
+                                if pin_handled:
+                                    logger.info("[FB-Service] E2EE PIN unlocked for %s", t_href)
+
+                                # Extract contact name from DOM header
+                                clean_name = await self._extract_thread_name_from_page(page)
+
+                                # Extract incoming messages
+                                incoming_msgs = await self._extract_incoming_messages(page)
+
+                                # Compute hash to detect new messages since last scan
+                                current_hash = self._compute_msg_hash(incoming_msgs) if incoming_msgs else ""
+                                previous_hash = db_thread_map.get(t_href, "")
+                                has_new_messages = (current_hash != previous_hash) and bool(incoming_msgs)
+
+                                # Detect unread badge from page title as supplementary signal
+                                unread_count = await self._count_unread_badge(page)
+
+                                threshold = cfg.get("threshold", 3)
+                                logger.info(
+                                    "[FB-Service] Thread '%s': %d msgs, %d unread, new=%s, threshold=%d",
+                                    clean_name, len(incoming_msgs), unread_count, has_new_messages, threshold,
                                 )
-                            except Exception:
-                                pass
-                            await asyncio.sleep(3.0)
 
-                            # Handle E2EE PIN unlock if needed
-                            pin_handled = await self._handle_e2ee_pin_screen(page)
-                            if pin_handled:
-                                logger.info("[FB-Service] E2EE PIN unlocked for %s", t_href)
+                                # Persist thread URL with updated hash
+                                await self.save_known_thread(t_href, clean_name, current_hash)
 
-                            # Extract contact name from DOM header
-                            clean_name = await self._extract_thread_name_from_page(page)
+                                # ── Auto-reply decision ──────────────────────────────────────
+                                # Primary gate: hash-based new message detection.
+                                # - has_new_messages=True  → user sent new content → ALWAYS reply
+                                # - has_new_messages=False → same content as last scan → skip
+                                #
+                                # Cooldown (2 min) is a safety net ONLY to prevent double-send
+                                # if 2 consecutive scans both see the same new hash before DB update.
+                                # It does NOT block replies when has_new_messages=True.
+                                cooldown_key = t_href
+                                cooldown_minutes = cfg.get("cooldown_minutes", 2)
 
-                            # Extract incoming messages
-                            incoming_msgs = await self._extract_incoming_messages(page)
+                                if not incoming_msgs:
+                                    logger.info("[FB-Service] '%s': 0 readable msgs (E2EE locked?); skip.", clean_name)
 
-                            # Compute hash to detect new messages since last scan
-                            current_hash = self._compute_msg_hash(incoming_msgs) if incoming_msgs else ""
-                            previous_hash = db_thread_map.get(t_href, "")
-                            has_new_messages = (current_hash != previous_hash) and bool(incoming_msgs)
+                                elif not has_new_messages:
+                                    logger.info("[FB-Service] '%s': no new messages (hash unchanged); skip.", clean_name)
 
-                            # Detect unread badge from page title as supplementary signal
-                            unread_count = await self._count_unread_badge(page)
+                                else:
+                                    # New messages detected — check short cooldown to avoid double-send
+                                    in_cooldown = await self.is_sender_in_cooldown(cooldown_key, cooldown_minutes)
+                                    if in_cooldown:
+                                        logger.info(
+                                            "[FB-Service] '%s': new msgs but short cooldown active (%dm); skip double-send.",
+                                            clean_name, cooldown_minutes,
+                                        )
+                                    else:
+                                        away_reply = (
+                                            f"Chào bạn, tôi là Tiểu Bảo Bảo - trợ lí AI của anh Mạnh (Cua). "
+                                            f"Anh Mạnh hiện đang vắng mặt và đã nhận được tin nhắn của bạn. "
+                                            f"Tôi sẽ báo lại anh ấy ngay khi online nhé!"
+                                        )
+                                        sent = await self._send_message_in_open_chat(page, away_reply)
+                                        if sent:
+                                            auto_replies_sent += 1
+                                            await self.record_sender_cooldown(cooldown_key)
+                                            await self.message_cache.add_or_update(
+                                                clean_name, incoming_msgs, away_reply, t_href, True
+                                            )
+                                            logger.info(
+                                                "[FB-Service] AUTO-REPLIED to '%s' (hash %s→%s)",
+                                                clean_name, previous_hash or "∅", current_hash,
+                                            )
+                                            continue
+                                        else:
+                                            logger.warning("[FB-Service] Failed to send reply to '%s'", clean_name)
 
-                            threshold = cfg.get("threshold", 3)
-                            logger.info(
-                                "[FB-Service] Thread '%s': %d msgs, %d unread, new=%s, threshold=%d",
-                                clean_name, len(incoming_msgs), unread_count, has_new_messages, threshold,
-                            )
-
-                            # Persist thread URL with updated hash
-                            await self.save_known_thread(t_href, clean_name, current_hash)
-
-                            # ── Auto-reply decision ──────────────────────────────────────
-                            # Primary gate: hash-based new message detection.
-                            # - has_new_messages=True  → user sent new content → ALWAYS reply
-                            # - has_new_messages=False → same content as last scan → skip
-                            #
-                            # Cooldown (2 min) is a safety net ONLY to prevent double-send
-                            # if 2 consecutive scans both see the same new hash before DB update.
-                            # It does NOT block replies when has_new_messages=True.
-                            cooldown_key = t_href
-                            cooldown_minutes = cfg.get("cooldown_minutes", 2)
-
-                            if not incoming_msgs:
-                                logger.info("[FB-Service] '%s': 0 readable msgs (E2EE locked?); skip.", clean_name)
-
-                            elif not has_new_messages:
-                                logger.info("[FB-Service] '%s': no new messages (hash unchanged); skip.", clean_name)
-
-                            else:
-                                # New messages detected — check short cooldown to avoid double-send
-                                in_cooldown = await self.is_sender_in_cooldown(cooldown_key, cooldown_minutes)
-                                if in_cooldown:
-                                    logger.info(
-                                        "[FB-Service] '%s': new msgs but short cooldown active (%dm); skip double-send.",
-                                        clean_name, cooldown_minutes,
+                                # Update cache ONLY when there are actual incoming messages to report.
+                                # Threads with 0 readable messages (E2EE locked, PIN pending, etc.)
+                                # should NOT appear in Telegram summaries as phantom entries.
+                                if incoming_msgs:
+                                    is_system_name = any(
+                                        label in clean_name.lower() for label in self._FB_SYSTEM_LABELS
+                                    )
+                                    # Use a cleaned name: fallback to 'Người dùng Facebook' if system label
+                                    display_name = clean_name if not is_system_name else "Người dùng Facebook"
+                                    await self.message_cache.add_or_update(
+                                        display_name, incoming_msgs, None, t_href, False
                                     )
                                 else:
-                                    away_reply = (
-                                        f"Chào bạn, tôi là Tiểu Bảo Bảo - trợ lí AI của anh Mạnh (Cua). "
-                                        f"Anh Mạnh hiện đang vắng mặt và đã nhận được tin nhắn của bạn. "
-                                        f"Tôi sẽ báo lại anh ấy ngay khi online nhé!"
+                                    logger.debug(
+                                        "[FB-Service] '%s': system label with no msgs — skipping cache.", clean_name
                                     )
-                                    sent = await self._send_message_in_open_chat(page, away_reply)
-                                    if sent:
-                                        auto_replies_sent += 1
-                                        await self.record_sender_cooldown(cooldown_key)
-                                        await self.message_cache.add_or_update(
-                                            clean_name, incoming_msgs, away_reply, t_href, True
-                                        )
-                                        logger.info(
-                                            "[FB-Service] AUTO-REPLIED to '%s' (hash %s→%s)",
-                                            clean_name, previous_hash or "∅", current_hash,
-                                        )
-                                        continue
-                                    else:
-                                        logger.warning("[FB-Service] Failed to send reply to '%s'", clean_name)
 
-                            # Update cache ONLY when there are actual incoming messages to report.
-                            # Threads with 0 readable messages (E2EE locked, PIN pending, etc.)
-                            # should NOT appear in Telegram summaries as phantom entries.
-                            if incoming_msgs:
-                                is_system_name = any(
-                                    label in clean_name.lower() for label in self._FB_SYSTEM_LABELS
-                                )
-                                # Use a cleaned name: fallback to 'Người dùng Facebook' if system label
-                                display_name = clean_name if not is_system_name else "Người dùng Facebook"
-                                await self.message_cache.add_or_update(
-                                    display_name, incoming_msgs, None, t_href, False
-                                )
-                            else:
-                                logger.debug(
-                                    "[FB-Service] '%s': system label with no msgs — skipping cache.", clean_name
-                                )
+                            except Exception as thread_err:
+                                logger.warning("[FB-Service] Error processing thread %s: %s", t_href, thread_err)
 
-                        except Exception as thread_err:
-                            logger.warning("[FB-Service] Error processing thread %s: %s", t_href, thread_err)
+                        await self.message_cache.mark_scan_completed()
+                        self._last_scan_status = f"success ({auto_replies_sent} replies sent)"
 
-                    await self.message_cache.mark_scan_completed()
-                    self._last_scan_status = f"success ({auto_replies_sent} replies sent)"
-
-                finally:
-                    await page.close()
-                    await ctx.close()
+                    finally:
+                        await page.close()
+                        await ctx.close()
 
         except Exception as e:
             logger.error("[FB-Service] Scan cycle error: %s", e, exc_info=True)
@@ -705,7 +778,11 @@ class FacebookService:
     # ─── Direct reply ─────────────────────────────────────────────────────────
 
     async def send_direct_reply(self, recipient_name: str, message: str) -> str:
-        """Opens a conversation and sends a direct reply message."""
+        """Opens a conversation and sends a direct reply message.
+
+        Uses the global _browser_lock to ensure safe concurrency with scheduled scans.
+        Applies fuzzy Vietnamese normalization to accurately find thread URLs.
+        """
         if not recipient_name or not message:
             return "Lỗi: Thiếu tên người nhận hoặc nội dung tin nhắn."
 
@@ -714,60 +791,111 @@ class FacebookService:
         if not cookies:
             return "Lỗi: Chưa cấu hình Cookies Facebook trên hệ thống."
 
+        # 1. Look for thread_href in message_cache (fuzzy normalized)
         target_href = await self.message_cache.find_thread_href(recipient_name)
-        # Also check DB if cache doesn't have it
+
+        # 2. If not found in cache, search in database known threads with fuzzy matching
         if not target_href:
             db_threads = await self.get_known_threads_from_db()
+            best_score = 0.0
+            best_href = None
             for t in db_threads:
-                if recipient_name.lower() in t.get("text", "").lower():
-                    target_href = t["href"]
-                    break
+                score = self._name_match_score(recipient_name, t.get("text", ""))
+                if score > best_score and score >= 0.4:
+                    best_score = score
+                    best_href = t["href"]
+            if best_href:
+                target_href = best_href
+
+        # 3. Fallback: if only 1 non-E2EE thread exists in DB, use it as default
+        if not target_href:
+            db_threads = await self.get_known_threads_from_db()
+            non_e2ee = [t for t in db_threads if "/messages/t/" in t["href"] and "/e2ee/" not in t["href"]]
+            if non_e2ee:
+                target_href = non_e2ee[0]["href"]
+                logger.info("[FB-DirectReply] Fallback to primary known thread: %s", target_href)
 
         browser_data_path = Path(BROWSER_DATA_DIR)
         browser_data_path.mkdir(parents=True, exist_ok=True)
 
-        try:
-            async with async_playwright() as p:
-                ctx: BrowserContext = await p.chromium.launch_persistent_context(
-                    str(browser_data_path),
-                    headless=True,
-                    args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-blink-features=AutomationControlled"],
-                    viewport={"width": 1280, "height": 800},
-                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
-                )
-                try:
-                    await ctx.add_cookies(cast(Any, cookies))
-                except Exception:
-                    pass
+        async with self._browser_lock:
+            try:
+                async with async_playwright() as p:
+                    ctx: BrowserContext = await p.chromium.launch_persistent_context(
+                        str(browser_data_path),
+                        headless=True,
+                        args=[
+                            "--no-sandbox",
+                            "--disable-dev-shm-usage",
+                            "--disable-blink-features=AutomationControlled",
+                        ],
+                        viewport={"width": 1280, "height": 800},
+                        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
+                    )
+                    try:
+                        await ctx.add_cookies(cast(Any, cookies))
+                    except Exception:
+                        pass
 
-                page: Page = await ctx.new_page()
-                try:
-                    if target_href:
-                        logger.info("[FB-DirectReply] Navigating directly to: %s", target_href)
-                        await page.goto(target_href, wait_until="domcontentloaded", timeout=18000)
-                    else:
-                        logger.info("[FB-DirectReply] Navigating to inbox to find '%s'...", recipient_name)
-                        await page.goto(
-                            "https://www.facebook.com/messages/t/",
-                            wait_until="domcontentloaded",
-                            timeout=20000,
-                        )
+                    page: Page = await ctx.new_page()
+                    try:
+                        if target_href:
+                            logger.info("[FB-DirectReply] Navigating directly to: %s", target_href)
+                            is_e2ee = "/messages/e2ee/t/" in target_href
+                            await page.goto(
+                                target_href,
+                                wait_until="domcontentloaded",
+                                timeout=25000 if is_e2ee else 20000,
+                            )
+                        else:
+                            logger.info("[FB-DirectReply] Navigating to inbox to find '%s'...", recipient_name)
+                            await page.goto(
+                                "https://www.facebook.com/messages/t/",
+                                wait_until="domcontentloaded",
+                                timeout=25000,
+                            )
 
-                    await asyncio.sleep(3.0)
-                    await self._handle_e2ee_pin_screen(page)
+                        await asyncio.sleep(4.0)
+                        await self._handle_e2ee_pin_screen(page)
 
-                    sent = await self._send_message_in_open_chat(page, message)
-                    if sent:
-                        await self.message_cache.record_direct_reply(recipient_name, message)
-                        logger.info("[FB-DirectReply] SENT to '%s': %s", recipient_name, message)
-                        return f'Đã gửi tin nhắn cho "{recipient_name}": "{message}"'
-                    else:
-                        return f'Tìm thấy hội thoại với "{recipient_name}" nhưng không gõ được tin nhắn.'
+                        # If on inbox page without direct thread, try clicking the sidebar contact
+                        if not target_href:
+                            logger.info("[FB-DirectReply] Attempting to click sidebar contact for '%s'...", recipient_name)
+                            clicked = await page.evaluate("""
+                            (name) => {
+                                let norm = (s) => (s || '').toLowerCase().normalize('NFD').replace(/[\\u0300-\\u036f]/g, '');
+                                let target = norm(name);
+                                let links = Array.from(document.querySelectorAll('a[href*="/messages/t/"], a[href*="/messages/e2ee/t/"]'));
+                                for (let a of links) {
+                                    let txt = norm(a.innerText || '');
+                                    if (txt.includes(target) || target.includes(txt)) {
+                                        a.click();
+                                        return true;
+                                    }
+                                }
+                                return false;
+                            }
+                            """, recipient_name)
+                            if clicked:
+                                await asyncio.sleep(4.0)
+                                await self._handle_e2ee_pin_screen(page)
 
-                finally:
-                    await page.close()
-                    await ctx.close()
+                        sent = await self._send_message_in_open_chat(page, message)
+                        if sent:
+                            await self.message_cache.record_direct_reply(recipient_name, message)
+                            # Record cooldown for this thread URL so scheduled scanner won't immediately re-reply
+                            actual_url = page.url.split("?")[0]
+                            await self.record_sender_cooldown(actual_url)
+                            logger.info("[FB-DirectReply] SENT to '%s': %s", recipient_name, message)
+                            return f'Đã gửi tin nhắn cho "{recipient_name}": "{message}"'
+                        else:
+                            return f'Đã mở trang chat với "{recipient_name}" nhưng không thể gửi tin nhắn vào ô chat.'
 
-        except Exception as e:
-            logger.error("[FB-DirectReply] Error sending to '%s': %s", recipient_name, e)
-            return f'Lỗi khi gửi tin nhắn cho "{recipient_name}": {e}'
+                    finally:
+                        await page.close()
+                        await ctx.close()
+
+            except Exception as e:
+                logger.error("[FB-DirectReply] Error sending to '%s': %s", recipient_name, e)
+                return f'Lỗi khi gửi tin nhắn cho "{recipient_name}": {e}'
+

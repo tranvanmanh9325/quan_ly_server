@@ -96,11 +96,44 @@ class FacebookMessageCache:
             self._last_scan_at = datetime.now(VN_TZ)
 
     def _find_entry_sync(self, sender_name: str) -> Optional[MessageEntry]:
-        q = sender_name.strip().lower()
+        if not sender_name or not self._entries:
+            return None
+        import unicodedata
+        import re
+
+        def _norm(s: str) -> str:
+            nfkd = unicodedata.normalize("NFKD", s.lower())
+            no_marks = "".join(c for c in nfkd if not unicodedata.combining(c))
+            no_marks = no_marks.replace("đ", "d").replace("Đ", "D")
+            cleaned = re.sub(r"[^a-z0-9\s]", " ", no_marks)
+            return " ".join(cleaned.split())
+
+        q_norm = _norm(sender_name)
+        if not q_norm:
+            return None
+
+        # 1. Exact or substring match on normalized text
         for e in self._entries:
-            if q in e.sender_name.lower() or e.sender_name.lower() in q:
+            e_norm = _norm(e.sender_name)
+            if q_norm == e_norm or q_norm in e_norm or e_norm in q_norm:
                 return e
-        return None
+
+        # 2. Token set overlap match (e.g. 'Mạnh Văn Trần' vs 'Trần Văn Mạnh')
+        q_tokens = set(q_norm.split())
+        best_match: Optional[MessageEntry] = None
+        best_score = 0.0
+
+        for e in self._entries:
+            e_tokens = set(_norm(e.sender_name).split())
+            if not e_tokens:
+                continue
+            overlap = len(q_tokens.intersection(e_tokens))
+            score = overlap / max(len(q_tokens), len(e_tokens))
+            if score > best_score and score >= 0.5:
+                best_score = score
+                best_match = e
+
+        return best_match
 
     async def find_thread_href(self, sender_name: str) -> Optional[str]:
         async with self._lock:

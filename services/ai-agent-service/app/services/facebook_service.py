@@ -598,21 +598,32 @@ class FacebookService:
                             # Persist thread URL with updated hash
                             await self.save_known_thread(t_href, clean_name, current_hash)
 
-                            # ── Auto-reply decision ──────────────────────────
-                            # Reply only when:
-                            # 1. We can read actual messages (incoming_msgs > 0)
-                            # 2. Messages are NEW since last reply (hash changed)
-                            # 3. Sender not in cooldown
-                            # Cooldown key = thread_href URL (stable across scans)
+                            # ── Auto-reply decision ──────────────────────────────────────
+                            # Primary gate: hash-based new message detection.
+                            # - has_new_messages=True  → user sent new content → ALWAYS reply
+                            # - has_new_messages=False → same content as last scan → skip
+                            #
+                            # Cooldown (2 min) is a safety net ONLY to prevent double-send
+                            # if 2 consecutive scans both see the same new hash before DB update.
+                            # It does NOT block replies when has_new_messages=True.
                             cooldown_key = t_href
-                            should_reply = has_new_messages and (
-                                unread_count > 0 or len(incoming_msgs) >= threshold
-                            )
-                            if should_reply:
-                                in_cooldown = await self.is_sender_in_cooldown(
-                                    cooldown_key, cfg.get("cooldown_minutes", 15)
-                                )
-                                if not in_cooldown:
+                            cooldown_minutes = cfg.get("cooldown_minutes", 2)
+
+                            if not incoming_msgs:
+                                logger.info("[FB-Service] '%s': 0 readable msgs (E2EE locked?); skip.", clean_name)
+
+                            elif not has_new_messages:
+                                logger.info("[FB-Service] '%s': no new messages (hash unchanged); skip.", clean_name)
+
+                            else:
+                                # New messages detected — check short cooldown to avoid double-send
+                                in_cooldown = await self.is_sender_in_cooldown(cooldown_key, cooldown_minutes)
+                                if in_cooldown:
+                                    logger.info(
+                                        "[FB-Service] '%s': new msgs but short cooldown active (%dm); skip double-send.",
+                                        clean_name, cooldown_minutes,
+                                    )
+                                else:
                                     away_reply = (
                                         f"Chào bạn, tôi là Tiểu Bảo Bảo - trợ lí AI của anh Mạnh (Cua). "
                                         f"Anh Mạnh hiện đang vắng mặt và đã nhận được tin nhắn của bạn. "
@@ -627,15 +638,11 @@ class FacebookService:
                                         )
                                         logger.info(
                                             "[FB-Service] AUTO-REPLIED to '%s' (hash %s→%s)",
-                                            clean_name, previous_hash or "∅", current_hash
+                                            clean_name, previous_hash or "∅", current_hash,
                                         )
                                         continue
-                                else:
-                                    logger.info("[FB-Service] '%s' is in cooldown; skipping.", clean_name)
-                            elif not incoming_msgs:
-                                logger.info("[FB-Service] '%s': 0 readable msgs (E2EE locked?); skip.", clean_name)
-                            elif not has_new_messages:
-                                logger.info("[FB-Service] '%s': no new messages since last scan; skip.", clean_name)
+                                    else:
+                                        logger.warning("[FB-Service] Failed to send reply to '%s'", clean_name)
 
                             # Update cache without reply
                             await self.message_cache.add_or_update(

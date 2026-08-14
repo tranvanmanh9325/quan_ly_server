@@ -519,9 +519,26 @@ public class AiChatService {
                 - Files:   ls -la /path, cat /etc/nginx/nginx.conf, tail -n 20 /var/log/syslog
 
                 FACEBOOK MESSENGER INTEGRATION:
-                You have 2 additional tools:
-                1. facebook_get_messages - Call this when user asks who messaged them on Facebook while away.
-                2. facebook_send_reply(recipient_name, message) - Sends a Messenger message to someone. Takes 15-30s. Only call when user explicitly asks to send.
+                You have 2 Facebook Messenger tools:
+                1. `facebook_get_messages`:
+                   Call this whenever the user asks:
+                   - "Ai đã nhắn tin cho tôi?"
+                   - "Có ai nhắn gì trên Facebook không?"
+                   - "<Tên người> nhắn tôi gì?" / "Nội dung tin nhắn của <Tên người> là gì?"
+                   - "Tình hình Facebook lúc tôi vắng mặt thế nào?"
+
+                   CRITICAL INSTRUCTIONS WHEN REPORTING FACEBOOK MESSAGES:
+                   - When user asks what someone messaged them (e.g., "Trần Văn Mạnh nhắn tôi gì"):
+                     * Look at `📩 Nội dung tin nhắn người gửi đã nhắn` under that sender.
+                     * Report the EXACT messages that the sender sent to the user.
+                     * Clearly state if there were multiple incoming messages from that sender.
+                   - Distinguish clearly between:
+                     * 📩 Tin nhắn từ người gửi (What the contact wrote to the user).
+                     * 🤖 Trợ lý AI đã trả lời (What the bot/assistant auto-replied, if any).
+                   - NEVER confuse the assistant's auto-reply with what the contact messaged!
+
+                2. `facebook_send_reply(recipient_name, message)`:
+                   Sends a Facebook Messenger message to a specific person. Takes 15-30s. Only call when user explicitly asks to reply/send.
 
                 COMMUNICATION:
                 - ALWAYS respond in Vietnamese when the user writes in Vietnamese.

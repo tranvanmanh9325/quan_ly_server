@@ -570,6 +570,7 @@ public class FacebookMessengerService implements SchedulingConfigurer, Disposabl
 
                     if (sent) {
                         log.info("[FB-DirectReply] SENT to '{}': {}", recipientName, message);
+                        messageCache.recordDirectReply(recipientName, message);
                         return "Da gui tin nhan cho \"" + recipientName + "\": \"" + message + "\" | Screenshot: " + screenshotPath;
                     }
                     return "Tim thay hoi thoai nhung khong go duoc tin nhan. Screenshot: " + screenshotPath;
@@ -858,7 +859,13 @@ public class FacebookMessengerService implements SchedulingConfigurer, Disposabl
                 if (tHref != null && tText != null && !tText.isBlank()) {
                     String cleanName = tText.split("(?i)\\s*(?:bạn:|tin nhắn|đã gửi)\\s*")[0].trim();
                     if (!cleanName.isBlank()) {
-                        messageCache.addOrUpdate(cleanName, tText, tHref, false);
+                        String afterName = tText.substring(Math.min(cleanName.length(), tText.length())).trim();
+                        String lowerAfter = afterName.toLowerCase();
+                        List<String> initMsgs = new ArrayList<>();
+                        if (!afterName.isBlank() && !lowerAfter.startsWith("bạn:") && !lowerAfter.startsWith("you:")) {
+                            initMsgs.add(afterName);
+                        }
+                        messageCache.addOrUpdate(cleanName, initMsgs, null, tHref, false);
                     }
                 }
             }
@@ -1086,15 +1093,56 @@ public class FacebookMessengerService implements SchedulingConfigurer, Disposabl
                             senderName, isE2ee, isRequestThread);
                 }
 
-                // Record every thread with at least 1 unreplied message into the cache
-                // so the AI can answer "ai nhắn gì lúc vắng mặt?" via Telegram.
-                if (effectiveCount >= 1) {
-                    String previewText = (String) page.evaluate(
-                            "() => { let msgs = Array.from(document.querySelectorAll('[role=main] [dir=auto]')); " +
-                            "let last = msgs.filter(m => m.innerText && m.innerText.trim()).slice(-3); " +
-                            "return last.map(m => m.innerText.trim()).join(' | ').substring(0, 100); }");
-                    messageCache.addOrUpdate(senderName, previewText, href != null ? href : page.url(), false);
+                // Extract actual incoming messages sent by the contact (filtering out outgoing messages and bot prefixes)
+                List<String> incomingMsgs = new ArrayList<>();
+                try {
+                    @SuppressWarnings("unchecked")
+                    List<String> rawIncoming = (List<String>) page.evaluate(
+                            "() => {" +
+                            "  let main = document.querySelector('[role=\"main\"]') || document.querySelector('[role=\"region\"]') || document.body;" +
+                            "  let bubbles = Array.from(main.querySelectorAll('[aria-label]')).filter(el => {" +
+                            "    let lbl = (el.getAttribute('aria-label') || '').toLowerCase();" +
+                            "    return (lbl.startsWith('tin nh\\u1eafn do ') && lbl.includes(' g\\u1eedi l\\u00fac ')) || /^l\\u00fac \\d{1,2}:\\d{2},.+:/.test(lbl);" +
+                            "  });" +
+                            "  let incoming = [];" +
+                            "  if (bubbles.length > 0) {" +
+                            "    for (let b of bubbles) {" +
+                            "      let lbl = (b.getAttribute('aria-label') || '').toLowerCase();" +
+                            "      let isOut = lbl.startsWith('tin nh\\u1eafn do b\\u1ea1n') || /^l\\u00fac \\d{1,2}:\\d{2}, b\\u1ea1n:/.test(lbl);" +
+                            "      if (!isOut) {" +
+                            "        let txt = (b.innerText || '').trim();" +
+                            "        if (txt && !incoming.includes(txt)) incoming.push(txt);" +
+                            "      }" +
+                            "    }" +
+                            "  }" +
+                            "  if (incoming.length === 0) {" +
+                            "    let chatScope = main.querySelector('[role=\"grid\"], [role=\"list\"], [role=\"log\"]') || main;" +
+                            "    let editables = Array.from(chatScope.querySelectorAll('[contenteditable=\"true\"]'));" +
+                            "    let allAuto = Array.from(chatScope.querySelectorAll('div[dir=\"auto\"], span[dir=\"auto\"]'));" +
+                            "    let rows = allAuto.filter(el => {" +
+                            "      if (el.closest('[role=\"navigation\"], [role=\"complementary\"], aside')) return false;" +
+                            "      let txt = (el.innerText || '').trim();" +
+                            "      if (!txt) return false;" +
+                            "      if (editables.some(ed => ed.contains(el))) return false;" +
+                            "      return true;" +
+                            "    });" +
+                            "    for (let r of rows) {" +
+                            "      let txt = (r.innerText || '').trim();" +
+                            "      let lower = txt.toLowerCase();" +
+                            "      if (lower.includes('m\\u00e3 h\\u00f3a \\u0111\\u1ea7u cu\\u1ed1i') || lower.includes('t\\u00ecm hi\\u1ec3u th\\u00eam') || lower.includes('n\\u1ebfu b\\u1ea1n ch\\u1ea5p nh\\u1eadn')) continue;" +
+                            "      if (lower.includes('ti\\u1ec3u b\\u1ea3o b\\u1ea3o') || lower.includes('tr\\u1ee3 l\\u00fd ai c\\u1ee7a anh m\\u1ea1nh') || lower.includes('tr\\u1ee3 l\\u00ed c\\u1ee7a m\\u1ea1nh')) continue;" +
+                            "      if (!incoming.includes(txt)) incoming.push(txt);" +
+                            "    }" +
+                            "  }" +
+                            "  return incoming.slice(-10);" +
+                            "}");
+                    if (rawIncoming != null) incomingMsgs.addAll(rawIncoming);
+                } catch (Exception e) {
+                    log.warn("[FB-Responder] Could not extract incoming messages for '{}': {}", senderName, e.getMessage());
                 }
+
+                // Record thread into cache with true incoming messages list
+                messageCache.addOrUpdate(senderName, incomingMsgs, null, href != null ? href : page.url(), wasAccepted);
 
                 if (effectiveCount >= cfg.getThreshold()) {
                     log.info("[FB-Responder] Triggering AI Away reply for '{}' (Count: {} >= Threshold: {})",
@@ -1104,9 +1152,8 @@ public class FacebookMessengerService implements SchedulingConfigurer, Disposabl
                     if (sent) {
                         autoRepliesSent++;
                         log.info("[FB-Responder] AUTO-REPLY SENT to '{}': {}", senderName, awayReply);
-                        // Mark as auto-replied in cache
-                        messageCache.addOrUpdate(senderName,
-                                "[Auto-reply sent: " + awayReply.substring(0, Math.min(60, awayReply.length())) + "]",
+                        // Mark as auto-replied in cache with assistant reply text stored separately
+                        messageCache.addOrUpdate(senderName, incomingMsgs, awayReply,
                                 href != null ? href : page.url(), true);
                         page.screenshot(new Page.ScreenshotOptions()
                                 .setPath(java.nio.file.Paths.get("/tmp/fb_reply_sent.png")));
@@ -1115,6 +1162,7 @@ public class FacebookMessengerService implements SchedulingConfigurer, Disposabl
                     log.info("[FB-Responder] '{}' count {} below threshold {}. No reply sent.",
                             senderName, effectiveCount, cfg.getThreshold());
                 }
+
 
             } catch (Exception ex) {
                 log.warn("[FB-Responder] Error processing thread #{}: {}", i, ex.getMessage());

@@ -90,5 +90,13 @@ public class FacebookConfigController {
     public ResponseEntity<Map<String, String>> captureChatScreenshots() {
         return ResponseEntity.ok(messengerService.captureChatScreenshots());
     }
+
+    @PostMapping("/test-ai-chat")
+    public ResponseEntity<Map<String, String>> testAiChat(@RequestBody Map<String, String> body) {
+        String msg = body.getOrDefault("message", "Trần Văn Mạnh nhắn tôi gì?");
+        String reply = aiChatService.chat("test-cli-session", msg);
+        return ResponseEntity.ok(Map.of("message", msg, "reply", reply));
+    }
 }
+
 

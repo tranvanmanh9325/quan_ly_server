@@ -213,11 +213,14 @@ class FacebookService:
     async def _extract_thread_name_from_page(self, page: Page) -> str:
         """Extracts the conversation partner's name from the page title or header."""
         try:
-            # Try page title (e.g. "Trần Văn Mạnh | Messenger")
+            # Try page title (e.g. "(2) Trần Văn Mạnh | Messenger")
             title = await page.title()
             if title and "|" in title:
                 name = title.split("|")[0].strip()
-                if name and name.lower() != "messenger":
+                # Strip unread count prefix: "(2) Trần Văn Mạnh" → "Trần Văn Mạnh"
+                import re
+                name = re.sub(r'^\(\d+\)\s*', '', name).strip()
+                if name and name.lower() not in ("messenger", "facebook", ""):
                     return name
 
             # Try aria-label on conversation header
@@ -303,17 +306,32 @@ class FacebookService:
         return 0
 
     async def _send_message_in_open_chat(self, page: Page, text: str) -> bool:
-        """Types and submits a reply message in the currently active chat window."""
+        """Types and submits a reply message in the currently active chat window.
+
+        Uses JavaScript focus + keyboard.type instead of click() to avoid failures
+        when Facebook shows overlays (e.g. E2EE upgrade prompts) that intercept
+        pointer events on the input box.
+        """
         try:
-            input_box = await page.wait_for_selector(
+            # Wait for the textbox to be present in DOM
+            await page.wait_for_selector(
                 "[role='main'] [contenteditable='true'][role='textbox'], "
                 "[contenteditable='true'][aria-label*='Tin nhắn'], "
                 "[contenteditable='true'][role='textbox']",
                 timeout=8000,
             )
-            if not input_box:
+            # Focus via JavaScript to bypass any overlay intercepting pointer events
+            focused = await page.evaluate("""
+            () => {
+              let box = document.querySelector("[role='main'] [contenteditable='true'][role='textbox']") ||
+                        document.querySelector("[contenteditable='true'][aria-label*='Tin nh\u1eafn']") ||
+                        document.querySelector("[contenteditable='true'][role='textbox']");
+              if (box) { box.focus(); return true; }
+              return false;
+            }
+            """)
+            if not focused:
                 return False
-            await input_box.click()
             await asyncio.sleep(0.3)
             await page.keyboard.type(text, delay=25)
             await asyncio.sleep(0.3)
@@ -461,19 +479,23 @@ class FacebookService:
                         t_href = item.get("href", "")
                         if not t_href:
                             continue
-
                         try:
                             logger.info("[FB-Service] Checking thread: %s", t_href)
                             await page.goto(t_href, wait_until="domcontentloaded", timeout=15000)
+                            # Wait for message input box to confirm chat is loaded
+                            try:
+                                await page.wait_for_selector(
+                                    "[contenteditable='true'][role='textbox']",
+                                    timeout=8000,
+                                )
+                            except Exception:
+                                pass
                             await asyncio.sleep(3.0)
                             await self._handle_e2ee_pin_screen(page)
 
-                            # Extract sender name
-                            clean_name = item.get("text", "").split("\n")[0].strip()
-                            if "Bạn:" in clean_name or "bạn:" in clean_name:
-                                clean_name = clean_name.split("Bạn:")[0].split("bạn:")[0].strip()
-                            if not clean_name or len(clean_name) < 2:
-                                clean_name = await self._extract_thread_name_from_page(page)
+                            # Always extract sender name from page title (most reliable source).
+                            # Sidebar text may include last message preview which pollutes the name.
+                            clean_name = await self._extract_thread_name_from_page(page)
 
                             # Persist this thread URL so we can check it next time
                             await self.save_known_thread(t_href, clean_name)
@@ -490,8 +512,11 @@ class FacebookService:
                                 clean_name, len(incoming_msgs), unread_count, threshold,
                             )
 
-                            # Trigger auto-reply when threshold met OR unread badge triggers it
-                            should_reply = len(incoming_msgs) >= threshold or unread_count >= threshold
+                            # Trigger auto-reply:
+                            # - Primary: ANY unread message (unread_count > 0) means someone is waiting
+                            # - Fallback: enough extracted messages meet the threshold
+                            # The cooldown prevents spamming the same sender.
+                            should_reply = unread_count > 0 or len(incoming_msgs) >= threshold
                             if should_reply:
                                 in_cooldown = await self.is_sender_in_cooldown(clean_name, cfg.get("cooldown_minutes", 15))
                                 if not in_cooldown:

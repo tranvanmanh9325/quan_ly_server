@@ -318,6 +318,21 @@ class FacebookService:
             }
             """)
             await asyncio.sleep(1.5)
+
+            # 6. If confirmation modal 'Tiếp tục mà không khôi phục?' appears, click 'Không khôi phục tin nhắn'
+            await page.evaluate("""
+            () => {
+                let btns = Array.from(document.querySelectorAll('button, div[role="button"], span'));
+                for (let b of btns) {
+                    let txt = (b.innerText || '').trim();
+                    if (txt === 'Không khôi phục tin nhắn' || txt === 'Continue without restoring') {
+                        (b.closest('div[role="button"], button') || b).click();
+                        return;
+                    }
+                }
+            }
+            """)
+            await asyncio.sleep(1.0)
             return True
 
         except Exception as e:

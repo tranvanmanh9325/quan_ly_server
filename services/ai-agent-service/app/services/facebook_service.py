@@ -898,88 +898,88 @@ class FacebookService:
                 logger.info("[FB-DirectReply] Fallback to primary known thread: %s", target_href)
 
         async def _execute_send() -> str:
-            async with self._browser_lock:
-                async with async_playwright() as p:
-                    browser = await p.chromium.launch(
-                        headless=True,
-                        args=[
-                            "--no-sandbox",
-                            "--disable-dev-shm-usage",
-                            "--disable-blink-features=AutomationControlled",
-                        ],
+            async with async_playwright() as p:
+                browser = await p.chromium.launch(
+                    headless=True,
+                    args=[
+                        "--no-sandbox",
+                        "--disable-dev-shm-usage",
+                        "--disable-blink-features=AutomationControlled",
+                    ],
+                )
+                ctx = await browser.new_context(
+                    viewport={"width": 1280, "height": 850},
+                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
+                )
+                try:
+                    await ctx.add_cookies(cast(Any, cookies))
+                except Exception:
+                    pass
+
+                page = await ctx.new_page()
+                try:
+                    dest_url = target_href if target_href else "https://www.facebook.com/messages/t/"
+                    logger.info("[FB-DirectReply] Navigating to: %s for '%s'...", dest_url, recipient_name)
+                    await page.goto(
+                        dest_url,
+                        wait_until="domcontentloaded",
+                        timeout=25000,
                     )
-                    ctx = await browser.new_context(
-                        viewport={"width": 1280, "height": 850},
-                        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
-                    )
-                    try:
-                        await ctx.add_cookies(cast(Any, cookies))
-                    except Exception:
-                        pass
+                    await asyncio.sleep(6.0)
 
-                    page = await ctx.new_page()
-                    try:
-                        dest_url = target_href if target_href else "https://www.facebook.com/messages/t/"
-                        logger.info("[FB-DirectReply] Navigating to: %s for '%s'...", dest_url, recipient_name)
-                        await page.goto(
-                            dest_url,
-                            wait_until="domcontentloaded",
-                            timeout=25000,
-                        )
-                        await asyncio.sleep(6.0)
+                    # Handle PIN screen & dismiss any modal overlays
+                    await self._handle_e2ee_pin_screen(page)
+                    await asyncio.sleep(2.0)
 
-                        # Handle PIN screen & dismiss any modal overlays
-                        await self._handle_e2ee_pin_screen(page)
-                        await asyncio.sleep(2.0)
-
-                        # If on root inbox and thread was clicked, ensure open
-                        if not target_href:
-                            await page.evaluate("""
-                            (name) => {
-                                let norm = (s) => (s || '').toLowerCase().normalize('NFD').replace(/[\\u0300-\\u036f]/g, '');
-                                let target = norm(name);
-                                let links = Array.from(document.querySelectorAll('a[href*="/messages/t/"], a[href*="/messages/e2ee/t/"]'));
-                                for (let a of links) {
+                    # If on root inbox and thread was clicked, ensure open
+                    if not target_href:
+                        await page.evaluate("""
+                        (name) => {
+                            let norm = (s) => (s || '').toLowerCase().normalize('NFD').replace(/[\\u0300-\\u036f]/g, '');
+                            let target = norm(name);
+                            let links = Array.from(document.querySelectorAll('a[href*="/messages/t/"], a[href*="/messages/e2ee/t/"]'));
+                            for (let a of links) {
                                     let txt = norm(a.innerText || '');
                                     if (txt.includes(target) || target.includes(txt)) {
                                         a.click();
                                         return true;
                                     }
-                                }
-                                return false;
                             }
-                            """, recipient_name)
-                            await asyncio.sleep(3.0)
-                            await self._handle_e2ee_pin_screen(page)
+                            return false;
+                        }
+                        """, recipient_name)
+                        await asyncio.sleep(3.0)
+                        await self._handle_e2ee_pin_screen(page)
 
-                        # Send the message
-                        sent = await self._send_message_in_open_chat(page, message)
-                        if sent:
-                            await asyncio.sleep(2.0)
-                            # Save screenshot proof
-                            try:
-                                await page.screenshot(path="/tmp/last_direct_reply_proof.png")
-                            except Exception:
-                                pass
+                    # Send the message
+                    sent = await self._send_message_in_open_chat(page, message)
+                    if sent:
+                        await asyncio.sleep(2.0)
+                        # Save screenshot proof
+                        try:
+                            await page.screenshot(path="/tmp/last_direct_reply_proof.png")
+                        except Exception:
+                            pass
 
-                            await self.message_cache.record_direct_reply(recipient_name, message)
-                            actual_url = page.url.split("?")[0]
-                            await self.record_sender_cooldown(actual_url)
-                            logger.info("[FB-DirectReply] SENT to '%s': %s", recipient_name, message)
-                            return f'Đã gửi tin nhắn cho "{recipient_name}": "{message}"'
-                        else:
-                            return f'Lỗi: Đã mở trang chat với "{recipient_name}" nhưng không thể gửi tin nhắn vào ô chat.'
+                        await self.message_cache.record_direct_reply(recipient_name, message)
+                        actual_url = page.url.split("?")[0]
+                        await self.record_sender_cooldown(actual_url)
+                        logger.info("[FB-DirectReply] SENT to '%s': %s", recipient_name, message)
+                        return f'Đã gửi tin nhắn cho "{recipient_name}": "{message}"'
+                    else:
+                        return f'Lỗi: Đã mở trang chat với "{recipient_name}" nhưng không thể gửi tin nhắn vào ô chat.'
 
-                    finally:
-                        await page.close()
-                        await ctx.close()
-                        await browser.close()
+                finally:
+                    await page.close()
+                    await ctx.close()
+                    await browser.close()
 
         try:
-            return await asyncio.wait_for(_execute_send(), timeout=55.0)
+            async with self._browser_lock:
+                return await asyncio.wait_for(_execute_send(), timeout=60.0)
         except asyncio.TimeoutError:
             logger.error("[FB-DirectReply] Timeout sending to '%s'", recipient_name)
-            return f'Lỗi: Hết thời gian chờ (55s) khi gửi tin nhắn cho "{recipient_name}". Vui lòng thử lại.'
+            return f'Lỗi: Hết thời gian chờ (60s) khi gửi tin nhắn cho "{recipient_name}". Vui lòng thử lại.'
         except Exception as e:
             logger.error("[FB-DirectReply] Error sending to '%s': %s", recipient_name, e)
             return f'Lỗi khi gửi tin nhắn cho "{recipient_name}": {e}'

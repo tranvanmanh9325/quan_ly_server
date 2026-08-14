@@ -30,7 +30,7 @@ class AiAgentService:
         self.fb_service = fb_service_ref
         self.model = settings.GROQ_MODEL
         self._history_map: Dict[str, List[Dict[str, Any]]] = {}
-        self._http_client = httpx.AsyncClient(timeout=30.0)
+        self._http_client = httpx.AsyncClient(timeout=120.0)
 
     def set_fb_service(self, fb_service: Any) -> None:
         self.fb_service = fb_service

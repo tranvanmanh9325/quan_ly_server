@@ -898,29 +898,28 @@ class FacebookService:
         target_href = await self.message_cache.find_thread_href(recipient_name)
 
         # 2. If not found in cache, search in database known threads with fuzzy matching
-        # Prioritize active E2EE threads (/messages/e2ee/t/) as modern Messenger routes all active chats to E2EE
+        # Prioritize direct standard threads (/messages/t/) to avoid E2EE pending message queue
         if not target_href:
             db_threads = await self.get_known_threads_from_db()
             best_score = 0.0
             best_href = None
             for t in db_threads:
                 score = self._name_match_score(recipient_name, t.get("text", ""))
-                is_e2ee = "/messages/e2ee/t/" in t["href"]
-                # Give a priority bonus to E2EE threads so active chats are targeted
-                adjusted_score = score + (0.1 if is_e2ee else 0.0)
+                is_non_e2ee = "/messages/t/" in t["href"] and "/e2ee/" not in t["href"]
+                # Give priority to standard direct delivery threads
+                adjusted_score = score + (0.15 if is_non_e2ee else 0.0)
                 if adjusted_score > best_score and score >= 0.4:
                     best_score = adjusted_score
                     best_href = t["href"]
             if best_href:
                 target_href = best_href
 
-        # 3. Fallback: if any thread exists in DB, use the first E2EE or active thread
+        # 3. Fallback: if any thread exists in DB, prefer standard thread first
         if not target_href:
             db_threads = await self.get_known_threads_from_db()
             if db_threads:
-                # Prefer E2EE thread first
-                e2ee_threads = [t for t in db_threads if "/messages/e2ee/t/" in t["href"]]
-                target_href = e2ee_threads[0]["href"] if e2ee_threads else db_threads[0]["href"]
+                non_e2ee_threads = [t for t in db_threads if "/messages/t/" in t["href"] and "/e2ee/" not in t["href"]]
+                target_href = non_e2ee_threads[0]["href"] if non_e2ee_threads else db_threads[0]["href"]
                 logger.info("[FB-DirectReply] Fallback to primary known thread: %s", target_href)
 
         async def _execute_send() -> str:

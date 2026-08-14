@@ -666,15 +666,17 @@ class FacebookService:
                                     else:
                                         logger.warning("[FB-Service] Failed to send reply to '%s'", clean_name)
 
-                            # Update cache — only if we have a real person name and/or actual messages.
-                            # Skip threads where name is a Facebook system label with no readable messages
-                            # to prevent 'người gửi không xác định' in Telegram summaries.
-                            is_system_name = any(
-                                label in clean_name.lower() for label in self._FB_SYSTEM_LABELS
-                            )
-                            if not is_system_name or incoming_msgs:
+                            # Update cache ONLY when there are actual incoming messages to report.
+                            # Threads with 0 readable messages (E2EE locked, PIN pending, etc.)
+                            # should NOT appear in Telegram summaries as phantom entries.
+                            if incoming_msgs:
+                                is_system_name = any(
+                                    label in clean_name.lower() for label in self._FB_SYSTEM_LABELS
+                                )
+                                # Use a cleaned name: fallback to 'Người dùng Facebook' if system label
+                                display_name = clean_name if not is_system_name else "Người dùng Facebook"
                                 await self.message_cache.add_or_update(
-                                    clean_name, incoming_msgs, None, t_href, False
+                                    display_name, incoming_msgs, None, t_href, False
                                 )
                             else:
                                 logger.debug(

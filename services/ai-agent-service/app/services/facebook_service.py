@@ -226,62 +226,84 @@ class FacebookService:
             logger.warning("[FB-Service] Error handling E2EE PIN screen: %s", e)
         return False
 
+    # Facebook UI labels that are NOT person names — used to filter bad extractions
+    _FB_SYSTEM_LABELS = frozenset({
+        "messenger", "facebook", "th\u00f4ng b\u00e1o", "\u0111\u01b0\u1ee3c m\u00e3 h\u00f3a \u0111\u1ea7u cu\u1ed1i",
+        "m\u00e3 h\u00f3a \u0111\u1ea7u cu\u1ed1i", "ng\u01b0\u1eddi d\u00f9ng facebook", "\u0111o\u1ea1n chat",
+        "tin nh\u1eafn", "so\u1ea1n", "m\u1edbi", "t\u00ecm ki\u1ebfm", "nh\u1eadp",
+        "cu\u1ed9c tr\u00f2 chuy\u1ec7n", "c\u00e0i \u0111\u1eb7t", "quy\u1ec1n ri\u00eang t\u01b0",
+    })
+
     async def _extract_thread_name_from_page(self, page: Page) -> str:
         """Extracts the conversation partner's name from the page header.
 
-        Based on actual DOM: [role=main] h3 contains 'Cuộc trò chuyện với X'
-        or a simple <a> element with the contact name.
+        Priority:
+        1. h3 containing 'Cu\u1ed9c tr\u00f2 chuy\u1ec7n v\u1edbi X' (most reliable, FB accessibility label)
+        2. First <a> in [role=main] that is a valid name
+        3. Any h3 not in system labels blacklist
+        4. Page title fallback
         """
         import re
         try:
             name_from_dom = await page.evaluate("""
             () => {
-              let main = document.querySelector('[role="main"]');
-              if (!main) main = document.body;
-
-              // Try: <a> link with contact name (appears in chat header)
-              // Usually the first <a> directly in the header zone
-              let headerLinks = Array.from(main.querySelectorAll('a'));
-              for (let a of headerLinks) {
-                let txt = (a.innerText || '').trim();
-                let low = txt.toLowerCase();
-                if (txt.length > 1 && txt.length < 80 && !low.includes('messenger') && !low.includes('facebook') && !low.includes('thông báo')) {
-                  return txt;
-                }
-              }
-
-              // Try: h3 containing 'Cuộc trò chuyện với'
+              // Priority 1: h3 with 'Cu\u1ed9c tr\u00f2 chuy\u1ec7n v\u1edbi X' — most reliable FB accessibility label
               let h3s = Array.from(document.querySelectorAll('h3'));
               for (let h of h3s) {
                 let txt = (h.innerText || '').trim();
-                let m = txt.match(/Cuộc trò chuyện với (.+)/);
-                if (m) return m[1].trim();
+                let m = txt.match(/Cu\u1ed9c tr\u00f2 chuy\u1ec7n v\u1edbi (.+)/);
+                if (m && m[1].trim().length > 1) return m[1].trim();
               }
 
-              // Try: any h3 that has a valid name (not system labels)
+              // Priority 2: <a> inside [role=main] — contact link in header
+              let main = document.querySelector('[role="main"]') || document.body;
+              let BLACKLIST = new Set([
+                'messenger','facebook','th\u00f4ng b\u00e1o','\u0111\u01b0\u1ee3c m\u00e3 h\u00f3a \u0111\u1ea7u cu\u1ed1i',
+                'm\u00e3 h\u00f3a \u0111\u1ea7u cu\u1ed1i','ng\u01b0\u1eddi d\u00f9ng facebook',
+                '\u0111o\u1ea1n chat','tin nh\u1eafn','so\u1ea1n','m\u1edbi','t\u00ecm ki\u1ebfm',
+              ]);
+              for (let a of Array.from(main.querySelectorAll('a'))) {
+                let txt = (a.innerText || '').trim();
+                let low = txt.toLowerCase();
+                if (txt.length > 1 && txt.length < 80 && !BLACKLIST.has(low)
+                    && !low.includes('m\u00e3 h\u00f3a') && !low.includes('th\u00f4ng b\u00e1o')) {
+                  return txt;
+                }
+              }
+
+              // Priority 3: any h3 not matching system labels
+              const LABEL_FRAGMENTS = [
+                'tin nh\u1eafn','so\u1ea1n','\u0111o\u1ea1n chat','messenger','m\u00e3 h\u00f3a',
+                'nh\u1eadp m\u00e3','kh\u00f4i ph\u1ee5c','c\u00e0i \u0111\u1eb7t','quy\u1ec1n ri\u00eang t\u01b0',
+                'c\u00f3 th\u1ec3 b\u1ea1n bi\u1ebft','t\u00ecm ki\u1ebfm','th\u00f4ng b\u00e1o',
+              ];
               for (let h of h3s) {
                 let txt = (h.innerText || '').trim();
                 let low = txt.toLowerCase();
-                if (txt.length > 1 && txt.length < 80 && !low.includes('tin nhắn') && !low.includes('soạn') && !low.includes('đoạn chat') && !low.includes('messenger')) {
-                  return txt;
-                }
+                if (txt.length < 2 || txt.length > 80) continue;
+                if (LABEL_FRAGMENTS.some(f => low.includes(f))) continue;
+                return txt;
               }
               return '';
             }
             """)
-            if name_from_dom and len(name_from_dom) > 1 and name_from_dom.lower() not in ("messenger", "facebook", "thông báo"):
-                return name_from_dom
+            if name_from_dom:
+                name_lower = name_from_dom.lower()
+                is_system = any(label in name_lower for label in self._FB_SYSTEM_LABELS)
+                if not is_system and len(name_from_dom) > 1:
+                    return name_from_dom
 
-            # Fallback: page title strip
+            # Fallback: page title (format varies, rarely contains name now)
             title = await page.title()
             if title and "|" in title:
                 name = title.split("|")[0].strip()
                 name = re.sub(r"^\(\d+\)\s*", "", name).strip()
-                if name and name.lower() not in ("messenger", "facebook", ""):
+                name_lower = name.lower()
+                if name and not any(label in name_lower for label in self._FB_SYSTEM_LABELS):
                     return name
         except Exception as e:
             logger.debug("[FB-Service] Could not extract thread name: %s", e)
-        return "Người dùng Facebook"
+        return "Ng\u01b0\u1eddi d\u00f9ng Facebook"
 
     async def _extract_incoming_messages(self, page: Page) -> List[str]:
         """Extracts genuine incoming messages from the open chat window.
@@ -644,10 +666,20 @@ class FacebookService:
                                     else:
                                         logger.warning("[FB-Service] Failed to send reply to '%s'", clean_name)
 
-                            # Update cache without reply
-                            await self.message_cache.add_or_update(
-                                clean_name, incoming_msgs, None, t_href, False
+                            # Update cache — only if we have a real person name and/or actual messages.
+                            # Skip threads where name is a Facebook system label with no readable messages
+                            # to prevent 'người gửi không xác định' in Telegram summaries.
+                            is_system_name = any(
+                                label in clean_name.lower() for label in self._FB_SYSTEM_LABELS
                             )
+                            if not is_system_name or incoming_msgs:
+                                await self.message_cache.add_or_update(
+                                    clean_name, incoming_msgs, None, t_href, False
+                                )
+                            else:
+                                logger.debug(
+                                    "[FB-Service] '%s': system label with no msgs — skipping cache.", clean_name
+                                )
 
                         except Exception as thread_err:
                             logger.warning("[FB-Service] Error processing thread %s: %s", t_href, thread_err)

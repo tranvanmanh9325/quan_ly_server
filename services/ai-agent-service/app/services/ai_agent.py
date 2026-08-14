@@ -107,10 +107,10 @@ CORE BEHAVIOR:
 - For questions about server status, CPU, RAM, disk, network, Docker containers, deployed projects, or logs, ALWAYS call `run_command` to get real-time data.
 
 SAFE COMMANDS YOU CAN USE:
-- IP/Network: curl -s --max-time 3 https://api.ipify.org, hostname -I, ip addr, ss -tlnp
-- System/Time: date '+%Y-%m-%d %H:%M:%S %Z', uptime, free -h, df -h, ps aux, top -b -n 1
-- Projects/Git: git -C /home/kirito/quan_ly_server remote -v, git -C /home/kirito/quan_ly_server log -n 5 --oneline, ls -la /home/kirito/
-- Docker: docker ps, docker ps -a, docker stats --no-stream, docker logs --tail 50 <name>
+- IP/Network: curl -s https://api.ipify.org, hostname -I, ss -tlnp
+- System: uptime, free -h, df -h, top -b -n 1
+- Projects: git -C /home/kirito/quan_ly_server log -n 5 --oneline, ls -la /home/kirito/
+- Docker: docker ps, docker stats --no-stream
 
 FACEBOOK MESSENGER INTEGRATION:
 You have 2 Facebook Messenger tools:
@@ -148,15 +148,14 @@ COMMUNICATION:
                     "name": "run_command",
                     "description": (
                         "Execute a read-only Linux shell command on the remote server via SSH. "
-                        "Use this whenever you need real-time server data to answer the user's question. "
-                        "Examples: 'date', 'docker ps', 'free -h', 'df -h', 'ps aux | grep java', 'ss -tlnp'."
+                        "Use this whenever you need real-time server data such as IP, CPU, RAM, Disk, or Docker status."
                     ),
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "command": {
                                 "type": "string",
-                                "description": "The exact single-line read-only shell command to execute.",
+                                "description": "The shell command to execute, e.g. 'df -h' or 'curl -s https://api.ipify.org'.",
                             }
                         },
                         "required": ["command"],

@@ -508,23 +508,6 @@ class FacebookService:
         except Exception as e:
             logger.warning("[FB-Service] Error evaluating incoming messages: %s", e)
         return []
-
-    async def _count_unread_badge(self, page: Page) -> int:
-        """Reads the unread message badge count visible in the page title or header.
-
-        Facebook shows 'N tin nhắn chưa đọc' or '(N) ...' in page title when there
-        are unread messages. We use this as a signal instead of message count.
-        """
-        try:
-            title = await page.title()
-            # Pattern: "(5) Trần Văn Mạnh | Messenger"
-            if title and title.startswith("("):
-                count_str = title[1:title.index(")")] if ")" in title else "0"
-                return int(count_str) if count_str.isdigit() else 0
-        except Exception:
-            pass
-        return 0
-
     async def _send_message_in_open_chat(self, page: Page, text: str) -> bool:
         """Types and submits a reply message in the currently active chat window.
 
@@ -532,9 +515,41 @@ class FacebookService:
         and variations in Facebook Messenger's DOM structure.
         """
         try:
+            # 0. Proactively clean up any modal overlays or PIN dialogs that may have appeared late
+            await page.evaluate("""
+            () => {
+                // Find and remove all dialogs and overlays
+                let dialogs = document.querySelectorAll('[role="dialog"], [role="alertdialog"], div[aria-modal="true"]');
+                dialogs.forEach(d => {
+                    let txt = d.innerText || '';
+                    if (txt.includes('Nhập mã PIN') || txt.includes('khôi phục') || txt.includes('PIN')) {
+                        d.remove();
+                    }
+                });
+                // Remove fixed backdrops
+                let backdrops = document.querySelectorAll('div[style*="position: fixed"][style*="z-index"]');
+                backdrops.forEach(b => b.remove());
+            }
+            """)
+            await asyncio.sleep(0.5)
+
             # 1. Wait for and focus on the message textbox (retry for up to 10s)
             focused = False
             for _ in range(10):
+                # Clean up any recurring popup during loop
+                await page.evaluate("""
+                () => {
+                    let dialogs = document.querySelectorAll('[role="dialog"], [role="alertdialog"], div[aria-modal="true"]');
+                    dialogs.forEach(d => {
+                        let txt = d.innerText || '';
+                        if (txt.includes('Nhập mã PIN') || txt.includes('khôi phục') || txt.includes('PIN')) {
+                            d.remove();
+                        }
+                    });
+                    let backdrops = document.querySelectorAll('div[style*="position: fixed"][style*="z-index"]');
+                    backdrops.forEach(b => b.remove());
+                }
+                """)
                 focused = await page.evaluate("""
                 () => {
                     let selectors = [
@@ -582,7 +597,7 @@ class FacebookService:
 
             # 4. Press Enter to send
             await page.keyboard.press("Enter")
-            await asyncio.sleep(1.0)
+            await asyncio.sleep(1.5)
 
             # 5. Fallback: click Send button if Enter didn't trigger submission
             await page.evaluate("""
@@ -590,11 +605,11 @@ class FacebookService:
                 let btn = document.querySelector('[aria-label="Nhấn để gửi"], [aria-label="Press Enter to send"], [aria-label="Send"], svg[aria-label="Nhấn để gửi"]');
                 if (btn) {
                     let clickable = btn.closest('div[role="button"], button') || btn;
-                    clickable.click();
+                    clickable.click && clickable.click();
                 }
             }
             """)
-            await asyncio.sleep(1.5)
+            await asyncio.sleep(2.0)
             logger.info("[FB-Service] Successfully submitted message to chat window.")
             return True
 

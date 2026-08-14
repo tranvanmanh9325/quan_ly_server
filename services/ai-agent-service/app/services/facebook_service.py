@@ -548,62 +548,65 @@ class FacebookService:
         before focusing and typing into the message input box.
         """
         try:
-            # 0. Dismiss any PIN or notification dialogs by clicking Close (X) or removing from DOM
+            # 0. Force clean up all modal dialogs, PIN overlays, and dark backdrops
             await page.evaluate("""
             () => {
-                let closeBtns = document.querySelectorAll('[aria-label="Đóng"], [aria-label="Close"], [aria-label="Huỷ"], svg[aria-label="Đóng"]');
+                // 1. Click any Close buttons inside dialogs
+                let closeBtns = document.querySelectorAll('[role="dialog"] [role="button"], [aria-label="Đóng"], [aria-label="Close"], [aria-label="Huỷ"]');
                 closeBtns.forEach(b => {
-                    let clickTarget = b.closest('div[role="button"], button') || b;
-                    clickTarget.click();
+                    if (b.click) b.click();
                 });
-                let dialogs = document.querySelectorAll('[role="dialog"], [role="alertdialog"], div[aria-modal="true"]');
-                dialogs.forEach(d => {
-                    let txt = d.innerText || '';
-                    if (txt.includes('Nhập mã PIN') || txt.includes('khôi phục') || txt.includes('PIN') || txt.includes('thông báo')) {
-                        d.remove();
-                    }
-                });
-                let backdrops = document.querySelectorAll('div[style*="position: fixed"][style*="z-index"]');
-                backdrops.forEach(b => b.remove());
-            }
-            """)
-            await asyncio.sleep(0.5)
+                // 2. Remove all modal dialogs from DOM
+                let dialogs = Array.from(document.querySelectorAll('[role="dialog"], [role="alertdialog"], div[aria-modal="true"]'));
+                dialogs.forEach(d => d.remove());
 
-            # 1. Wait for and focus on the message textbox (retry for up to 10s)
-            focused = False
-            for _ in range(10):
-                focused = await page.evaluate("""
-                () => {
-                    let selectors = [
-                        'div[role="textbox"][contenteditable="true"]',
-                        'div[aria-placeholder="Aa"]',
-                        'div[data-lexical-editor="true"]',
-                        '[contenteditable="true"][aria-label*="Viết cho"]',
-                        '[contenteditable="true"][aria-label*="Nhập"]',
-                        '[contenteditable="true"][aria-label*="Tin nhắn"]',
-                        '[role="main"] [contenteditable="true"]',
-                        '[contenteditable="true"]',
-                    ];
-                    for (let sel of selectors) {
-                        let elements = document.querySelectorAll(sel);
-                        for (let el of elements) {
-                            if (el.closest('[role="navigation"], [role="search"], aside')) continue;
-                            if (el.offsetParent !== null || el.getClientRects().length > 0) {
-                                el.focus();
-                                el.click();
-                                return true;
-                            }
+                // 3. Remove all fixed overlays containing PIN text
+                let all = Array.from(document.querySelectorAll('div'));
+                all.forEach(el => {
+                    let t = (el.innerText || '');
+                    if (t.includes('Nhập mã PIN') || t.includes('khôi phục') || t.includes('Mã PIN')) {
+                        if (el.parentElement && !el.querySelector('[role="main"]')) {
+                            el.remove();
                         }
                     }
-                    return false;
+                });
+
+                // 4. Remove dark modal backdrops
+                let backdrops = document.querySelectorAll('div[style*="position: fixed"], div[style*="background-color: rgba(0, 0, 0"]');
+                backdrops.forEach(b => {
+                    if (!b.querySelector('[role="main"]') && !b.querySelector('[role="navigation"]')) {
+                        b.remove();
+                    }
+                });
+            }
+            """)
+            await asyncio.sleep(0.6)
+
+            # 1. Target the chat message textbox directly in DOM
+            textbox_selector = 'div[role="main"] div[role="textbox"][contenteditable="true"], div[role="textbox"][contenteditable="true"], div[data-lexical-editor="true"], div[aria-placeholder="Aa"]'
+            
+            textbox_found = False
+            for _ in range(10):
+                # Clean up recurring modal before focusing
+                await page.evaluate("""
+                () => {
+                    let dialogs = document.querySelectorAll('[role="dialog"], [role="alertdialog"], div[aria-modal="true"]');
+                    dialogs.forEach(d => d.remove());
                 }
                 """)
-                if focused:
-                    break
-                await asyncio.sleep(1.0)
+                try:
+                    el = await page.wait_for_selector(textbox_selector, timeout=2000)
+                    if el:
+                        await el.scroll_into_view_if_needed()
+                        await el.click(force=True)
+                        await el.focus()
+                        textbox_found = True
+                        break
+                except Exception:
+                    await asyncio.sleep(1.0)
 
-            if not focused:
-                logger.warning("[FB-Service] Could not find or focus message input box after 10s.")
+            if not textbox_found:
+                logger.warning("[FB-Service] Could not locate or click chat message textbox after 10s.")
                 return False
 
             await asyncio.sleep(0.4)

@@ -508,6 +508,17 @@ class FacebookService:
         except Exception as e:
             logger.warning("[FB-Service] Error evaluating incoming messages: %s", e)
         return []
+
+    async def _count_unread_badge(self, page: Page) -> int:
+        """Reads the unread message badge count visible in the page title or header."""
+        try:
+            title = await page.title()
+            if title and title.startswith("("):
+                count_str = title[1:title.index(")")] if ")" in title else "0"
+                return int(count_str) if count_str.isdigit() else 0
+        except Exception:
+            pass
+        return 0
     async def _send_message_in_open_chat(self, page: Page, text: str) -> bool:
         """Types and submits a reply message in the currently active chat window.
 
@@ -960,16 +971,20 @@ class FacebookService:
                 try:
                     dest_url = target_href if target_href else "https://www.facebook.com/messages/t/"
                     logger.info("[FB-DirectReply] Navigating to: %s for '%s'...", dest_url, recipient_name)
-                    await page.goto(
-                        dest_url,
-                        wait_until="domcontentloaded",
-                        timeout=25000,
-                    )
-                    await asyncio.sleep(6.0)
+                    try:
+                        await page.goto(
+                            dest_url,
+                            wait_until="commit",
+                            timeout=35000,
+                        )
+                    except Exception as nav_e:
+                        logger.warning("[FB-DirectReply] Navigation notice: %s", nav_e)
+
+                    await asyncio.sleep(5.0)
 
                     # Handle PIN screen & dismiss any modal overlays
                     await self._handle_e2ee_pin_screen(page)
-                    await asyncio.sleep(2.0)
+                    await asyncio.sleep(1.5)
 
                     # If on root inbox and thread was clicked, ensure open
                     if not target_href:

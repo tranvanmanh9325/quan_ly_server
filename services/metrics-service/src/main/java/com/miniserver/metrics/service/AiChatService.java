@@ -96,7 +96,7 @@ public class AiChatService {
             "crontab -r"
     );
 
-    @Value("${groq.model:llama-3.1-8b-instant}")
+    @Value("${groq.model:llama-3.3-70b-versatile}")
     private String model;
 
     private final SshService   sshService;

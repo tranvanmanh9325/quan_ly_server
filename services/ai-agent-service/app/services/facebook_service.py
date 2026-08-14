@@ -861,9 +861,9 @@ class FacebookService:
     async def send_direct_reply(self, recipient_name: str, message: str) -> str:
         """Opens a conversation and sends a direct reply message.
 
-        Uses an ephemeral browser context with direct cookie injection to avoid
-        SingletonLock conflicts and race conditions with scheduled scans.
-        Protected by a 50-second timeout to guarantee responsive bot feedback.
+        Protected by the global _browser_lock to ensure only 1 Chromium instance
+        runs at a time, preventing CPU overload and timeouts.
+        Directly navigates to target thread URL for maximum speed.
         """
         if not recipient_name or not message:
             return "Lỗi: Thiếu tên người nhận hoặc nội dung tin nhắn."
@@ -898,81 +898,88 @@ class FacebookService:
                 logger.info("[FB-DirectReply] Fallback to primary known thread: %s", target_href)
 
         async def _execute_send() -> str:
-            async with async_playwright() as p:
-                browser = await p.chromium.launch(
-                    headless=True,
-                    args=[
-                        "--no-sandbox",
-                        "--disable-dev-shm-usage",
-                        "--disable-blink-features=AutomationControlled",
-                    ],
-                )
-                ctx = await browser.new_context(
-                    viewport={"width": 1280, "height": 850},
-                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
-                )
-                try:
-                    await ctx.add_cookies(cast(Any, cookies))
-                except Exception:
-                    pass
-
-                page = await ctx.new_page()
-                try:
-                    logger.info("[FB-DirectReply] Initializing Messenger root for '%s'...", recipient_name)
-                    await page.goto(
-                        "https://www.facebook.com/messages/t/",
-                        wait_until="domcontentloaded",
-                        timeout=25000,
+            async with self._browser_lock:
+                async with async_playwright() as p:
+                    browser = await p.chromium.launch(
+                        headless=True,
+                        args=[
+                            "--no-sandbox",
+                            "--disable-dev-shm-usage",
+                            "--disable-blink-features=AutomationControlled",
+                        ],
                     )
-                    await asyncio.sleep(8.0)
-
-                    # Handle and dismiss any modal overlay / PIN screen
+                    ctx = await browser.new_context(
+                        viewport={"width": 1280, "height": 850},
+                        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
+                    )
                     try:
-                        close_btn = await page.query_selector(
-                            'div[role="dialog"] [aria-label="Đóng"], div[role="dialog"] [aria-label="Close"], div[role="dialog"] [role="button"]:has(svg)'
-                        )
-                        if close_btn:
-                            await close_btn.click()
-                            await asyncio.sleep(1.5)
+                        await ctx.add_cookies(cast(Any, cookies))
                     except Exception:
                         pass
 
-                    await self._handle_e2ee_pin_screen(page)
-                    await asyncio.sleep(2.0)
-
-                    # If target_href is specific and current page isn't already there
-                    if target_href and target_href not in page.url:
-                        logger.info("[FB-DirectReply] Navigating to specific thread: %s", target_href)
-                        is_e2ee = "/messages/e2ee/t/" in target_href
+                    page = await ctx.new_page()
+                    try:
+                        dest_url = target_href if target_href else "https://www.facebook.com/messages/t/"
+                        logger.info("[FB-DirectReply] Navigating to: %s for '%s'...", dest_url, recipient_name)
                         await page.goto(
-                            target_href,
+                            dest_url,
                             wait_until="domcontentloaded",
-                            timeout=20000 if is_e2ee else 15000,
+                            timeout=25000,
                         )
-                        await asyncio.sleep(4.0)
+                        await asyncio.sleep(6.0)
+
+                        # Handle PIN screen & dismiss any modal overlays
                         await self._handle_e2ee_pin_screen(page)
+                        await asyncio.sleep(2.0)
 
-                    # Send the message
-                    sent = await self._send_message_in_open_chat(page, message)
-                    if sent:
-                        await self.message_cache.record_direct_reply(recipient_name, message)
-                        actual_url = page.url.split("?")[0]
-                        await self.record_sender_cooldown(actual_url)
-                        logger.info("[FB-DirectReply] SENT to '%s': %s", recipient_name, message)
-                        return f'Đã gửi tin nhắn cho "{recipient_name}": "{message}"'
-                    else:
-                        return f'Đã mở trang chat với "{recipient_name}" nhưng không thể gửi tin nhắn vào ô chat.'
+                        # If on root inbox and thread was clicked, ensure open
+                        if not target_href:
+                            await page.evaluate("""
+                            (name) => {
+                                let norm = (s) => (s || '').toLowerCase().normalize('NFD').replace(/[\\u0300-\\u036f]/g, '');
+                                let target = norm(name);
+                                let links = Array.from(document.querySelectorAll('a[href*="/messages/t/"], a[href*="/messages/e2ee/t/"]'));
+                                for (let a of links) {
+                                    let txt = norm(a.innerText || '');
+                                    if (txt.includes(target) || target.includes(txt)) {
+                                        a.click();
+                                        return true;
+                                    }
+                                }
+                                return false;
+                            }
+                            """, recipient_name)
+                            await asyncio.sleep(3.0)
+                            await self._handle_e2ee_pin_screen(page)
 
-                finally:
-                    await page.close()
-                    await ctx.close()
-                    await browser.close()
+                        # Send the message
+                        sent = await self._send_message_in_open_chat(page, message)
+                        if sent:
+                            await asyncio.sleep(2.0)
+                            # Save screenshot proof
+                            try:
+                                await page.screenshot(path="/tmp/last_direct_reply_proof.png")
+                            except Exception:
+                                pass
+
+                            await self.message_cache.record_direct_reply(recipient_name, message)
+                            actual_url = page.url.split("?")[0]
+                            await self.record_sender_cooldown(actual_url)
+                            logger.info("[FB-DirectReply] SENT to '%s': %s", recipient_name, message)
+                            return f'Đã gửi tin nhắn cho "{recipient_name}": "{message}"'
+                        else:
+                            return f'Lỗi: Đã mở trang chat với "{recipient_name}" nhưng không thể gửi tin nhắn vào ô chat.'
+
+                    finally:
+                        await page.close()
+                        await ctx.close()
+                        await browser.close()
 
         try:
-            return await asyncio.wait_for(_execute_send(), timeout=50.0)
+            return await asyncio.wait_for(_execute_send(), timeout=55.0)
         except asyncio.TimeoutError:
             logger.error("[FB-DirectReply] Timeout sending to '%s'", recipient_name)
-            return f'Hết thời gian chờ (50s) khi gửi tin nhắn cho "{recipient_name}". Vui lòng thử lại.'
+            return f'Lỗi: Hết thời gian chờ (55s) khi gửi tin nhắn cho "{recipient_name}". Vui lòng thử lại.'
         except Exception as e:
             logger.error("[FB-DirectReply] Error sending to '%s': %s", recipient_name, e)
             return f'Lỗi khi gửi tin nhắn cho "{recipient_name}": {e}'

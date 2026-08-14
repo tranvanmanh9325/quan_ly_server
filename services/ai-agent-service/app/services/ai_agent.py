@@ -277,14 +277,15 @@ COMMUNICATION:
                 finish_reason = choice.get("finish_reason", "stop")
                 assistant_msg = choice.get("message", {})
 
-                history.append(assistant_msg)
+                raw_content = assistant_msg.get("content") or ""
+                has_tool_calls = finish_reason == "tool_calls" and bool(assistant_msg.get("tool_calls"))
 
-                if finish_reason == "tool_calls" and assistant_msg.get("tool_calls"):
+                if has_tool_calls:
                     for tc in assistant_msg["tool_calls"]:
-                        call_id = tc["id"]
-                        fn_name = tc["function"]["name"]
+                        call_id = tc.get("id", "call_1")
+                        fn_name = tc.get("function", {}).get("name", "")
                         try:
-                            fn_args = json.loads(tc["function"]["arguments"])
+                            fn_args = json.loads(tc.get("function", {}).get("arguments", "{}"))
                         except Exception:
                             fn_args = {}
 
@@ -294,12 +295,56 @@ COMMUNICATION:
                             "tool_call_id": call_id,
                             "content": tool_result,
                         })
-                    # Loop back to let model formulate final answer
-                else:
-                    return assistant_msg.get("content", "Xin lỗi, tôi không thể xử lý yêu cầu lúc này.")
+                    continue
+
+                # Fallback: Check if model emitted pseudo-XML function tags in plain text
+                pseudo_calls = self._extract_pseudo_tool_calls(raw_content)
+                if pseudo_calls:
+                    for idx, pc in enumerate(pseudo_calls):
+                        fn_name = pc["name"]
+                        fn_args = pc["args"]
+                        tool_result = await self._execute_tool(fn_name, fn_args)
+                        history.append({
+                            "role": "tool",
+                            "tool_call_id": f"call_pseudo_{idx}",
+                            "content": tool_result,
+                        })
+                    continue
+
+                return raw_content.strip() or "Xin lỗi, tôi không thể xử lý yêu cầu lúc này."
 
             except Exception as e:
                 logger.error("[AiAgent] Agent execution exception: %s", e, exc_info=True)
                 return f"Đã xảy ra lỗi khi xử lý câu hỏi: {e}"
 
         return "AI đã thử nhiều bước nhưng chưa hoàn thành yêu cầu."
+
+    def _extract_pseudo_tool_calls(self, text: str) -> List[Dict[str, Any]]:
+        import re
+        calls = []
+        if not text or ("<function" not in text and "<tool_call" not in text):
+            return calls
+
+        p1 = re.findall(r"<function=([a-zA-Z0-9_]+)[^>]*>(.*?)(?:</function>|$)", text, re.DOTALL)
+        for fn_name, fn_args_str in p1:
+            try:
+                start = fn_args_str.find("{")
+                end = fn_args_str.rfind("}")
+                if start != -1 and end != -1:
+                    args = json.loads(fn_args_str[start:end+1])
+                    calls.append({"name": fn_name, "args": args})
+            except Exception:
+                pass
+
+        p2 = re.findall(r"<function>([a-zA-Z0-9_]+)</function>\s*({.*?})(?:</function>|$)", text, re.DOTALL)
+        for fn_name, fn_args_str in p2:
+            try:
+                start = fn_args_str.find("{")
+                end = fn_args_str.rfind("}")
+                if start != -1 and end != -1:
+                    args = json.loads(fn_args_str[start:end+1])
+                    calls.append({"name": fn_name, "args": args})
+            except Exception:
+                pass
+
+        return calls

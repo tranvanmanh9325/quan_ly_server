@@ -291,6 +291,21 @@ class FacebookService:
             logger.info("[FB-Service] PIN 090325 entered. Waiting for E2EE decryption...")
             await asyncio.sleep(7.0)
 
+            # 5. Clean up any remaining dialog elements and backdrops from DOM
+            await page.evaluate("""
+            () => {
+                let dialogs = Array.from(document.querySelectorAll('[role="dialog"], [role="alertdialog"], div[aria-modal="true"]'));
+                dialogs.forEach(d => d.remove());
+                let backdrops = Array.from(document.querySelectorAll('div[style*="position: fixed"], div[style*="background-color: rgba(0, 0, 0"]'));
+                backdrops.forEach(b => {
+                    if (!b.querySelector('[role="main"]') && !b.querySelector('[role="navigation"]')) {
+                        b.remove();
+                    }
+                });
+            }
+            """)
+            await asyncio.sleep(0.5)
+
             logger.info("[FB-Service] E2EE chat history successfully decrypted and unlocked with PIN 090325!")
             return True
 
@@ -960,8 +975,21 @@ class FacebookService:
                     if sent:
                         # Wait 4 seconds to ensure WebSocket payload is acknowledged by Facebook servers
                         await asyncio.sleep(4.0)
-                        # Save screenshot proof
+                        # Clean up any leftover overlay before taking screenshot proof
                         try:
+                            await page.evaluate("""
+                            () => {
+                                let dialogs = Array.from(document.querySelectorAll('[role="dialog"], [role="alertdialog"], div[aria-modal="true"]'));
+                                dialogs.forEach(d => d.remove());
+                                let backdrops = Array.from(document.querySelectorAll('div[style*="position: fixed"], div[style*="background-color: rgba(0, 0, 0"]'));
+                                backdrops.forEach(b => {
+                                    if (!b.querySelector('[role="main"]') && !b.querySelector('[role="navigation"]')) {
+                                        b.remove();
+                                    }
+                                });
+                            }
+                            """)
+                            await asyncio.sleep(0.3)
                             await page.screenshot(path="/tmp/last_direct_reply_proof.png")
                         except Exception:
                             pass

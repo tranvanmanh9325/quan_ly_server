@@ -247,19 +247,23 @@ class FacebookService:
             }
             """)
             if has_cancel_modal:
-                logger.info("[FB-Service] Detected 'Tiếp tục mà không khôi phục' modal. Clicking 'Hủy' to return to PIN screen...")
-                await page.evaluate("""
+                logger.info("[FB-Service] Detected 'Tiếp tục mà không khôi phục' modal. Clicking 'Hủy'...")
+                clicked = await page.evaluate("""
                 () => {
-                    let allBtns = Array.from(document.querySelectorAll('button, div[role="button"], span'));
+                    let allBtns = Array.from(document.querySelectorAll('button, div[role="button"], span, [tabindex="0"]'));
                     for (let b of allBtns) {
                         let txt = (b.innerText || '').trim();
                         if (txt === 'Hủy' || txt === 'Cancel') {
                             (b.closest('div[role="button"], button') || b).click();
-                            return;
+                            return true;
                         }
                     }
+                    return false;
                 }
                 """)
+                if not clicked:
+                    # Fallback physical mouse click on Hủy button
+                    await page.mouse.click(395, 578)
                 await asyncio.sleep(2.0)
 
             # 1. Check if PIN screen is present by text
@@ -279,21 +283,26 @@ class FacebookService:
             pin = "090325"
 
             # 2. Focus on the first dash box or input inside the PIN dialog
-            await page.evaluate("""
+            box_focused = await page.evaluate("""
             () => {
                 let dialog = Array.from(document.querySelectorAll('div, [role="dialog"], [role="alertdialog"]')).find(d => {
                     let t = (d.innerText || '');
                     return t.includes('Nhập mã PIN') || t.includes('khôi phục đoạn chat');
                 });
                 if (dialog) {
-                    let firstBox = dialog.querySelector('input, div[tabindex="0"], div[role="button"]') || dialog;
+                    let firstBox = dialog.querySelector('div[tabindex="0"]:not([aria-valuetext]), input');
                     if (firstBox) {
                         firstBox.click();
                         if (firstBox.focus) firstBox.focus();
+                        return true;
                     }
                 }
+                return false;
             }
             """)
+            if not box_focused:
+                # Fallback physical mouse click on PIN box 1
+                await page.mouse.click(390, 630)
             await asyncio.sleep(0.5)
 
             # 3. Type 6 digits: 0, 9, 0, 3, 2, 5

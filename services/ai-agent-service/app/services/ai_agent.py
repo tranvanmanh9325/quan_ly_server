@@ -226,7 +226,7 @@ COMMUNICATION:
         if not self.is_configured():
             return "AI chưa được cấu hình. Vui lòng thêm ít nhất 1 GROQ_API_KEY vào file .env."
 
-        history = self._history_map.setdefault(chat_id, deque(maxlen=MAX_HISTORY_MESSAGES))
+        history = self._history_map.setdefault(chat_id, [])
 
         if self._is_greeting(user_message):
             greeting = (
@@ -236,6 +236,7 @@ COMMUNICATION:
             )
             history.append({"role": "user", "content": user_message})
             history.append({"role": "assistant", "content": greeting})
+            self._trim_history(history)
             return greeting
 
         history.append({"role": "user", "content": user_message})
@@ -269,7 +270,9 @@ COMMUNICATION:
                     continue
 
                 if response.status_code != 200:
+                    print(f"[AiAgent] Groq error {response.status_code}: {response.text}", flush=True)
                     logger.error("[AiAgent] Groq error %d: %s", response.status_code, response.text)
+                    self.clear_history(chat_id)
                     return "Xin lỗi, đã xảy ra lỗi khi gọi AI. Vui lòng thử lại sau giây lát."
 
                 data = response.json()
@@ -327,13 +330,22 @@ COMMUNICATION:
                     continue
 
                 history.append(assistant_msg)
+                self._trim_history(history)
                 return raw_content.strip() or "Xin lỗi, tôi không thể xử lý yêu cầu lúc này."
 
             except Exception as e:
+                print(f"[AiAgent] Agent execution exception: {e}", flush=True)
                 logger.error("[AiAgent] Agent execution exception: %s", e, exc_info=True)
                 return f"Đã xảy ra lỗi khi xử lý câu hỏi: {e}"
 
+        self._trim_history(history)
         return "AI đã thử nhiều bước nhưng chưa hoàn thành yêu cầu."
+
+    def _trim_history(self, history: List[Dict[str, Any]]) -> None:
+        while len(history) > MAX_HISTORY_MESSAGES:
+            history.pop(0)
+            if history and history[0].get("role") == "tool":
+                history.pop(0)
 
     def _extract_pseudo_tool_calls(self, text: str) -> List[Dict[str, Any]]:
         import re

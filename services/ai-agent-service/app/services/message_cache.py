@@ -80,16 +80,11 @@ class FacebookMessageCache:
     async def record_direct_reply(self, sender_name: str, reply_message: str) -> None:
         if not sender_name or not sender_name.strip():
             return
-        async with self._lock:
-            existing = self._find_entry_sync(sender_name)
-            if existing:
-                await self.add_or_update(
-                    existing.sender_name,
-                    existing.incoming_messages,
-                    reply_message,
-                    existing.thread_href,
-                    True,
-                )
+        await self.add_or_update(
+            sender_name=sender_name,
+            last_reply_sent=reply_message,
+            was_auto_replied=True,
+        )
 
     async def mark_scan_completed(self) -> None:
         async with self._lock:

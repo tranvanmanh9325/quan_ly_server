@@ -508,66 +508,18 @@ class FacebookService:
 
     async def _send_message_in_open_chat(self, page: Page, text: str) -> bool:
         """Sends a text message in an already opened and authenticated chat window.
-        Proactively closes or removes any modal overlays (E2EE PIN / notifications)
-        before focusing and typing into the message input box.
+        Proactively unlocks E2EE with PIN 090325 before typing.
         """
         try:
-            # 0. Force clean up all modal dialogs, PIN overlays, and dark backdrops
-            await page.evaluate("""
-            () => {
-                // 1. Click 'Không khôi phục tin nhắn' if confirmation dialog appeared
-                let allBtns = Array.from(document.querySelectorAll('button, div[role="button"], span'));
-                allBtns.forEach(b => {
-                    let txt = (b.innerText || '').trim();
-                    if (txt === 'Không khôi phục tin nhắn' || txt === 'Continue without restoring') {
-                        (b.closest('div[role="button"], button') || b).click();
-                    }
-                });
-
-                // 2. Click any Close buttons inside dialogs
-                let closeBtns = document.querySelectorAll('[role="dialog"] [role="button"], [aria-label="Đóng"], [aria-label="Close"], [aria-label="Huỷ"]');
-                closeBtns.forEach(b => {
-                    if (b.click) b.click();
-                });
-
-                // 3. Remove all modal dialogs from DOM
-                let dialogs = Array.from(document.querySelectorAll('[role="dialog"], [role="alertdialog"], div[aria-modal="true"]'));
-                dialogs.forEach(d => d.remove());
-
-                // 4. Remove all fixed overlays containing PIN text
-                let all = Array.from(document.querySelectorAll('div'));
-                all.forEach(el => {
-                    let t = (el.innerText || '');
-                    if (t.includes('Nhập mã PIN') || t.includes('khôi phục') || t.includes('Mã PIN') || t.includes('Tiếp tục mà không')) {
-                        if (el.parentElement && !el.querySelector('[role="main"]')) {
-                            el.remove();
-                        }
-                    }
-                });
-
-                // 5. Remove dark modal backdrops
-                let backdrops = document.querySelectorAll('div[style*="position: fixed"], div[style*="background-color: rgba(0, 0, 0"]');
-                backdrops.forEach(b => {
-                    if (!b.querySelector('[role="main"]') && !b.querySelector('[role="navigation"]')) {
-                        b.remove();
-                    }
-                });
-            }
-            """)
-            await asyncio.sleep(0.6)
+            # 0. Unlock E2EE with PIN 090325 if PIN screen or confirmation modal is open
+            await self._handle_e2ee_pin_screen(page)
+            await asyncio.sleep(0.5)
 
             # 1. Target the chat message textbox directly in DOM
             textbox_selector = 'div[role="main"] div[role="textbox"][contenteditable="true"], div[role="textbox"][contenteditable="true"], div[data-lexical-editor="true"], div[aria-placeholder="Aa"]'
             
             textbox_found = False
             for _ in range(10):
-                # Clean up recurring modal before focusing
-                await page.evaluate("""
-                () => {
-                    let dialogs = document.querySelectorAll('[role="dialog"], [role="alertdialog"], div[aria-modal="true"]');
-                    dialogs.forEach(d => d.remove());
-                }
-                """)
                 try:
                     el = await page.wait_for_selector(textbox_selector, timeout=2000)
                     if el:

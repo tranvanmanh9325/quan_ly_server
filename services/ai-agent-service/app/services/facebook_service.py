@@ -213,44 +213,53 @@ class FacebookService:
     async def _extract_thread_name_from_page(self, page: Page) -> str:
         """Extracts the conversation partner's name from the page header.
 
-        Facebook's page title format is '(1) Messenger | Facebook' which does NOT
-        contain the contact name. We must read the conversation header from the DOM.
+        Based on actual DOM: [role=main] h3 contains 'Cuộc trò chuyện với X'
+        or a simple <a> element with the contact name.
         """
         import re
         try:
-            # Primary: read conversation header from DOM — the <h1> or role='heading'
-            # inside the 'main' area typically contains the contact name.
             name_from_dom = await page.evaluate("""
             () => {
-              // Try: header with role=link (FB renders contact as a link in header)
-              let h = document.querySelector('[role=\"main\"] [role=\"link\"] h1, [role=\"main\"] h1');
-              if (h) return (h.innerText || '').trim();
+              let main = document.querySelector('[role="main"]');
+              if (!main) main = document.body;
 
-              // Try: the topmost heading visible in the chat area
-              let headings = Array.from(document.querySelectorAll('h1, h2, h3, h4'));
-              for (let hel of headings) {
-                let txt = (hel.innerText || '').trim();
-                if (txt && txt.length > 1 && txt.length < 80) return txt;
+              // Try: <a> link with contact name (appears in chat header)
+              // Usually the first <a> directly in the header zone
+              let headerLinks = Array.from(main.querySelectorAll('a'));
+              for (let a of headerLinks) {
+                let txt = (a.innerText || '').trim();
+                let low = txt.toLowerCase();
+                if (txt.length > 1 && txt.length < 80 && !low.includes('messenger') && !low.includes('facebook') && !low.includes('thông báo')) {
+                  return txt;
+                }
               }
 
-              // Try: aria-label on the thread navigation link
-              let navLink = document.querySelector('[aria-label*=\"Cuộc trò chuyện\"], [aria-label*=\"Conversation with\"]');
-              if (navLink) {
-                let lbl = navLink.getAttribute('aria-label') || '';
-                let m = lbl.match(/(?:Cuộc trò chuyện với|Conversation with)\\s+(.+)/);
+              // Try: h3 containing 'Cuộc trò chuyện với'
+              let h3s = Array.from(document.querySelectorAll('h3'));
+              for (let h of h3s) {
+                let txt = (h.innerText || '').trim();
+                let m = txt.match(/Cuộc trò chuyện với (.+)/);
                 if (m) return m[1].trim();
+              }
+
+              // Try: any h3 that has a valid name (not system labels)
+              for (let h of h3s) {
+                let txt = (h.innerText || '').trim();
+                let low = txt.toLowerCase();
+                if (txt.length > 1 && txt.length < 80 && !low.includes('tin nhắn') && !low.includes('soạn') && !low.includes('đoạn chat') && !low.includes('messenger')) {
+                  return txt;
+                }
               }
               return '';
             }
             """)
-            if name_from_dom and len(name_from_dom) > 1 and name_from_dom.lower() not in ("messenger", "facebook"):
+            if name_from_dom and len(name_from_dom) > 1 and name_from_dom.lower() not in ("messenger", "facebook", "thông báo"):
                 return name_from_dom
 
-            # Fallback: try page title — only works when title has format "Name | Messenger"
+            # Fallback: page title strip
             title = await page.title()
             if title and "|" in title:
                 name = title.split("|")[0].strip()
-                # Strip unread count prefix: "(2) Trần Văn Mạnh" → "Trần Văn Mạnh"
                 name = re.sub(r"^\(\d+\)\s*", "", name).strip()
                 if name and name.lower() not in ("messenger", "facebook", ""):
                     return name
@@ -261,28 +270,44 @@ class FacebookService:
     async def _extract_incoming_messages(self, page: Page) -> List[str]:
         """Extracts genuine incoming messages from the open chat window.
 
-        Uses aria-label heuristics first (most reliable), falling back to
-        dir=auto text scanning if the structured approach yields nothing.
+        Based on actual DOM observation, Facebook's aria-label format is:
+          'Nh\u1eadp, Tin nh\u1eafn do X g\u1eedi l\u00fac HH:MM: message_text'
+          'Nh\u1eadp, Tin nh\u1eafn do B\u1ea1n g\u1eedi l\u00fac HH:MM: message_text'
+
+        We parse these labels to identify incoming (not from 'B\u1ea1n') messages.
         """
         try:
             script = """
             () => {
               let main = document.querySelector('[role="main"]') || document.querySelector('[role="region"]') || document.body;
-              let bubbles = Array.from(main.querySelectorAll('[aria-label]')).filter(el => {
-                let lbl = (el.getAttribute('aria-label') || '').toLowerCase();
-                return (lbl.startsWith('tin nhắn do ') && lbl.includes(' gửi lúc ')) || /^lúc \\d{1,2}:\\d{2},.+:/.test(lbl);
-              });
+
+              // Primary: use aria-label parsing (most reliable)
+              // Actual format: 'Nh\u1eadp, Tin nh\u1eafn do X g\u1eedi l\u00fac HH:MM: text'
+              let allEls = Array.from(main.querySelectorAll('[aria-label]'));
               let incoming = [];
-              if (bubbles.length > 0) {
-                for (let b of bubbles) {
-                  let lbl = (b.getAttribute('aria-label') || '').toLowerCase();
-                  let isOut = lbl.startsWith('tin nhắn do bạn') || /^lúc \\d{1,2}:\\d{2}, bạn:/.test(lbl);
-                  if (!isOut) {
-                    let txt = (b.innerText || '').trim();
-                    if (txt && !incoming.includes(txt)) incoming.push(txt);
-                  }
-                }
+              let seen = new Set();
+
+              for (let el of allEls) {
+                let lbl = (el.getAttribute('aria-label') || '');
+                let lblLow = lbl.toLowerCase();
+
+                // Match: 'Nh\u1eadp, Tin nh\u1eafn do X g\u1eedi l\u00fac' or 'Tin nh\u1eafn do X g\u1eedi l\u00fac'
+                if (!lblLow.includes('tin nh\u1eafn do') || !lblLow.includes('g\u1eedi l\u00fac')) continue;
+
+                // Skip messages sent by 'B\u1ea1n' (= us, the account owner)
+                if (lblLow.includes('do b\u1ea1n g\u1eedi') || lblLow.includes('do b\u1ea1n g\u1ecci')) continue;
+
+                // Extract message text: everything after the last ':'
+                // Format: '...l\u00fac HH:MM: actual message text'
+                let colonIdx = lbl.lastIndexOf(':');
+                if (colonIdx < 0) continue;
+                let txt = lbl.substring(colonIdx + 1).trim();
+                if (!txt || seen.has(txt)) continue;
+                seen.add(txt);
+                incoming.push(txt);
               }
+
+              // Fallback: scan dir=auto elements when aria-labels don't work
               if (incoming.length === 0) {
                 let chatScope = main.querySelector('[role="grid"], [role="list"], [role="log"]') || main;
                 let editables = Array.from(chatScope.querySelectorAll('[contenteditable="true"]'));
@@ -297,9 +322,9 @@ class FacebookService:
                 for (let r of rows) {
                   let txt = (r.innerText || '').trim();
                   let lower = txt.toLowerCase();
-                  if (lower.includes('mã hóa đầu cuối') || lower.includes('tìm hiểu thêm') || lower.includes('nếu bạn chấp nhận')) continue;
-                  if (lower.includes('tiểu bảo bảo') || lower.includes('trợ lý ai của anh mạnh') || lower.includes('trợ lí của mạnh')) continue;
-                  if (!incoming.includes(txt)) incoming.push(txt);
+                  if (lower.includes('m\u00e3 h\u00f3a \u0111\u1ea7u cu\u1ed1i') || lower.includes('t\u00ecm hi\u1ec3u th\u00eam') || lower.includes('n\u1ebfu b\u1ea1n ch\u1ea5p nh\u1eadn')) continue;
+                  if (lower.includes('ti\u1ec3u b\u1ea3o b\u1ea3o') || lower.includes('tr\u1ee3 l\u00fd ai') || lower.includes('tr\u1ee3 l\u00ed c\u1ee7a m\u1ea1nh')) continue;
+                  if (!seen.has(txt)) { seen.add(txt); incoming.push(txt); }
                 }
               }
               return incoming.slice(-10);

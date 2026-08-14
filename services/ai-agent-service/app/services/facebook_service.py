@@ -232,31 +232,97 @@ class FacebookService:
     # ─── Playwright helpers ───────────────────────────────────────────────────
 
     async def _handle_e2ee_pin_screen(self, page: Page) -> bool:
-        """Handles Facebook's 6-digit E2EE PIN screen if it appears."""
+        """Handles Facebook's 6-digit E2EE PIN screen if it appears.
+
+        Detects both standard inputs and custom React dash boxes, types 090325,
+        waits for decryption, and automatically dismisses the modal.
+        """
         try:
+            # 1. Check if PIN screen is present by text or input elements
+            has_pin_dialog = await page.evaluate("""
+            () => {
+                let txt = (document.body.innerText || '');
+                return txt.includes('Nhập mã PIN') || txt.includes('khôi phục đoạn chat') || 
+                       txt.includes('khôi phục lịch sử') || txt.includes('mã PIN') || 
+                       txt.includes('Enter PIN') || txt.includes('restore your chat');
+            }
+            """)
+
             pin_inputs = await page.query_selector_all(
                 "input[type='password'], input[maxlength='1'], input[inputmode='numeric']"
             )
-            if len(pin_inputs) in (1, 6):
-                logger.info("[FB-Service] E2EE PIN screen detected. Unlocking...")
-                pin = "090325"
-                if len(pin_inputs) == 6:
-                    for i, digit in enumerate(pin):
-                        await pin_inputs[i].fill(digit)
-                        await asyncio.sleep(0.1)
-                else:
-                    await pin_inputs[0].fill(pin)
-                await asyncio.sleep(1.0)
-                submit_btn = await page.query_selector(
-                    "button[type='submit'], [aria-label*='Tiếp tục'], [aria-label*='Continue']"
-                )
-                if submit_btn:
+
+            if not has_pin_dialog and len(pin_inputs) not in (1, 6):
+                return False
+
+            logger.info("[FB-Service] E2EE PIN screen detected. Unlocking with PIN 090325...")
+            pin = "090325"
+
+            # 2. Fill standard inputs if found
+            if len(pin_inputs) == 6:
+                for i, digit in enumerate(pin):
+                    await pin_inputs[i].fill(digit)
+                    await asyncio.sleep(0.1)
+            elif len(pin_inputs) == 1:
+                await pin_inputs[0].fill(pin)
+                await asyncio.sleep(0.1)
+
+            # 3. Focus on PIN dialog container and simulate sequential keyboard typing
+            await page.evaluate("""
+            () => {
+                let dialog = Array.from(document.querySelectorAll('div, [role="dialog"], [role="alertdialog"]')).find(d => {
+                    let t = (d.innerText || '');
+                    return t.includes('Nhập mã PIN') || t.includes('khôi phục đoạn chat');
+                });
+                if (dialog) {
+                    let firstBox = dialog.querySelector('input, [tabindex], div:has(> span)') || dialog;
+                    if (firstBox.click) firstBox.click();
+                    if (firstBox.focus) firstBox.focus();
+                }
+            }
+            """)
+            await asyncio.sleep(0.3)
+
+            for digit in pin:
+                await page.keyboard.press(digit)
+                await asyncio.sleep(0.15)
+
+            # 4. Click Submit / Tiếp tục if present
+            submit_btn = await page.query_selector(
+                "button[type='submit'], [aria-label*='Tiếp tục'], [aria-label*='Continue'], div[role='button']:has-text('Tiếp tục')"
+            )
+            if submit_btn:
+                try:
                     await submit_btn.click()
-                    await asyncio.sleep(5.0)  # Wait longer for messages to decrypt after PIN
-                return True
+                except Exception:
+                    pass
+
+            # Wait for decryption
+            await asyncio.sleep(4.0)
+
+            # 5. Dismiss any remaining modal overlay by clicking Close (X) button
+            await page.evaluate("""
+            () => {
+                let dialogs = Array.from(document.querySelectorAll('[role="dialog"], [role="alertdialog"], div')).filter(d => {
+                    let t = (d.innerText || '');
+                    return t.includes('Nhập mã PIN') || t.includes('khôi phục đoạn chat');
+                });
+                for (let d of dialogs) {
+                    let closeBtn = d.querySelector('[aria-label="Đóng"], [aria-label="Close"], [aria-label="Huỷ"], svg');
+                    if (closeBtn) {
+                        let clickTarget = closeBtn.closest('div[role="button"], button') || closeBtn;
+                        clickTarget.click();
+                        return;
+                    }
+                }
+            }
+            """)
+            await asyncio.sleep(1.5)
+            return True
+
         except Exception as e:
             logger.warning("[FB-Service] Error handling E2EE PIN screen: %s", e)
-        return False
+            return False
 
     # Facebook UI labels that are NOT person names — used to filter bad extractions
     _FB_SYSTEM_LABELS = frozenset({

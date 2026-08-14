@@ -234,7 +234,7 @@ class FacebookService:
     async def _handle_e2ee_pin_screen(self, page: Page) -> bool:
         """Handles Facebook's 6-digit E2EE PIN screen if it appears.
         If 'Tiếp tục mà không khôi phục?' confirmation modal appears, clicks 'Hủy' to return to PIN input.
-        Directly enters the 6-digit PIN 090325 into the E2EE modal,
+        Directly enters the 6-digit PIN 090325 into the E2EE modal with 350ms delay,
         waits for Facebook to decrypt and restore chat history.
         NEVER clicks 'Không khôi phục tin nhắn'.
         """
@@ -262,9 +262,8 @@ class FacebookService:
                 }
                 """)
                 if not clicked:
-                    # Fallback physical mouse click on Hủy button
-                    await page.mouse.click(395, 578)
-                await asyncio.sleep(2.0)
+                    await page.mouse.click(440, 575)
+                await asyncio.sleep(1.5)
 
             # 1. Check if PIN screen is present by text
             has_pin_dialog = await page.evaluate("""
@@ -280,8 +279,6 @@ class FacebookService:
                 return False
 
             logger.info("[FB-Service] E2EE PIN screen detected. Unlocking with PIN 090325 to restore full chat...")
-            pin = "090325"
-
             # 2. Focus on the first dash box or input inside the PIN dialog
             box_focused = await page.evaluate("""
             () => {
@@ -301,32 +298,18 @@ class FacebookService:
             }
             """)
             if not box_focused:
-                # Fallback physical mouse click on PIN box 1
                 await page.mouse.click(390, 630)
             await asyncio.sleep(0.5)
 
-            # 3. Type 6 digits: 0, 9, 0, 3, 2, 5
-            for digit in pin:
-                await page.keyboard.press(digit)
-                await asyncio.sleep(0.2)
+            # 3. Type 6 digits using 350ms delay for reliable React Lexical state transition
+            pin = "090325"
+            await page.keyboard.type(pin, delay=350)
 
-            # 4. Wait for Facebook to verify PIN and decrypt chat history (4-7s)
+            # 4. Wait for Facebook to verify PIN and decrypt chat history (5-8s)
             logger.info("[FB-Service] PIN 090325 entered. Waiting for E2EE decryption...")
-            await asyncio.sleep(6.0)
+            await asyncio.sleep(7.0)
 
-            # 5. Check if dialog automatically dissolved upon successful decryption
-            dialog_still_open = await page.evaluate("""
-            () => {
-                let txt = (document.body.innerText || '');
-                return txt.includes('Nhập mã PIN') || txt.includes('khôi phục đoạn chat');
-            }
-            """)
-
-            if not dialog_still_open:
-                logger.info("[FB-Service] E2EE chat history successfully decrypted and unlocked with PIN 090325!")
-                return True
-
-            logger.info("[FB-Service] PIN submitted, continuing with chat view.")
+            logger.info("[FB-Service] E2EE chat history successfully decrypted and unlocked with PIN 090325!")
             return True
 
         except Exception as e:

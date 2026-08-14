@@ -978,17 +978,23 @@ class FacebookService:
                     try:
                         await page.goto(
                             dest_url,
-                            wait_until="commit",
+                            wait_until="domcontentloaded",
                             timeout=35000,
                         )
                     except Exception as nav_e:
                         logger.warning("[FB-DirectReply] Navigation notice: %s", nav_e)
 
-                    await asyncio.sleep(5.0)
+                    # Wait for React Messenger interface to fully hydrate
+                    try:
+                        await page.wait_for_selector('div[role="main"], div[role="textbox"], [contenteditable="true"]', timeout=20000)
+                    except Exception:
+                        pass
+
+                    await asyncio.sleep(2.0)
 
                     # Handle PIN screen & dismiss any modal overlays
                     await self._handle_e2ee_pin_screen(page)
-                    await asyncio.sleep(1.5)
+                    await asyncio.sleep(1.0)
 
                     # If on root inbox and thread was clicked, ensure open
                     if not target_href:

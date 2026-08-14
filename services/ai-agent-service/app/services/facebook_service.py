@@ -3,7 +3,7 @@ import json
 import logging
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 import psycopg
 from psycopg.rows import dict_row
 from playwright.async_api import async_playwright, Browser, BrowserContext, Page
@@ -28,7 +28,7 @@ class FacebookService:
 
     async def get_config_from_db(self) -> Dict[str, Any]:
         try:
-            async with await psycopg.AsyncConnection.connect(settings.database_url, row_factory=dict_row) as conn:
+            async with await psycopg.AsyncConnection.connect(settings.database_url, row_factory=cast(Any, dict_row)) as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(
                         "SELECT id, cookies_json, cooldown_minutes, custom_message, enabled, "
@@ -268,7 +268,7 @@ class FacebookService:
                     viewport={"width": 1280, "height": 800},
                     user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
                 )
-                await context.add_cookies(cookies)
+                await context.add_cookies(cast(Any, cookies))
                 page: Page = await context.new_page()
 
                 try:
@@ -385,7 +385,7 @@ class FacebookService:
                     viewport={"width": 1280, "height": 800},
                     user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
                 )
-                await context.add_cookies(cookies)
+                await context.add_cookies(cast(Any, cookies))
                 page: Page = await context.new_page()
 
                 try:

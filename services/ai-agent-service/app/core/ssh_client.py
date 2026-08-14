@@ -1,6 +1,5 @@
 import asyncio
 import logging
-from typing import Optional
 import asyncssh
 from app.config import settings
 from app.core.security import find_security_violation
@@ -52,9 +51,15 @@ class SshClient:
                         conn.run(timed_cmd, check=False),
                         timeout=COMMAND_TIMEOUT_SEC + 5,
                     )
-                    stdout = (result.stdout or "").strip()
-                    stderr = (result.stderr or "").strip()
-                    output = stdout if stdout else stderr
+                    stdout_raw = result.stdout or ""
+                    stdout_str = stdout_raw.decode("utf-8", errors="replace") if isinstance(stdout_raw, bytes) else stdout_raw
+
+                    stderr_raw = result.stderr or ""
+                    stderr_str = stderr_raw.decode("utf-8", errors="replace") if isinstance(stderr_raw, bytes) else stderr_raw
+
+                    stdout = stdout_str.strip()
+                    stderr = stderr_str.strip()
+                    output: str = stdout if stdout else stderr
 
                     if not output:
                         return "(lệnh không có output hoặc server không phản hồi)"

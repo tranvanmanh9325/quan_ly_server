@@ -1,8 +1,7 @@
 import asyncio
 import json
 import logging
-from collections import deque
-from typing import Any, Deque, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 import httpx
 
 from app.config import settings
@@ -30,7 +29,7 @@ class AiAgentService:
         self.message_cache = message_cache
         self.fb_service = fb_service_ref
         self.model = settings.GROQ_MODEL
-        self._history_map: Dict[str, Deque[Dict[str, Any]]] = {}
+        self._history_map: Dict[str, List[Dict[str, Any]]] = {}
         self._http_client = httpx.AsyncClient(timeout=30.0)
 
     def set_fb_service(self, fb_service: Any) -> None:

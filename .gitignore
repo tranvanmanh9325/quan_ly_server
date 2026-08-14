@@ -7,13 +7,23 @@
 .env.*
 .env.local
 
-# Build artifacts (Maven & Node)
+# Build artifacts (Maven, Node & Python)
 target/
 **/target/
 node_modules/
 **/node_modules/
 dist/
 **/dist/
+.venv/
+**/.venv/
+venv/
+**/venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.ruff_cache/
 
 # IDE & OS files
 .idea/

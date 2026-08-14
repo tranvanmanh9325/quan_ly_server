@@ -1,0 +1,14 @@
+{
+  "executionEnvironments": [
+    {
+      "root": "services/ai-agent-service",
+      "extraPaths": [
+        "services/ai-agent-service"
+      ]
+    }
+  ],
+  "venvPath": "services/ai-agent-service",
+  "venv": ".venv",
+  "pythonVersion": "3.14",
+  "typeCheckingMode": "basic"
+}

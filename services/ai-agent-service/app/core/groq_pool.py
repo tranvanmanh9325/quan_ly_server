@@ -48,7 +48,7 @@ class GroqKeyPool:
                     return key
 
             # If all keys are in cooldown, pick the one that expires soonest
-            logger.warn("[GroqKeyPool] All keys currently rate-limited; picking soonest available.")
+            logger.warning("[GroqKeyPool] All keys currently rate-limited; picking soonest available.")
             soonest_key = min(self._cooldowns.keys(), key=lambda k: self._cooldowns[k])
             return soonest_key
 

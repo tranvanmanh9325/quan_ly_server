@@ -2,5 +2,12 @@
     "java.compile.nullAnalysis.mode": "automatic",
     "java.configuration.updateBuildConfiguration": "automatic",
     // LICENSE is a plain-text legal document, not a Markdown file — exclude from linting
-    "markdownlint.ignore": ["LICENSE"]
+    "markdownlint.ignore": ["LICENSE"],
+    "python.defaultInterpreterPath": "${workspaceFolder}/services/ai-agent-service/.venv/Scripts/python.exe",
+    "python.analysis.extraPaths": [
+        "${workspaceFolder}/services/ai-agent-service"
+    ],
+    "python.autoComplete.extraPaths": [
+        "${workspaceFolder}/services/ai-agent-service"
+    ]
 }

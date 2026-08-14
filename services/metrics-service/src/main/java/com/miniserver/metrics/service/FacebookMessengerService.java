@@ -285,8 +285,6 @@ public class FacebookMessengerService implements SchedulingConfigurer, Disposabl
         return t;
     });
     private final AtomicBoolean scanRunning  = new AtomicBoolean(false);
-    /** Separate lock for sendDirectReply — uses its own temp profile, safe to run concurrently with scan. */
-    private final AtomicBoolean replyRunning = new AtomicBoolean(false);
     private volatile String lastScanResult = null;
 
     public FacebookMessengerService(FacebookConfigRepository configRepository,
@@ -303,7 +301,7 @@ public class FacebookMessengerService implements SchedulingConfigurer, Disposabl
                 this::scheduledCheck,
                 triggerContext -> {
                     Optional<FacebookConfig> configOpt = configRepository.getConfig();
-                    int interval = configOpt.map(FacebookConfig::getScanIntervalMinutes).orElse(5);
+                    int interval = configOpt.map(c -> c.getScanIntervalMinutes()).orElse(5);
                     if (interval < 1) interval = 1;
 
                     Instant lastCompletion = triggerContext.lastCompletion();

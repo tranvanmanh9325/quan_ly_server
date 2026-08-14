@@ -122,7 +122,7 @@ class TelegramBot:
             return
 
         # Security check: If configured with a specific TELEGRAM_CHAT_ID, reject unauthorized users
-        if self.chat_id and str(self.chat_id) != chat_id:
+        if self.chat_id and self.chat_id != chat_id:
             logger.warning("[TelegramBot] Unauthorized message from chat_id %s", chat_id)
             await self.send_message(chat_id, "⛔ Bạn không có quyền truy cập bot này.")
             return

@@ -26,7 +26,7 @@ async def facebook_periodic_scan_loop(fb_service: FacebookService):
     while True:
         try:
             cfg = await fb_service.get_config_from_db()
-            interval_min = max(1, cfg.get("scan_interval_minutes", 5))
+            interval_min = max(3, cfg.get("scan_interval_minutes", 3))
             if cfg.get("enabled", False):
                 logger.info("[FB-Scheduler] Running scheduled scan cycle...")
                 await fb_service.run_scan_cycle()

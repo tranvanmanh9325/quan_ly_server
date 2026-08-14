@@ -720,12 +720,16 @@ class FacebookService:
 
                     try:
                         logger.info("[FB-Service] Navigating to Messenger inbox...")
-                        await page.goto(
-                            "https://www.facebook.com/messages/t/",
-                            wait_until="domcontentloaded",
-                            timeout=25000,
-                        )
-                        await asyncio.sleep(5.0)
+                        try:
+                            await page.goto(
+                                "https://www.facebook.com/messages/t/",
+                                wait_until="domcontentloaded",
+                                timeout=25000,
+                            )
+                        except Exception as nav_e:
+                            logger.warning("[FB-Service] Inbox navigation warning: %s", nav_e)
+
+                        await asyncio.sleep(4.0)
                         await self._handle_e2ee_pin_screen(page)
 
                         # ─── Thread Discovery ─────────────────────────────────────

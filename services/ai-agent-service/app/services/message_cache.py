@@ -1,10 +1,29 @@
 import asyncio
+import collections
+import functools
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional
 from pydantic import BaseModel, Field
 
 VN_TZ = timezone(timedelta(hours=7))
 HISTORY_LIMIT = 50
+
+# Fast C-level transliteration table for O(1) normalized string matching
+_VN_TRANS_TABLE = str.maketrans(
+    "àáảãạăằắẳẵặâầấẩẫậèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ"
+    "ÀÁẢÃẠĂẰẮẲẴẶÂẦẤẨẪẬÈÉẺẼẸÊỀẾỂỄỆÌÍỈĨỊÒÓỎÕỌÔỒỐỔỖỘƠỜỚỞỠỢÙÚỦŨỤƯỪỨỬỮỰỲÝỶỸỴĐ",
+    "aaaaaaaaaaaaaaaaaeeeeeeeeeeeiiiiiooooooooooooooooouuuuuuuuuuuyyyyyd"
+    "AAAAAAAAAAAAAAAAAEEEEEEEEEEEIIIIIOOOOOOOOOOOOOOOOOUUUUUUUUUUUYYYYYD"
+)
+
+
+@functools.lru_cache(maxsize=2048)
+def _fast_normalize_name(text: str) -> str:
+    if not text:
+        return ""
+    s = text.translate(_VN_TRANS_TABLE).lower()
+    cleaned = "".join(c if (c.isalnum() or c.isspace()) else " " for c in s)
+    return " ".join(cleaned.split())
 
 
 class MessageEntry(BaseModel):
@@ -18,12 +37,14 @@ class MessageEntry(BaseModel):
 
 class FacebookMessageCache:
     """
-    In-memory thread-safe cache for Facebook Messenger activity.
-    Stores structured incoming messages separated from bot auto-replies.
+    Thread-safe, Bounded O(1) LRU Cache for Facebook Messenger activity.
+    Uses collections.OrderedDict for strict O(1) eviction and LRU re-ordering.
+    Eliminates memory leaks and array-shifting overhead.
     """
 
-    def __init__(self):
-        self._entries: List[MessageEntry] = []
+    def __init__(self, capacity: int = HISTORY_LIMIT):
+        self._capacity = capacity
+        self._entries: collections.OrderedDict[str, MessageEntry] = collections.OrderedDict()
         self._last_scan_at: Optional[datetime] = None
         self._lock = asyncio.Lock()
 
@@ -39,10 +60,14 @@ class FacebookMessageCache:
             return
 
         clean_sender = sender_name.strip()
+        norm_key = _fast_normalize_name(clean_sender)
+        if not norm_key:
+            return
+
         clean_incoming = [m.strip() for m in (incoming_messages or []) if m and m.strip()]
 
         async with self._lock:
-            existing = self._find_entry_sync(clean_sender)
+            existing = self._entries.get(norm_key)
 
             if not clean_incoming and existing and existing.incoming_messages:
                 clean_incoming = list(existing.incoming_messages)
@@ -59,23 +84,22 @@ class FacebookMessageCache:
                 else (existing.thread_href if existing else "")
             )
 
-            auto_replied_to_store = was_auto_replied
-
-            # Remove old entry if present
-            self._entries = [e for e in self._entries if e.sender_name.lower() != clean_sender.lower()]
-
             entry = MessageEntry(
                 sender_name=clean_sender,
                 incoming_messages=clean_incoming,
                 last_reply_sent=reply_to_store,
                 thread_href=href_to_store,
                 detected_at=datetime.now(VN_TZ),
-                was_auto_replied=auto_replied_to_store,
+                was_auto_replied=was_auto_replied,
             )
-            self._entries.insert(0, entry)
 
-            while len(self._entries) > HISTORY_LIMIT:
-                self._entries.pop()
+            # O(1) update and move to front (MRU - Most Recently Used)
+            self._entries[norm_key] = entry
+            self._entries.move_to_end(norm_key, last=False)
+
+            # O(1) pop LRU (Least Recently Used) if capacity exceeded
+            while len(self._entries) > self._capacity:
+                self._entries.popitem(last=True)
 
     async def record_direct_reply(self, sender_name: str, reply_message: str) -> None:
         if not sender_name or not sender_name.strip():
@@ -93,40 +117,31 @@ class FacebookMessageCache:
     def _find_entry_sync(self, sender_name: str) -> Optional[MessageEntry]:
         if not sender_name or not self._entries:
             return None
-        import unicodedata
-        import re
 
-        def _norm(s: str) -> str:
-            nfkd = unicodedata.normalize("NFKD", s.lower())
-            no_marks = "".join(c for c in nfkd if not unicodedata.combining(c))
-            no_marks = no_marks.replace("đ", "d").replace("Đ", "D")
-            cleaned = re.sub(r"[^a-z0-9\s]", " ", no_marks)
-            return " ".join(cleaned.split())
-
-        q_norm = _norm(sender_name)
-        if not q_norm:
+        norm_q = _fast_normalize_name(sender_name)
+        if not norm_q:
             return None
 
-        # 1. Exact or substring match on normalized text
-        for e in self._entries:
-            e_norm = _norm(e.sender_name)
-            if q_norm == e_norm or q_norm in e_norm or e_norm in q_norm:
-                return e
+        # 1. Exact O(1) hash map lookup
+        entry = self._entries.get(norm_q)
+        if entry:
+            return entry
 
-        # 2. Token set overlap match (e.g. 'Mạnh Văn Trần' vs 'Trần Văn Mạnh')
-        q_tokens = set(q_norm.split())
+        # 2. Substring & Fuzzy token lookup
+        q_tokens = set(norm_q.split())
         best_match: Optional[MessageEntry] = None
         best_score = 0.0
 
-        for e in self._entries:
-            e_tokens = set(_norm(e.sender_name).split())
-            if not e_tokens:
-                continue
-            overlap = len(q_tokens.intersection(e_tokens))
-            score = overlap / max(len(q_tokens), len(e_tokens))
-            if score > best_score and score >= 0.5:
-                best_score = score
-                best_match = e
+        for key, e in self._entries.items():
+            if norm_q in key or key in norm_q:
+                return e
+            e_tokens = set(key.split())
+            if e_tokens:
+                overlap = len(q_tokens.intersection(e_tokens))
+                score = overlap / max(len(q_tokens), len(e_tokens))
+                if score > best_score and score >= 0.5:
+                    best_score = score
+                    best_match = e
 
         return best_match
 
@@ -137,7 +152,7 @@ class FacebookMessageCache:
 
     async def get_all(self) -> List[MessageEntry]:
         async with self._lock:
-            return list(self._entries)
+            return list(self._entries.values())
 
     async def to_ai_summary(self) -> str:
         async with self._lock:
@@ -155,7 +170,7 @@ class FacebookMessageCache:
 
             lines.append(f"Danh sách tin nhắn Facebook được ghi nhận ({len(self._entries)} người):\n")
 
-            for idx, e in enumerate(self._entries, start=1):
+            for idx, e in enumerate(self._entries.values(), start=1):
                 lines.append(f"{idx}. 👤 Người gửi: {e.sender_name}")
                 if e.incoming_messages:
                     lines.append("   📩 Nội dung tin nhắn người gửi đã nhắn:")

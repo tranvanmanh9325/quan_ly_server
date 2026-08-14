@@ -35,16 +35,6 @@ const PROCESS_INTERVAL        = 30_000;
 const ADAPTIVE_THRESHOLD_MS   = 5_000;  // Ngưỡng để xem SSH là "đang chậm"
 
 function App() {
-  // Attach JWT token to every outgoing API request
-  useEffect(() => {
-    const id = axios.interceptors.request.use(config => {
-      const token = getToken();
-      if (token) config.headers['Authorization'] = `Bearer ${token}`;
-      return config;
-    });
-    return () => axios.interceptors.request.eject(id);
-  }, []);
-
   // Load persisted alert thresholds from localStorage
   const [alertThresholds, setAlertThresholds] = React.useState(() => {
     const s = loadSettings();

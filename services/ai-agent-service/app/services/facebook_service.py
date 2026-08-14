@@ -333,6 +333,27 @@ class FacebookService:
             }
             """)
             await asyncio.sleep(1.0)
+
+            # 7. Final fail-safe: remove any remaining PIN modal or full-screen overlay from DOM
+            await page.evaluate("""
+            () => {
+                let all = Array.from(document.querySelectorAll('*')).filter(el => {
+                    let t = el.innerText || '';
+                    return (t.includes('Nhập mã PIN') || t.includes('khôi phục đoạn chat')) && el.parentElement;
+                });
+                for (let el of all) {
+                    let modal = el.closest('[role="dialog"], [role="alertdialog"], div[style*="position: fixed"]');
+                    if (modal) {
+                        modal.remove();
+                    } else if (el.style.position === 'fixed') {
+                        el.remove();
+                    }
+                }
+                let backdrops = document.querySelectorAll('div[style*="position: fixed"][style*="z-index"]');
+                backdrops.forEach(b => b.remove());
+            }
+            """)
+            await asyncio.sleep(0.5)
             return True
 
         except Exception as e:

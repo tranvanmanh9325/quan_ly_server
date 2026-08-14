@@ -298,6 +298,21 @@ COMMUNICATION:
                             fn_args = {}
 
                         tool_result = await self._execute_tool(fn_name, fn_args)
+                        # For direct Facebook message sending, return tool result directly
+                        # to eliminate any possible AI LLM hallucination or misreporting
+                        if fn_name == "facebook_send_reply":
+                            history.append({
+                                "role": "tool",
+                                "tool_call_id": call_id,
+                                "content": tool_result,
+                            })
+                            history.append({
+                                "role": "assistant",
+                                "content": tool_result,
+                            })
+                            self._trim_history(history)
+                            return tool_result
+
                         history.append({
                             "role": "tool",
                             "tool_call_id": call_id,

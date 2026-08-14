@@ -980,7 +980,8 @@ class FacebookService:
                     # Send the message
                     sent = await self._send_message_in_open_chat(page, message)
                     if sent:
-                        await asyncio.sleep(2.0)
+                        # Wait 4 seconds to ensure WebSocket payload is acknowledged by Facebook servers
+                        await asyncio.sleep(4.0)
                         # Save screenshot proof
                         try:
                             await page.screenshot(path="/tmp/last_direct_reply_proof.png")
@@ -1002,10 +1003,10 @@ class FacebookService:
 
         try:
             async with self._browser_lock:
-                return await asyncio.wait_for(_execute_send(), timeout=60.0)
+                return await asyncio.wait_for(_execute_send(), timeout=120.0)
         except asyncio.TimeoutError:
             logger.error("[FB-DirectReply] Timeout sending to '%s'", recipient_name)
-            return f'Lỗi: Hết thời gian chờ (60s) khi gửi tin nhắn cho "{recipient_name}". Vui lòng thử lại.'
+            return f'Lỗi: Hết thời gian chờ (120s) khi gửi tin nhắn cho "{recipient_name}". Vui lòng thử lại.'
         except Exception as e:
             logger.error("[FB-DirectReply] Error sending to '%s': %s", recipient_name, e)
             return f'Lỗi khi gửi tin nhắn cho "{recipient_name}": {e}'

@@ -174,6 +174,7 @@ COMMUNICATION:
                     "parameters": {
                         "type": "object",
                         "properties": {},
+                        "required": [],
                     },
                 },
             },
@@ -254,7 +255,7 @@ COMMUNICATION:
                 "messages": messages,
                 "tools": self._build_tools(),
                 "tool_choice": "auto",
-                "temperature": 0.4,
+                "temperature": 0.1,
                 "max_tokens": 1024,
             }
 

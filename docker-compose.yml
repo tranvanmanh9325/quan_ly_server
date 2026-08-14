@@ -3,6 +3,7 @@ services:
     image: postgres:17-alpine
     container_name: dashboard_db
     restart: unless-stopped
+    stop_grace_period: 15s
     shm_size: '256m'
     command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]
     environment:
@@ -17,9 +18,10 @@ services:
       - dashboard-network
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U dashboard_user -d quan_ly_server"]
-      interval: 10s
+      interval: 20s
       timeout: 5s
       retries: 5
+      start_period: 20s
 
   auth-service:
     build:
@@ -33,14 +35,15 @@ services:
     environment:
       JAVA_TOOL_OPTIONS: "-XX:+UseSerialGC -XX:MaxRAMPercentage=70.0 -XX:+ExitOnOutOfMemoryError -XX:+TieredCompilation -XX:TieredStopAtLevel=1"
     restart: unless-stopped
+    stop_grace_period: 15s
     networks:
       - dashboard-network
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8081/actuator/health"]
-      interval: 15s
-      timeout: 10s
-      retries: 6
-      start_period: 60s
+      interval: 25s
+      timeout: 5s
+      retries: 5
+      start_period: 45s
     deploy:
       resources:
         limits:
@@ -62,6 +65,7 @@ services:
       JAVA_TOOL_OPTIONS: "-XX:+UseG1GC -XX:MaxRAMPercentage=60.0 -XX:ParallelGCThreads=2 -XX:ConcGCThreads=1 -XX:+ExitOnOutOfMemoryError"
       TELEGRAM_POLLING_ENABLED: "false"
     restart: unless-stopped
+    stop_grace_period: 15s
     depends_on:
       db:
         condition: service_healthy
@@ -69,10 +73,10 @@ services:
       - dashboard-network
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8082/actuator/health"]
-      interval: 15s
-      timeout: 10s
-      retries: 6
-      start_period: 60s
+      interval: 25s
+      timeout: 5s
+      retries: 5
+      start_period: 45s
     deploy:
       resources:
         limits:
@@ -95,6 +99,7 @@ services:
     environment:
       - TZ=Asia/Ho_Chi_Minh
     restart: unless-stopped
+    stop_grace_period: 15s
     depends_on:
       db:
         condition: service_healthy
@@ -106,9 +111,9 @@ services:
       - browser_data:/app/browser_data
     healthcheck:
       test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8084/health')\""]
-      interval: 15s
-      timeout: 10s
-      retries: 6
+      interval: 25s
+      timeout: 5s
+      retries: 5
       start_period: 30s
     deploy:
       resources:
@@ -118,7 +123,6 @@ services:
         reservations:
           memory: 256M
     cpu_shares: 512
-
 
   file-service:
     build:
@@ -132,14 +136,15 @@ services:
     environment:
       JAVA_TOOL_OPTIONS: "-XX:+UseSerialGC -XX:MaxRAMPercentage=70.0 -XX:+ExitOnOutOfMemoryError -XX:+TieredCompilation -XX:TieredStopAtLevel=1"
     restart: unless-stopped
+    stop_grace_period: 15s
     networks:
       - dashboard-network
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8083/actuator/health"]
-      interval: 15s
-      timeout: 10s
-      retries: 6
-      start_period: 60s
+      interval: 25s
+      timeout: 5s
+      retries: 5
+      start_period: 45s
     deploy:
       resources:
         limits:
@@ -163,6 +168,7 @@ services:
       file-service:
         condition: service_healthy
     restart: unless-stopped
+    stop_grace_period: 15s
     networks:
       - dashboard-network
     healthcheck:

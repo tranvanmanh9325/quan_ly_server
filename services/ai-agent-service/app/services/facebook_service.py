@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, cast
 import psycopg
 from psycopg.rows import dict_row
-from playwright.async_api import async_playwright, Browser, BrowserContext, Page
+from playwright.async_api import async_playwright, BrowserContext, Page
 
 from app.config import settings
 from app.services.message_cache import FacebookMessageCache
@@ -14,17 +14,24 @@ from app.services.message_cache import FacebookMessageCache
 logger = logging.getLogger(__name__)
 VN_TZ = timezone(timedelta(hours=7))
 
+# Persistent browser context directory — mounted as a Docker volume so E2EE keys
+# survive container restarts. Without persistence, the sidebar never renders in
+# headless mode because Facebook's E2EE requires local IndexedDB encryption keys.
+BROWSER_DATA_DIR = "/app/browser_data"
+
 
 class FacebookService:
     def __init__(self, message_cache: FacebookMessageCache, ai_agent_ref: Any = None):
         self.message_cache = message_cache
-        self.ai_agent = ai_agent_ref  # Set after initialization to avoid circular reference
+        self.ai_agent = ai_agent_ref
         self._is_scanning = False
         self._last_scan_status = "idle"
         self._lock = asyncio.Lock()
 
     def set_ai_agent(self, ai_agent: Any) -> None:
         self.ai_agent = ai_agent
+
+    # ─── DB helpers ──────────────────────────────────────────────────────────
 
     async def get_config_from_db(self) -> Dict[str, Any]:
         try:
@@ -40,10 +47,8 @@ class FacebookService:
         except Exception as e:
             logger.error("[FB-Service] Error fetching config from DB: %s", e)
         return {
-            "enabled": False,
-            "threshold": 3,
-            "cookies_json": "[]",
-            "custom_message": "",
+            "enabled": False, "threshold": 3,
+            "cookies_json": "[]", "custom_message": "",
             "scan_interval_minutes": 5,
         }
 
@@ -108,6 +113,43 @@ class FacebookService:
         except Exception as e:
             logger.warning("[FB-Service] Cooldown record error: %s", e)
 
+    async def get_known_threads_from_db(self) -> List[Dict[str, str]]:
+        """Returns all known thread URLs stored from previous scans."""
+        try:
+            async with await psycopg.AsyncConnection.connect(settings.database_url, row_factory=cast(Any, dict_row)) as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        "SELECT thread_href, sender_name FROM facebook_known_threads ORDER BY discovered_at DESC LIMIT 20"
+                    )
+                    rows = await cur.fetchall()
+                    return [{"href": row["thread_href"], "text": row["sender_name"]} for row in rows]
+        except Exception as e:
+            logger.warning("[FB-Service] Error fetching known threads: %s", e)
+        return []
+
+    async def save_known_thread(self, href: str, sender_name: str) -> None:
+        """Persists a discovered thread URL so future scans can check it directly."""
+        if not href:
+            return
+        try:
+            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        """
+                        INSERT INTO facebook_known_threads (thread_href, sender_name, last_checked_at, discovered_at)
+                        VALUES (%s, %s, NOW(), NOW())
+                        ON CONFLICT (thread_href) DO UPDATE SET
+                            sender_name = EXCLUDED.sender_name,
+                            last_checked_at = NOW()
+                        """,
+                        (href.split("?")[0], sender_name),
+                    )
+                    await conn.commit()
+        except Exception as e:
+            logger.warning("[FB-Service] Error saving known thread: %s", e)
+
+    # ─── Cookie helpers ───────────────────────────────────────────────────────
+
     def _parse_cookies(self, cookies_json: str) -> List[Dict[str, Any]]:
         if not cookies_json or not cookies_json.strip():
             return []
@@ -121,19 +163,15 @@ class FacebookService:
                     domain = c.get("domain", ".facebook.com")
                     path = c.get("path", "/")
                     if name and value:
-                        raw_same_site = str(c.get("sameSite", "Lax") or "Lax").lower()
-                        if "strict" in raw_same_site:
+                        raw_ss = str(c.get("sameSite", "Lax") or "Lax").lower()
+                        if "strict" in raw_ss:
                             same_site = "Strict"
-                        elif "none" in raw_same_site or "no_restriction" in raw_same_site:
+                        elif "none" in raw_ss or "no_restriction" in raw_ss:
                             same_site = "None"
                         else:
                             same_site = "Lax"
-
                         cookies.append({
-                            "name": name,
-                            "value": value,
-                            "domain": domain,
-                            "path": path,
+                            "name": name, "value": value, "domain": domain, "path": path,
                             "secure": bool(c.get("secure", True)),
                             "httpOnly": bool(c.get("httpOnly", False)),
                             "sameSite": same_site,
@@ -143,11 +181,15 @@ class FacebookService:
             logger.error("[FB-Service] Failed to parse cookies JSON: %s", e)
             return []
 
+    # ─── Playwright helpers ───────────────────────────────────────────────────
+
     async def _handle_e2ee_pin_screen(self, page: Page) -> bool:
-        """Handles Facebook's 6-digit end-to-end encryption PIN screen if it appears."""
+        """Handles Facebook's 6-digit E2EE PIN screen if it appears."""
         try:
-            pin_inputs = await page.query_selector_all("input[type='password'], input[maxlength='1'], input[inputmode='numeric']")
-            if len(pin_inputs) == 6 or len(pin_inputs) == 1:
+            pin_inputs = await page.query_selector_all(
+                "input[type='password'], input[maxlength='1'], input[inputmode='numeric']"
+            )
+            if len(pin_inputs) in (1, 6):
                 logger.info("[FB-Service] E2EE PIN screen detected. Unlocking...")
                 pin = "090305"
                 if len(pin_inputs) == 6:
@@ -156,9 +198,10 @@ class FacebookService:
                         await asyncio.sleep(0.1)
                 else:
                     await pin_inputs[0].fill(pin)
-
                 await asyncio.sleep(1.0)
-                submit_btn = await page.query_selector("button[type='submit'], [aria-label*='Tiếp tục'], [aria-label*='Continue']")
+                submit_btn = await page.query_selector(
+                    "button[type='submit'], [aria-label*='Tiếp tục'], [aria-label*='Continue']"
+                )
                 if submit_btn:
                     await submit_btn.click()
                     await asyncio.sleep(3.0)
@@ -167,8 +210,34 @@ class FacebookService:
             logger.warning("[FB-Service] Error handling E2EE PIN screen: %s", e)
         return False
 
+    async def _extract_thread_name_from_page(self, page: Page) -> str:
+        """Extracts the conversation partner's name from the page title or header."""
+        try:
+            # Try page title (e.g. "Trần Văn Mạnh | Messenger")
+            title = await page.title()
+            if title and "|" in title:
+                name = title.split("|")[0].strip()
+                if name and name.lower() != "messenger":
+                    return name
+
+            # Try aria-label on conversation header
+            header = await page.query_selector(
+                "h1, [role='banner'] [role='link'], [aria-label*='Cuộc trò chuyện']"
+            )
+            if header:
+                txt = await header.inner_text()
+                if txt and txt.strip():
+                    return txt.strip()
+        except Exception as e:
+            logger.debug("[FB-Service] Could not extract thread name: %s", e)
+        return "Người dùng Facebook"
+
     async def _extract_incoming_messages(self, page: Page) -> List[str]:
-        """Extracts genuine incoming messages sent by the contact, filtering out outgoing messages and bot prefixes."""
+        """Extracts genuine incoming messages from the open chat window.
+
+        Uses aria-label heuristics first (most reliable), falling back to
+        dir=auto text scanning if the structured approach yields nothing.
+        """
         try:
             script = """
             () => {
@@ -217,30 +286,84 @@ class FacebookService:
             logger.warning("[FB-Service] Error evaluating incoming messages: %s", e)
         return []
 
+    async def _count_unread_badge(self, page: Page) -> int:
+        """Reads the unread message badge count visible in the page title or header.
+
+        Facebook shows 'N tin nhắn chưa đọc' or '(N) ...' in page title when there
+        are unread messages. We use this as a signal instead of message count.
+        """
+        try:
+            title = await page.title()
+            # Pattern: "(5) Trần Văn Mạnh | Messenger"
+            if title and title.startswith("("):
+                count_str = title[1:title.index(")")] if ")" in title else "0"
+                return int(count_str) if count_str.isdigit() else 0
+        except Exception:
+            pass
+        return 0
+
     async def _send_message_in_open_chat(self, page: Page, text: str) -> bool:
         """Types and submits a reply message in the currently active chat window."""
         try:
             input_box = await page.wait_for_selector(
-                "[role='main'] [contenteditable='true'][role='textbox'], [contenteditable='true'][aria-label*='Tin nhắn'], [contenteditable='true'][role='textbox']",
+                "[role='main'] [contenteditable='true'][role='textbox'], "
+                "[contenteditable='true'][aria-label*='Tin nhắn'], "
+                "[contenteditable='true'][role='textbox']",
                 timeout=8000,
             )
             if not input_box:
                 return False
-
             await input_box.click()
             await asyncio.sleep(0.3)
-            # Fill or type text into message box
             await page.keyboard.type(text, delay=25)
             await asyncio.sleep(0.3)
             await page.keyboard.press("Enter")
-            await asyncio.sleep(1.0)
+            await asyncio.sleep(1.5)
             return True
         except Exception as e:
             logger.warning("[FB-Service] Failed to send message in chat: %s", e)
             return False
 
+    async def _sidebar_thread_links(self, page: Page) -> List[Dict[str, str]]:
+        """Attempts to extract thread links from the sidebar.
+
+        Falls back gracefully to empty list when E2EE sidebar cannot render.
+        """
+        try:
+            result = await page.evaluate("""
+            () => {
+              let links = Array.from(document.querySelectorAll('a[href*="/messages/t/"], a[href*="/messages/e2ee/t/"]'));
+              let seen = new Set();
+              let items = [];
+              for (let a of links) {
+                let href = a.href;
+                if (!href || href.includes('/messages/new/')) continue;
+                let cleanHref = href.split('?')[0];
+                if (seen.has(cleanHref)) continue;
+                seen.add(cleanHref);
+                items.push({ href: cleanHref, text: (a.innerText || '').substring(0, 80) });
+              }
+              return items;
+            }
+            """)
+            if isinstance(result, list):
+                return result
+        except Exception as e:
+            logger.debug("[FB-Service] Sidebar link extraction failed: %s", e)
+        return []
+
+    # ─── Main scan cycle ──────────────────────────────────────────────────────
+
     async def run_scan_cycle(self) -> int:
-        """Executes one scan cycle: checks active threads, extracts incoming messages, sends auto-replies if threshold met."""
+        """Executes one complete scan cycle across all known Messenger threads.
+
+        Strategy (fixes E2EE headless sidebar issue):
+        1. Use persistent browser context so E2EE keys survive between scans.
+        2. Navigate to inbox — capture the redirect URL (= most-recent thread).
+        3. Discover threads from: redirect URL + DB known threads + sidebar (if available).
+        4. Visit each thread directly, extract messages, auto-reply if threshold met.
+        5. Persist newly discovered thread URLs to DB for future scans.
+        """
         if self._is_scanning:
             logger.info("[FB-Service] Scan cycle already in progress; skipping.")
             return 0
@@ -262,74 +385,119 @@ class FacebookService:
                 self._last_scan_status = "no_cookies"
                 return 0
 
+            # Ensure persistent browser data directory exists
+            browser_data_path = Path(BROWSER_DATA_DIR)
+            browser_data_path.mkdir(parents=True, exist_ok=True)
+
             async with async_playwright() as p:
-                browser: Browser = await p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-dev-shm-usage"])
-                context: BrowserContext = await browser.new_context(
+                # Persistent context is critical: preserves E2EE IndexedDB keys
+                # between scan cycles so that E2EE conversations load properly.
+                ctx: BrowserContext = await p.chromium.launch_persistent_context(
+                    str(browser_data_path),
+                    headless=True,
+                    args=[
+                        "--no-sandbox",
+                        "--disable-dev-shm-usage",
+                        # Prevents Facebook from detecting automation and restricting rendering
+                        "--disable-blink-features=AutomationControlled",
+                    ],
                     viewport={"width": 1280, "height": 800},
                     user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
                 )
-                await context.add_cookies(cast(Any, cookies))
-                page: Page = await context.new_page()
+
+                # Re-inject cookies on every run to keep session fresh
+                try:
+                    await ctx.add_cookies(cast(Any, cookies))
+                except Exception as e:
+                    logger.debug("[FB-Service] Cookie injection warning (non-fatal): %s", e)
+
+                page: Page = await ctx.new_page()
 
                 try:
                     logger.info("[FB-Service] Navigating to Messenger inbox...")
-                    await page.goto("https://www.facebook.com/messages/t/", wait_until="domcontentloaded", timeout=25000)
-                    await asyncio.sleep(3.0)
+                    await page.goto(
+                        "https://www.facebook.com/messages/t/",
+                        wait_until="domcontentloaded",
+                        timeout=25000,
+                    )
+                    await asyncio.sleep(5.0)
                     await self._handle_e2ee_pin_screen(page)
 
-                    # Extract threads from sidebar
-                    thread_links = await page.evaluate("""
-                    () => {
-                      let links = Array.from(document.querySelectorAll('a[href*="/messages/t/"], a[href*="/messages/e2ee/t/"]'));
-                      let seen = new Set();
-                      let items = [];
-                      for (let a of links) {
-                        let href = a.href;
-                        if (!href || href.includes('/messages/new/')) continue;
-                        let cleanHref = href.split('?')[0];
-                        if (seen.has(cleanHref)) continue;
-                        seen.add(cleanHref);
-                        items.push({ href: cleanHref, text: (a.innerText || '').substring(0, 80) });
-                      }
-                      return items;
-                    }
-                    """)
+                    # ─── Thread Discovery ─────────────────────────────────────
+                    # Build the thread list WITHOUT relying solely on the sidebar.
+                    threads_to_check: List[Dict[str, str]] = []
+                    seen_hrefs: set = set()
 
-                    logger.info("[FB-Service] Discovered %d threads in sidebar.", len(thread_links or []))
+                    def _add_thread(href: str, text: str = "") -> None:
+                        clean = href.split("?")[0]
+                        if clean and clean not in seen_hrefs and (
+                            "/messages/t/" in clean or "/messages/e2ee/t/" in clean
+                        ):
+                            seen_hrefs.add(clean)
+                            threads_to_check.append({"href": clean, "text": text})
 
-                    for item in (thread_links or [])[:5]:
-                        t_href = item.get("href")
-                        t_text = item.get("text", "")
+                    # 1) Capture redirect URL — this is the most recently active thread
+                    current_url = page.url
+                    if "/messages/t/" in current_url or "/messages/e2ee/t/" in current_url:
+                        logger.info("[FB-Service] Captured redirect thread: %s", current_url)
+                        _add_thread(current_url)
 
+                    # 2) Previously known threads from DB (discovered in past scans)
+                    db_threads = await self.get_known_threads_from_db()
+                    for t in db_threads:
+                        _add_thread(t["href"], t.get("text", ""))
+
+                    # 3) Sidebar links (works when E2EE context is fully initialized)
+                    sidebar_threads = await self._sidebar_thread_links(page)
+                    if sidebar_threads:
+                        logger.info("[FB-Service] Sidebar returned %d threads.", len(sidebar_threads))
+                        for t in sidebar_threads[:5]:
+                            _add_thread(t.get("href", ""), t.get("text", ""))
+
+                    logger.info("[FB-Service] Total threads to check: %d", len(threads_to_check))
+
+                    # ─── Process Each Thread ──────────────────────────────────
+                    for item in threads_to_check[:6]:
+                        t_href = item.get("href", "")
                         if not t_href:
                             continue
 
-                        # Extract name
-                        clean_name = t_text.split("\n")[0].strip()
-                        if "Bạn:" in clean_name or "bạn:" in clean_name:
-                            clean_name = clean_name.split("Bạn:")[0].split("bạn:")[0].strip()
-
-                        if not clean_name:
-                            clean_name = "Người dùng Facebook"
-
-                        # Navigate to thread
                         try:
+                            logger.info("[FB-Service] Checking thread: %s", t_href)
                             await page.goto(t_href, wait_until="domcontentloaded", timeout=15000)
-                            await asyncio.sleep(2.0)
+                            await asyncio.sleep(3.0)
                             await self._handle_e2ee_pin_screen(page)
 
-                            # Extract incoming messages
+                            # Extract sender name
+                            clean_name = item.get("text", "").split("\n")[0].strip()
+                            if "Bạn:" in clean_name or "bạn:" in clean_name:
+                                clean_name = clean_name.split("Bạn:")[0].split("bạn:")[0].strip()
+                            if not clean_name or len(clean_name) < 2:
+                                clean_name = await self._extract_thread_name_from_page(page)
+
+                            # Persist this thread URL so we can check it next time
+                            await self.save_known_thread(t_href, clean_name)
+
+                            # Detect unread count from page title
+                            unread_count = await self._count_unread_badge(page)
+
+                            # Extract incoming messages from conversation view
                             incoming_msgs = await self._extract_incoming_messages(page)
                             threshold = cfg.get("threshold", 3)
 
-                            # Check if threshold met and not in cooldown
-                            if len(incoming_msgs) >= threshold:
+                            logger.info(
+                                "[FB-Service] Thread '%s': %d incoming msgs, %d unread badge, threshold=%d",
+                                clean_name, len(incoming_msgs), unread_count, threshold,
+                            )
+
+                            # Trigger auto-reply when threshold met OR unread badge triggers it
+                            should_reply = len(incoming_msgs) >= threshold or unread_count >= threshold
+                            if should_reply:
                                 in_cooldown = await self.is_sender_in_cooldown(clean_name, cfg.get("cooldown_minutes", 15))
                                 if not in_cooldown:
-                                    # Generate away message
                                     away_reply = (
                                         f"Chào bạn, tôi là Tiểu Bảo Bảo - trợ lí AI của anh Mạnh (Cua). "
-                                        f"Anh Mạnh hiện đang vắng mặt và đã nhận được {len(incoming_msgs)} tin nhắn của bạn. "
+                                        f"Anh Mạnh hiện đang vắng mặt và đã nhận được tin nhắn của bạn. "
                                         f"Tôi sẽ báo lại anh ấy ngay khi online nhé!"
                                     )
                                     sent = await self._send_message_in_open_chat(page, away_reply)
@@ -339,8 +507,10 @@ class FacebookService:
                                         await self.message_cache.add_or_update(
                                             clean_name, incoming_msgs, away_reply, t_href, True
                                         )
-                                        logger.info("[FB-Service] AUTO-REPLIED to '%s': %s", clean_name, away_reply)
+                                        logger.info("[FB-Service] AUTO-REPLIED to '%s'", clean_name)
                                         continue
+                                else:
+                                    logger.info("[FB-Service] '%s' is in cooldown; skipping reply.", clean_name)
 
                             # Update cache without reply
                             await self.message_cache.add_or_update(
@@ -348,14 +518,14 @@ class FacebookService:
                             )
 
                         except Exception as thread_err:
-                            logger.warning("[FB-Service] Error inspecting thread %s: %s", t_href, thread_err)
+                            logger.warning("[FB-Service] Error processing thread %s: %s", t_href, thread_err)
 
                     await self.message_cache.mark_scan_completed()
                     self._last_scan_status = f"success ({auto_replies_sent} replies sent)"
 
                 finally:
-                    await context.close()
-                    await browser.close()
+                    await page.close()
+                    await ctx.close()
 
         except Exception as e:
             logger.error("[FB-Service] Scan cycle error: %s", e, exc_info=True)
@@ -365,6 +535,8 @@ class FacebookService:
                 self._is_scanning = False
 
         return auto_replies_sent
+
+    # ─── Direct reply ─────────────────────────────────────────────────────────
 
     async def send_direct_reply(self, recipient_name: str, message: str) -> str:
         """Opens a conversation and sends a direct reply message."""
@@ -377,26 +549,45 @@ class FacebookService:
             return "Lỗi: Chưa cấu hình Cookies Facebook trên hệ thống."
 
         target_href = await self.message_cache.find_thread_href(recipient_name)
+        # Also check DB if cache doesn't have it
+        if not target_href:
+            db_threads = await self.get_known_threads_from_db()
+            for t in db_threads:
+                if recipient_name.lower() in t.get("text", "").lower():
+                    target_href = t["href"]
+                    break
+
+        browser_data_path = Path(BROWSER_DATA_DIR)
+        browser_data_path.mkdir(parents=True, exist_ok=True)
 
         try:
             async with async_playwright() as p:
-                browser: Browser = await p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-dev-shm-usage"])
-                context: BrowserContext = await browser.new_context(
+                ctx: BrowserContext = await p.chromium.launch_persistent_context(
+                    str(browser_data_path),
+                    headless=True,
+                    args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-blink-features=AutomationControlled"],
                     viewport={"width": 1280, "height": 800},
                     user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
                 )
-                await context.add_cookies(cast(Any, cookies))
-                page: Page = await context.new_page()
+                try:
+                    await ctx.add_cookies(cast(Any, cookies))
+                except Exception:
+                    pass
 
+                page: Page = await ctx.new_page()
                 try:
                     if target_href:
-                        logger.info("[FB-DirectReply] Navigating directly to cached thread: %s", target_href)
+                        logger.info("[FB-DirectReply] Navigating directly to: %s", target_href)
                         await page.goto(target_href, wait_until="domcontentloaded", timeout=18000)
                     else:
                         logger.info("[FB-DirectReply] Navigating to inbox to find '%s'...", recipient_name)
-                        await page.goto("https://www.facebook.com/messages/t/", wait_until="domcontentloaded", timeout=20000)
+                        await page.goto(
+                            "https://www.facebook.com/messages/t/",
+                            wait_until="domcontentloaded",
+                            timeout=20000,
+                        )
 
-                    await asyncio.sleep(2.0)
+                    await asyncio.sleep(3.0)
                     await self._handle_e2ee_pin_screen(page)
 
                     sent = await self._send_message_in_open_chat(page, message)
@@ -408,8 +599,8 @@ class FacebookService:
                         return f'Tìm thấy hội thoại với "{recipient_name}" nhưng không gõ được tin nhắn.'
 
                 finally:
-                    await context.close()
-                    await browser.close()
+                    await page.close()
+                    await ctx.close()
 
         except Exception as e:
             logger.error("[FB-DirectReply] Error sending to '%s': %s", recipient_name, e)

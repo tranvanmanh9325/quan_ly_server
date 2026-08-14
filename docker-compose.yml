@@ -98,6 +98,10 @@ services:
         condition: service_healthy
     networks:
       - dashboard-network
+    volumes:
+      # Persistent Chromium profile: preserves E2EE IndexedDB keys across restarts
+      # Without this, Facebook E2EE Messenger sidebar never loads in headless mode
+      - browser_data:/app/browser_data
     healthcheck:
       test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8084/health')\""]
       interval: 15s
@@ -179,3 +183,4 @@ networks:
 
 volumes:
   postgres_data:
+  browser_data:

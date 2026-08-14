@@ -456,11 +456,10 @@ class FacebookService:
             script = """
             () => {
               let main = document.querySelector('[role="main"]') || document.querySelector('[role="region"]') || document.body;
+              let mainRect = main.getBoundingClientRect();
+              let myNames = ['bạn', 'phạm minh', 'tiểu bảo bảo', 'trợ lí ai', 'trợ lý ai', 'anh mạnh (cua)'];
 
-              // 1. Primary: aria-label extraction (most reliable on modern Facebook Messenger)
-              // Formats:
-              //   - 'Nhập, Tin nhắn do Bạn gửi lúc 17:11: Hello' (Us)
-              //   - 'Nhập, Tin nhắn do Trần Văn Mạnh gửi lúc 17:13: Test' (Them)
+              // 1. Primary: aria-label extraction + layout position check
               let allEls = Array.from(main.querySelectorAll('[aria-label]'));
               let msgNodes = [];
 
@@ -469,7 +468,19 @@ class FacebookService:
                 let lblLow = lbl.toLowerCase();
                 if (!lblLow.includes('tin nhắn do') || !lblLow.includes('gửi lúc')) continue;
 
-                let isUs = lblLow.includes('do bạn gửi') || lblLow.includes('do bạn gởi');
+                // Check sender identity
+                let isUs = myNames.some(name => lblLow.includes('do ' + name + ' gửi') || lblLow.includes(name));
+
+                // Check visual position (Right-aligned vs Left-aligned)
+                let rect = el.getBoundingClientRect();
+                if (rect.width > 0 && mainRect.width > 0) {
+                  let rightDist = mainRect.right - rect.right;
+                  let leftDist = rect.left - mainRect.left;
+                  if (rightDist < leftDist || rightDist < 300) {
+                    isUs = true;
+                  }
+                }
+
                 let colonIdx = lbl.lastIndexOf(':');
                 let txt = colonIdx >= 0 ? lbl.substring(colonIdx + 1).trim() : '';
                 if (txt) {
@@ -477,7 +488,7 @@ class FacebookService:
                 }
               }
 
-              // 2. Fallback: visual element inspection if aria-labels are not hydrated
+              // 2. Fallback: visual element inspection if aria-labels are not available
               if (msgNodes.length === 0) {
                 let chatScope = main.querySelector('[role="grid"], [role="list"], [role="log"]') || main;
                 let editables = Array.from(chatScope.querySelectorAll('[contenteditable="true"]'));
@@ -494,7 +505,9 @@ class FacebookService:
                 for (let r of rows) {
                   let t = (r.innerText || '').trim();
                   let low = t.toLowerCase();
-                  let isUs = low.includes('tiểu bảo bảo') || low.includes('trợ lí ai') || low.includes('trợ lý ai') || low.includes('trợ lí của mạnh');
+                  let rect = r.getBoundingClientRect();
+                  let isUs = (mainRect.right - rect.right) < (rect.left - mainRect.left) || 
+                             myNames.some(name => low.includes(name));
                   msgNodes.push({ sender: isUs ? 'us' : 'them', text: t });
                 }
               }

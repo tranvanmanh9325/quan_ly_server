@@ -541,25 +541,28 @@ class FacebookService:
         except Exception:
             pass
         return 0
-    async def _send_message_in_open_chat(self, page: Page, text: str) -> bool:
-        """Types and submits a reply message in the currently active chat window.
 
-        Uses resilient JavaScript element discovery + focus to bypass overlays
-        and variations in Facebook Messenger's DOM structure.
+    async def _send_message_in_open_chat(self, page: Page, text: str) -> bool:
+        """Sends a text message in an already opened and authenticated chat window.
+        Proactively closes or removes any modal overlays (E2EE PIN / notifications)
+        before focusing and typing into the message input box.
         """
         try:
-            # 0. Proactively clean up any modal overlays or PIN dialogs that may have appeared late
+            # 0. Dismiss any PIN or notification dialogs by clicking Close (X) or removing from DOM
             await page.evaluate("""
             () => {
-                // Find and remove all dialogs and overlays
+                let closeBtns = document.querySelectorAll('[aria-label="Đóng"], [aria-label="Close"], [aria-label="Huỷ"], svg[aria-label="Đóng"]');
+                closeBtns.forEach(b => {
+                    let clickTarget = b.closest('div[role="button"], button') || b;
+                    clickTarget.click();
+                });
                 let dialogs = document.querySelectorAll('[role="dialog"], [role="alertdialog"], div[aria-modal="true"]');
                 dialogs.forEach(d => {
                     let txt = d.innerText || '';
-                    if (txt.includes('Nhập mã PIN') || txt.includes('khôi phục') || txt.includes('PIN')) {
+                    if (txt.includes('Nhập mã PIN') || txt.includes('khôi phục') || txt.includes('PIN') || txt.includes('thông báo')) {
                         d.remove();
                     }
                 });
-                // Remove fixed backdrops
                 let backdrops = document.querySelectorAll('div[style*="position: fixed"][style*="z-index"]');
                 backdrops.forEach(b => b.remove());
             }
@@ -569,20 +572,6 @@ class FacebookService:
             # 1. Wait for and focus on the message textbox (retry for up to 10s)
             focused = False
             for _ in range(10):
-                # Clean up any recurring popup during loop
-                await page.evaluate("""
-                () => {
-                    let dialogs = document.querySelectorAll('[role="dialog"], [role="alertdialog"], div[aria-modal="true"]');
-                    dialogs.forEach(d => {
-                        let txt = d.innerText || '';
-                        if (txt.includes('Nhập mã PIN') || txt.includes('khôi phục') || txt.includes('PIN')) {
-                            d.remove();
-                        }
-                    });
-                    let backdrops = document.querySelectorAll('div[style*="position: fixed"][style*="z-index"]');
-                    backdrops.forEach(b => b.remove());
-                }
-                """)
                 focused = await page.evaluate("""
                 () => {
                     let selectors = [
@@ -624,19 +613,15 @@ class FacebookService:
             await page.keyboard.press("Backspace")
             await asyncio.sleep(0.2)
 
-            # 3. Insert message content supporting full UTF-8, Emoji and Multiline
-            try:
-                # Playwright's insert_text natively dispatches InputEvent with exact UTF-8 / Emoji payload
-                await page.keyboard.insert_text(text)
-            except Exception as insert_err:
-                logger.warning("[FB-Service] insert_text failed (%s), falling back to keyboard.type", insert_err)
-                await page.keyboard.type(text, delay=20)
+            # 3. Type the message content using human-like keypresses (essential for Facebook React Lexical editor state sync)
+            await page.keyboard.type(text, delay=25)
             await asyncio.sleep(0.6)
 
             # 4. Press Enter to send
             await page.keyboard.press("Enter")
             await asyncio.sleep(1.5)
 
+            # 5. Fallback: click Send button if Enter didn't trigger submission
             await page.evaluate("""
             () => {
                 let btn = document.querySelector('[aria-label="Nhấn để gửi"], [aria-label="Press Enter to send"], [aria-label="Send"], svg[aria-label="Nhấn để gửi"]');

@@ -59,7 +59,7 @@ class FacebookMessageCache:
                 else (existing.thread_href if existing else "")
             )
 
-            auto_replied_to_store = was_auto_replied or (existing.was_auto_replied if existing else False)
+            auto_replied_to_store = was_auto_replied
 
             # Remove old entry if present
             self._entries = [e for e in self._entries if e.sender_name.lower() != clean_sender.lower()]

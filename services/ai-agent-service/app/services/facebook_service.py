@@ -456,59 +456,41 @@ class FacebookService:
             script = """
             () => {
               let main = document.querySelector('[role="main"]') || document.querySelector('[role="region"]') || document.body;
-              let mainRect = main.getBoundingClientRect();
-              let myNames = ['bạn', 'phạm minh', 'tiểu bảo bảo', 'trợ lí ai', 'trợ lý ai', 'anh mạnh (cua)'];
 
-              // 1. Primary: aria-label extraction + layout position check
-              let allEls = Array.from(main.querySelectorAll('[aria-label]'));
+              // 1. Primary: Facebook Messenger embeds accessibility text in <span> elements
+              // Formats:
+              //   - 'Nhập, Tin nhắn do Bạn gửi lúc 17:11: Chào anh Mạnh...' (Us)
+              //   - 'Nhập, Tin nhắn do Trần Văn Mạnh gửi lúc 17:32: sádas' (Them)
+              let allSpans = Array.from(main.querySelectorAll('span'));
               let msgNodes = [];
 
-              for (let el of allEls) {
-                let lbl = (el.getAttribute('aria-label') || '');
-                let lblLow = lbl.toLowerCase();
-                if (!lblLow.includes('tin nhắn do') || !lblLow.includes('gửi lúc')) continue;
+              for (let s of allSpans) {
+                let t = (s.innerText || s.textContent || '').trim();
+                let low = t.toLowerCase();
+                if (!low.includes('tin nhắn do') || !low.includes('gửi lúc')) continue;
 
-                // Check sender identity
-                let isUs = myNames.some(name => lblLow.includes('do ' + name + ' gửi') || lblLow.includes(name));
-
-                // Check visual position (Right-aligned vs Left-aligned)
-                let rect = el.getBoundingClientRect();
-                if (rect.width > 0 && mainRect.width > 0) {
-                  let rightDist = mainRect.right - rect.right;
-                  let leftDist = rect.left - mainRect.left;
-                  if (rightDist < leftDist || rightDist < 300) {
-                    isUs = true;
-                  }
-                }
-
-                let colonIdx = lbl.lastIndexOf(':');
-                let txt = colonIdx >= 0 ? lbl.substring(colonIdx + 1).trim() : '';
-                if (txt) {
-                  msgNodes.push({ sender: isUs ? 'us' : 'them', text: txt });
+                let isUs = low.includes('do bạn gửi') || low.includes('do bạn gởi');
+                let colonIdx = t.lastIndexOf(':');
+                let msgText = colonIdx >= 0 ? t.substring(colonIdx + 1).trim() : '';
+                if (msgText) {
+                  msgNodes.push({ sender: isUs ? 'us' : 'them', text: msgText });
                 }
               }
 
-              // 2. Fallback: visual element inspection if aria-labels are not available
+              // 2. Fallback: scan aria-labels if spans were not rendered
               if (msgNodes.length === 0) {
-                let chatScope = main.querySelector('[role="grid"], [role="list"], [role="log"]') || main;
-                let editables = Array.from(chatScope.querySelectorAll('[contenteditable="true"]'));
-                let allAuto = Array.from(chatScope.querySelectorAll('div[dir="auto"], span[dir="auto"]'));
-                let rows = allAuto.filter(el => {
-                  if (el.closest('[role="navigation"], [role="complementary"], aside')) return false;
-                  let t = (el.innerText || '').trim();
-                  if (!t) return false;
-                  if (editables.some(ed => ed.contains(el))) return false;
-                  let low = t.toLowerCase();
-                  if (low.includes('mã hóa đầu cuối') || low.includes('tìm hiểu thêm') || low.includes('nếu bạn chấp nhận')) return false;
-                  return true;
-                });
-                for (let r of rows) {
-                  let t = (r.innerText || '').trim();
-                  let low = t.toLowerCase();
-                  let rect = r.getBoundingClientRect();
-                  let isUs = (mainRect.right - rect.right) < (rect.left - mainRect.left) || 
-                             myNames.some(name => low.includes(name));
-                  msgNodes.push({ sender: isUs ? 'us' : 'them', text: t });
+                let allEls = Array.from(main.querySelectorAll('[aria-label]'));
+                for (let el of allEls) {
+                  let lbl = (el.getAttribute('aria-label') || '').trim();
+                  let low = lbl.toLowerCase();
+                  if (!low.includes('tin nhắn do') || !low.includes('gửi lúc')) continue;
+
+                  let isUs = low.includes('do bạn gửi') || low.includes('do bạn gởi');
+                  let colonIdx = lbl.lastIndexOf(':');
+                  let msgText = colonIdx >= 0 ? lbl.substring(colonIdx + 1).trim() : '';
+                  if (msgText) {
+                    msgNodes.push({ sender: isUs ? 'us' : 'them', text: msgText });
+                  }
                 }
               }
 
@@ -876,6 +858,9 @@ class FacebookService:
                                 #    The conversation is already replied to. NEVER send away message!
                                 if last_sender == "us":
                                     logger.info("[FB-Service] '%s': last message is from us; no auto-reply needed.", clean_name)
+                                    await self.message_cache.add_or_update(
+                                        clean_name, incoming_msgs, "", t_href, True
+                                    )
                                     continue
 
                                 # 2. If 0 messages found or E2EE locked:
@@ -883,7 +868,7 @@ class FacebookService:
                                     logger.info("[FB-Service] '%s': 0 readable incoming msgs; skip.", clean_name)
                                     continue
 
-                                # 3. Update cache with latest incoming messages so Telegram bot / UI knows
+                                # 3. Update cache with latest incoming messages with unreplied status (False)
                                 await self.message_cache.add_or_update(
                                     clean_name, incoming_msgs, "", t_href, False
                                 )

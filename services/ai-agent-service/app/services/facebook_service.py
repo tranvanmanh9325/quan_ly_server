@@ -551,27 +551,37 @@ class FacebookService:
             # 0. Force clean up all modal dialogs, PIN overlays, and dark backdrops
             await page.evaluate("""
             () => {
-                // 1. Click any Close buttons inside dialogs
+                // 1. Click 'Không khôi phục tin nhắn' if confirmation dialog appeared
+                let allBtns = Array.from(document.querySelectorAll('button, div[role="button"], span'));
+                allBtns.forEach(b => {
+                    let txt = (b.innerText || '').trim();
+                    if (txt === 'Không khôi phục tin nhắn' || txt === 'Continue without restoring') {
+                        (b.closest('div[role="button"], button') || b).click();
+                    }
+                });
+
+                // 2. Click any Close buttons inside dialogs
                 let closeBtns = document.querySelectorAll('[role="dialog"] [role="button"], [aria-label="Đóng"], [aria-label="Close"], [aria-label="Huỷ"]');
                 closeBtns.forEach(b => {
                     if (b.click) b.click();
                 });
-                // 2. Remove all modal dialogs from DOM
+
+                // 3. Remove all modal dialogs from DOM
                 let dialogs = Array.from(document.querySelectorAll('[role="dialog"], [role="alertdialog"], div[aria-modal="true"]'));
                 dialogs.forEach(d => d.remove());
 
-                // 3. Remove all fixed overlays containing PIN text
+                // 4. Remove all fixed overlays containing PIN text
                 let all = Array.from(document.querySelectorAll('div'));
                 all.forEach(el => {
                     let t = (el.innerText || '');
-                    if (t.includes('Nhập mã PIN') || t.includes('khôi phục') || t.includes('Mã PIN')) {
+                    if (t.includes('Nhập mã PIN') || t.includes('khôi phục') || t.includes('Mã PIN') || t.includes('Tiếp tục mà không')) {
                         if (el.parentElement && !el.querySelector('[role="main"]')) {
                             el.remove();
                         }
                     }
                 });
 
-                // 4. Remove dark modal backdrops
+                // 5. Remove dark modal backdrops
                 let backdrops = document.querySelectorAll('div[style*="position: fixed"], div[style*="background-color: rgba(0, 0, 0"]');
                 backdrops.forEach(b => {
                     if (!b.querySelector('[role="main"]') && !b.querySelector('[role="navigation"]')) {

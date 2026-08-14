@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 import logging
 from datetime import datetime, timezone, timedelta
@@ -114,21 +115,29 @@ class FacebookService:
             logger.warning("[FB-Service] Cooldown record error: %s", e)
 
     async def get_known_threads_from_db(self) -> List[Dict[str, str]]:
-        """Returns all known thread URLs stored from previous scans."""
+        """Returns all known thread URLs with their last message hash."""
         try:
             async with await psycopg.AsyncConnection.connect(settings.database_url, row_factory=cast(Any, dict_row)) as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(
-                        "SELECT thread_href, sender_name FROM facebook_known_threads ORDER BY discovered_at DESC LIMIT 20"
+                        "SELECT thread_href, sender_name, last_msg_hash FROM facebook_known_threads ORDER BY discovered_at DESC LIMIT 20"
                     )
                     rows = await cur.fetchall()
-                    return [{"href": row["thread_href"], "text": row["sender_name"]} for row in rows]
+                    return [{
+                        "href": row["thread_href"],
+                        "text": row["sender_name"],
+                        "last_msg_hash": row["last_msg_hash"] or "",
+                    } for row in rows]
         except Exception as e:
             logger.warning("[FB-Service] Error fetching known threads: %s", e)
         return []
 
-    async def save_known_thread(self, href: str, sender_name: str) -> None:
-        """Persists a discovered thread URL so future scans can check it directly."""
+    async def save_known_thread(self, href: str, sender_name: str, msg_hash: str = "") -> None:
+        """Persists a discovered thread URL and its latest message hash.
+
+        The msg_hash allows the scanner to detect whether new messages have arrived
+        since the last scan — preventing re-replies when message content is unchanged.
+        """
         if not href:
             return
         try:
@@ -136,17 +145,24 @@ class FacebookService:
                 async with conn.cursor() as cur:
                     await cur.execute(
                         """
-                        INSERT INTO facebook_known_threads (thread_href, sender_name, last_checked_at, discovered_at)
-                        VALUES (%s, %s, NOW(), NOW())
+                        INSERT INTO facebook_known_threads (thread_href, sender_name, last_msg_hash, last_checked_at, discovered_at)
+                        VALUES (%s, %s, %s, NOW(), NOW())
                         ON CONFLICT (thread_href) DO UPDATE SET
                             sender_name = EXCLUDED.sender_name,
+                            last_msg_hash = EXCLUDED.last_msg_hash,
                             last_checked_at = NOW()
                         """,
-                        (href.split("?")[0], sender_name),
+                        (href.split("?")[0], sender_name, msg_hash),
                     )
                     await conn.commit()
         except Exception as e:
             logger.warning("[FB-Service] Error saving known thread: %s", e)
+
+    @staticmethod
+    def _compute_msg_hash(messages: List[str]) -> str:
+        """Computes a stable hash of message content to detect changes between scans."""
+        combined = "|".join(sorted(messages))  # sorted for stability regardless of extraction order
+        return hashlib.sha256(combined.encode()).hexdigest()[:16]
 
     # ─── Cookie helpers ───────────────────────────────────────────────────────
 
@@ -191,7 +207,7 @@ class FacebookService:
             )
             if len(pin_inputs) in (1, 6):
                 logger.info("[FB-Service] E2EE PIN screen detected. Unlocking...")
-                pin = "090305"
+                pin = "090325"
                 if len(pin_inputs) == 6:
                     for i, digit in enumerate(pin):
                         await pin_inputs[i].fill(digit)
@@ -204,7 +220,7 @@ class FacebookService:
                 )
                 if submit_btn:
                     await submit_btn.click()
-                    await asyncio.sleep(3.0)
+                    await asyncio.sleep(5.0)  # Wait longer for messages to decrypt after PIN
                 return True
         except Exception as e:
             logger.warning("[FB-Service] Error handling E2EE PIN screen: %s", e)
@@ -491,8 +507,14 @@ class FacebookService:
 
                     # ─── Thread Discovery ─────────────────────────────────────
                     # Build the thread list WITHOUT relying solely on the sidebar.
+                    # db_thread_map lets us look up the last known msg hash per URL.
                     threads_to_check: List[Dict[str, str]] = []
                     seen_hrefs: set = set()
+                    db_threads = await self.get_known_threads_from_db()
+                    db_thread_map: Dict[str, str] = {
+                        t["href"].split("?")[0]: t.get("last_msg_hash", "")
+                        for t in db_threads
+                    }
 
                     def _add_thread(href: str, text: str = "") -> None:
                         clean = href.split("?")[0]
@@ -502,18 +524,17 @@ class FacebookService:
                             seen_hrefs.add(clean)
                             threads_to_check.append({"href": clean, "text": text})
 
-                    # 1) Capture redirect URL — this is the most recently active thread
+                    # 1) Capture redirect URL — most recently active thread
                     current_url = page.url
                     if "/messages/t/" in current_url or "/messages/e2ee/t/" in current_url:
                         logger.info("[FB-Service] Captured redirect thread: %s", current_url)
                         _add_thread(current_url)
 
-                    # 2) Previously known threads from DB (discovered in past scans)
-                    db_threads = await self.get_known_threads_from_db()
+                    # 2) Previously known threads from DB
                     for t in db_threads:
                         _add_thread(t["href"], t.get("text", ""))
 
-                    # 3) Sidebar links (works when E2EE context is fully initialized)
+                    # 3) Sidebar links (works when persistent context is initialized)
                     sidebar_threads = await self._sidebar_thread_links(page)
                     if sidebar_threads:
                         logger.info("[FB-Service] Sidebar returned %d threads.", len(sidebar_threads))
@@ -539,34 +560,49 @@ class FacebookService:
                             except Exception:
                                 pass
                             await asyncio.sleep(3.0)
-                            await self._handle_e2ee_pin_screen(page)
 
-                            # Always extract sender name from page title (most reliable source).
-                            # Sidebar text may include last message preview which pollutes the name.
+                            # Handle E2EE PIN unlock if needed
+                            pin_handled = await self._handle_e2ee_pin_screen(page)
+                            if pin_handled:
+                                logger.info("[FB-Service] E2EE PIN unlocked for %s", t_href)
+
+                            # Extract contact name from DOM header
                             clean_name = await self._extract_thread_name_from_page(page)
 
-                            # Persist this thread URL so we can check it next time
-                            await self.save_known_thread(t_href, clean_name)
+                            # Extract incoming messages
+                            incoming_msgs = await self._extract_incoming_messages(page)
 
-                            # Detect unread count from page title
+                            # Compute hash to detect new messages since last scan
+                            current_hash = self._compute_msg_hash(incoming_msgs) if incoming_msgs else ""
+                            previous_hash = db_thread_map.get(t_href, "")
+                            has_new_messages = (current_hash != previous_hash) and bool(incoming_msgs)
+
+                            # Detect unread badge from page title as supplementary signal
                             unread_count = await self._count_unread_badge(page)
 
-                            # Extract incoming messages from conversation view
-                            incoming_msgs = await self._extract_incoming_messages(page)
                             threshold = cfg.get("threshold", 3)
-
                             logger.info(
-                                "[FB-Service] Thread '%s': %d incoming msgs, %d unread badge, threshold=%d",
-                                clean_name, len(incoming_msgs), unread_count, threshold,
+                                "[FB-Service] Thread '%s': %d msgs, %d unread, new=%s, threshold=%d",
+                                clean_name, len(incoming_msgs), unread_count, has_new_messages, threshold,
                             )
 
-                            # Trigger auto-reply:
-                            # - Primary: ANY unread message (unread_count > 0) means someone is waiting
-                            # - Fallback: enough extracted messages meet the threshold
-                            # The cooldown prevents spamming the same sender.
-                            should_reply = unread_count > 0 or len(incoming_msgs) >= threshold
+                            # Persist thread URL with updated hash
+                            await self.save_known_thread(t_href, clean_name, current_hash)
+
+                            # ── Auto-reply decision ──────────────────────────
+                            # Reply only when:
+                            # 1. We can read actual messages (incoming_msgs > 0)
+                            # 2. Messages are NEW since last reply (hash changed)
+                            # 3. Sender not in cooldown
+                            # Cooldown key = thread_href URL (stable across scans)
+                            cooldown_key = t_href
+                            should_reply = has_new_messages and (
+                                unread_count > 0 or len(incoming_msgs) >= threshold
+                            )
                             if should_reply:
-                                in_cooldown = await self.is_sender_in_cooldown(clean_name, cfg.get("cooldown_minutes", 15))
+                                in_cooldown = await self.is_sender_in_cooldown(
+                                    cooldown_key, cfg.get("cooldown_minutes", 15)
+                                )
                                 if not in_cooldown:
                                     away_reply = (
                                         f"Chào bạn, tôi là Tiểu Bảo Bảo - trợ lí AI của anh Mạnh (Cua). "
@@ -576,14 +612,21 @@ class FacebookService:
                                     sent = await self._send_message_in_open_chat(page, away_reply)
                                     if sent:
                                         auto_replies_sent += 1
-                                        await self.record_sender_cooldown(clean_name)
+                                        await self.record_sender_cooldown(cooldown_key)
                                         await self.message_cache.add_or_update(
                                             clean_name, incoming_msgs, away_reply, t_href, True
                                         )
-                                        logger.info("[FB-Service] AUTO-REPLIED to '%s'", clean_name)
+                                        logger.info(
+                                            "[FB-Service] AUTO-REPLIED to '%s' (hash %s→%s)",
+                                            clean_name, previous_hash or "∅", current_hash
+                                        )
                                         continue
                                 else:
-                                    logger.info("[FB-Service] '%s' is in cooldown; skipping reply.", clean_name)
+                                    logger.info("[FB-Service] '%s' is in cooldown; skipping.", clean_name)
+                            elif not incoming_msgs:
+                                logger.info("[FB-Service] '%s': 0 readable msgs (E2EE locked?); skip.", clean_name)
+                            elif not has_new_messages:
+                                logger.info("[FB-Service] '%s': no new messages since last scan; skip.", clean_name)
 
                             # Update cache without reply
                             await self.message_cache.add_or_update(

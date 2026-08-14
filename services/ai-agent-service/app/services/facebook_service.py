@@ -279,27 +279,9 @@ class FacebookService:
                 return False
 
             logger.info("[FB-Service] E2EE PIN screen detected. Unlocking with PIN 090325 to restore full chat...")
-            # 2. Focus on the first dash box or input inside the PIN dialog
-            box_focused = await page.evaluate("""
-            () => {
-                let dialog = Array.from(document.querySelectorAll('div, [role="dialog"], [role="alertdialog"]')).find(d => {
-                    let t = (d.innerText || '');
-                    return t.includes('Nhập mã PIN') || t.includes('khôi phục đoạn chat');
-                });
-                if (dialog) {
-                    let firstBox = dialog.querySelector('div[tabindex="0"]:not([aria-valuetext]), input');
-                    if (firstBox) {
-                        firstBox.click();
-                        if (firstBox.focus) firstBox.focus();
-                        return true;
-                    }
-                }
-                return false;
-            }
-            """)
-            if not box_focused:
-                await page.mouse.click(390, 630)
-            await asyncio.sleep(0.5)
+            # 2. Directly click on PIN box 1 at (390, 630) to avoid misclicking Close (X) button
+            await page.mouse.click(390, 630)
+            await asyncio.sleep(0.6)
 
             # 3. Type 6 digits using 350ms delay for reliable React Lexical state transition
             pin = "090325"

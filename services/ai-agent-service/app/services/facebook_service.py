@@ -439,75 +439,102 @@ class FacebookService:
             logger.debug("[FB-Service] Could not extract thread name: %s", e)
         return "Ng\u01b0\u1eddi d\u00f9ng Facebook"
 
-    async def _extract_incoming_messages(self, page: Page) -> List[str]:
-        """Extracts genuine incoming messages from the open chat window.
-
-        Based on actual DOM observation, Facebook's aria-label format is:
-          'Nh\u1eadp, Tin nh\u1eafn do X g\u1eedi l\u00fac HH:MM: message_text'
-          'Nh\u1eadp, Tin nh\u1eafn do B\u1ea1n g\u1eedi l\u00fac HH:MM: message_text'
-
-        We parse these labels to identify incoming (not from 'B\u1ea1n') messages.
+    async def _extract_conversation_state(self, page: Page) -> Dict[str, Any]:
+        """Analyzes the current chat window in depth to determine:
+        - last_sender: 'us' (if account owner or bot sent the last message) or 'them' (if incoming)
+        - consecutive_unreplied_count: number of consecutive messages sent by the other party since our last message
+        - incoming_msgs: list of incoming message texts from the other party
+        - last_msg_text: text of the very last message in the thread
         """
+        default_state: Dict[str, Any] = {
+            "last_sender": "none",
+            "consecutive_unreplied_count": 0,
+            "incoming_msgs": [],
+            "last_msg_text": "",
+        }
         try:
             script = """
             () => {
               let main = document.querySelector('[role="main"]') || document.querySelector('[role="region"]') || document.body;
 
-              // Primary: use aria-label parsing (most reliable)
-              // Actual format: 'Nh\u1eadp, Tin nh\u1eafn do X g\u1eedi l\u00fac HH:MM: text'
+              // 1. Primary: aria-label extraction (most reliable on modern Facebook Messenger)
+              // Formats:
+              //   - 'Nhập, Tin nhắn do Bạn gửi lúc 17:11: Hello' (Us)
+              //   - 'Nhập, Tin nhắn do Trần Văn Mạnh gửi lúc 17:13: Test' (Them)
               let allEls = Array.from(main.querySelectorAll('[aria-label]'));
-              let incoming = [];
-              let seen = new Set();
+              let msgNodes = [];
 
               for (let el of allEls) {
                 let lbl = (el.getAttribute('aria-label') || '');
                 let lblLow = lbl.toLowerCase();
+                if (!lblLow.includes('tin nhắn do') || !lblLow.includes('gửi lúc')) continue;
 
-                // Match: 'Nh\u1eadp, Tin nh\u1eafn do X g\u1eedi l\u00fac' or 'Tin nh\u1eafn do X g\u1eedi l\u00fac'
-                if (!lblLow.includes('tin nh\u1eafn do') || !lblLow.includes('g\u1eedi l\u00fac')) continue;
-
-                // Skip messages sent by 'B\u1ea1n' (= us, the account owner)
-                if (lblLow.includes('do b\u1ea1n g\u1eedi') || lblLow.includes('do b\u1ea1n g\u1ecci')) continue;
-
-                // Extract message text: everything after the last ':'
-                // Format: '...l\u00fac HH:MM: actual message text'
+                let isUs = lblLow.includes('do bạn gửi') || lblLow.includes('do bạn gởi');
                 let colonIdx = lbl.lastIndexOf(':');
-                if (colonIdx < 0) continue;
-                let txt = lbl.substring(colonIdx + 1).trim();
-                if (!txt || seen.has(txt)) continue;
-                seen.add(txt);
-                incoming.push(txt);
+                let txt = colonIdx >= 0 ? lbl.substring(colonIdx + 1).trim() : '';
+                if (txt) {
+                  msgNodes.push({ sender: isUs ? 'us' : 'them', text: txt });
+                }
               }
 
-              // Fallback: scan dir=auto elements when aria-labels don't work
-              if (incoming.length === 0) {
+              // 2. Fallback: visual element inspection if aria-labels are not hydrated
+              if (msgNodes.length === 0) {
                 let chatScope = main.querySelector('[role="grid"], [role="list"], [role="log"]') || main;
                 let editables = Array.from(chatScope.querySelectorAll('[contenteditable="true"]'));
                 let allAuto = Array.from(chatScope.querySelectorAll('div[dir="auto"], span[dir="auto"]'));
                 let rows = allAuto.filter(el => {
                   if (el.closest('[role="navigation"], [role="complementary"], aside')) return false;
-                  let txt = (el.innerText || '').trim();
-                  if (!txt) return false;
+                  let t = (el.innerText || '').trim();
+                  if (!t) return false;
                   if (editables.some(ed => ed.contains(el))) return false;
+                  let low = t.toLowerCase();
+                  if (low.includes('mã hóa đầu cuối') || low.includes('tìm hiểu thêm') || low.includes('nếu bạn chấp nhận')) return false;
                   return true;
                 });
                 for (let r of rows) {
-                  let txt = (r.innerText || '').trim();
-                  let lower = txt.toLowerCase();
-                  if (lower.includes('m\u00e3 h\u00f3a \u0111\u1ea7u cu\u1ed1i') || lower.includes('t\u00ecm hi\u1ec3u th\u00eam') || lower.includes('n\u1ebfu b\u1ea1n ch\u1ea5p nh\u1eadn')) continue;
-                  if (lower.includes('ti\u1ec3u b\u1ea3o b\u1ea3o') || lower.includes('tr\u1ee3 l\u00fd ai') || lower.includes('tr\u1ee3 l\u00ed c\u1ee7a m\u1ea1nh')) continue;
-                  if (!seen.has(txt)) { seen.add(txt); incoming.push(txt); }
+                  let t = (r.innerText || '').trim();
+                  let low = t.toLowerCase();
+                  let isUs = low.includes('tiểu bảo bảo') || low.includes('trợ lí ai') || low.includes('trợ lý ai') || low.includes('trợ lí của mạnh');
+                  msgNodes.push({ sender: isUs ? 'us' : 'them', text: t });
                 }
               }
-              return incoming.slice(-10);
+
+              if (msgNodes.length === 0) {
+                return { last_sender: 'none', consecutive_unreplied_count: 0, incoming_msgs: [], last_msg_text: '' };
+              }
+
+              let lastNode = msgNodes[msgNodes.length - 1];
+              let unreplied = 0;
+              let incoming = [];
+
+              // Count backwards consecutive incoming messages from the other person
+              for (let i = msgNodes.length - 1; i >= 0; i--) {
+                if (msgNodes[i].sender === 'us') {
+                  break;
+                }
+                unreplied++;
+                incoming.unshift(msgNodes[i].text);
+              }
+
+              return {
+                last_sender: lastNode.sender,
+                consecutive_unreplied_count: unreplied,
+                incoming_msgs: incoming.slice(-10),
+                last_msg_text: lastNode.text
+              };
             }
             """
-            result = await page.evaluate(script)
-            if isinstance(result, list):
-                return [str(s).strip() for s in result if s and str(s).strip()]
+            res = await page.evaluate(script)
+            if isinstance(res, dict):
+                return {
+                    "last_sender": str(res.get("last_sender", "none")),
+                    "consecutive_unreplied_count": int(res.get("consecutive_unreplied_count", 0)),
+                    "incoming_msgs": [str(s).strip() for s in res.get("incoming_msgs", []) if s],
+                    "last_msg_text": str(res.get("last_msg_text", "")),
+                }
         except Exception as e:
-            logger.warning("[FB-Service] Error evaluating incoming messages: %s", e)
-        return []
+            logger.warning("[FB-Service] Error evaluating conversation state: %s", e)
+        return default_state
 
     async def _count_unread_badge(self, page: Page) -> int:
         """Reads the unread message badge count visible in the page title or header."""
@@ -807,8 +834,12 @@ class FacebookService:
                                 # Extract contact name from DOM header
                                 clean_name = await self._extract_thread_name_from_page(page)
 
-                                # Extract incoming messages
-                                incoming_msgs = await self._extract_incoming_messages(page)
+                                # Extract conversation state (who sent the last message, unreplied count)
+                                conv_state = await self._extract_conversation_state(page)
+                                last_sender = conv_state["last_sender"]
+                                consecutive_unreplied = conv_state["consecutive_unreplied_count"]
+                                incoming_msgs = conv_state["incoming_msgs"]
+                                last_msg_text = conv_state["last_msg_text"]
 
                                 # Compute hash to detect new messages since last scan
                                 current_hash = self._compute_msg_hash(incoming_msgs) if incoming_msgs else ""
@@ -818,60 +849,74 @@ class FacebookService:
                                 # Detect unread badge from page title as supplementary signal
                                 unread_count = await self._count_unread_badge(page)
 
-                                threshold = cfg.get("threshold", 3)
+                                threshold = cfg.get("threshold", 5)
                                 logger.info(
-                                    "[FB-Service] Thread '%s': %d msgs, %d unread, new=%s, threshold=%d",
-                                    clean_name, len(incoming_msgs), unread_count, has_new_messages, threshold,
+                                    "[FB-Service] Thread '%s': last_sender=%s, unreplied=%d, threshold=%d, new=%s, hash=%s",
+                                    clean_name, last_sender, consecutive_unreplied, threshold, has_new_messages, current_hash[:8] if current_hash else "∅",
                                 )
 
                                 # Persist thread URL with updated hash
                                 await self.save_known_thread(t_href, clean_name, current_hash)
 
                                 # ── Auto-reply decision ──────────────────────────────────────
-                                # Primary gate: hash-based new message detection.
-                                # - has_new_messages=True  → user sent new content → ALWAYS reply
-                                # - has_new_messages=False → same content as last scan → skip
-                                #
-                                # Cooldown (2 min) is a safety net ONLY to prevent double-send
-                                # if 2 consecutive scans both see the same new hash before DB update.
-                                # It does NOT block replies when has_new_messages=True.
+                                # 1. If the last message in the thread was sent by 'us' (account owner or bot):
+                                #    The conversation is already replied to. NEVER send away message!
+                                if last_sender == "us":
+                                    logger.info("[FB-Service] '%s': last message is from us; no auto-reply needed.", clean_name)
+                                    continue
+
+                                # 2. If 0 messages found or E2EE locked:
+                                if not incoming_msgs:
+                                    logger.info("[FB-Service] '%s': 0 readable incoming msgs; skip.", clean_name)
+                                    continue
+
+                                # 3. Update cache with latest incoming messages so Telegram bot / UI knows
+                                await self.message_cache.add_or_update(
+                                    clean_name, incoming_msgs, "", t_href, False
+                                )
+
+                                # 4. Check if consecutive unreplied incoming messages reached threshold
+                                if consecutive_unreplied < threshold:
+                                    logger.info(
+                                        "[FB-Service] '%s': unreplied count (%d) < threshold (%d); skip away message.",
+                                        clean_name, consecutive_unreplied, threshold,
+                                    )
+                                    continue
+
+                                # 5. If threshold reached, ensure this is a new message batch (not already replied)
+                                if not has_new_messages:
+                                    logger.info("[FB-Service] '%s': threshold met but already replied to this hash; skip.", clean_name)
+                                    continue
+
                                 cooldown_key = t_href
                                 cooldown_minutes = cfg.get("cooldown_minutes", 2)
+                                in_cooldown = await self.is_sender_in_cooldown(cooldown_key, cooldown_minutes)
+                                if in_cooldown:
+                                    logger.info(
+                                        "[FB-Service] '%s': cooldown active (%dm); skip double-send.",
+                                        clean_name, cooldown_minutes,
+                                    )
+                                    continue
 
-                                if not incoming_msgs:
-                                    logger.info("[FB-Service] '%s': 0 readable msgs (E2EE locked?); skip.", clean_name)
-
-                                elif not has_new_messages:
-                                    logger.info("[FB-Service] '%s': no new messages (hash unchanged); skip.", clean_name)
-
+                                # All criteria strictly met: send away message ONCE
+                                away_reply = (
+                                    f"Chào bạn, tôi là Tiểu Bảo Bảo - trợ lí AI của anh Mạnh (Cua). "
+                                    f"Anh Mạnh hiện đang vắng mặt và đã nhận được tin nhắn của bạn. "
+                                    f"Tôi sẽ báo lại anh ấy ngay khi online nhé!"
+                                )
+                                sent = await self._send_message_in_open_chat(page, away_reply)
+                                if sent:
+                                    auto_replies_sent += 1
+                                    await self.record_sender_cooldown(cooldown_key)
+                                    await self.message_cache.add_or_update(
+                                        clean_name, incoming_msgs, away_reply, t_href, True
+                                    )
+                                    logger.info(
+                                        "[FB-Service] AUTO-REPLIED to '%s' (unreplied=%d, hash %s→%s)",
+                                        clean_name, consecutive_unreplied, previous_hash or "∅", current_hash,
+                                    )
                                 else:
-                                    # New messages detected — check short cooldown to avoid double-send
-                                    in_cooldown = await self.is_sender_in_cooldown(cooldown_key, cooldown_minutes)
-                                    if in_cooldown:
-                                        logger.info(
-                                            "[FB-Service] '%s': new msgs but short cooldown active (%dm); skip double-send.",
-                                            clean_name, cooldown_minutes,
-                                        )
-                                    else:
-                                        away_reply = (
-                                            f"Chào bạn, tôi là Tiểu Bảo Bảo - trợ lí AI của anh Mạnh (Cua). "
-                                            f"Anh Mạnh hiện đang vắng mặt và đã nhận được tin nhắn của bạn. "
-                                            f"Tôi sẽ báo lại anh ấy ngay khi online nhé!"
-                                        )
-                                        sent = await self._send_message_in_open_chat(page, away_reply)
-                                        if sent:
-                                            auto_replies_sent += 1
-                                            await self.record_sender_cooldown(cooldown_key)
-                                            await self.message_cache.add_or_update(
-                                                clean_name, incoming_msgs, away_reply, t_href, True
-                                            )
-                                            logger.info(
-                                                "[FB-Service] AUTO-REPLIED to '%s' (hash %s→%s)",
-                                                clean_name, previous_hash or "∅", current_hash,
-                                            )
-                                            continue
-                                        else:
-                                            logger.warning("[FB-Service] Failed to send reply to '%s'", clean_name)
+                                    logger.warning("[FB-Service] Failed to send reply to '%s'", clean_name)
 
                                 # Update cache ONLY when there are actual incoming messages to report.
                                 # Threads with 0 readable messages (E2EE locked, PIN pending, etc.)

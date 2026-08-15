@@ -159,6 +159,3 @@ async def vnc_heartbeat():
     """Resets idle watchdog timer while the user is actively viewing/using the VNC modal."""
     vnc_manager.touch()
     return {"status": "ok"}
-
-
-

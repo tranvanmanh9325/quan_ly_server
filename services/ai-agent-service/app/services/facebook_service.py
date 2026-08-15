@@ -758,7 +758,19 @@ class FacebookService:
             if not search_snippet:
                 return False
 
-            # 2. Scroll to bottom — auto-reply is recent, should be near the bottom
+            # 2. Ensure E2EE is unlocked — without this, messages don't render in headless Chromium
+            await self._handle_e2ee_pin_screen(page)
+            await asyncio.sleep(1.0)
+
+            # 3. Wait for message bubbles to actually load in DOM (E2EE conversations load async)
+            try:
+                await page.wait_for_selector('div[dir="auto"]', timeout=10000)
+            except Exception:
+                logger.warning("[FB-Service] Unsend: timed out waiting for message bubbles to load (E2EE?)")
+                return False
+            await asyncio.sleep(1.5)
+
+            # 4. Scroll to bottom — auto-reply is recent, should be near the bottom
             await page.keyboard.press("End")
             await asyncio.sleep(1.0)
 
@@ -779,6 +791,13 @@ class FacebookService:
             target_msg = msg_locator.nth(count - 1)  # last (most recent) occurrence
             await target_msg.scroll_into_view_if_needed()
             await asyncio.sleep(0.5)
+
+            # Debug: take screenshot to see actual page state before hover
+            try:
+                await page.screenshot(path="/app/browser_data/unsend_debug.png")
+                logger.info("[FB-Service] Unsend debug screenshot saved.")
+            except Exception:
+                pass
 
             # 4. Hover over the bubble to trigger Facebook's hover action toolbar
             await target_msg.hover()

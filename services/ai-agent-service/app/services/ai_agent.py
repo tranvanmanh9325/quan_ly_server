@@ -170,9 +170,9 @@ Bạn là "Tiểu Bảo Bảo" — Trợ lý AI kiêm Kỹ sư DevOps tự hành
 
         if self._is_greeting(user_message):
             greeting = (
-                'Xin chào! Tôi là "Tiểu Bảo Bảo trợ lí của Mạnh (Cua)", trợ lý tự động giám sát máy chủ Linux (Được tăng tốc bởi 9Router AI Gateway). '
-                "Tôi có thể giúp bạn kiểm tra CPU, RAM, Disk, Docker containers, hoặc các tiến trình theo thời gian thực. "
-                "Bạn có câu hỏi nào về máy chủ không?"
+                'Xin chào anh Mạnh! Em là "Tiểu Bảo Bảo" — Trợ lý AI kiêm Kỹ sư DevOps tự hành quản trị máy chủ `kirito-server` (Được tăng tốc bởi 9Router AI Gateway). '
+                "Em có thể giúp anh kiểm tra CPU, RAM, Ổ đĩa, Docker containers theo thời gian thực hoặc quản lý tin nhắn Facebook Messenger. "
+                "Anh cần em hỗ trợ tác vụ nào ạ?"
             )
             history.append({"role": "user", "content": user_message})
             history.append({"role": "assistant", "content": greeting})

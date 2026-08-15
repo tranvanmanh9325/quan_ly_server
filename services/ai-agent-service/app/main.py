@@ -11,6 +11,7 @@ from app.core.ssh_client import SshClient
 from app.services.message_cache import FacebookMessageCache
 from app.services.facebook_service import FacebookService
 from app.services.ai_agent import AiAgentService
+from app.services.browser_agent import BrowserAgentService
 from app.services.telegram_bot import TelegramBot
 from app.routers import health, facebook, openai_gateway
 
@@ -52,8 +53,10 @@ async def lifespan(app: FastAPI):
 
     # 2. Initialize domain services with bidirectional wiring
     fb_service = FacebookService(message_cache)
+    browser_agent = BrowserAgentService()
     ai_agent = AiAgentService(llm_router, ssh_client, message_cache, fb_service)
     fb_service.set_ai_agent(ai_agent)
+    ai_agent.set_browser_agent(browser_agent)
     telegram_bot = TelegramBot(ai_agent, ssh_client)
 
     # 3. Attach to app state for dependency injection in routers
@@ -61,6 +64,7 @@ async def lifespan(app: FastAPI):
     app.state.ssh_client = ssh_client
     app.state.message_cache = message_cache
     app.state.fb_service = fb_service
+    app.state.browser_agent = browser_agent
     app.state.ai_agent = ai_agent
     app.state.telegram_bot = telegram_bot
 
@@ -78,6 +82,8 @@ async def lifespan(app: FastAPI):
         await asyncio.gather(telegram_task, fb_scan_task, return_exceptions=True)
     except Exception:
         pass
+    # Gracefully close the autonomous browser context
+    await browser_agent.close()
 
 
 app = FastAPI(

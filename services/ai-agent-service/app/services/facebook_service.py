@@ -904,7 +904,6 @@ class FacebookService:
                         }
                     """, search_snippet)
                     if clicked:
-                        await asyncio.sleep(0.8)
                         more_btn = True  # sentinel — menu should be open now
                 except Exception as je:
                     logger.warning("[FB-Service] Unsend: JS More button click also failed: %s", je)
@@ -915,9 +914,31 @@ class FacebookService:
 
             if more_btn is not True:  # if we got an actual locator (not JS sentinel)
                 await more_btn.click()
-            await asyncio.sleep(0.6)
-
+            
             # 6. Click "Gỡ" / "Remove" from the context menu
+            await asyncio.sleep(1.0)  # wait longer for menu to animate in
+
+            # Debug: screenshot after clicking More to see what menu opened
+            try:
+                await page.screenshot(path="/app/browser_data/unsend_menu_open.png")
+            except Exception:
+                pass
+
+            # Log all visible menu items/buttons for debugging
+            try:
+                menu_items = await page.evaluate("""
+                    () => {
+                        const items = [...document.querySelectorAll('[role="menuitem"], [role="option"], [role="listitem"]')];
+                        return items.filter(i => {
+                            const r = i.getBoundingClientRect();
+                            return r.width > 0 && r.height > 0;
+                        }).map(i => i.innerText?.trim()).filter(Boolean);
+                    }
+                """)
+                logger.info("[FB-Service] Unsend: visible menu items = %s", menu_items)
+            except Exception:
+                pass
+
             removed = False
             remove_patterns = [
                 re.compile(r"^Gỡ$", re.I),
@@ -945,6 +966,25 @@ class FacebookService:
                             break
                     except Exception:
                         pass
+
+            if not removed:
+                # Last resort: JS click on any visible item containing "Gỡ" or "Remove"
+                try:
+                    removed = await page.evaluate("""
+                        () => {
+                            const all = [...document.querySelectorAll('[role="menuitem"], [role="option"], [role="listitem"], li, div[tabindex]')];
+                            const target = all.find(el => {
+                                const t = (el.innerText || '').trim();
+                                return /^(Gỡ|Remove|Xóa)$/.test(t) && el.getBoundingClientRect().width > 0;
+                            });
+                            if (target) { target.click(); return true; }
+                            return false;
+                        }
+                    """)
+                    if removed:
+                        logger.info("[FB-Service] Unsend: found Remove via JS last-resort.")
+                except Exception:
+                    pass
 
             if not removed:
                 logger.warning("[FB-Service] Unsend: could not find Remove option in context menu")

@@ -291,6 +291,8 @@ export default function SettingsPage() {
     enabled: false,
     threshold: 5,
     scanIntervalMinutes: 5,
+    idleTimeoutMinutes: 3,
+    humanSessionMinutes: 10,
     cookiesJson: '',
     customMessage: '',
     lastStatus: 'Tắt',
@@ -407,6 +409,8 @@ export default function SettingsPage() {
             enabled:             d.enabled             ?? false,
             threshold:           d.threshold           ?? 5,
             scanIntervalMinutes: d.scanIntervalMinutes ?? d.scan_interval_minutes ?? 5,
+            idleTimeoutMinutes:  d.idleTimeoutMinutes  ?? d.idle_timeout_minutes  ?? 3,
+            humanSessionMinutes: d.humanSessionMinutes ?? d.human_session_minutes ?? 10,
             cookiesJson:         d.cookiesJson         || d.cookies_json || '',
             customMessage:       d.customMessage       || d.custom_message || '',
             lastStatus:          d.lastStatus          || d.last_status || 'Tắt',
@@ -589,6 +593,8 @@ export default function SettingsPage() {
             enabled:             cd.enabled             ?? true,
             threshold:           cd.threshold           ?? 5,
             scanIntervalMinutes: cd.scanIntervalMinutes ?? cd.scan_interval_minutes ?? 5,
+            idleTimeoutMinutes:  cd.idleTimeoutMinutes  ?? cd.idle_timeout_minutes  ?? 3,
+            humanSessionMinutes: cd.humanSessionMinutes ?? cd.human_session_minutes ?? 10,
             cookiesJson:         cd.cookiesJson         || cd.cookies_json || '',
             customMessage:       cd.customMessage       || cd.custom_message || '',
             lastStatus:          cd.lastStatus          || cd.last_status || 'Đã lưu phiên từ Server Chromium',
@@ -1000,6 +1006,66 @@ export default function SettingsPage() {
             <SettingRow label={t('settings.facebook.threshold')} desc={t('settings.facebook.thresholdDesc')}>
               <ThresholdSlider id="fb-threshold" min={1} max={20} unit={` ${t('settings.facebook.thresholdUnit')}`} value={fbConfig.threshold}
                 onChange={v => updateFb('threshold', v)} color="var(--accent-purple)" />
+            </SettingRow>
+
+            <SettingRow label={t('settings.facebook.idleTimeout')} desc={t('settings.facebook.idleTimeoutDesc')}>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '8px' }}>
+                <ThresholdSlider id="fb-idle-timeout" min={1} max={30} unit={` ${t('settings.facebook.minutesUnit')}`} value={fbConfig.idleTimeoutMinutes}
+                  onChange={v => updateFb('idleTimeoutMinutes', v)} color="var(--accent-cyan)" />
+                <div style={{ display: 'flex', gap: '4px' }}>
+                  {[1, 2, 3, 5, 10, 15].map(m => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => updateFb('idleTimeoutMinutes', m)}
+                      style={{
+                        background: fbConfig.idleTimeoutMinutes === m ? 'rgba(0, 242, 254, 0.2)' : 'rgba(0,0,0,0.4)',
+                        border: fbConfig.idleTimeoutMinutes === m ? '1px solid var(--accent-cyan)' : '1px solid rgba(255,255,255,0.1)',
+                        borderRadius: '3px',
+                        color: fbConfig.idleTimeoutMinutes === m ? 'var(--accent-cyan)' : 'var(--text-secondary)',
+                        fontFamily: 'Share Tech Mono',
+                        fontSize: '0.72rem',
+                        padding: '2px 6px',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s ease',
+                        boxShadow: fbConfig.idleTimeoutMinutes === m ? '0 0 8px rgba(0, 242, 254, 0.4)' : 'none',
+                      }}
+                    >
+                      {m}m
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </SettingRow>
+
+            <SettingRow label={t('settings.facebook.humanSession')} desc={t('settings.facebook.humanSessionDesc')}>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '8px' }}>
+                <ThresholdSlider id="fb-human-session" min={5} max={60} unit={` ${t('settings.facebook.minutesUnit')}`} value={fbConfig.humanSessionMinutes}
+                  onChange={v => updateFb('humanSessionMinutes', v)} color="var(--accent-purple)" />
+                <div style={{ display: 'flex', gap: '4px' }}>
+                  {[5, 10, 15, 30, 60].map(m => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => updateFb('humanSessionMinutes', m)}
+                      style={{
+                        background: fbConfig.humanSessionMinutes === m ? 'rgba(187, 0, 255, 0.2)' : 'rgba(0,0,0,0.4)',
+                        border: fbConfig.humanSessionMinutes === m ? '1px solid var(--accent-purple)' : '1px solid rgba(255,255,255,0.1)',
+                        borderRadius: '3px',
+                        color: fbConfig.humanSessionMinutes === m ? 'var(--accent-purple)' : 'var(--text-secondary)',
+                        fontFamily: 'Share Tech Mono',
+                        fontSize: '0.72rem',
+                        padding: '2px 6px',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s ease',
+                        boxShadow: fbConfig.humanSessionMinutes === m ? '0 0 8px rgba(187, 0, 255, 0.4)' : 'none',
+                      }}
+                    >
+                      {m}m
+                    </button>
+                  ))}
+                </div>
+              </div>
             </SettingRow>
 
             <SettingRow label={t('settings.facebook.scanInterval')} desc={t('settings.facebook.scanIntervalDesc')}>

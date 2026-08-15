@@ -48,7 +48,25 @@ class FacebookMessageCache:
         self._capacity = capacity
         self._entries: collections.OrderedDict[str, MessageEntry] = collections.OrderedDict()
         self._last_scan_at: Optional[datetime] = None
+        self._last_human_interaction_at: Optional[datetime] = None
         self._lock = asyncio.Lock()
+
+    def record_human_activity(self) -> None:
+        """Records that the human account owner was active (e.g. sent a message or interacted with system)."""
+        self._last_human_interaction_at = datetime.now(VN_TZ)
+
+    def is_human_actively_chatting(self, window_minutes: int = 10) -> bool:
+        """Returns True if the human account owner interacted or replied within the last window_minutes."""
+        if not self._last_human_interaction_at:
+            return False
+        elapsed = (datetime.now(VN_TZ) - self._last_human_interaction_at).total_seconds() / 60.0
+        return elapsed < max(1, window_minutes)
+
+    def get_last_human_activity_minutes_ago(self) -> Optional[float]:
+        """Returns how many minutes ago the human was active, or None."""
+        if not self._last_human_interaction_at:
+            return None
+        return max(0.0, (datetime.now(VN_TZ) - self._last_human_interaction_at).total_seconds() / 60.0)
 
     async def add_or_update(
         self,
@@ -104,6 +122,9 @@ class FacebookMessageCache:
                 final_type = "ai_auto"
             else:
                 final_type = "none"
+
+            if final_human:
+                self.record_human_activity()
 
             entry = MessageEntry(
                 sender_name=clean_sender,

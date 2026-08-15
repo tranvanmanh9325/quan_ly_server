@@ -11,8 +11,10 @@ router = APIRouter(prefix="/api/facebook", tags=["Facebook"])
 
 class FacebookConfigInput(BaseModel):
     enabled: bool = False
-    threshold: int = Field(default=3, ge=1)
+    threshold: int = Field(default=5, ge=1)
     scanIntervalMinutes: int = Field(default=5, ge=1)
+    idleTimeoutMinutes: int = Field(default=3, ge=1, le=60)
+    humanSessionMinutes: int = Field(default=10, ge=1, le=120)
     customMessage: str = ""
     cookiesJson: str = ""
 
@@ -41,6 +43,8 @@ async def get_config(fb: FacebookService = Depends(get_fb_service)):
     enabled = bool(cfg.get("enabled", False))
     threshold = int(cfg.get("threshold", 5))
     scan_interval = int(cfg.get("scan_interval_minutes", 5))
+    idle_timeout = int(cfg.get("idle_timeout_minutes", 3))
+    human_session = int(cfg.get("human_session_minutes", 10))
     custom_msg = cfg.get("custom_message", "")
     last_status = cfg.get("last_status", "Tắt")
     return {
@@ -49,6 +53,10 @@ async def get_config(fb: FacebookService = Depends(get_fb_service)):
         "threshold": threshold,
         "scanIntervalMinutes": scan_interval,
         "scan_interval_minutes": scan_interval,
+        "idleTimeoutMinutes": idle_timeout,
+        "idle_timeout_minutes": idle_timeout,
+        "humanSessionMinutes": human_session,
+        "human_session_minutes": human_session,
         "cookiesJson": cookies,
         "cookies_json": cookies,
         "customMessage": custom_msg,
@@ -66,6 +74,8 @@ async def update_config(
     cfg["enabled"] = input_data.enabled
     cfg["threshold"] = max(1, input_data.threshold)
     cfg["scan_interval_minutes"] = max(1, input_data.scanIntervalMinutes)
+    cfg["idle_timeout_minutes"] = max(1, input_data.idleTimeoutMinutes)
+    cfg["human_session_minutes"] = max(1, input_data.humanSessionMinutes)
     if input_data.customMessage:
         cfg["custom_message"] = input_data.customMessage
     if input_data.cookiesJson:

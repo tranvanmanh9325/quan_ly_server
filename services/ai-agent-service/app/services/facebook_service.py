@@ -166,7 +166,7 @@ class FacebookService:
                 async with conn.cursor() as cur:
                     await cur.execute(
                         "SELECT id, cookies_json, cooldown_minutes, custom_message, enabled, "
-                        "last_status, threshold, scan_interval_minutes FROM facebook_config LIMIT 1"
+                        "last_status, threshold, scan_interval_minutes, idle_timeout_minutes, human_session_minutes FROM facebook_config LIMIT 1"
                     )
                     row = await cur.fetchone()
                     if row:
@@ -174,7 +174,9 @@ class FacebookService:
         except Exception as e:
             logger.error("[FB-Service] Error fetching config from DB: %s", e)
         return {
-            "enabled": False, "threshold": 3,
+            "enabled": False, "threshold": 5,
+            "idle_timeout_minutes": 3,
+            "human_session_minutes": 10,
             "cookies_json": "[]", "custom_message": "",
             "scan_interval_minutes": 5,
         }
@@ -185,22 +187,26 @@ class FacebookService:
                 async with conn.cursor() as cur:
                     await cur.execute(
                         """
-                        INSERT INTO facebook_config (id, cookies_json, cooldown_minutes, custom_message, enabled, last_status, threshold, scan_interval_minutes, created_at, updated_at)
-                        VALUES (1, %s, 15, %s, %s, 'updated', %s, %s, NOW(), NOW())
+                        INSERT INTO facebook_config (id, cookies_json, cooldown_minutes, custom_message, enabled, last_status, threshold, scan_interval_minutes, idle_timeout_minutes, human_session_minutes, created_at, updated_at)
+                        VALUES (1, %s, 15, %s, %s, 'updated', %s, %s, %s, %s, NOW(), NOW())
                         ON CONFLICT (id) DO UPDATE SET
                             cookies_json = EXCLUDED.cookies_json,
                             custom_message = EXCLUDED.custom_message,
                             enabled = EXCLUDED.enabled,
                             threshold = EXCLUDED.threshold,
                             scan_interval_minutes = EXCLUDED.scan_interval_minutes,
+                            idle_timeout_minutes = EXCLUDED.idle_timeout_minutes,
+                            human_session_minutes = EXCLUDED.human_session_minutes,
                             updated_at = NOW()
                         """,
                         (
                             cfg.get("cookies_json", "[]"),
                             cfg.get("custom_message", ""),
                             cfg.get("enabled", False),
-                            cfg.get("threshold", 3),
+                            cfg.get("threshold", 5),
                             cfg.get("scan_interval_minutes", 5),
+                            cfg.get("idle_timeout_minutes", 3),
+                            cfg.get("human_session_minutes", 10),
                         ),
                     )
                     await conn.commit()
@@ -523,6 +529,8 @@ class FacebookService:
               let consecutive_unreplied = 0;
               let reached_human_boundary = false;
               let seenSignatures = new Set();
+              let last_msg_hour = null;
+              let last_msg_minute = null;
 
               for (let i = distinctElements.length - 1; i >= 0; i--) {
                 let el = distinctElements[i];
@@ -545,6 +553,11 @@ class FacebookService:
                 if (last_sender === 'none') {
                   last_sender = isUs ? 'us' : 'them';
                   last_msg_text = msgText;
+                  let timeMatch = t.match(/gửi lúc\\s*(\\d{1,2}):(\\d{2})/i) || t.match(/sent at\\s*(\\d{1,2}):(\\d{2})/i);
+                  if (timeMatch) {
+                    last_msg_hour = parseInt(timeMatch[1], 10);
+                    last_msg_minute = parseInt(timeMatch[2], 10);
+                  }
                 }
 
                 if (!isUs) {
@@ -575,17 +588,33 @@ class FacebookService:
                 last_sender: last_sender,
                 consecutive_unreplied_count: consecutive_unreplied,
                 incoming_msgs: incoming,
-                last_msg_text: last_msg_text
+                last_msg_text: last_msg_text,
+                last_msg_hour: last_msg_hour,
+                last_msg_minute: last_msg_minute
               };
             }
             """
             res = await page.evaluate(script)
             if isinstance(res, dict):
+                last_hour = res.get("last_msg_hour")
+                last_min = res.get("last_msg_minute")
+                elapsed_minutes = None
+                if last_hour is not None and last_min is not None:
+                    try:
+                        now_dt = datetime.now(VN_TZ)
+                        msg_dt = now_dt.replace(hour=int(last_hour), minute=int(last_min), second=0, microsecond=0)
+                        if msg_dt > now_dt:
+                            msg_dt -= timedelta(days=1)
+                        elapsed_minutes = max(0.0, (now_dt - msg_dt).total_seconds() / 60.0)
+                    except Exception:
+                        elapsed_minutes = None
+
                 return {
                     "last_sender": str(res.get("last_sender", "none")),
                     "consecutive_unreplied_count": int(res.get("consecutive_unreplied_count", 0)),
                     "incoming_msgs": [str(s).strip() for s in res.get("incoming_msgs", []) if s],
                     "last_msg_text": str(res.get("last_msg_text", "")),
+                    "elapsed_minutes_since_last_msg": elapsed_minutes,
                 }
         except Exception as e:
             logger.warning("[FB-Service] Error evaluating conversation state: %s", e)
@@ -913,7 +942,17 @@ class FacebookService:
                                     reply_type="none"
                                 )
 
-                                # 4. Check if consecutive unreplied incoming messages reached threshold
+                                # 4. Presence Check 1: Global Human Active Session
+                                human_session_minutes = int(cfg.get("human_session_minutes", 10))
+                                if self.message_cache.is_human_actively_chatting(window_minutes=human_session_minutes):
+                                    mins_ago = self.message_cache.get_last_human_activity_minutes_ago()
+                                    logger.info(
+                                        "[FB-Service] '%s': Human is actively chatting (last action %.1fm ago < %dm session window); suppressing auto-reply.",
+                                        clean_name, mins_ago or 0.0, human_session_minutes,
+                                    )
+                                    continue
+
+                                # 5. Presence Check 2: Consecutive unreplied count vs threshold
                                 if consecutive_unreplied < threshold:
                                     logger.info(
                                         "[FB-Service] '%s': unreplied count (%d) < threshold (%d); skip away message.",
@@ -921,7 +960,24 @@ class FacebookService:
                                     )
                                     continue
 
-                                # 5. If threshold reached, ensure this is a new message batch (not already replied)
+                                # 6. Presence Check 3: Inactivity / Idle Delay Window
+                                idle_timeout_minutes = int(cfg.get("idle_timeout_minutes", 3))
+                                entry = self.message_cache._find_entry_sync(clean_name)
+                                detected_at = entry.detected_at if entry else datetime.now(VN_TZ)
+                                cache_elapsed = max(0.0, (datetime.now(VN_TZ) - detected_at).total_seconds() / 60.0)
+                                dom_elapsed = conv_state.get("elapsed_minutes_since_last_msg")
+
+                                # Use DOM elapsed time if parsed, otherwise fallback to cache detection elapsed time
+                                effective_elapsed = dom_elapsed if dom_elapsed is not None else cache_elapsed
+
+                                if effective_elapsed < idle_timeout_minutes:
+                                    logger.info(
+                                        "[FB-Service] '%s': threshold (%d) met but messages too recent (%.1fm < %dm idle delay); observing...",
+                                        clean_name, threshold, effective_elapsed, idle_timeout_minutes,
+                                    )
+                                    continue
+
+                                # 7. If threshold reached and idle delay elapsed, ensure this is a new message batch
                                 if not has_new_messages:
                                     logger.info("[FB-Service] '%s': threshold met but already replied to this hash; skip.", clean_name)
                                     continue

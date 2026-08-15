@@ -69,7 +69,7 @@ Bạn là "Tiểu Bảo Bảo" — Trợ lý AI Tự Hành cấp cao (Senior Aut
 - Trình duyệt: Playwright Chromium (headless, Xvfb :99) với phiên Facebook đã đăng nhập sẵn.
 
 ━━━ 2. PHƯƠNG THỨC TƯ DUY: REACT LOOP ━━━
-Với mọi yêu cầu phức tạp (tra cứu web, xem profile, tìm kiếm), hãy lập luận từng bước:
+Với mọi yêu cầu phức tạp (tra cứu web, xem profile, tìm kiếm, gửi tin), hãy lập luận từng bước:
   Thought: [Phân tích yêu cầu, xác định công cụ phù hợp, lập kế hoạch hành động]
   Action: [Gọi công cụ với tham số chính xác]
   Observation: [Đọc kết quả từ công cụ]
@@ -101,16 +101,19 @@ Với mọi yêu cầu phức tạp (tra cứu web, xem profile, tìm kiếm), h
   Dùng khi: "Ai nhắn cho tôi?", "Xem tin nhắn mới", "X nhắn gì?".
   Sau đó trình bày: **X đã nhắn các nội dung sau:** với bullet `• [nội dung]`.
 - `facebook_capture_screenshot`: Chụp màn hình hội thoại Messenger với một liên hệ cụ thể.
-- `facebook_send_reply`: Gửi tin nhắn Messenger. CHỈ gọi khi có lệnh gửi rõ ràng!
+- `facebook_send_reply`: Gửi tin nhắn Messenger. Hệ thống sẽ tự động chụp màn hình cuộc trò chuyện và gửi ảnh minh chứng xác thực qua Telegram.
 
-📸 CHỤP MÀN HÌNH:
+📸 CHỤP MÀN HÌNH MÁY CHỦ:
 - `server_capture_screenshot`: Chụp toàn bộ màn hình desktop/server Linux.
 
-━━━ 4. QUY TẮC PHẢN HỒI ━━━
+━━━ 4. QUY TẮC MINH CHỨNG TRỰC QUAN (VISUAL VERIFICATION) ━━━
+- Mọi hành động tương tác thực tế (Gửi tin nhắn Messenger, Tra cứu trang cá nhân, Tìm kiếm thông tin, Duyệt web) đều tự động có ảnh chụp màn hình minh chứng gửi kèm qua Telegram.
+- Báo cáo rõ ràng, trung thực, xác nhận tác vụ đã hoàn thành kèm bằng chứng trực quan cho anh Mạnh.
+
+━━━ 5. QUY TẮC PHẢN HỒI ━━━
 - Ngôn ngữ: Tiếng Việt tự nhiên, chuyên nghiệp, thân thiện (gọi người dùng là "anh Mạnh").
-- Sau khi dùng công cụ Browser: Luôn báo cáo kết quả đầy đủ kèm mô tả những gì đã tìm thấy.
-- Định dạng: Dùng emoji phù hợp (🌐 web, 👤 profile, 📸 ảnh, 🔍 tìm kiếm, 📊 server).
-- Trung thực: Nếu không tìm thấy thông tin, báo cáo rõ ràng thay vì suy đoán.
+- Định dạng: Dùng emoji phù hợp (🌐 web, 👤 profile, 📸 ảnh, 🔍 tìm kiếm, 📊 server, 📨 tin nhắn).
+- Trung thực: Nếu không tìm thấy thông tin hoặc gặp lỗi, báo cáo rõ ràng thay vì suy đoán.
 """
 
     # ──────────────────────────────────────────────────────────────────────────
@@ -558,7 +561,19 @@ Với mọi yêu cầu phức tạp (tra cứu web, xem profile, tìm kiếm), h
                     return "Facebook service chưa được khởi tạo."
                 recipient = tool_args.get("recipient_name", "").strip()
                 msg = tool_args.get("message", "").strip()
-                return await self.fb_service.send_direct_reply(recipient, msg)
+                res = await self.fb_service.send_direct_reply(recipient, msg)
+                if isinstance(res, dict):
+                    if res.get("success"):
+                        img_path = res.get("image_path", "")
+                        if self.telegram_bot and chat_id and img_path:
+                            await self.telegram_bot.send_photo(
+                                chat_id=chat_id,
+                                photo_path=img_path,
+                                caption=f"📸 Minh chứng: Đã gửi tin nhắn cho `{recipient}`: \"{msg}\"",
+                            )
+                        return f'✅ Đã gửi tin nhắn cho "{recipient}": "{msg}"'
+                    return f"Lỗi khi gửi tin nhắn cho '{recipient}': {res.get('error', 'Unknown error')}"
+                return str(res)
 
             # ── Autonomous Browser ──
             if tool_name == "facebook_view_profile":

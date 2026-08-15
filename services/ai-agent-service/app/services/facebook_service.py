@@ -3,6 +3,8 @@ import functools
 import hashlib
 import json
 import logging
+import re
+import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, cast
@@ -981,20 +983,21 @@ class FacebookService:
 
     # ─── Direct reply ─────────────────────────────────────────────────────────
 
-    async def send_direct_reply(self, recipient_name: str, message: str) -> str:
+    async def send_direct_reply(self, recipient_name: str, message: str) -> Dict[str, Any]:
         """Opens a conversation and sends a direct reply message.
+        Captures a visual screenshot proof of the sent message in the chat box.
 
         Protected by the global _browser_lock to ensure only 1 Chromium instance
         runs at a time, preventing CPU overload and timeouts.
         Directly navigates to target thread URL for maximum speed.
         """
         if not recipient_name or not message:
-            return "Lỗi: Thiếu tên người nhận hoặc nội dung tin nhắn."
+            return {"success": False, "error": "Lỗi: Thiếu tên người nhận hoặc nội dung tin nhắn."}
 
         cfg = await self.get_config_from_db()
         cookies = self._parse_cookies(cfg.get("cookies_json", ""))
         if not cookies:
-            return "Lỗi: Chưa cấu hình Cookies Facebook trên hệ thống."
+            return {"success": False, "error": "Lỗi: Chưa cấu hình Cookies Facebook trên hệ thống."}
 
         # 1. Look for thread_href in message_cache (fuzzy normalized)
         target_href = await self.message_cache.find_thread_href(recipient_name)
@@ -1008,23 +1011,22 @@ class FacebookService:
             for t in db_threads:
                 score = self._name_match_score(recipient_name, t.get("text", ""))
                 is_non_e2ee = "/messages/t/" in t["href"] and "/e2ee/" not in t["href"]
-                # Give priority to standard direct delivery threads
-                adjusted_score = score + (0.15 if is_non_e2ee else 0.0)
-                if adjusted_score > best_score and score >= 0.4:
-                    best_score = adjusted_score
+                effective_score = score + (0.15 if is_non_e2ee else 0.0)
+                if effective_score > best_score and effective_score >= 0.4:
+                    best_score = effective_score
                     best_href = t["href"]
             if best_href:
                 target_href = best_href
+                logger.info("[FB-DirectReply] Resolved thread from DB with score %.2f: %s", best_score, target_href)
 
-        # 3. Fallback: if any thread exists in DB, prefer standard thread first
+        # 3. Fallback: pick the primary known thread from database if recipient_name matches loosely
         if not target_href:
             db_threads = await self.get_known_threads_from_db()
             if db_threads:
-                non_e2ee_threads = [t for t in db_threads if "/messages/t/" in t["href"] and "/e2ee/" not in t["href"]]
-                target_href = non_e2ee_threads[0]["href"] if non_e2ee_threads else db_threads[0]["href"]
+                target_href = db_threads[0]["href"]
                 logger.info("[FB-DirectReply] Fallback to primary known thread: %s", target_href)
 
-        async def _execute_send() -> str:
+        async def _execute_send() -> Dict[str, Any]:
             # Clean up stale Chromium SingletonLock
             for item in ["SingletonLock", "SingletonCookie", "SingletonSocket"]:
                 lock_path = Path(BROWSER_DATA_DIR) / item
@@ -1038,7 +1040,7 @@ class FacebookService:
                 ctx = await p.chromium.launch_persistent_context(
                     user_data_dir=BROWSER_DATA_DIR,
                     headless=True,
-                    viewport={"width": 1280, "height": 850},
+                    viewport={"width": 1280, "height": 900},
                     timezone_id="Asia/Ho_Chi_Minh",
                     locale="vi-VN",
                     args=[
@@ -1102,8 +1104,9 @@ class FacebookService:
                     # Send the message
                     sent = await self._send_message_in_open_chat(page, message)
                     if sent:
-                        # Wait 4 seconds to ensure WebSocket payload is acknowledged by Facebook servers
-                        await asyncio.sleep(4.0)
+                        # Wait 3.5s to ensure WebSocket payload is rendered in chat view
+                        await asyncio.sleep(3.5)
+                        proof_path = ""
                         # Clean up any leftover overlay before taking screenshot proof
                         try:
                             await page.evaluate("""
@@ -1118,18 +1121,30 @@ class FacebookService:
                                 });
                             }
                             """)
-                            await asyncio.sleep(0.3)
-                            await page.screenshot(path="/tmp/last_direct_reply_proof.png")
-                        except Exception:
-                            pass
+                            await asyncio.sleep(0.5)
+                            safe_name = re.sub(r'[^a-zA-Z0-9_]', '_', recipient_name.strip().lower()) or "reply"
+                            proof_path = f"/tmp/fb_reply_proof_{safe_name}_{int(time.time()*1000)}.png"
+                            await page.screenshot(path=proof_path)
+                            logger.info("[FB-DirectReply] Captured visual proof screenshot -> %s", proof_path)
+                        except Exception as shot_err:
+                            logger.warning("[FB-DirectReply] Could not capture proof screenshot: %s", shot_err)
 
                         await self.message_cache.record_direct_reply(recipient_name, message)
                         actual_url = page.url.split("?")[0]
                         await self.record_sender_cooldown(actual_url)
                         logger.info("[FB-DirectReply] SENT to '%s': %s", recipient_name, message)
-                        return f'Đã gửi tin nhắn cho "{recipient_name}": "{message}"'
+                        return {
+                            "success": True,
+                            "image_path": proof_path,
+                            "recipient_name": recipient_name,
+                            "message": message,
+                            "summary": f'Đã gửi tin nhắn cho "{recipient_name}": "{message}"',
+                        }
                     else:
-                        return f'Lỗi: Đã mở trang chat với "{recipient_name}" nhưng không thể gửi tin nhắn vào ô chat.'
+                        return {
+                            "success": False,
+                            "error": f'Lỗi: Đã mở trang chat với "{recipient_name}" nhưng không thể gửi tin nhắn vào ô chat.',
+                        }
 
                 finally:
                     await page.close()
@@ -1140,10 +1155,10 @@ class FacebookService:
                 return await asyncio.wait_for(_execute_send(), timeout=120.0)
         except asyncio.TimeoutError:
             logger.error("[FB-DirectReply] Timeout sending to '%s'", recipient_name)
-            return f'Lỗi: Hết thời gian chờ (120s) khi gửi tin nhắn cho "{recipient_name}". Vui lòng thử lại.'
+            return {"success": False, "error": f'Lỗi: Hết thời gian chờ (120s) khi gửi tin nhắn cho "{recipient_name}". Vui lòng thử lại.'}
         except Exception as e:
             logger.error("[FB-DirectReply] Error sending to '%s': %s", recipient_name, e)
-            return f'Lỗi khi gửi tin nhắn cho "{recipient_name}": {e}'
+            return {"success": False, "error": f'Lỗi khi gửi tin nhắn cho "{recipient_name}": {e}'}
 
     async def capture_chat_screenshot(self, recipient_name: str) -> Dict[str, Any]:
         """Navigates to the recipient's chat thread, unlocks E2EE with PIN 090325,

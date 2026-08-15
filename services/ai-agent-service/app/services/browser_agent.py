@@ -274,13 +274,34 @@ class BrowserAgentService:
                 except Exception as e:
                     logger.warning("[BrowserAgent] Search goto notice: %s", e)
 
-                # ── Step 2: Wait for results to render ────────────────────────
-                # Facebook renders search results asynchronously; wait generously.
-                await asyncio.sleep(5)
+                # ── Step 2: Wait for search results to render ─────────────────
+                # Wait for any profile link to appear in the DOM, then give FB
+                # an extra 2 s to finish rendering all results. This is more
+                # reliable than a fixed sleep because it adapts to network speed.
+                try:
+                    await page.wait_for_function(
+                        """() => {
+                            const links = document.querySelectorAll('a[href]');
+                            for (const a of links) {
+                                const href = a.href || '';
+                                if (href.includes('facebook.com/') && !href.includes('/search/')) return true;
+                            }
+                            return false;
+                        }""",
+                        timeout=20000,
+                    )
+                    await asyncio.sleep(2)
+                except Exception:
+                    # Fallback: just wait 8 seconds
+                    await asyncio.sleep(8)
+
+                current_url = page.url
+                logger.info("[BrowserAgent] Search page URL: %s", current_url)
                 await self._dismiss_overlays(page)
 
                 # ── Step 3-4: Collect profile hrefs and pick best match ───────
                 profile_href = await self._resolve_best_profile_href(page, name_query)
+
 
                 if not profile_href:
                     # Fallback: return search results page itself

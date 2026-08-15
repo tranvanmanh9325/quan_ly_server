@@ -192,12 +192,12 @@ class VncManager:
 
                 cookies_json = json.dumps(cookies)
 
-                # Save to PostgreSQL
+                # Save to PostgreSQL table facebook_config
                 async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
                     async with conn.cursor() as cur:
                         await cur.execute("""
-                            INSERT INTO fb_auto_responder_config (id, cookies_json, last_status, updated_at)
-                            VALUES (1, %s, %s, NOW())
+                            INSERT INTO facebook_config (id, cookies_json, last_status, enabled, threshold, cooldown_minutes, custom_message, created_at, updated_at)
+                            VALUES (1, %s, %s, true, 3, 2, '', NOW(), NOW())
                             ON CONFLICT (id) DO UPDATE
                             SET cookies_json = EXCLUDED.cookies_json,
                                 last_status = EXCLUDED.last_status,

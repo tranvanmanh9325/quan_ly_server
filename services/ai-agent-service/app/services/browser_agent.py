@@ -16,6 +16,7 @@ Design decisions:
 """
 
 import asyncio
+import io
 import logging
 import re
 import time
@@ -23,6 +24,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, cast
 from urllib.parse import quote
 
+from PIL import Image
 from playwright.async_api import (
     async_playwright,
     Browser,
@@ -54,13 +56,23 @@ GOOGLE_SEARCH = "https://www.google.com/search?q={query}&hl=vi"
 DEFAULT_TIMEOUT_MS = 30_000
 NAV_TIMEOUT_MS = 45_000
 
-# Screenshot quality thresholds
-# A skeleton/blank FB page compresses to ~20-50 KB at 1366x768.
-# A real profile with cover photo is typically 150 KB+.
-# We use 60 KB as a conservative minimum for a "valid" profile screenshot.
-SCREENSHOT_MIN_BYTES = 60 * 1024   # 60 KB
-SCREENSHOT_MAX_RETRIES = 3          # retry count before giving up
-SCREENSHOT_RETRY_WAIT_S = 4.0       # extra seconds to wait between retries
+# ── Screenshot quality thresholds ──────────────────────────────────────────────
+# Strategy: TWO independent checks must BOTH pass for a screenshot to be "valid".
+#
+# 1. FILE SIZE: A truly blank/white PNG at 1366×768 compresses to ~6-15 KB.
+#    A real web page with text + images is typically 80 KB+.
+#    We use 40 KB as the minimum — conservative enough to pass skeleton pages.
+#
+# 2. PIL PIXEL ANALYSIS: Convert to grayscale and measure color variance.
+#    A pure white or single-color page will have std_dev ≈ 0.
+#    A real page with mixed content has std_dev >> 10.
+#    We require std_dev >= 8.0 to pass.
+#
+# A screenshot fails if EITHER check fails.
+SCREENSHOT_MIN_BYTES  = 40 * 1024   # 40 KB minimum file size
+SCREENSHOT_MIN_STDDEV = 8.0          # minimum grayscale std-deviation
+SCREENSHOT_MAX_RETRIES = 3           # max retry attempts before giving up
+SCREENSHOT_RETRY_WAIT_S = 3.0        # seconds to wait between retries
 
 
 # ─── Helper ───────────────────────────────────────────────────────────────────
@@ -280,74 +292,101 @@ class BrowserAgentService:
             logger.warning("[BrowserAgent] Profile content wait timed out; proceeding anyway.")
 
     def _is_screenshot_valid(self, path: str) -> bool:
-        """Check whether a saved PNG screenshot contains real page content.
+        """Dual-check a PNG screenshot for real page content.
 
-        Rationale: PNG compresses repetitive/uniform areas extremely well.
-        A skeleton / blank page (mostly solid gray blocks) will compress to
-        ~20–50 KB at 1366×768, while a real profile page with a colourful cover
-        photo and text will exceed 100 KB. We use 60 KB as a conservative lower
-        bound to flag 'loading' screenshots for retry.
+        Returns True only when BOTH conditions hold:
+          1. File size >= SCREENSHOT_MIN_BYTES  (filters zero/near-zero renders)
+          2. Grayscale std-deviation >= SCREENSHOT_MIN_STDDEV
+             (filters pure-white / single-color blank pages)
+
+        Using PIL pixel-level analysis is far more reliable than file size alone
+        because some anti-bot "block" pages render styled HTML that can exceed
+        40 KB yet still appear visually blank (white background + tiny text).
         """
         try:
             file_size = Path(path).stat().st_size
-            logger.info(
-                "[BrowserAgent] Screenshot quality check: %s → %d bytes (%.1f KB)",
-                Path(path).name,
-                file_size,
-                file_size / 1024,
-            )
-            return file_size >= SCREENSHOT_MIN_BYTES
-        except Exception as e:
-            logger.warning("[BrowserAgent] Could not stat screenshot %s: %s", path, e)
-            return True  # assume OK if we can't check
+            if file_size < SCREENSHOT_MIN_BYTES:
+                logger.info(
+                    "[BrowserAgent] Screenshot FAIL size check: %s → %.1f KB (< %.0f KB)",
+                    Path(path).name, file_size / 1024, SCREENSHOT_MIN_BYTES / 1024,
+                )
+                return False
 
-    async def _screenshot_with_quality_check(
+            # PIL pixel analysis — detect uniform/blank images
+            with open(path, "rb") as f:
+                img = Image.open(io.BytesIO(f.read()))
+            gray = img.convert("L")
+            pixels = list(gray.getdata())
+            n = len(pixels)
+            if n == 0:
+                return False
+            mean = sum(pixels) / n
+            variance = sum((p - mean) ** 2 for p in pixels) / n
+            std_dev = variance ** 0.5
+
+            logger.info(
+                "[BrowserAgent] Screenshot quality: %s → %.1f KB, std_dev=%.1f",
+                Path(path).name, file_size / 1024, std_dev,
+            )
+
+            if std_dev < SCREENSHOT_MIN_STDDEV:
+                logger.info(
+                    "[BrowserAgent] Screenshot FAIL std_dev check: %.1f < %.1f (blank/uniform page)",
+                    std_dev, SCREENSHOT_MIN_STDDEV,
+                )
+                return False
+
+            return True
+
+        except Exception as e:
+            logger.warning("[BrowserAgent] Screenshot quality check error (%s): %s", path, e)
+            return True  # assume OK if PIL fails (don't block the flow)
+
+    async def _screenshot(
         self,
         page: Page,
         name: str,
         wait_fn: Optional[str] = None,
     ) -> str:
-        """Take a screenshot and retry up to SCREENSHOT_MAX_RETRIES times if the
-        file is suspiciously small (indicating a skeleton / loading state).
+        """Take a viewport screenshot, auto-retrying on blank/white pages.
 
-        Between retries the helper:
-          1. Waits SCREENSHOT_RETRY_WAIT_S seconds for more content to render.
-          2. Scrolls back to top (some FB elements only render when in viewport).
-          3. Re-dismisses any overlays that might have appeared.
-          4. Optionally re-evaluates the caller-supplied wait_fn JS condition.
+        This replaces the old two-method pattern (_screenshot / _screenshot_with_quality_check).
+        All callers use this single method — quality validation is always applied.
+
+        Between retries:
+          1. Waits SCREENSHOT_RETRY_WAIT_S seconds
+          2. Re-dismisses overlays
+          3. Re-evaluates optional JS readiness condition (wait_fn)
         """
         for attempt in range(1, SCREENSHOT_MAX_RETRIES + 1):
             path = str(SCREENSHOT_DIR / f"{name}_{_now_ms()}.png")
             await page.screenshot(path=path, full_page=False)
 
             if self._is_screenshot_valid(path):
-                logger.info("[BrowserAgent] Screenshot OK (attempt %d).", attempt)
+                logger.info("[BrowserAgent] Screenshot OK (attempt %d) → %s", attempt, path)
                 return path
 
             logger.warning(
-                "[BrowserAgent] Screenshot too small (attempt %d/%d); page may still be loading. Retrying in %.0fs.",
-                attempt,
-                SCREENSHOT_MAX_RETRIES,
-                SCREENSHOT_RETRY_WAIT_S,
+                "[BrowserAgent] Screenshot invalid (attempt %d/%d) — blank or uniform page, retrying in %.0fs…",
+                attempt, SCREENSHOT_MAX_RETRIES, SCREENSHOT_RETRY_WAIT_S,
             )
 
             if attempt < SCREENSHOT_MAX_RETRIES:
                 await asyncio.sleep(SCREENSHOT_RETRY_WAIT_S)
-                # Scroll to top so cover photo is in the viewport
-                try:
-                    await page.evaluate("window.scrollTo(0, 0)")
-                except Exception:
-                    pass
                 await self._dismiss_overlays(page)
-                # If a JS readiness condition was provided, wait for it again
                 if wait_fn:
                     try:
-                        await page.wait_for_function(wait_fn, timeout=10000)
+                        await page.wait_for_function(wait_fn, timeout=10_000)
                     except Exception:
                         pass
 
-        # All retries exhausted — return the last screenshot regardless
-        logger.warning("[BrowserAgent] All %d screenshot attempts returned small file; using last one.", SCREENSHOT_MAX_RETRIES)
+        # All retries exhausted — return last path and log a warning
+        logger.warning(
+            "[BrowserAgent] All %d screenshot attempts invalid; using last captured file.",
+            SCREENSHOT_MAX_RETRIES,
+        )
+        return path  # path is still set from the last attempt
+
         return path  # noqa: F821 — defined in last loop iteration
 
 
@@ -425,7 +464,7 @@ class BrowserAgentService:
                         await page.evaluate("window.scrollTo(0, 0)")
                     except Exception:
                         pass
-                    img_path = await self._screenshot_with_quality_check(
+                    img_path = await self._screenshot(
                         page, f"fb_profile_{_safe_filename(name_query)}"
                     )
                     final_url = page.url
@@ -513,7 +552,7 @@ class BrowserAgentService:
                     await page.evaluate("window.scrollTo(0, 0)")
                 except Exception:
                     pass
-                img_path = await self._screenshot_with_quality_check(
+                img_path = await self._screenshot(
                     page, f"fb_profile_{_safe_filename(name_query)}"
                 )
                 final_url = page.url

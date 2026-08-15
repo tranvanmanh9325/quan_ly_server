@@ -521,6 +521,7 @@ Với mọi yêu cầu phức tạp (tra cứu web, xem profile, tìm kiếm), h
         tool_name: str,
         tool_args: Dict[str, Any],
         chat_id: Optional[str] = None,
+        pending_photos: Optional[list] = None,
     ) -> str:
         try:
             # ── Server ──
@@ -589,7 +590,231 @@ Với mọi yêu cầu phức tạp (tra cứu web, xem profile, tìm kiếm), h
                         f"🔗 URL: {res.get('profile_url', 'N/A')}\n"
                         f"📝 Giới thiệu:\n{res.get('intro_text', 'Không có thông tin.')[:600]}"
                     ),
+                    send_now=True,  # terminal: always send immediately
                 )
+
+
+            if tool_name == "browser_navigate":
+                if not self.browser_agent:
+                    return "Browser agent chưa được khởi tạo."
+                url = tool_args.get("url", "").strip()
+                res = await self.browser_agent.browser_navigate(url)
+                return await self._handle_browser_result(
+                    res,
+                    chat_id=chat_id,
+                    default_caption=f"🌐 Trang web: {res.get('url', url)}",
+                    success_prefix=(
+                        f"🌐 **{res.get('page_title', url)}**\n"
+                        f"🔗 URL: {res.get('url', url)}\n\n"
+                        f"📄 Nội dung trích xuất:\n{res.get('page_text', '')[:800]}"
+                    ),
+                    pending_photos=pending_photos,
+                )
+
+            if tool_name == "browser_search_google":
+                if not self.browser_agent:
+                    return "Browser agent chưa được khởi tạo."
+                query = tool_args.get("query", "").strip()
+                res = await self.browser_agent.browser_search_google(query)
+                if res.get("success"):
+                    top = res.get("top_results", [])
+                    results_text = "\n".join(
+                        f"{i+1}. **{r.get('title', '')}**\n   🔗 {r.get('url', '')}\n   {r.get('snippet', '')}"
+                        for i, r in enumerate(top)
+                    )
+                    img_path = res.get("image_path", "")
+                    # Defer: add to pending_photos so only the last one is sent
+                    if pending_photos is not None and img_path:
+                        pending_photos.clear()
+                        pending_photos.append((f"🔍 Kết quả Google: {query}", img_path))
+                    summary = f"🔍 Kết quả tìm kiếm Google cho: **{query}**\n\n{results_text}" if results_text else res.get("page_text", "")[:1000]
+                    return summary
+                return f"Lỗi khi tìm kiếm Google: {res.get('error', 'Unknown error')}"
+
+            if tool_name == "browser_take_screenshot":
+                if not self.browser_agent:
+                    return "Browser agent chưa được khởi tạo."
+                res = await self.browser_agent.browser_take_screenshot()
+                # Flush any pending deferred photo — this IS the explicit final screenshot
+                if pending_photos:
+                    pending_photos.clear()
+                return await self._handle_browser_result(
+                    res,
+                    chat_id=chat_id,
+                    default_caption=f"📸 Màn hình: {res.get('page_title', 'Trình duyệt')}",
+                    success_prefix=f"📸 Ảnh chụp màn hình trang: **{res.get('page_title', '')}**\n🔗 {res.get('url', '')}",
+                    send_now=True,  # user explicitly requested this screenshot
+                )
+
+            if tool_name == "server_capture_screenshot":
+                from pathlib import Path as _Path
+                img_path = "/tmp/server_screen.png"
+                await self.ssh_client.execute_command(
+                    f"DISPLAY=:99 scrot -z {img_path} 2>/dev/null "
+                    f"|| DISPLAY=:99 import -window root {img_path} 2>/dev/null || true"
+                )
+                if self.telegram_bot and chat_id and _Path(img_path).exists():
+                    await self.telegram_bot.send_photo(
+                        chat_id=chat_id,
+                        photo_path=img_path,
+                        caption="🖥️ Màn hình máy chủ `kirito-server`",
+                    )
+                    return "🖥️ Đã chụp và gửi ảnh màn hình máy chủ qua Telegram!"
+                return "Đã thực hiện chụp màn hình máy chủ."
+
+            if tool_name == "browser_click":
+                if not self.browser_agent:
+                    return "Browser agent chưa được khởi tạo."
+                sel = tool_args.get("selector_or_text", "").strip()
+                res = await self.browser_agent.browser_click(sel)
+                return await self._handle_browser_result(
+                    res, chat_id=chat_id,
+                    default_caption=f"💎 Click: {sel}",
+                    success_prefix=res.get("action", f"📌 Đã click vào `{sel}`"),
+                    pending_photos=pending_photos,
+                )
+
+            if tool_name == "browser_type":
+                if not self.browser_agent:
+                    return "Browser agent chưa được khởi tạo."
+                sel = tool_args.get("selector", "").strip()
+                text = tool_args.get("text", "").strip()
+                press_enter = tool_args.get("press_enter", False)
+                res = await self.browser_agent.browser_type(sel, text, press_enter=press_enter)
+                return await self._handle_browser_result(
+                    res, chat_id=chat_id,
+                    default_caption="⌨️ Gõ text",
+                    success_prefix=res.get("action", f"⌨️ Đã gõ '{text}' vào `{sel}`"),
+                    pending_photos=pending_photos,
+                )
+
+            if tool_name == "browser_scroll":
+                if not self.browser_agent:
+                    return "Browser agent chưa được khởi tạo."
+                direction = tool_args.get("direction", "down")
+                pixels = int(tool_args.get("pixels", 500))
+                res = await self.browser_agent.browser_scroll(direction, pixels)
+                return await self._handle_browser_result(
+                    res, chat_id=chat_id,
+                    default_caption=f"↕️ Cuộn {direction}",
+                    success_prefix=res.get("action", f"↕️ Đã cuộn trang {direction}"),
+                    pending_photos=pending_photos,
+                )
+
+            if tool_name == "browser_go_back":
+                if not self.browser_agent:
+                    return "Browser agent chưa được khởi tạo."
+                res = await self.browser_agent.browser_go_back()
+                return await self._handle_browser_result(
+                    res, chat_id=chat_id,
+                    default_caption="◀️ Quay lại trang trước",
+                    success_prefix=f"◀️ {res.get('action', 'Quay lại')} → **{res.get('title', '')}**\n🔗 {res.get('url', '')}",
+                    pending_photos=pending_photos,
+                )
+
+            if tool_name == "browser_go_forward":
+                if not self.browser_agent:
+                    return "Browser agent chưa được khởi tạo."
+                res = await self.browser_agent.browser_go_forward()
+                return await self._handle_browser_result(
+                    res, chat_id=chat_id,
+                    default_caption="▶️ Tiến tới trang kế tiếp",
+                    success_prefix=f"▶️ {res.get('action', 'Tiến tới')} → **{res.get('title', '')}**\n🔗 {res.get('url', '')}",
+                    pending_photos=pending_photos,
+                )
+
+            if tool_name == "browser_get_text":
+                if not self.browser_agent:
+                    return "Browser agent chưa được khởi tạo."
+                sel = tool_args.get("selector", "").strip()
+                res = await self.browser_agent.browser_get_text(sel)
+                if res.get("success"):
+                    return f"📝 Nội dung `{sel}`:\n```\n{res.get('text', '')}\n```"
+                return f"❌ Không lấy được text: {res.get('error')}"
+
+            if tool_name == "browser_press_key":
+                if not self.browser_agent:
+                    return "Browser agent chưa được khởi tạo."
+                key = tool_args.get("key", "").strip()
+                res = await self.browser_agent.browser_press_key(key)
+                return await self._handle_browser_result(
+                    res, chat_id=chat_id,
+                    default_caption=f"⌨️ Phím: {key}",
+                    success_prefix=res.get("action", f"⌨️ Đã nhấn phím `{key}`"),
+                    pending_photos=pending_photos,
+                )
+
+            if tool_name == "browser_hover":
+                if not self.browser_agent:
+                    return "Browser agent chưa được khởi tạo."
+                target = tool_args.get("selector_or_text", "").strip()
+                res = await self.browser_agent.browser_hover(target)
+                return await self._handle_browser_result(
+                    res, chat_id=chat_id,
+                    default_caption=f"📸 Hover: {target}",
+                    success_prefix=res.get("action", f"🔲 Đã hover vào `{target}`"),
+                    pending_photos=pending_photos,
+                )
+
+            if tool_name == "browser_select_option":
+                if not self.browser_agent:
+                    return "Browser agent chưa được khởi tạo."
+                sel = tool_args.get("selector", "").strip()
+                val = tool_args.get("value", "").strip()
+                res = await self.browser_agent.browser_select_option(sel, val)
+                return await self._handle_browser_result(
+                    res, chat_id=chat_id,
+                    default_caption=f"📌 Chọn: {val}",
+                    success_prefix=res.get("action", f"✔️ Đã chọn `{val}` trong `{sel}`"),
+                    pending_photos=pending_photos,
+                )
+
+            if tool_name == "browser_execute_js":
+                if not self.browser_agent:
+                    return "Browser agent chưa được khởi tạo."
+                script = tool_args.get("script", "").strip()
+                res = await self.browser_agent.browser_execute_js(script)
+                if not res.get("success"):
+                    return f"❌ Lỗi JS: {res.get('error')}"
+                result_text = f"✅ **Kết quả JavaScript:**\n```\n{res.get('result', '')}\n```"
+                return await self._handle_browser_result(
+                    res, chat_id=chat_id,
+                    default_caption="💻 JS executed",
+                    success_prefix=result_text,
+                    pending_photos=pending_photos,
+                )
+
+            if tool_name == "browser_fill_form":
+                if not self.browser_agent:
+                    return "Browser agent chưa được khởi tạo."
+                fields = tool_args.get("fields", {})
+                submit_selector = tool_args.get("submit_selector")
+                res = await self.browser_agent.browser_fill_form(fields, submit_selector)
+                return await self._handle_browser_result(
+                    res, chat_id=chat_id,
+                    default_caption="📋 Điền form",
+                    success_prefix=(
+                        f"✅ {res.get('action', 'Đã điền form')}\n"
+                        f"🔗 {res.get('url', '')}\n"
+                        f"📜 Trang: **{res.get('title', '')}**"
+                    ),
+                    pending_photos=pending_photos,
+                )
+
+            if tool_name == "browser_wait_for":
+                if not self.browser_agent:
+                    return "Browser agent chưa được khởi tạo."
+                sel = tool_args.get("selector", "").strip()
+                timeout_ms = int(tool_args.get("timeout_ms", 10000))
+                state = tool_args.get("state", "visible")
+                res = await self.browser_agent.browser_wait_for(sel, timeout_ms, state)
+                return await self._handle_browser_result(
+                    res, chat_id=chat_id,
+                    default_caption=f"⏳ Chờ: {sel}",
+                    success_prefix=res.get("action", f"✅ Element `{sel}` đã xuất hiện"),
+                    pending_photos=pending_photos,
+                )
+
 
 
             if tool_name == "browser_navigate":
@@ -816,24 +1041,68 @@ Với mọi yêu cầu phức tạp (tra cứu web, xem profile, tìm kiếm), h
             logger.error("[AiAgent] Tool '%s' error: %s", tool_name, e, exc_info=True)
             return f"Lỗi khi thực thi công cụ `{tool_name}`: {e}"
 
+    async def _flush_pending_photos(self, pending_photos: list, chat_id: Optional[str]) -> None:
+        """Send the single deferred photo (if any) to Telegram.
+
+        Design: Only the LAST screenshot from a multi-step chain ends up in
+        pending_photos (each new screenshot clears the list before appending).
+        This guarantees exactly 1 photo is sent regardless of how many tools ran.
+
+        Skips sending if the photo file is missing or if Telegram is not configured.
+        """
+        if not pending_photos or not self.telegram_bot or not chat_id:
+            return
+        caption, img_path = pending_photos[-1]
+        pending_photos.clear()
+        if img_path:
+            try:
+                await self.telegram_bot.send_photo(
+                    chat_id=chat_id,
+                    photo_path=img_path,
+                    caption=caption,
+                )
+            except Exception as e:
+                logger.warning("[AiAgent] Failed to flush pending photo %s: %s", img_path, e)
+
     async def _handle_browser_result(
         self,
         res: Dict[str, Any],
         chat_id: Optional[str],
         default_caption: str,
         success_prefix: str,
+        send_now: bool = False,
+        pending_photos: Optional[list] = None,
     ) -> str:
-        """Send screenshot to Telegram (if available) and return a Markdown summary."""
+        """Process browser tool result.
+
+        Instead of sending the photo immediately (which causes spam when multiple
+        tools chain together), we defer the photo to pending_photos and only
+        flush the LAST one at the end of the ReAct loop.
+
+        Args:
+            send_now: If True, send the photo to Telegram immediately (for terminal tools).
+            pending_photos: Accumulator list for deferred (caption, path) tuples.
+                           Pass the same list across all tool calls in one turn.
+        """
         if not res.get("success"):
             return f"Lỗi: {res.get('error', 'Unknown error')}"
 
         img_path = res.get("image_path", "")
-        if self.telegram_bot and chat_id and img_path:
-            await self.telegram_bot.send_photo(
-                chat_id=chat_id,
-                photo_path=img_path,
-                caption=default_caption,
-            )
+
+        if send_now:
+            # Terminal tools (facebook_view_profile, server screenshot, etc.) send immediately
+            if self.telegram_bot and chat_id and img_path:
+                await self.telegram_bot.send_photo(
+                    chat_id=chat_id,
+                    photo_path=img_path,
+                    caption=default_caption,
+                )
+        elif pending_photos is not None and img_path:
+            # Intermediate tool: defer photo, replace any previous pending photo
+            # (we only want the LAST screenshot from a multi-step chain)
+            pending_photos.clear()
+            pending_photos.append((default_caption, img_path))
+
         return success_prefix
 
     async def _resolve_profile_url_from_thread(self, name_query: str) -> Optional[str]:
@@ -965,6 +1234,9 @@ Với mọi yêu cầu phức tạp (tra cứu web, xem profile, tìm kiếm), h
         history.append({"role": "user", "content": user_message})
         # Tools that should only be called once per conversation turn
         executed_once_tools: set = set()
+        # Deferred photos: only the LAST screenshot from multi-step browsing is sent.
+        # Each entry is (caption: str, img_path: str). Cleared/replaced on each new screenshot.
+        pending_photos: list = []
 
         for iteration in range(MAX_AGENT_ITERATIONS):
             messages = [{"role": "system", "content": self._build_system_prompt()}]
@@ -1009,7 +1281,9 @@ Với mọi yêu cầu phức tạp (tra cứu web, xem profile, tìm kiếm), h
                         fn_args = {}
 
                     logger.info("[AiAgent][iter=%d] Executing tool: %s(%s)", iteration, fn_name, fn_args)
-                    tool_result = await self._execute_tool(fn_name, fn_args, chat_id=chat_id)
+                    tool_result = await self._execute_tool(
+                        fn_name, fn_args, chat_id=chat_id, pending_photos=pending_photos
+                    )
 
                     history.append({
                         "role": "tool",
@@ -1017,19 +1291,16 @@ Với mọi yêu cầu phức tạp (tra cứu web, xem profile, tìm kiếm), h
                         "content": tool_result,
                     })
 
-                    # Terminal tools — return immediately (screenshot IS the final answer)
+                    # Terminal tools — flush pending photos then return immediately
                     if fn_name in self._DIRECT_RETURN_TOOLS:
+                        await self._flush_pending_photos(pending_photos, chat_id)
                         history.append({"role": "assistant", "content": tool_result})
                         self._trim_history(history)
                         return tool_result
 
-                    # Screenshot/interaction tools — send photo but continue the ReAct loop
-                    # so the LLM can decide the next action (multi-step browsing).
-                    # Add to executed_once_tools so navigate/search aren't called twice.
+                    # Non-terminal tools: add to executed_once set to prevent redundant calls
                     if fn_name in self._SCREENSHOT_TOOLS:
                         executed_once_tools.add(fn_name)
-                        # The tool_result already went into history above as an observation.
-                        # The loop will continue and the LLM will see the observation.
 
                 continue  # Feed observation back into the next LLM call
 
@@ -1052,7 +1323,9 @@ Với mọi yêu cầu phức tạp (tra cứu web, xem profile, tìm kiếm), h
                 for idx, pc in enumerate(pseudo_calls):
                     fn_name = pc["name"]
                     fn_args = pc["args"]
-                    tool_result = await self._execute_tool(fn_name, fn_args, chat_id=chat_id)
+                    tool_result = await self._execute_tool(
+                        fn_name, fn_args, chat_id=chat_id, pending_photos=pending_photos
+                    )
                     history.append({
                         "role": "tool",
                         "tool_call_id": f"call_pseudo_{iteration}_{idx}",
@@ -1060,12 +1333,14 @@ Với mọi yêu cầu phức tạp (tra cứu web, xem profile, tìm kiếm), h
                     })
                 continue
 
-            # ── Final answer ──
+            # ── Final answer — flush the last deferred screenshot (if any) ──
             final = raw_content.strip() or "Xin lỗi, tôi không thể xử lý yêu cầu này lúc này."
+            await self._flush_pending_photos(pending_photos, chat_id)
             history.append(assistant_msg)
             self._trim_history(history)
             return final
 
+        await self._flush_pending_photos(pending_photos, chat_id)
         self._trim_history(history)
         return "AI đã thực hiện nhiều bước nhưng chưa hoàn thành yêu cầu. Vui lòng thử lại hoặc chia nhỏ yêu cầu."
 

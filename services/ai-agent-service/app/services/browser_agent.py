@@ -37,7 +37,8 @@ logger = logging.getLogger(__name__)
 
 # ─── Constants ────────────────────────────────────────────────────────────────
 
-BROWSER_DATA_DIR = "/app/browser_data"
+BROWSER_DATA_DIR = "/app/browser_data"       # Shared (FacebookService)
+BROWSER_AGENT_DATA_DIR = "/app/browser_agent_data"  # Exclusive to BrowserAgentService
 SCREENSHOT_DIR = Path("/tmp/browser_agent")
 SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -89,13 +90,27 @@ class BrowserAgentService:
     # ──────────────────────────────────────────────────────────────────────────
 
     async def _ensure_context(self) -> BrowserContext:
-        """Lazily launch a persistent Playwright context, or return the running one."""
+        """Lazily launch a persistent Playwright context, or return the running one.
+
+        BrowserAgentService uses its own dedicated user-data directory
+        (browser_agent_data) so it never conflicts with the FacebookService
+        context that operates on browser_data. On first launch, it copies
+        the Cookies file from the main browser_data so it inherits the
+        Facebook session without re-login.
+        """
         if self._context:
             return self._context
 
-        # Clean up any stale Chromium singleton locks left from a previous crash
+        agent_dir = Path(BROWSER_AGENT_DATA_DIR)
+        agent_dir.mkdir(parents=True, exist_ok=True)
+
+        # Inherit the Facebook session cookie from the main browser_data so
+        # we don't need to log in again.
+        self._sync_cookies_from_main(agent_dir)
+
+        # Clean up any stale Chromium singleton locks
         for lock_name in ("SingletonLock", "SingletonCookie", "SingletonSocket"):
-            lock_path = Path(BROWSER_DATA_DIR) / lock_name
+            lock_path = agent_dir / lock_name
             if lock_path.is_symlink() or lock_path.exists():
                 try:
                     lock_path.unlink()
@@ -104,7 +119,7 @@ class BrowserAgentService:
 
         self._playwright = await async_playwright().start()
         self._context = await self._playwright.chromium.launch_persistent_context(
-            user_data_dir=BROWSER_DATA_DIR,
+            user_data_dir=BROWSER_AGENT_DATA_DIR,
             headless=True,
             viewport=VIEWPORT,
             timezone_id="Asia/Ho_Chi_Minh",
@@ -121,8 +136,37 @@ class BrowserAgentService:
                 "Chrome/127.0.0.0 Safari/537.36"
             ),
         )
-        logger.info("[BrowserAgent] Persistent Chromium context launched.")
+        logger.info("[BrowserAgent] Dedicated Chromium context launched (dir=%s).", BROWSER_AGENT_DATA_DIR)
         return self._context
+
+    def _sync_cookies_from_main(self, agent_dir: Path) -> None:
+        """Copy Chromium profile data (Cookies, Local Storage) from the main
+        browser_data directory to the agent-exclusive directory so that the
+        Facebook authenticated session is shared without sharing the file lock.
+        This is a best-effort operation — failures are silently ignored.
+        """
+        import shutil
+        main_dir = Path(BROWSER_DATA_DIR)
+        default_src = main_dir / "Default"
+        default_dst = agent_dir / "Default"
+        default_dst.mkdir(parents=True, exist_ok=True)
+
+        for filename in ("Cookies", "Local Storage", "IndexedDB", "Session Storage"):
+            src = default_src / filename
+            dst = default_dst / filename
+            if not src.exists():
+                continue
+            try:
+                if src.is_dir():
+                    if dst.exists():
+                        shutil.rmtree(dst)
+                    shutil.copytree(src, dst)
+                else:
+                    shutil.copy2(src, dst)
+                logger.debug("[BrowserAgent] Synced %s → %s", src, dst)
+            except Exception as e:
+                logger.warning("[BrowserAgent] Cookie sync warn (%s): %s", filename, e)
+
 
     async def close(self) -> None:
         """Gracefully shut down the browser context on service shutdown."""

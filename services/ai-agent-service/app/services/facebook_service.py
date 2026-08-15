@@ -839,8 +839,15 @@ class FacebookService:
                                 #    The conversation is already replied to. NEVER send away message!
                                 if last_sender == "us":
                                     logger.info("[FB-Service] '%s': last message is from us; no auto-reply needed.", clean_name)
+                                    is_auto = "Tiểu Bảo Bảo" in last_msg_text or "trợ lí AI" in last_msg_text or "vắng mặt" in last_msg_text
                                     await self.message_cache.add_or_update(
-                                        clean_name, incoming_msgs, "", t_href, True
+                                        sender_name=clean_name,
+                                        incoming_messages=incoming_msgs,
+                                        last_reply_sent=last_msg_text,
+                                        thread_href=t_href,
+                                        was_auto_replied=is_auto,
+                                        replied_by_human=(not is_auto),
+                                        reply_type="ai_auto" if is_auto else "human_direct"
                                     )
                                     continue
 
@@ -849,9 +856,15 @@ class FacebookService:
                                     logger.info("[FB-Service] '%s': 0 readable incoming msgs; skip.", clean_name)
                                     continue
 
-                                # 3. Update cache with latest incoming messages with unreplied status (False)
+                                # 3. Update cache with latest incoming messages with unreplied status
                                 await self.message_cache.add_or_update(
-                                    clean_name, incoming_msgs, "", t_href, False
+                                    sender_name=clean_name,
+                                    incoming_messages=incoming_msgs,
+                                    last_reply_sent="",
+                                    thread_href=t_href,
+                                    was_auto_replied=False,
+                                    replied_by_human=False,
+                                    reply_type="none"
                                 )
 
                                 # 4. Check if consecutive unreplied incoming messages reached threshold
@@ -888,7 +901,13 @@ class FacebookService:
                                     auto_replies_sent += 1
                                     await self.record_sender_cooldown(cooldown_key)
                                     await self.message_cache.add_or_update(
-                                        clean_name, incoming_msgs, away_reply, t_href, True
+                                        sender_name=clean_name,
+                                        incoming_messages=incoming_msgs,
+                                        last_reply_sent=away_reply,
+                                        thread_href=t_href,
+                                        was_auto_replied=True,
+                                        replied_by_human=False,
+                                        reply_type="ai_auto"
                                     )
                                     logger.info(
                                         "[FB-Service] AUTO-REPLIED to '%s' (unreplied=%d, hash %s→%s)",
@@ -896,23 +915,6 @@ class FacebookService:
                                     )
                                 else:
                                     logger.warning("[FB-Service] Failed to send reply to '%s'", clean_name)
-
-                                # Update cache ONLY when there are actual incoming messages to report.
-                                # Threads with 0 readable messages (E2EE locked, PIN pending, etc.)
-                                # should NOT appear in Telegram summaries as phantom entries.
-                                if incoming_msgs:
-                                    is_system_name = any(
-                                        label in clean_name.lower() for label in self._FB_SYSTEM_LABELS
-                                    )
-                                    # Use a cleaned name: fallback to 'Người dùng Facebook' if system label
-                                    display_name = clean_name if not is_system_name else "Người dùng Facebook"
-                                    await self.message_cache.add_or_update(
-                                        display_name, incoming_msgs, None, t_href, False
-                                    )
-                                else:
-                                    logger.debug(
-                                        "[FB-Service] '%s': system label with no msgs — skipping cache.", clean_name
-                                    )
 
                             except Exception as thread_err:
                                 logger.warning("[FB-Service] Error processing thread %s: %s", t_href, thread_err)

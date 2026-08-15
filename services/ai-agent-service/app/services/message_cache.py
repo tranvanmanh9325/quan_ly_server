@@ -33,6 +33,8 @@ class MessageEntry(BaseModel):
     thread_href: str = ""
     detected_at: datetime = Field(default_factory=lambda: datetime.now(VN_TZ))
     was_auto_replied: bool = False
+    replied_by_human: bool = False
+    reply_type: str = "none"  # "none" | "ai_auto" | "human_direct"
 
 
 class FacebookMessageCache:
@@ -55,6 +57,8 @@ class FacebookMessageCache:
         last_reply_sent: Optional[str] = None,
         thread_href: Optional[str] = None,
         was_auto_replied: bool = False,
+        replied_by_human: bool = False,
+        reply_type: Optional[str] = None,
     ) -> None:
         if not sender_name or not sender_name.strip():
             return
@@ -84,13 +88,28 @@ class FacebookMessageCache:
                 else (existing.thread_href if existing else "")
             )
 
+            # Determine final reply type
+            final_human = replied_by_human or (existing.replied_by_human if existing else False)
+            final_auto = was_auto_replied or (existing.was_auto_replied if existing else False)
+            
+            if reply_type:
+                final_type = reply_type
+            elif final_human:
+                final_type = "human_direct"
+            elif final_auto:
+                final_type = "ai_auto"
+            else:
+                final_type = "none"
+
             entry = MessageEntry(
                 sender_name=clean_sender,
                 incoming_messages=clean_incoming,
                 last_reply_sent=reply_to_store,
                 thread_href=href_to_store,
                 detected_at=datetime.now(VN_TZ),
-                was_auto_replied=was_auto_replied,
+                was_auto_replied=final_auto,
+                replied_by_human=final_human,
+                reply_type=final_type,
             )
 
             # O(1) update and move to front (MRU - Most Recently Used)
@@ -102,12 +121,15 @@ class FacebookMessageCache:
                 self._entries.popitem(last=True)
 
     async def record_direct_reply(self, sender_name: str, reply_message: str) -> None:
+        """Records a reply sent directly by the human account owner (via AI/Telegram or Web)."""
         if not sender_name or not sender_name.strip():
             return
         await self.add_or_update(
             sender_name=sender_name,
             last_reply_sent=reply_message,
-            was_auto_replied=True,
+            was_auto_replied=False,
+            replied_by_human=True,
+            reply_type="human_direct",
         )
 
     async def mark_scan_completed(self) -> None:
@@ -180,9 +202,18 @@ class FacebookMessageCache:
                     lines.append("   📩 Nội dung tin nhắn người gửi đã nhắn: (Không có tin nhắn mới)")
 
                 if e.last_reply_sent:
-                    lines.append(f'   🤖 Trợ lý AI đã trả lời: "{e.last_reply_sent}"')
+                    lines.append(f'   💬 Nội dung phản hồi: "{e.last_reply_sent}"')
 
-                status = "✅ Trạng thái: Đã gửi phản hồi tự động." if e.was_auto_replied else "⏳ Trạng thái: Chưa trả lời."
+                if e.replied_by_human or e.reply_type == "human_direct":
+                    status = "✅ Trạng thái: BẠN (CHỦ TÀI KHOẢN) ĐÃ TRỰC TIẾP TRẢ LỜI."
+                elif e.was_auto_replied or e.reply_type == "ai_auto":
+                    status = (
+                        "⚠️ Trạng thái: TRỢ LÝ AI ĐÃ GỬI TIN NHẮN VẮNG MẶT TỰ ĐỘNG "
+                        "(BẠN/CHỦ TÀI KHOẢN CHƯA TRẢ LỜI TRỰC TIẾP)."
+                    )
+                else:
+                    status = "⏳ Trạng thái: CHƯA TRẢ LỜI (Chưa có bất kỳ phản hồi nào)."
+
                 lines.append(f"   {status}")
                 lines.append(f"   🕐 Ghi nhận lúc: {e.detected_at.strftime('%H:%M %d/%m/%Y')}")
                 lines.append(f"   🔗 Thread URL: {e.thread_href}\n")

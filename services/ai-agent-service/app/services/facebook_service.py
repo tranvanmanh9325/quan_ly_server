@@ -1145,3 +1145,153 @@ class FacebookService:
             logger.error("[FB-DirectReply] Error sending to '%s': %s", recipient_name, e)
             return f'Lỗi khi gửi tin nhắn cho "{recipient_name}": {e}'
 
+    async def capture_chat_screenshot(self, recipient_name: str) -> Dict[str, Any]:
+        """Navigates to the recipient's chat thread, unlocks E2EE with PIN 090325,
+        removes any blocking overlays, captures a crystal-clear screenshot, and returns its file path.
+        """
+        logger.info("[FB-Screenshot] Request to capture chat screenshot for '%s'...", recipient_name)
+        cookies = await self._load_session_cookies()
+        if not cookies:
+            return {"success": False, "error": "Chưa có session cookies Facebook. Vui lòng cập nhật cookies trong Settings."}
+
+        # 1. Resolve thread href from message_cache or known threads
+        target_href = await self.message_cache.find_thread_href(recipient_name)
+        if not target_href:
+            db_threads = await self.get_known_threads_from_db()
+            best_score = 0.0
+            best_href = None
+            for t in db_threads:
+                score = self._name_match_score(recipient_name, t.get("text", ""))
+                if score > best_score and score >= 0.4:
+                    best_score = score
+                    best_href = t["href"]
+            if best_href:
+                target_href = best_href
+
+        if not target_href:
+            db_threads = await self.get_known_threads_from_db()
+            if db_threads:
+                target_href = db_threads[0]["href"]
+                logger.info("[FB-Screenshot] Fallback to primary known thread: %s", target_href)
+
+        import re
+        safe_name = re.sub(r'[^a-zA-Z0-9_]', '_', recipient_name.strip().lower()) or "chat"
+        screenshot_path = f"/tmp/fb_chat_{safe_name}.png"
+
+        async def _execute_capture() -> Dict[str, Any]:
+            # Clean up stale Chromium locks
+            for item in ["SingletonLock", "SingletonCookie", "SingletonSocket"]:
+                lock_path = Path(BROWSER_DATA_DIR) / item
+                if lock_path.is_symlink() or lock_path.exists():
+                    try:
+                        lock_path.unlink()
+                    except Exception:
+                        pass
+
+            async with async_playwright() as p:
+                ctx = await p.chromium.launch_persistent_context(
+                    user_data_dir=BROWSER_DATA_DIR,
+                    headless=True,
+                    viewport={"width": 1280, "height": 900},
+                    timezone_id="Asia/Ho_Chi_Minh",
+                    locale="vi-VN",
+                    args=[
+                        "--no-sandbox",
+                        "--disable-dev-shm-usage",
+                        "--disable-blink-features=AutomationControlled",
+                    ],
+                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
+                )
+                try:
+                    await ctx.add_cookies(cast(Any, cookies))
+                except Exception:
+                    pass
+
+                page = await ctx.new_page()
+                try:
+                    dest_url = target_href if target_href else "https://www.facebook.com/messages/t/"
+                    logger.info("[FB-Screenshot] Navigating to: %s for '%s'...", dest_url, recipient_name)
+                    try:
+                        await page.goto(
+                            dest_url,
+                            wait_until="domcontentloaded",
+                            timeout=35000,
+                        )
+                    except Exception as nav_e:
+                        logger.warning("[FB-Screenshot] Navigation notice: %s", nav_e)
+
+                    # Wait for React Messenger interface
+                    try:
+                        await page.wait_for_selector('div[role="main"], div[role="textbox"], [contenteditable="true"]', timeout=20000)
+                    except Exception:
+                        pass
+
+                    await asyncio.sleep(2.5)
+
+                    # Handle E2EE PIN unlock with 090325 to decrypt full chat history
+                    pin_unlocked = await self._handle_e2ee_pin_screen(page)
+                    if pin_unlocked:
+                        logger.info("[FB-Screenshot] E2EE PIN 090325 successfully handled for '%s'", recipient_name)
+                    await asyncio.sleep(1.5)
+
+                    # If on root inbox and thread was clicked, ensure open
+                    if not target_href:
+                        await page.evaluate("""
+                        (name) => {
+                            let norm = (s) => (s || '').toLowerCase().normalize('NFD').replace(/[\\u0300-\\u036f]/g, '');
+                            let target = norm(name);
+                            let links = Array.from(document.querySelectorAll('a[href*="/messages/t/"], a[href*="/messages/e2ee/t/"]'));
+                            for (let a of links) {
+                                let txt = norm(a.innerText || '');
+                                if (txt.includes(target) || target.includes(txt)) {
+                                    a.click();
+                                    return true;
+                                }
+                            }
+                            return false;
+                        }
+                        """, recipient_name)
+                        await asyncio.sleep(3.0)
+                        await self._handle_e2ee_pin_screen(page)
+                        await asyncio.sleep(1.0)
+
+                    # Clean up any leftover overlay / backdrop
+                    try:
+                        await page.evaluate("""
+                        () => {
+                            let dialogs = Array.from(document.querySelectorAll('[role="dialog"], [role="alertdialog"], div[aria-modal="true"]'));
+                            dialogs.forEach(d => d.remove());
+                            let backdrops = Array.from(document.querySelectorAll('div[style*="position: fixed"], div[style*="background-color: rgba(0, 0, 0"]'));
+                            backdrops.forEach(b => {
+                                if (!b.querySelector('[role="main"]') && !b.querySelector('[role="navigation"]')) {
+                                    b.remove();
+                                }
+                            });
+                        }
+                        """)
+                    except Exception:
+                        pass
+
+                    await page.screenshot(path=screenshot_path)
+                    logger.info("[FB-Screenshot] Screenshot successfully saved to %s", screenshot_path)
+                    return {
+                        "success": True,
+                        "image_path": screenshot_path,
+                        "recipient_name": recipient_name,
+                        "message": f"Đã chụp ảnh màn hình hội thoại với {recipient_name}.",
+                    }
+                finally:
+                    await page.close()
+                    await ctx.close()
+
+        try:
+            async with self._browser_lock:
+                return await asyncio.wait_for(_execute_capture(), timeout=120.0)
+        except asyncio.TimeoutError:
+            logger.error("[FB-Screenshot] Timeout capturing screenshot for '%s'", recipient_name)
+            return {"success": False, "error": "Hết thời gian chờ (120s) khi chụp ảnh màn hình."}
+        except Exception as e:
+            logger.error("[FB-Screenshot] Error capturing screenshot for '%s': %s", recipient_name, e, exc_info=True)
+            return {"success": False, "error": str(e)}
+
+

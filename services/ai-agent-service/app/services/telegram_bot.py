@@ -21,6 +21,8 @@ class TelegramBot:
         self._http_client = httpx.AsyncClient(timeout=35.0)
         self._running = False
         self._last_offset = 0
+        if hasattr(self.ai_agent, "set_telegram_bot"):
+            self.ai_agent.set_telegram_bot(self)
 
     @property
     def api_url(self) -> str:
@@ -48,6 +50,35 @@ class TelegramBot:
                 return res2.status_code == 200
         except Exception as e:
             logger.error("[TelegramBot] Failed sending message: %s", e)
+        return False
+
+    async def send_photo(self, chat_id: str, photo_path: str, caption: Optional[str] = None) -> bool:
+        if not self.token or not photo_path:
+            return False
+        try:
+            from pathlib import Path
+            p = Path(photo_path)
+            if not p.exists():
+                logger.error("[TelegramBot] Photo file does not exist: %s", photo_path)
+                return False
+
+            url = f"{self.api_url}/sendPhoto"
+            with open(p, "rb") as f:
+                photo_bytes = f.read()
+
+            files = {"photo": (p.name, photo_bytes, "image/png")}
+            data = {"chat_id": chat_id}
+            if caption:
+                data["caption"] = caption
+
+            res = await self._http_client.post(url, data=data, files=files, timeout=40.0)
+            if res.status_code == 200:
+                logger.info("[TelegramBot] Photo successfully sent to %s (%s)", chat_id, photo_path)
+                return True
+            else:
+                logger.warning("[TelegramBot] sendPhoto error %d: %s", res.status_code, res.text)
+        except Exception as e:
+            logger.error("[TelegramBot] Failed sending photo: %s", e, exc_info=True)
         return False
 
     async def _claim_update(self, update_id: int) -> bool:

@@ -26,10 +26,14 @@ class AiAgentService:
         self.ssh_client = ssh_client
         self.message_cache = message_cache
         self.fb_service = fb_service_ref
+        self.telegram_bot: Any = None
         self._history_map: Dict[str, List[Dict[str, Any]]] = {}
 
     def set_fb_service(self, fb_service: Any) -> None:
         self.fb_service = fb_service
+
+    def set_telegram_bot(self, telegram_bot: Any) -> None:
+        self.telegram_bot = telegram_bot
 
     def is_configured(self) -> bool:
         return self.llm_router.has_active_providers
@@ -83,6 +87,11 @@ Bạn là "Tiểu Bảo Bảo" — Trợ lý AI kiêm Kỹ sư DevOps tự hành
 - `facebook_get_messages`:
   * Sử dụng khi người dùng hỏi về tin nhắn mới, ai đang nhắn tin, tin nhắn trong lúc vắng mặt, tình hình inbox Messenger, hoặc hỏi một người cụ thể đã nhắn nội dung gì (ví dụ: 'Tôi muốn biết Trần Văn Mạnh nhắn gì', 'Trần Văn Mạnh nhắn gì đấy?', 'Ai nhắn cho tôi?').
   * Sau khi nhận dữ liệu: Liệt kê rõ ràng các nội dung tin nhắn theo đúng mẫu ở mục 2. KHÔNG gọi lại tool này trong cùng 1 lượt hỏi.
+- `facebook_capture_screenshot`:
+  * Sử dụng khi người dùng yêu cầu chụp ảnh màn hình cuộc trò chuyện Messenger với một người cụ thể (ví dụ: 'Tôi muốn bạn chụp màn hình hội thoại giữa tôi với Mạnh Văn Trần', 'chụp ảnh tin nhắn với Thảo', 'chụp màn hình chat với Trần Văn Mạnh').
+  * Tự động trích xuất tên người nhận (`recipient_name`) và gọi công cụ này.
+- `server_capture_screenshot`:
+  * Sử dụng khi người dùng yêu cầu chụp ảnh màn hình máy chủ hoặc desktop Linux (ví dụ: 'chụp ảnh màn hình server', 'chụp màn hình máy chủ').
 - `facebook_send_reply`:
   * CHỈ GỌI CÔNG CỤ NÀY khi người dùng CÓ YÊU CẦU / MỆNH LỆNH GỬI TIN NHẮN RÕ RÀNG (ví dụ: 'nhắn cho Thảo là...', 'bảo anh Nam...', 'rep lại Trần Văn Mạnh: ...', 'gửi tin nhắn cho...').
   * TUYỆT ĐỐI KHÔNG TỰ Ý GỌI `facebook_send_reply` khi người dùng chỉ hỏi thông tin hoặc tra cứu nội dung tin nhắn!
@@ -124,6 +133,31 @@ Bạn là "Tiểu Bảo Bảo" — Trợ lý AI kiêm Kỹ sư DevOps tự hành
             {
                 "type": "function",
                 "function": {
+                    "name": "facebook_capture_screenshot",
+                    "description": "Chụp ảnh màn hình cuộc trò chuyện Messenger giữa bạn và một liên hệ cụ thể (ví dụ: 'Mạnh Văn Trần', 'Trần Văn Mạnh', 'Thảo') và gửi trực tiếp ảnh chụp cho người dùng qua Telegram.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "recipient_name": {
+                                "type": "string",
+                                "description": "Tên người nhận cần chụp màn hình hội thoại (ví dụ: 'Mạnh Văn Trần', 'Trần Văn Mạnh').",
+                            },
+                        },
+                        "required": ["recipient_name"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "server_capture_screenshot",
+                    "description": "Chụp ảnh toàn bộ màn hình desktop/server Linux hiện tại và gửi trực tiếp ảnh chụp cho người dùng qua Telegram.",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+            {
+                "type": "function",
+                "function": {
                     "name": "facebook_send_reply",
                     "description": "Gửi tin nhắn trả lời trực tiếp cho một liên hệ trên Facebook Messenger. TUYỆT ĐỐI CHỈ GỌI KHI NGƯỜI DÙNG YÊU CẦU GỬI TIN NHẮN CỤ THỂ, KHÔNG GỌI KHI NGƯỜI DÙNG CHỈ TRA CỨU.",
                     "parameters": {
@@ -145,7 +179,7 @@ Bạn là "Tiểu Bảo Bảo" — Trợ lý AI kiêm Kỹ sư DevOps tự hành
         ]
         return [t for t in tools if t["function"]["name"] not in excluded]
 
-    async def _execute_tool(self, tool_name: str, tool_args: Dict[str, Any]) -> str:
+    async def _execute_tool(self, tool_name: str, tool_args: Dict[str, Any], chat_id: Optional[str] = None) -> str:
         try:
             if tool_name == "run_command":
                 cmd = tool_args.get("command", "")
@@ -158,6 +192,36 @@ Bạn là "Tiểu Bảo Bảo" — Trợ lý AI kiêm Kỹ sư DevOps tự hành
             if tool_name == "facebook_get_messages":
                 raw_cache = await self.message_cache.to_ai_summary()
                 return self.llm_router.rtk.compress(raw_cache, max_chars=3000, max_lines=40)
+
+            if tool_name == "facebook_capture_screenshot":
+                if not self.fb_service:
+                    return "Facebook service is not initialized."
+                recipient = tool_args.get("recipient_name", "").strip()
+                res = await self.fb_service.capture_chat_screenshot(recipient)
+                if res.get("success"):
+                    img_path = res.get("image_path", "")
+                    if self.telegram_bot and chat_id and img_path:
+                        await self.telegram_bot.send_photo(
+                            chat_id=chat_id,
+                            photo_path=img_path,
+                            caption=f"📸 Ảnh chụp màn hình hội thoại với `{recipient}`",
+                        )
+                    return f"📸 Đã chụp và gửi ảnh màn hình hội thoại với `{recipient}` qua Telegram!"
+                else:
+                    return f"Lỗi khi chụp màn hình hội thoại: {res.get('error', 'Unknown error')}"
+
+            if tool_name == "server_capture_screenshot":
+                from pathlib import Path
+                img_path = "/tmp/server_screen.png"
+                await self.ssh_client.execute_command(f"DISPLAY=:99 scrot -z {img_path} 2>/dev/null || DISPLAY=:99 import -window root {img_path} 2>/dev/null || true")
+                if self.telegram_bot and chat_id and Path(img_path).exists():
+                    await self.telegram_bot.send_photo(
+                        chat_id=chat_id,
+                        photo_path=img_path,
+                        caption="🖥️ Ảnh chụp màn hình máy chủ `kirito-server`",
+                    )
+                    return "🖥️ Đã chụp và gửi ảnh màn hình máy chủ qua Telegram!"
+                return "Đã thực hiện chụp màn hình máy chủ."
 
             if tool_name == "facebook_send_reply":
                 if not self.fb_service:
@@ -228,10 +292,10 @@ Bạn là "Tiểu Bảo Bảo" — Trợ lý AI kiêm Kỹ sư DevOps tự hành
                     except Exception:
                         fn_args = {}
 
-                    tool_result = await self._execute_tool(fn_name, fn_args)
-                    # For direct Facebook message sending, return tool result directly
+                    tool_result = await self._execute_tool(fn_name, fn_args, chat_id=chat_id)
+                    # For direct actions (reply, screenshot), return tool result directly
                     # to eliminate any possible AI LLM hallucination or misreporting
-                    if fn_name == "facebook_send_reply":
+                    if fn_name in ("facebook_send_reply", "facebook_capture_screenshot", "server_capture_screenshot"):
                         history.append({
                             "role": "tool",
                             "tool_call_id": call_id,

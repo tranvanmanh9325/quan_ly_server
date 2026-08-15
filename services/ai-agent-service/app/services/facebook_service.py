@@ -502,12 +502,12 @@ class FacebookService:
             () => {
               let main = document.querySelector('[role="main"]') || document.querySelector('[role="region"]') || document.body;
 
-              // High-performance Reverse Subtree Walker (Bottom-Up Pruned Scan)
-              // Inspects DOM elements from bottom to top and terminates early upon reaching 'us' boundary.
               let allElements = Array.from(main.querySelectorAll('span, [aria-label]'));
               let incoming = [];
               let last_sender = 'none';
               let last_msg_text = '';
+              let consecutive_unreplied = 0;
+              let reached_human_boundary = false;
 
               for (let i = allElements.length - 1; i >= 0; i--) {
                 let el = allElements[i];
@@ -527,20 +527,33 @@ class FacebookService:
                   last_msg_text = msgText;
                 }
 
-                if (isUs) {
-                  // Reached boundary where we replied -> Stop scanning older messages immediately! (Subtree Pruning)
-                  break;
-                } else {
+                if (!isUs) {
+                  // Message from the other party
                   incoming.unshift(msgText);
+                  if (last_sender === 'them' && !reached_human_boundary) {
+                    consecutive_unreplied++;
+                  }
                   if (incoming.length >= 10) {
                     break;
+                  }
+                } else {
+                  // Message from us
+                  if (last_sender === 'them') {
+                    // Reached boundary where our last message ended
+                    reached_human_boundary = true;
+                    break;
+                  } else {
+                    // last_sender is 'us': if we already collected incoming messages preceding this 'us' message, stop
+                    if (incoming.length > 0) {
+                      break;
+                    }
                   }
                 }
               }
 
               return {
                 last_sender: last_sender,
-                consecutive_unreplied_count: incoming.length,
+                consecutive_unreplied_count: consecutive_unreplied,
                 incoming_msgs: incoming,
                 last_msg_text: last_msg_text
               };

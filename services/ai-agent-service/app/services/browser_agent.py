@@ -791,3 +791,422 @@ class BrowserAgentService:
             except Exception as e:
                 logger.error("[BrowserAgent] browser_take_screenshot error: %s", e)
                 return {"success": False, "error": str(e)}
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Internal helper
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def _get_active_page(self, ctx: BrowserContext) -> Optional[Page]:
+        """Return the most recently active page in the context, or None."""
+        pages = ctx.pages
+        return pages[-1] if pages else None
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Extended Browser Control Tools
+    # ──────────────────────────────────────────────────────────────────────────
+
+    async def browser_type(
+        self,
+        selector: str,
+        text: str,
+        press_enter: bool = False,
+        clear_first: bool = True,
+    ) -> Dict[str, Any]:
+        """Type text into an input field or textarea.
+
+        Args:
+            selector: CSS selector, placeholder text, or label text of the input.
+            text: The text to type.
+            press_enter: If True, press Enter after typing (useful for search boxes).
+            clear_first: Clear existing content before typing (default True).
+        """
+        logger.info("[BrowserAgent] browser_type(selector=%s, text=%r, enter=%s)", selector, text[:50], press_enter)
+        async with self._lock:
+            ctx = await self._ensure_context()
+            page = self._get_active_page(ctx)
+            if not page:
+                return {"success": False, "error": "Không có trang nào đang mở."}
+            try:
+                el = None
+                for strategy in (
+                    lambda: page.locator(selector).first,
+                    lambda: page.get_by_placeholder(selector, exact=False).first,
+                    lambda: page.get_by_label(selector, exact=False).first,
+                    lambda: page.get_by_role("textbox", name=selector).first,
+                ):
+                    try:
+                        candidate = strategy()
+                        await candidate.wait_for(state="visible", timeout=5000)
+                        el = candidate
+                        break
+                    except Exception:
+                        continue
+
+                if not el:
+                    return {"success": False, "error": f"Không tìm thấy input với selector: {selector}"}
+
+                if clear_first:
+                    await el.triple_click()
+                    await el.press("Control+a")
+                    await el.press("Delete")
+
+                await el.type(text, delay=40)  # human-like typing speed
+
+                if press_enter:
+                    await el.press("Enter")
+                    await asyncio.sleep(2)
+
+                await asyncio.sleep(0.8)
+                img_path = await self._screenshot(page, f"type_{_safe_filename(text[:20])}")
+                return {
+                    "success": True,
+                    "image_path": img_path,
+                    "action": f"Đã gõ '{text}'" + (" và nhấn Enter" if press_enter else ""),
+                    "url": page.url,
+                }
+            except Exception as e:
+                logger.error("[BrowserAgent] browser_type error: %s", e)
+                return {"success": False, "error": str(e)}
+
+    # ──────────────────────────────────────────────────────────────────────────
+
+    async def browser_scroll(
+        self, direction: str = "down", pixels: int = 500
+    ) -> Dict[str, Any]:
+        """Scroll the current page.
+
+        Args:
+            direction: 'up', 'down', 'top' (go to very top), 'bottom' (go to very bottom).
+            pixels: Number of pixels to scroll (for 'up'/'down' directions only).
+        """
+        logger.info("[BrowserAgent] browser_scroll(direction=%s, pixels=%d)", direction, pixels)
+        async with self._lock:
+            ctx = await self._ensure_context()
+            page = self._get_active_page(ctx)
+            if not page:
+                return {"success": False, "error": "Không có trang nào đang mở."}
+            try:
+                direction = direction.lower().strip()
+                if direction == "top":
+                    await page.evaluate("window.scrollTo(0, 0)")
+                elif direction == "bottom":
+                    await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                elif direction == "up":
+                    await page.evaluate(f"window.scrollBy(0, -{pixels})")
+                else:
+                    await page.evaluate(f"window.scrollBy(0, {pixels})")
+
+                await asyncio.sleep(0.8)
+                img_path = await self._screenshot(page, f"scroll_{direction}")
+                return {
+                    "success": True,
+                    "image_path": img_path,
+                    "action": f"Đã cuộn trang {direction}" + (f" {pixels}px" if direction in ("up", "down") else ""),
+                    "url": page.url,
+                }
+            except Exception as e:
+                logger.error("[BrowserAgent] browser_scroll error: %s", e)
+                return {"success": False, "error": str(e)}
+
+    # ──────────────────────────────────────────────────────────────────────────
+
+    async def browser_go_back(self) -> Dict[str, Any]:
+        """Navigate back to the previous page in the browser history."""
+        logger.info("[BrowserAgent] browser_go_back()")
+        async with self._lock:
+            ctx = await self._ensure_context()
+            page = self._get_active_page(ctx)
+            if not page:
+                return {"success": False, "error": "Không có trang nào đang mở."}
+            try:
+                await page.go_back(wait_until="commit", timeout=NAV_TIMEOUT_MS)
+                await asyncio.sleep(2)
+                img_path = await self._screenshot(page, f"back_{_now_ms()}")
+                return {
+                    "success": True,
+                    "image_path": img_path,
+                    "action": "Đã quay lại trang trước",
+                    "url": page.url,
+                    "title": await page.title(),
+                }
+            except Exception as e:
+                logger.error("[BrowserAgent] browser_go_back error: %s", e)
+                return {"success": False, "error": str(e)}
+
+    # ──────────────────────────────────────────────────────────────────────────
+
+    async def browser_go_forward(self) -> Dict[str, Any]:
+        """Navigate forward to the next page in the browser history."""
+        logger.info("[BrowserAgent] browser_go_forward()")
+        async with self._lock:
+            ctx = await self._ensure_context()
+            page = self._get_active_page(ctx)
+            if not page:
+                return {"success": False, "error": "Không có trang nào đang mở."}
+            try:
+                await page.go_forward(wait_until="commit", timeout=NAV_TIMEOUT_MS)
+                await asyncio.sleep(2)
+                img_path = await self._screenshot(page, f"forward_{_now_ms()}")
+                return {
+                    "success": True,
+                    "image_path": img_path,
+                    "action": "Đã tiến tới trang kế tiếp",
+                    "url": page.url,
+                    "title": await page.title(),
+                }
+            except Exception as e:
+                logger.error("[BrowserAgent] browser_go_forward error: %s", e)
+                return {"success": False, "error": str(e)}
+
+    # ──────────────────────────────────────────────────────────────────────────
+
+    async def browser_get_text(self, selector: str) -> Dict[str, Any]:
+        """Extract visible text from a specific DOM element.
+
+        Args:
+            selector: CSS selector of the element to read text from.
+        """
+        logger.info("[BrowserAgent] browser_get_text(selector=%s)", selector)
+        async with self._lock:
+            ctx = await self._ensure_context()
+            page = self._get_active_page(ctx)
+            if not page:
+                return {"success": False, "error": "Không có trang nào đang mở."}
+            try:
+                text = await page.locator(selector).first.inner_text(timeout=8000)
+                return {
+                    "success": True,
+                    "text": text.strip(),
+                    "selector": selector,
+                    "url": page.url,
+                }
+            except Exception as e:
+                logger.error("[BrowserAgent] browser_get_text error: %s", e)
+                return {"success": False, "error": str(e)}
+
+    # ──────────────────────────────────────────────────────────────────────────
+
+    async def browser_press_key(self, key: str) -> Dict[str, Any]:
+        """Press a keyboard key on the current page.
+
+        Args:
+            key: Playwright key name. Examples: 'Enter', 'Tab', 'Escape',
+                 'ArrowDown', 'Control+a', 'F5', 'Backspace'.
+        """
+        logger.info("[BrowserAgent] browser_press_key(key=%s)", key)
+        async with self._lock:
+            ctx = await self._ensure_context()
+            page = self._get_active_page(ctx)
+            if not page:
+                return {"success": False, "error": "Không có trang nào đang mở."}
+            try:
+                await page.keyboard.press(key)
+                await asyncio.sleep(1.5)
+                img_path = await self._screenshot(page, f"key_{_safe_filename(key)}")
+                return {
+                    "success": True,
+                    "image_path": img_path,
+                    "action": f"Đã nhấn phím: {key}",
+                    "url": page.url,
+                }
+            except Exception as e:
+                logger.error("[BrowserAgent] browser_press_key error: %s", e)
+                return {"success": False, "error": str(e)}
+
+    # ──────────────────────────────────────────────────────────────────────────
+
+    async def browser_hover(self, selector_or_text: str) -> Dict[str, Any]:
+        """Hover the mouse cursor over an element to reveal tooltips/dropdowns.
+
+        Args:
+            selector_or_text: CSS selector or visible text of the element.
+        """
+        logger.info("[BrowserAgent] browser_hover(target=%s)", selector_or_text)
+        async with self._lock:
+            ctx = await self._ensure_context()
+            page = self._get_active_page(ctx)
+            if not page:
+                return {"success": False, "error": "Không có trang nào đang mở."}
+            try:
+                try:
+                    await page.hover(selector_or_text, timeout=8000)
+                except Exception:
+                    await page.get_by_text(selector_or_text, exact=False).first.hover(timeout=8000)
+
+                await asyncio.sleep(1)
+                img_path = await self._screenshot(page, f"hover_{_safe_filename(selector_or_text[:30])}")
+                return {
+                    "success": True,
+                    "image_path": img_path,
+                    "action": f"Đã hover chuột vào: {selector_or_text}",
+                    "url": page.url,
+                }
+            except Exception as e:
+                logger.error("[BrowserAgent] browser_hover error: %s", e)
+                return {"success": False, "error": str(e)}
+
+    # ──────────────────────────────────────────────────────────────────────────
+
+    async def browser_select_option(self, selector: str, value: str) -> Dict[str, Any]:
+        """Select an option from a <select> dropdown element.
+
+        Args:
+            selector: CSS selector of the <select> element.
+            value: Option value, visible label text, or numeric index (e.g. '0').
+        """
+        logger.info("[BrowserAgent] browser_select_option(selector=%s, value=%s)", selector, value)
+        async with self._lock:
+            ctx = await self._ensure_context()
+            page = self._get_active_page(ctx)
+            if not page:
+                return {"success": False, "error": "Không có trang nào đang mở."}
+            try:
+                selected = None
+                for strategy in (
+                    {"value": value},
+                    {"label": value},
+                    *([{"index": int(value)}] if value.isdigit() else []),
+                ):
+                    try:
+                        selected = await page.select_option(selector, timeout=5000, **strategy)
+                        break
+                    except Exception:
+                        continue
+
+                if not selected:
+                    return {"success": False, "error": f"Không tìm thấy option '{value}' trong {selector}"}
+
+                await asyncio.sleep(0.8)
+                img_path = await self._screenshot(page, f"select_{_safe_filename(value[:20])}")
+                return {
+                    "success": True,
+                    "image_path": img_path,
+                    "action": f"Đã chọn option '{value}' trong {selector}",
+                    "url": page.url,
+                }
+            except Exception as e:
+                logger.error("[BrowserAgent] browser_select_option error: %s", e)
+                return {"success": False, "error": str(e)}
+
+    # ──────────────────────────────────────────────────────────────────────────
+
+    async def browser_execute_js(self, script: str) -> Dict[str, Any]:
+        """Execute arbitrary JavaScript on the current page and return the result.
+
+        Args:
+            script: JS code. Use 'return' to pass values back. Examples:
+                    'return document.title'
+                    'return document.querySelector("h1").innerText'
+                    'window.scrollTo(0,500); return window.scrollY'
+        """
+        logger.info("[BrowserAgent] browser_execute_js(script=%r)", script[:120])
+        async with self._lock:
+            ctx = await self._ensure_context()
+            page = self._get_active_page(ctx)
+            if not page:
+                return {"success": False, "error": "Không có trang nào đang mở."}
+            try:
+                wrapped = f"() => {{ {script} }}"
+                result = await page.evaluate(wrapped)
+                await asyncio.sleep(0.5)
+                img_path = await self._screenshot(page, f"js_{_now_ms()}")
+                return {
+                    "success": True,
+                    "image_path": img_path,
+                    "result": str(result)[:2000] if result is not None else "null",
+                    "url": page.url,
+                }
+            except Exception as e:
+                logger.error("[BrowserAgent] browser_execute_js error: %s", e)
+                return {"success": False, "error": str(e)}
+
+    # ──────────────────────────────────────────────────────────────────────────
+
+    async def browser_fill_form(
+        self, fields: Dict[str, str], submit_selector: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Fill multiple form fields in sequence and optionally submit.
+
+        Args:
+            fields: Dict mapping CSS selector → value.
+                    Example: {"#username": "alice", "#password": "s3cr3t"}
+            submit_selector: CSS selector or button text to click for submission.
+                             If omitted, presses Enter on the last field.
+        """
+        logger.info("[BrowserAgent] browser_fill_form(fields=%s, submit=%s)", list(fields.keys()), submit_selector)
+        async with self._lock:
+            ctx = await self._ensure_context()
+            page = self._get_active_page(ctx)
+            if not page:
+                return {"success": False, "error": "Không có trang nào đang mở."}
+            try:
+                filled = []
+                for selector, value in fields.items():
+                    try:
+                        el = page.locator(selector).first
+                        await el.wait_for(state="visible", timeout=8000)
+                        await el.triple_click()
+                        await el.fill(value)
+                        filled.append(selector)
+                        await asyncio.sleep(0.3)
+                    except Exception as fill_err:
+                        logger.warning("[BrowserAgent] fill_form: could not fill '%s': %s", selector, fill_err)
+
+                if submit_selector:
+                    try:
+                        await page.click(submit_selector, timeout=8000)
+                    except Exception:
+                        await page.get_by_text(submit_selector, exact=False).first.click(timeout=8000)
+                    await asyncio.sleep(3)
+                elif filled:
+                    await page.locator(filled[-1]).first.press("Enter")
+                    await asyncio.sleep(3)
+
+                await self._dismiss_overlays(page)
+                img_path = await self._screenshot(page, f"form_{_now_ms()}")
+                return {
+                    "success": True,
+                    "image_path": img_path,
+                    "action": f"Đã điền {len(filled)} trường và {'nhấn nút submit' if submit_selector else 'nhấn Enter'}",
+                    "filled_fields": filled,
+                    "url": page.url,
+                    "title": await page.title(),
+                }
+            except Exception as e:
+                logger.error("[BrowserAgent] browser_fill_form error: %s", e)
+                return {"success": False, "error": str(e)}
+
+    # ──────────────────────────────────────────────────────────────────────────
+
+    async def browser_wait_for(
+        self, selector: str, timeout_ms: int = 10000, state: str = "visible"
+    ) -> Dict[str, Any]:
+        """Wait for a specific DOM element to appear (or disappear) on the page.
+
+        Args:
+            selector: CSS selector to wait for.
+            timeout_ms: Max wait in milliseconds (default 10 000).
+            state: 'visible', 'attached', 'hidden', or 'detached'.
+        """
+        logger.info("[BrowserAgent] browser_wait_for(selector=%s, timeout=%d, state=%s)", selector, timeout_ms, state)
+        async with self._lock:
+            ctx = await self._ensure_context()
+            page = self._get_active_page(ctx)
+            if not page:
+                return {"success": False, "error": "Không có trang nào đang mở."}
+            try:
+                await page.wait_for_selector(selector, state=state, timeout=timeout_ms)
+                img_path = await self._screenshot(page, f"wait_{_safe_filename(selector[:30])}")
+                return {
+                    "success": True,
+                    "image_path": img_path,
+                    "action": f"Element '{selector}' đã ở trạng thái '{state}'",
+                    "url": page.url,
+                }
+            except Exception as e:
+                logger.error("[BrowserAgent] browser_wait_for timeout: %s", e)
+                return {
+                    "success": False,
+                    "error": f"Element '{selector}' không đạt trạng thái '{state}' sau {timeout_ms}ms",
+                }
+

@@ -250,7 +250,257 @@ Với mọi yêu cầu phức tạp (tra cứu web, xem profile, tìm kiếm), h
                     "parameters": {"type": "object", "properties": {}},
                 },
             },
+            # ── Fine-grained Browser Control ──
+            {
+                "type": "function",
+                "function": {
+                    "name": "browser_click",
+                    "description": (
+                        "Click vào một phần tử trên trang web đang mở. "
+                        "Dùng CSS selector hoặc text hiển thị của phần tử. "
+                        "Ví dụ: 'Đăng nhập', '#submit-btn', '.nav-item:first-child'."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "selector_or_text": {
+                                "type": "string",
+                                "description": "CSS selector hoặc text hiển thị của phần tử cần click.",
+                            }
+                        },
+                        "required": ["selector_or_text"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "browser_type",
+                    "description": (
+                        "Gõ văn bản vào ô input, textarea hoặc search box trên trang hiện tại. "
+                        "Hữu ích để điền form, tìm kiếm, nhập thông tin. "
+                        "Có thể tự động nhấn Enter sau khi gõ."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "selector": {
+                                "type": "string",
+                                "description": "CSS selector, placeholder text, hoặc label của ô input (ví dụ: '#search', 'Tìm kiếm', 'input[name=q]').",
+                            },
+                            "text": {
+                                "type": "string",
+                                "description": "Văn bản cần gõ vào ô input.",
+                            },
+                            "press_enter": {
+                                "type": "boolean",
+                                "description": "True nếu muốn nhấn Enter sau khi gõ xong (mặc định: false).",
+                            },
+                        },
+                        "required": ["selector", "text"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "browser_scroll",
+                    "description": (
+                        "Cuộn trang web theo hướng chỉ định. "
+                        "Dùng để xem thêm nội dung, load lazy-loading items, hoặc đến cuối trang."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "direction": {
+                                "type": "string",
+                                "enum": ["up", "down", "top", "bottom"],
+                                "description": "'down' cuộn xuống, 'up' cuộn lên, 'top' lên đầu trang, 'bottom' xuống cuối trang.",
+                            },
+                            "pixels": {
+                                "type": "integer",
+                                "description": "Số pixel cần cuộn (chỉ dùng cho direction='up'/'down', mặc định 500).",
+                            },
+                        },
+                        "required": ["direction"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "browser_go_back",
+                    "description": "Quay lại trang trước trong lịch sử trình duyệt (tương đương nhấn nút Back).",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "browser_go_forward",
+                    "description": "Tiến tới trang kế tiếp trong lịch sử trình duyệt (tương đương nhấn nút Forward).",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "browser_get_text",
+                    "description": (
+                        "Đọc và trích xuất văn bản từ một phần tử cụ thể trên trang web bằng CSS selector. "
+                        "Hữu ích để lấy giá, số liệu, nội dung cụ thể."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "selector": {
+                                "type": "string",
+                                "description": "CSS selector của phần tử cần đọc text (ví dụ: 'h1', '.price', '#result').",
+                            }
+                        },
+                        "required": ["selector"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "browser_press_key",
+                    "description": (
+                        "Nhấn một phím bàn phím trên trang hiện tại. "
+                        "Hữu ích để: submit form (Enter), chuyển trường (Tab), đóng popup (Escape), "
+                        "điều hướng menu (ArrowDown/Up), làm mới trang (F5)."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "key": {
+                                "type": "string",
+                                "description": "Tên phím theo chuẩn Playwright: 'Enter', 'Tab', 'Escape', 'Space', 'ArrowDown', 'ArrowUp', 'Control+a', 'F5', 'Backspace'...",
+                            }
+                        },
+                        "required": ["key"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "browser_hover",
+                    "description": (
+                        "Di chuyển con trỏ chuột hover lên một phần tử để hiện tooltip, dropdown menu ẩn, "
+                        "hoặc các hiệu ứng hover."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "selector_or_text": {
+                                "type": "string",
+                                "description": "CSS selector hoặc text hiển thị của phần tử cần hover.",
+                            }
+                        },
+                        "required": ["selector_or_text"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "browser_select_option",
+                    "description": "Chọn một option từ dropdown <select> trên trang web.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "selector": {
+                                "type": "string",
+                                "description": "CSS selector của thẻ <select>.",
+                            },
+                            "value": {
+                                "type": "string",
+                                "description": "Giá trị option (value attribute), text hiển thị, hoặc chỉ số (index) dạng string.",
+                            },
+                        },
+                        "required": ["selector", "value"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "browser_execute_js",
+                    "description": (
+                        "Thực thi mã JavaScript tùy ý trên trang hiện tại và trả về kết quả. "
+                        "Dùng để scraping nâng cao, thao tác DOM, lấy dữ liệu phức tạp. "
+                        "Ví dụ: 'return document.title', 'return document.querySelectorAll(\"a\").length'."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "script": {
+                                "type": "string",
+                                "description": "Mã JavaScript cần thực thi. Dùng 'return' để trả về giá trị.",
+                            }
+                        },
+                        "required": ["script"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "browser_fill_form",
+                    "description": (
+                        "Điền nhiều trường form cùng lúc và tùy chọn submit. "
+                        "Là tool nâng cao dùng khi cần điền nhiều field liên tiếp (ví dụ: form đăng nhập, form tìm kiếm phức tạp)."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "fields": {
+                                "type": "object",
+                                "description": "Object mapping CSS selector → giá trị cần điền. Ví dụ: {\"#username\": \"alice\", \"#password\": \"secret\"}.",
+                                "additionalProperties": {"type": "string"},
+                            },
+                            "submit_selector": {
+                                "type": "string",
+                                "description": "CSS selector hoặc text nút Submit/Đăng nhập. Nếu bỏ qua sẽ nhấn Enter ở trường cuối.",
+                            },
+                        },
+                        "required": ["fields"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "browser_wait_for",
+                    "description": (
+                        "Chờ một phần tử DOM xuất hiện hoặc biến mất trên trang. "
+                        "Dùng sau các thao tác bất đồng bộ (click load more, submit form...) để đảm bảo kết quả đã hiển thị."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "selector": {
+                                "type": "string",
+                                "description": "CSS selector cần chờ.",
+                            },
+                            "timeout_ms": {
+                                "type": "integer",
+                                "description": "Thời gian chờ tối đa tính bằng milliseconds (mặc định 10000).",
+                            },
+                            "state": {
+                                "type": "string",
+                                "enum": ["visible", "attached", "hidden", "detached"],
+                                "description": "Trạng thái cần chờ: 'visible' (đang hiển thị), 'hidden' (bị ẩn), 'attached'/'detached' (trong DOM hay không).",
+                            },
+                        },
+                        "required": ["selector"],
+                    },
+                },
+            },
             # ── Server Screenshot ──
+
             {
                 "type": "function",
                 "function": {
@@ -407,6 +657,159 @@ Với mọi yêu cầu phức tạp (tra cứu web, xem profile, tìm kiếm), h
                     return "🖥️ Đã chụp và gửi ảnh màn hình máy chủ qua Telegram!"
                 return "Đã thực hiện chụp màn hình máy chủ."
 
+            if tool_name == "browser_click":
+                if not self.browser_agent:
+                    return "Browser agent chưa được khởi tạo."
+                sel = tool_args.get("selector_or_text", "").strip()
+                res = await self.browser_agent.browser_click(sel)
+                return await self._handle_browser_result(
+                    res,
+                    chat_id=chat_id,
+                    default_caption=f"💎 Click: {sel}",
+                    success_prefix=res.get("action", f"📌 Đã click vào `{sel}`"),
+                )
+
+            if tool_name == "browser_type":
+                if not self.browser_agent:
+                    return "Browser agent chưa được khởi tạo."
+                sel = tool_args.get("selector", "").strip()
+                text = tool_args.get("text", "").strip()
+                press_enter = tool_args.get("press_enter", False)
+                res = await self.browser_agent.browser_type(sel, text, press_enter=press_enter)
+                return await self._handle_browser_result(
+                    res,
+                    chat_id=chat_id,
+                    default_caption=f"⌨️ Gõ text",
+                    success_prefix=res.get("action", f"⌨️ Đã gõ '{text}' vào `{sel}`"),
+                )
+
+            if tool_name == "browser_scroll":
+                if not self.browser_agent:
+                    return "Browser agent chưa được khởi tạo."
+                direction = tool_args.get("direction", "down")
+                pixels = int(tool_args.get("pixels", 500))
+                res = await self.browser_agent.browser_scroll(direction, pixels)
+                return await self._handle_browser_result(
+                    res,
+                    chat_id=chat_id,
+                    default_caption=f"↕️ Cuộn {direction}",
+                    success_prefix=res.get("action", f"↕️ Đã cuộn trang {direction}"),
+                )
+
+            if tool_name == "browser_go_back":
+                if not self.browser_agent:
+                    return "Browser agent chưa được khởi tạo."
+                res = await self.browser_agent.browser_go_back()
+                return await self._handle_browser_result(
+                    res,
+                    chat_id=chat_id,
+                    default_caption="◀️ Quay lại trang trước",
+                    success_prefix=f"◀️ {res.get('action', 'Quay lại')} → **{res.get('title', '')}**\n🔗 {res.get('url', '')}",
+                )
+
+            if tool_name == "browser_go_forward":
+                if not self.browser_agent:
+                    return "Browser agent chưa được khởi tạo."
+                res = await self.browser_agent.browser_go_forward()
+                return await self._handle_browser_result(
+                    res,
+                    chat_id=chat_id,
+                    default_caption="▶️ Tiến tới trang kế tiếp",
+                    success_prefix=f"▶️ {res.get('action', 'Tiến tới')} → **{res.get('title', '')}**\n🔗 {res.get('url', '')}",
+                )
+
+            if tool_name == "browser_get_text":
+                if not self.browser_agent:
+                    return "Browser agent chưa được khởi tạo."
+                sel = tool_args.get("selector", "").strip()
+                res = await self.browser_agent.browser_get_text(sel)
+                if res.get("success"):
+                    return f"📝 Nội dung `{sel}`:\n```\n{res.get('text', '')}\n```"
+                return f"❌ Không lấy được text: {res.get('error')}"
+
+            if tool_name == "browser_press_key":
+                if not self.browser_agent:
+                    return "Browser agent chưa được khởi tạo."
+                key = tool_args.get("key", "").strip()
+                res = await self.browser_agent.browser_press_key(key)
+                return await self._handle_browser_result(
+                    res,
+                    chat_id=chat_id,
+                    default_caption=f"⌨️ Phím: {key}",
+                    success_prefix=res.get("action", f"⌨️ Đã nhấn phím `{key}`"),
+                )
+
+            if tool_name == "browser_hover":
+                if not self.browser_agent:
+                    return "Browser agent chưa được khởi tạo."
+                target = tool_args.get("selector_or_text", "").strip()
+                res = await self.browser_agent.browser_hover(target)
+                return await self._handle_browser_result(
+                    res,
+                    chat_id=chat_id,
+                    default_caption=f"📸 Hover: {target}",
+                    success_prefix=res.get("action", f"🔲 Đã hover vào `{target}`"),
+                )
+
+            if tool_name == "browser_select_option":
+                if not self.browser_agent:
+                    return "Browser agent chưa được khởi tạo."
+                sel = tool_args.get("selector", "").strip()
+                val = tool_args.get("value", "").strip()
+                res = await self.browser_agent.browser_select_option(sel, val)
+                return await self._handle_browser_result(
+                    res,
+                    chat_id=chat_id,
+                    default_caption=f"📌 Chọn: {val}",
+                    success_prefix=res.get("action", f"✔️ Đã chọn `{val}` trong `{sel}`"),
+                )
+
+            if tool_name == "browser_execute_js":
+                if not self.browser_agent:
+                    return "Browser agent chưa được khởi tạo."
+                script = tool_args.get("script", "").strip()
+                res = await self.browser_agent.browser_execute_js(script)
+                if not res.get("success"):
+                    return f"❌ Lỗi JS: {res.get('error')}"
+                result_text = f"✅ **Kết quả JavaScript:**\n```\n{res.get('result', '')}\n```"
+                return await self._handle_browser_result(
+                    res,
+                    chat_id=chat_id,
+                    default_caption="💻 JS executed",
+                    success_prefix=result_text,
+                )
+
+            if tool_name == "browser_fill_form":
+                if not self.browser_agent:
+                    return "Browser agent chưa được khởi tạo."
+                fields = tool_args.get("fields", {})
+                submit_selector = tool_args.get("submit_selector")
+                res = await self.browser_agent.browser_fill_form(fields, submit_selector)
+                return await self._handle_browser_result(
+                    res,
+                    chat_id=chat_id,
+                    default_caption="📋 Điền form",
+                    success_prefix=(
+                        f"✅ {res.get('action', 'Đã điền form')}\n"
+                        f"🔗 {res.get('url', '')}\n"
+                        f"📜 Trang: **{res.get('title', '')}**"
+                    ),
+                )
+
+            if tool_name == "browser_wait_for":
+                if not self.browser_agent:
+                    return "Browser agent chưa được khởi tạo."
+                sel = tool_args.get("selector", "").strip()
+                timeout_ms = int(tool_args.get("timeout_ms", 10000))
+                state = tool_args.get("state", "visible")
+                res = await self.browser_agent.browser_wait_for(sel, timeout_ms, state)
+                return await self._handle_browser_result(
+                    res,
+                    chat_id=chat_id,
+                    default_caption=f"⏳ Chờ: {sel}",
+                    success_prefix=res.get("action", f"✅ Element `{sel}` đã xuất hiện"),
+                )
+
             return f"Unknown tool: {tool_name}"
 
         except Exception as e:
@@ -510,12 +913,27 @@ Với mọi yêu cầu phức tạp (tra cứu web, xem profile, tìm kiếm), h
     # ──────────────────────────────────────────────────────────────────────────
 
     _DIRECT_RETURN_TOOLS = frozenset({
+        # Facebook tools (always send photo via Telegram)
         "facebook_send_reply",
         "facebook_capture_screenshot",
         "facebook_view_profile",
+        # High-level browser tools (always send photo via Telegram)
         "browser_navigate",
         "browser_search_google",
         "browser_take_screenshot",
+        # Fine-grained browser interaction tools (send photo + action summary)
+        "browser_click",
+        "browser_type",
+        "browser_scroll",
+        "browser_go_back",
+        "browser_go_forward",
+        "browser_press_key",
+        "browser_hover",
+        "browser_select_option",
+        "browser_execute_js",
+        "browser_fill_form",
+        "browser_wait_for",
+        # Server screenshot
         "server_capture_screenshot",
     })
 

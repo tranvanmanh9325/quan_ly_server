@@ -799,12 +799,59 @@ class FacebookService:
             except Exception:
                 pass
 
-            # 4. Hover over the bubble to trigger Facebook's hover action toolbar
-            await target_msg.hover()
-            await asyncio.sleep(0.8)
+            # 4. Hover over the message bubble CONTAINER (not just the text node).
+            # Facebook's action toolbar (with "More") is attached to the parent wrapper,
+            # not the div[dir="auto"] text element. We walk up the DOM to find it.
+            hovered = False
+            try:
+                # Use JS to find the ancestor element that actually has the hover toolbar
+                # (typically 3-5 levels above div[dir="auto"])
+                container_handle = await page.evaluate_handle("""
+                    (snippet) => {
+                        const allDivs = [...document.querySelectorAll('div[dir="auto"]')];
+                        const target = allDivs.reverse().find(d => d.innerText && d.innerText.includes(snippet));
+                        if (!target) return null;
+                        // Walk up to find a container with data-message-id or role="row" or similar
+                        let el = target.parentElement;
+                        for (let i = 0; i < 8; i++) {
+                            if (!el) break;
+                            // Typical Messenger message container has a specific min-width or inline-block style
+                            const style = window.getComputedStyle(el);
+                            if (el.dataset.mid || el.getAttribute('data-message-id') ||
+                                el.getAttribute('role') === 'row' || el.classList.length > 3) {
+                                return el;
+                            }
+                            el = el.parentElement;
+                        }
+                        // Fallback: go up 4 levels from text node
+                        el = target;
+                        for (let i = 0; i < 4; i++) el = el?.parentElement;
+                        return el;
+                    }
+                """, search_snippet)
+
+                if container_handle:
+                    container_el = container_handle.as_element()
+                    if container_el:
+                        await container_el.hover()
+                        await asyncio.sleep(1.0)
+                        hovered = True
+            except Exception as he:
+                logger.warning("[FB-Service] Unsend: JS container hover failed: %s", he)
+
+            if not hovered:
+                # Direct fallback: hover the text node itself
+                await target_msg.hover()
+                await asyncio.sleep(1.0)
 
             # 5. Find and click the "More" (three-dot) button that appears on hover.
-            #    Try multiple aria-labels because Facebook uses different strings per locale.
+            #    Strategy: look for any visible button near the message that just appeared.
+            # Screenshot after hover to verify toolbar appeared
+            try:
+                await page.screenshot(path="/app/browser_data/unsend_after_hover.png")
+            except Exception:
+                pass
+
             more_btn = None
             more_labels = ["Thêm hành động", "Thêm", "More", "More actions", "Tùy chọn thêm"]
             for label in more_labels:
@@ -823,11 +870,42 @@ class FacebookService:
                     continue
 
             if not more_btn:
-                # Fallback: look for any small circular button near the message with role=button
-                logger.warning("[FB-Service] Unsend: could not locate 'More' hover button via aria-label")
+                # Fallback: use JS to find and click the "More" button near the hovered message
+                logger.warning("[FB-Service] Unsend: aria-label not found, trying JS fallback for More button")
+                try:
+                    clicked = await page.evaluate("""
+                        (snippet) => {
+                            // Find all role=button elements currently visible after hover
+                            const buttons = [...document.querySelectorAll('[role="button"]')];
+                            // Look for buttons that have appeared (opacity > 0, not hidden)
+                            // near the message — they typically contain an SVG (three-dot icon)
+                            const visible_with_svg = buttons.filter(b => {
+                                const rect = b.getBoundingClientRect();
+                                return rect.width > 0 && rect.height > 0 &&
+                                       window.getComputedStyle(b).display !== 'none' &&
+                                       b.querySelector('svg') &&
+                                       (b.getAttribute('aria-label') || '').length < 30;
+                            });
+                            if (visible_with_svg.length > 0) {
+                                // Click the last one (closest to bottom of page = our message)
+                                visible_with_svg[visible_with_svg.length - 1].click();
+                                return true;
+                            }
+                            return false;
+                        }
+                    """, search_snippet)
+                    if clicked:
+                        await asyncio.sleep(0.8)
+                        more_btn = True  # sentinel — menu should be open now
+                except Exception as je:
+                    logger.warning("[FB-Service] Unsend: JS More button click also failed: %s", je)
+
+            if not more_btn:
+                logger.warning("[FB-Service] Unsend: could not locate 'More' hover button via aria-label or JS")
                 return False
 
-            await more_btn.click()
+            if more_btn is not True:  # if we got an actual locator (not JS sentinel)
+                await more_btn.click()
             await asyncio.sleep(0.6)
 
             # 6. Click "Gỡ" / "Remove" from the context menu

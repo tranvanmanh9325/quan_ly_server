@@ -87,13 +87,10 @@ services:
 
   ai-agent-service:
     init: true
-    shm_size: '512m'
     build:
       context: ./services/ai-agent-service
       dockerfile: Dockerfile
     container_name: dashboard_ai_agent
-    ports:
-      - "8084:8084"
     env_file:
       - .env
     environment:

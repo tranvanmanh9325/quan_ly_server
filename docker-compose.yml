@@ -120,7 +120,7 @@ services:
       resources:
         limits:
           cpus: '1.0'
-          memory: 768M
+          memory: 1024M
         reservations:
           memory: 256M
     cpu_shares: 512

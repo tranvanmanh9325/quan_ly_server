@@ -709,6 +709,15 @@ class FacebookService:
             browser_data_path = Path(BROWSER_DATA_DIR)
             browser_data_path.mkdir(parents=True, exist_ok=True)
 
+            # Clean up stale Chromium SingletonLock / SingletonSocket
+            for item in ["SingletonLock", "SingletonCookie", "SingletonSocket"]:
+                lock_path = browser_data_path / item
+                if lock_path.is_symlink() or lock_path.exists():
+                    try:
+                        lock_path.unlink()
+                    except Exception:
+                        pass
+
             async with self._browser_lock:
                 async with async_playwright() as p:
                     # Persistent context is critical: preserves E2EE IndexedDB keys
@@ -998,9 +1007,18 @@ class FacebookService:
                 logger.info("[FB-DirectReply] Fallback to primary known thread: %s", target_href)
 
         async def _execute_send() -> str:
+            # Clean up stale Chromium SingletonLock
+            for item in ["SingletonLock", "SingletonCookie", "SingletonSocket"]:
+                lock_path = Path(BROWSER_DATA_DIR) / item
+                if lock_path.is_symlink() or lock_path.exists():
+                    try:
+                        lock_path.unlink()
+                    except Exception:
+                        pass
+
             async with async_playwright() as p:
                 ctx = await p.chromium.launch_persistent_context(
-                    user_data_dir="/app/data/browser_profile",
+                    user_data_dir=BROWSER_DATA_DIR,
                     headless=True,
                     viewport={"width": 1280, "height": 850},
                     timezone_id="Asia/Ho_Chi_Minh",

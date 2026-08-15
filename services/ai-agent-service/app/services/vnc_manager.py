@@ -131,6 +131,15 @@ class VncManager:
                 profile_dir = "/app/browser_data"
                 os.makedirs(profile_dir, exist_ok=True)
 
+                # Clean up stale Chromium SingletonLock / SingletonSocket
+                for item in ["SingletonLock", "SingletonCookie", "SingletonSocket"]:
+                    lock_path = os.path.join(profile_dir, item)
+                    if os.path.islink(lock_path) or os.path.exists(lock_path):
+                        try:
+                            os.remove(lock_path)
+                        except Exception:
+                            pass
+
                 self._playwright = await async_playwright().start()
                 self._context = await self._playwright.chromium.launch_persistent_context(
                     user_data_dir=profile_dir,

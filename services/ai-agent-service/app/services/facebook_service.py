@@ -1150,7 +1150,8 @@ class FacebookService:
         removes any blocking overlays, captures a crystal-clear screenshot, and returns its file path.
         """
         logger.info("[FB-Screenshot] Request to capture chat screenshot for '%s'...", recipient_name)
-        cookies = await self._load_session_cookies()
+        cfg = await self.get_config()
+        cookies = self._parse_cookies(cfg.get("cookies_json", ""))
         if not cookies:
             return {"success": False, "error": "Chưa có session cookies Facebook. Vui lòng cập nhật cookies trong Settings."}
 

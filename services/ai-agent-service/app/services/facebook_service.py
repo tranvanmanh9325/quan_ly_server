@@ -268,31 +268,76 @@ class FacebookService:
             logger.warning("[FB-Service] Error fetching known threads: %s", e)
         return []
 
-    async def save_known_thread(self, href: str, sender_name: str, msg_hash: str = "") -> None:
+    async def save_known_thread(self, href: str, sender_name: str, msg_hash: str = "", auto_reply_text: str = "") -> None:
         """Persists a discovered thread URL and its latest message hash.
 
-        The msg_hash allows the scanner to detect whether new messages have arrived
-        since the last scan — preventing re-replies when message content is unchanged.
+        auto_reply_text: If non-empty, records the away-message text the bot just sent.
+        This survives container restarts and is used to trigger the unsend on the next
+        scan cycle when the human has replied.
         """
         if not href:
             return
         try:
             async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
                 async with conn.cursor() as cur:
-                    await cur.execute(
-                        """
-                        INSERT INTO facebook_known_threads (thread_href, sender_name, last_msg_hash, last_checked_at, discovered_at)
-                        VALUES (%s, %s, %s, NOW(), NOW())
-                        ON CONFLICT (thread_href) DO UPDATE SET
-                            sender_name = EXCLUDED.sender_name,
-                            last_msg_hash = EXCLUDED.last_msg_hash,
-                            last_checked_at = NOW()
-                        """,
-                        (href.split("?")[0], sender_name, msg_hash),
-                    )
+                    if auto_reply_text:
+                        # When recording a new auto-reply: store text and reset unsent flag
+                        await cur.execute(
+                            """
+                            INSERT INTO facebook_known_threads (thread_href, sender_name, last_msg_hash, auto_reply_text, auto_reply_unsent, last_checked_at, discovered_at)
+                            VALUES (%s, %s, %s, %s, FALSE, NOW(), NOW())
+                            ON CONFLICT (thread_href) DO UPDATE SET
+                                sender_name = EXCLUDED.sender_name,
+                                last_msg_hash = EXCLUDED.last_msg_hash,
+                                auto_reply_text = EXCLUDED.auto_reply_text,
+                                auto_reply_unsent = FALSE,
+                                last_checked_at = NOW()
+                            """,
+                            (href.split("?")[0], sender_name, msg_hash, auto_reply_text),
+                        )
+                    else:
+                        await cur.execute(
+                            """
+                            INSERT INTO facebook_known_threads (thread_href, sender_name, last_msg_hash, last_checked_at, discovered_at)
+                            VALUES (%s, %s, %s, NOW(), NOW())
+                            ON CONFLICT (thread_href) DO UPDATE SET
+                                sender_name = EXCLUDED.sender_name,
+                                last_msg_hash = EXCLUDED.last_msg_hash,
+                                last_checked_at = NOW()
+                            """,
+                            (href.split("?")[0], sender_name, msg_hash),
+                        )
                     await conn.commit()
         except Exception as e:
             logger.warning("[FB-Service] Error saving known thread: %s", e)
+
+    async def get_thread_auto_reply(self, href: str) -> str:
+        """Returns the pending auto-reply text for a thread, or '' if none / already unsent."""
+        try:
+            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        "SELECT auto_reply_text FROM facebook_known_threads WHERE thread_href = %s AND auto_reply_unsent = FALSE AND auto_reply_text != ''",
+                        (href.split("?")[0],),
+                    )
+                    row = await cur.fetchone()
+                    return row[0] if row else ""
+        except Exception as e:
+            logger.warning("[FB-Service] Error fetching thread auto-reply: %s", e)
+        return ""
+
+    async def mark_thread_auto_reply_unsent(self, href: str) -> None:
+        """Marks the auto-reply for a thread as successfully unsent in the DB."""
+        try:
+            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        "UPDATE facebook_known_threads SET auto_reply_unsent = TRUE, auto_reply_text = '' WHERE thread_href = %s",
+                        (href.split("?")[0],),
+                    )
+                    await conn.commit()
+        except Exception as e:
+            logger.warning("[FB-Service] Error marking auto-reply unsent: %s", e)
 
     @staticmethod
     def _compute_msg_hash(messages: List[str]) -> str:
@@ -1053,25 +1098,20 @@ class FacebookService:
                                     logger.info("[FB-Service] '%s': last message is from us; no auto-reply needed.", clean_name)
                                     is_auto = any(m in last_msg_text for m in AWAY_REPLY_MARKERS)
 
-                                    # ── Unsend trigger: human replied after bot sent auto-reply ──
-                                    # Condition: current last msg is human's direct reply (not bot),
-                                    # but a previous cache entry shows bot had sent an auto-reply
-                                    # that hasn't been unsent yet.
+                                    # ── Unsend trigger (DB-backed, restart-safe) ──────────────
+                                    # Condition: the last msg is human's direct reply (not bot's away msg),
+                                    # AND the DB records a pending auto-reply for this thread.
                                     if not is_auto:
-                                        prev_entry = self.message_cache._find_entry_sync(clean_name)
-                                        if (
-                                            prev_entry
-                                            and prev_entry.was_auto_replied
-                                            and not prev_entry.auto_reply_unsent
-                                            and prev_entry.last_reply_sent
-                                        ):
+                                        pending_reply_text = await self.get_thread_auto_reply(t_href)
+                                        if pending_reply_text:
                                             logger.info(
-                                                "[FB-Service] '%s': human replied after bot auto-reply — attempting unsend.",
+                                                "[FB-Service] '%s': human replied after bot auto-reply — attempting unsend (DB-backed).",
                                                 clean_name,
                                             )
-                                            unsent_ok = await self._unsend_message(page, prev_entry.last_reply_sent)
+                                            unsent_ok = await self._unsend_message(page, pending_reply_text)
                                             if unsent_ok:
                                                 logger.info("[FB-Service] '%s': auto-reply successfully unsent.", clean_name)
+                                                await self.mark_thread_auto_reply_unsent(t_href)
                                                 await self.message_cache.mark_auto_reply_unsent(clean_name)
                                             else:
                                                 logger.warning(
@@ -1166,6 +1206,9 @@ class FacebookService:
                                 if sent:
                                     auto_replies_sent += 1
                                     await self.record_sender_cooldown(cooldown_key)
+                                    # Persist the auto-reply text in DB so unsend can find it
+                                    # even after a container restart (DB-backed, not in-memory)
+                                    await self.save_known_thread(t_href, clean_name, current_hash, auto_reply_text=away_reply)
                                     await self.message_cache.add_or_update(
                                         sender_name=clean_name,
                                         incoming_messages=incoming_msgs,

@@ -74,13 +74,12 @@ public class TelegramNotificationService {
     public void checkAndAlert(double cpuPercent, double ramPercent, double diskPercent) {
         TelegramConfig cfg = configRepository.getConfig().orElseGet(TelegramConfig::new);
 
-        boolean isEnvConfigured = (envBotToken != null && !envBotToken.isBlank()) && (envChatId != null && !envChatId.isBlank());
-        boolean isEnabled = isEnvConfigured || cfg.isEnabled();
-        if (!isEnabled) return;
+        // Strictly honor user's Enable Alerts switch on Dashboard
+        if (!cfg.isEnabled()) return;
 
         String token  = resolveToken(cfg);
         String chatId = resolveChatId(cfg);
-        if (token.isBlank() || chatId.isBlank()) return;
+        if (token == null || token.isBlank() || chatId == null || chatId.isBlank()) return;
 
         boolean cpuAlert  = cpuPercent  > cfg.getCpuThreshold()  && isCooldownExpired("cpu",  cfg.getCooldownMinutes());
         boolean ramAlert  = ramPercent  > cfg.getRamThreshold()  && isCooldownExpired("ram",  cfg.getCooldownMinutes());

@@ -846,6 +846,10 @@ class FacebookService:
 
                                 # Persist thread URL with updated hash
                                 await self.save_known_thread(t_href, clean_name, current_hash)
+                                try:
+                                    await page.screenshot(path="/app/browser_data/proof_chat_screen.png")
+                                except Exception:
+                                    pass
 
                                 # ── Auto-reply decision ──────────────────────────────────────
                                 # 1. If the last message in the thread was sent by 'us' (account owner or bot):

@@ -176,46 +176,52 @@ class FacebookMessageCache:
         async with self._lock:
             return list(self._entries.values())
 
+    def _format_summary_internal(self) -> str:
+        if not self._entries:
+            scan_info = (
+                f" Lần quét gần nhất: {self._last_scan_at.strftime('%H:%M %d/%m/%Y')}."
+                if self._last_scan_at
+                else " Chưa có lần quét nào hoàn thành."
+            )
+            return f"Không có tin nhắn Facebook nào được ghi nhận kể từ lần quét gần nhất.{scan_info}"
+
+        lines = []
+        if self._last_scan_at:
+            lines.append(f"Lần quét Facebook gần nhất: {self._last_scan_at.strftime('%H:%M %d/%m/%Y')}\n")
+
+        lines.append(f"Danh sách tin nhắn Facebook được ghi nhận ({len(self._entries)} người):\n")
+
+        for idx, e in enumerate(self._entries.values(), start=1):
+            lines.append(f"{idx}. 👤 Người gửi: {e.sender_name}")
+            if e.incoming_messages:
+                lines.append("   📩 Nội dung tin nhắn người gửi đã nhắn:")
+                for m in e.incoming_messages:
+                    lines.append(f'      • "{m}"')
+            else:
+                lines.append("   📩 Nội dung tin nhắn người gửi đã nhắn: (Không có tin nhắn mới)")
+
+            if e.last_reply_sent:
+                lines.append(f'   💬 Nội dung phản hồi: "{e.last_reply_sent}"')
+
+            if e.replied_by_human or e.reply_type == "human_direct":
+                status = "✅ Trạng thái: BẠN (CHỦ TÀI KHOẢN) ĐÃ TRỰC TIẾP TRẢ LỜI."
+            elif e.was_auto_replied or e.reply_type == "ai_auto":
+                status = (
+                    "⚠️ Trạng thái: TRỢ LÝ AI ĐÃ GỬI TIN NHẮN VẮNG MẶT TỰ ĐỘNG "
+                    "(BẠN/CHỦ TÀI KHOẢN CHƯA TRẢ LỜI TRỰC TIẾP)."
+                )
+            else:
+                status = "⏳ Trạng thái: CHƯA TRẢ LỜI (Chưa có bất kỳ phản hồi nào)."
+
+            lines.append(f"   {status}")
+            lines.append(f"   🕐 Ghi nhận lúc: {e.detected_at.strftime('%H:%M %d/%m/%Y')}")
+            lines.append(f"   🔗 Thread URL: {e.thread_href}\n")
+
+        return "\n".join(lines).strip()
+
     async def to_ai_summary(self) -> str:
         async with self._lock:
-            if not self._entries:
-                scan_info = (
-                    f" Lần quét gần nhất: {self._last_scan_at.strftime('%H:%M %d/%m/%Y')}."
-                    if self._last_scan_at
-                    else " Chưa có lần quét nào hoàn thành."
-                )
-                return f"Không có tin nhắn Facebook nào được ghi nhận kể từ lần quét gần nhất.{scan_info}"
+            return self._format_summary_internal()
 
-            lines = []
-            if self._last_scan_at:
-                lines.append(f"Lần quét Facebook gần nhất: {self._last_scan_at.strftime('%H:%M %d/%m/%Y')}\n")
-
-            lines.append(f"Danh sách tin nhắn Facebook được ghi nhận ({len(self._entries)} người):\n")
-
-            for idx, e in enumerate(self._entries.values(), start=1):
-                lines.append(f"{idx}. 👤 Người gửi: {e.sender_name}")
-                if e.incoming_messages:
-                    lines.append("   📩 Nội dung tin nhắn người gửi đã nhắn:")
-                    for m in e.incoming_messages:
-                        lines.append(f'      • "{m}"')
-                else:
-                    lines.append("   📩 Nội dung tin nhắn người gửi đã nhắn: (Không có tin nhắn mới)")
-
-                if e.last_reply_sent:
-                    lines.append(f'   💬 Nội dung phản hồi: "{e.last_reply_sent}"')
-
-                if e.replied_by_human or e.reply_type == "human_direct":
-                    status = "✅ Trạng thái: BẠN (CHỦ TÀI KHOẢN) ĐÃ TRỰC TIẾP TRẢ LỜI."
-                elif e.was_auto_replied or e.reply_type == "ai_auto":
-                    status = (
-                        "⚠️ Trạng thái: TRỢ LÝ AI ĐÃ GỬI TIN NHẮN VẮNG MẶT TỰ ĐỘNG "
-                        "(BẠN/CHỦ TÀI KHOẢN CHƯA TRẢ LỜI TRỰC TIẾP)."
-                    )
-                else:
-                    status = "⏳ Trạng thái: CHƯA TRẢ LỜI (Chưa có bất kỳ phản hồi nào)."
-
-                lines.append(f"   {status}")
-                lines.append(f"   🕐 Ghi nhận lúc: {e.detected_at.strftime('%H:%M %d/%m/%Y')}")
-                lines.append(f"   🔗 Thread URL: {e.thread_href}\n")
-
-            return "\n".join(lines).strip()
+    def format_for_prompt(self) -> str:
+        return self._format_summary_internal()

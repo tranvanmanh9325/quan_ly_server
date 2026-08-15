@@ -150,26 +150,30 @@ ADVANCED NATURAL LANGUAGE & INTENT RESOLUTION:
         ]
 
     async def _execute_tool(self, tool_name: str, tool_args: Dict[str, Any]) -> str:
-        if tool_name == "run_command":
-            cmd = tool_args.get("command", "")
-            if not cmd:
-                return "Error: No command specified."
-            raw_output = await self.ssh_client.execute_command(cmd)
-            # Apply 9Router RTK output compression to conserve tokens
-            return self.llm_router.rtk.compress(raw_output, max_chars=3000, max_lines=40)
+        try:
+            if tool_name == "run_command":
+                cmd = tool_args.get("command", "")
+                if not cmd:
+                    return "Error: No command specified."
+                raw_output = await self.ssh_client.execute_command(cmd)
+                # Apply 9Router RTK output compression to conserve tokens
+                return self.llm_router.rtk.compress(raw_output, max_chars=3000, max_lines=40)
 
-        if tool_name == "facebook_get_messages":
-            raw_cache = self.message_cache.format_for_prompt()
-            return self.llm_router.rtk.compress(raw_cache, max_chars=3000, max_lines=40)
+            if tool_name == "facebook_get_messages":
+                raw_cache = await self.message_cache.to_ai_summary()
+                return self.llm_router.rtk.compress(raw_cache, max_chars=3000, max_lines=40)
 
-        if tool_name == "facebook_send_reply":
-            if not self.fb_service:
-                return "Facebook service is not initialized."
-            recipient = tool_args.get("recipient_name", "").strip()
-            msg = tool_args.get("message", "").strip()
-            return await self.fb_service.send_direct_reply(recipient, msg)
+            if tool_name == "facebook_send_reply":
+                if not self.fb_service:
+                    return "Facebook service is not initialized."
+                recipient = tool_args.get("recipient_name", "").strip()
+                msg = tool_args.get("message", "").strip()
+                return await self.fb_service.send_direct_reply(recipient, msg)
 
-        return f"Unknown tool: {tool_name}"
+            return f"Unknown tool: {tool_name}"
+        except Exception as e:
+            logger.error("[AiAgentService] Error executing tool '%s': %s", tool_name, e, exc_info=True)
+            return f"Lỗi khi thực thi công cụ {tool_name}: {str(e)}"
 
     async def chat(self, chat_id: str, user_message: str) -> str:
         if not self.is_configured():

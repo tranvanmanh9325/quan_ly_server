@@ -158,16 +158,39 @@ class FacebookMessageCache:
                 self._entries.popitem(last=True)
 
     async def record_direct_reply(self, sender_name: str, reply_message: str) -> None:
-        """Records a reply sent directly by the human account owner (via AI/Telegram or Web)."""
+        """Records a reply sent directly by the human account owner via AI relay (facebook_send_reply tool).
+
+        KEY DISTINCTION: This does NOT trigger record_human_activity() because the human is
+        still considered away — they only relayed a message through the AI agent, not actively
+        browsing Facebook. Other conversations will still receive auto-replies normally.
+        """
         if not sender_name or not sender_name.strip():
             return
-        await self.add_or_update(
-            sender_name=sender_name,
-            last_reply_sent=reply_message,
-            was_auto_replied=False,
-            replied_by_human=True,
-            reply_type="human_direct",
-        )
+        # replied_by_human=True so scan cycle knows this thread is replied to (no double send),
+        # but we explicitly do NOT call record_human_activity() here.
+        norm_key = _fast_normalize_name(sender_name.strip())
+        if not norm_key:
+            return
+        async with self._lock:
+            existing = self._entries.get(norm_key)
+            reply_to_store = reply_message.strip() if reply_message and reply_message.strip() else (existing.last_reply_sent if existing else "")
+            href_to_store = existing.thread_href if existing else ""
+            incoming = list(existing.incoming_messages) if existing else []
+            entry = MessageEntry(
+                sender_name=sender_name.strip(),
+                incoming_messages=incoming,
+                last_reply_sent=reply_to_store,
+                thread_href=href_to_store,
+                detected_at=datetime.now(VN_TZ),
+                was_auto_replied=False,
+                replied_by_human=True,
+                reply_type="human_direct",
+                auto_reply_unsent=existing.auto_reply_unsent if existing else False,
+            )
+            self._entries[norm_key] = entry
+            self._entries.move_to_end(norm_key, last=False)
+            while len(self._entries) > self._capacity:
+                self._entries.popitem(last=True)
 
     async def mark_scan_completed(self) -> None:
         async with self._lock:

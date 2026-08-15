@@ -200,7 +200,7 @@ class FacebookMessageCache:
             if e.incoming_messages:
                 lines.append("   📩 Nội dung tin nhắn người gửi đã nhắn:")
                 for m in e.incoming_messages:
-                    lines.append(f'      • "{m}"')
+                    lines.append(f"      • `{m}`")
             else:
                 lines.append("   📩 Nội dung tin nhắn người gửi đã nhắn: (Không có tin nhắn mới)")
 

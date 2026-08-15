@@ -35,6 +35,8 @@ class TelegramBot:
                 "chat_id": chat_id,
                 "text": text,
                 "parse_mode": parse_mode,
+                "disable_web_page_preview": True,
+                "link_preview_options": {"is_disabled": True},
             }
             res = await self._http_client.post(url, json=payload)
             if res.status_code == 200:

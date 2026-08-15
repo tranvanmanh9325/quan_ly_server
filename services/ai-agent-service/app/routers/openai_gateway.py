@@ -76,12 +76,20 @@ async def list_openai_models(request: Request):
     llm_router: LlmRouter = getattr(request.app.state, "llm_router", None)
     model_entries = [
         {
-            "id": "llama-3.3-70b-versatile",
+            "id": "openai/gpt-oss-120b",
             "object": "model",
             "created": int(time.time()),
             "owned_by": "groq",
             "permission": [],
-            "root": "llama-3.3-70b-versatile",
+            "root": "openai/gpt-oss-120b",
+        },
+        {
+            "id": "qwen/qwen3.6-27b",
+            "object": "model",
+            "created": int(time.time()),
+            "owned_by": "groq",
+            "permission": [],
+            "root": "qwen/qwen3.6-27b",
         },
         {
             "id": "llama-3.1-8b-instant",

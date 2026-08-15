@@ -48,8 +48,12 @@ class Settings(BaseSettings):
     GROQ_API_KEY_10: str = Field(default="", alias="GROQ_API_KEY_10")
     GROQ_MODEL: str = Field(default="openai/gpt-oss-120b", alias="GROQ_MODEL")
 
-    # OpenRouter Multi-Model Fallback
+    # OpenRouter Multi-Key Pool (mirrors Groq pool pattern)
     OPENROUTER_API_KEY: str = Field(default="", alias="OPENROUTER_API_KEY")
+    OPENROUTER_API_KEY_2: str = Field(default="", alias="OPENROUTER_API_KEY_2")
+    OPENROUTER_API_KEY_3: str = Field(default="", alias="OPENROUTER_API_KEY_3")
+    OPENROUTER_API_KEY_4: str = Field(default="", alias="OPENROUTER_API_KEY_4")
+    OPENROUTER_API_KEY_5: str = Field(default="", alias="OPENROUTER_API_KEY_5")
     OPENROUTER_MODEL: str = Field(default="nvidia/nemotron-3-super-120b-a12b:free", alias="OPENROUTER_MODEL")
     OPENROUTER_API_URL: str = Field(default="https://openrouter.ai/api/v1/chat/completions", alias="OPENROUTER_API_URL")
 
@@ -74,6 +78,31 @@ class Settings(BaseSettings):
         # Also dynamically discover any extra GROQ_API_KEY_* environment variables
         for env_k, env_v in os.environ.items():
             if env_k.startswith("GROQ_API_KEY") and env_v and env_v.strip():
+                if env_v.strip() not in keys:
+                    keys.append(env_v.strip())
+
+        # Return unique, non-empty stripped keys while preserving order
+        seen = set()
+        result = []
+        for k in keys:
+            clean = k.strip() if k else ""
+            if clean and clean not in seen:
+                seen.add(clean)
+                result.append(clean)
+        return result
+
+    @property
+    def openrouter_keys(self) -> List[str]:
+        keys = [
+            self.OPENROUTER_API_KEY,
+            self.OPENROUTER_API_KEY_2,
+            self.OPENROUTER_API_KEY_3,
+            self.OPENROUTER_API_KEY_4,
+            self.OPENROUTER_API_KEY_5,
+        ]
+        # Dynamically discover any extra OPENROUTER_API_KEY_* environment variables
+        for env_k, env_v in os.environ.items():
+            if env_k.startswith("OPENROUTER_API_KEY") and env_v and env_v.strip():
                 if env_v.strip() not in keys:
                     keys.append(env_v.strip())
 

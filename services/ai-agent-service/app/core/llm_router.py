@@ -236,14 +236,15 @@ class LlmRouter:
                 api_keys=groq_keys,
             )
 
-        # 2. Tier 2: OpenRouter Multi-Model Fallback
-        if settings.OPENROUTER_API_KEY and settings.OPENROUTER_API_KEY.strip():
+        # 2. Tier 2: OpenRouter Multi-Key Pool (mirrors Groq pool)
+        openrouter_keys = settings.openrouter_keys
+        if openrouter_keys:
             self.providers["openrouter"] = Provider(
                 name="openrouter",
                 tier=2,
                 base_url=settings.OPENROUTER_API_URL,
                 default_model=settings.OPENROUTER_MODEL,
-                api_keys=[settings.OPENROUTER_API_KEY.strip()],
+                api_keys=openrouter_keys,
                 extra_headers={
                     "HTTP-Referer": "https://dashboard.kirito.server",
                     "X-Title": "Server Dashboard AI (9Router)",

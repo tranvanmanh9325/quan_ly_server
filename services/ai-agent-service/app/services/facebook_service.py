@@ -502,19 +502,37 @@ class FacebookService:
             () => {
               let main = document.querySelector('[role="main"]') || document.querySelector('[role="region"]') || document.body;
 
-              let allElements = Array.from(main.querySelectorAll('span, [aria-label]'));
+              // 1. Collect candidate elements carrying Facebook Messenger message metadata
+              let rawElements = Array.from(main.querySelectorAll('[role="row"], [aria-label*="gửi lúc"], [aria-label*="sent at"], [aria-label*="Tin nhắn do"]'));
+              
+              // 2. Filter out nested child elements if parent is already in the list to avoid duplicate DOM traversal
+              let distinctElements = rawElements.filter(el => {
+                return !rawElements.some(parent => parent !== el && parent.contains(el));
+              });
+
+              // Fallback to allElements if distinctElements is empty
+              if (distinctElements.length === 0) {
+                distinctElements = Array.from(main.querySelectorAll('span, [aria-label]'));
+              }
+
               let incoming = [];
               let last_sender = 'none';
               let last_msg_text = '';
               let consecutive_unreplied = 0;
               let reached_human_boundary = false;
+              let seenSignatures = new Set();
 
-              for (let i = allElements.length - 1; i >= 0; i--) {
-                let el = allElements[i];
+              for (let i = distinctElements.length - 1; i >= 0; i--) {
+                let el = distinctElements[i];
                 let t = (el.getAttribute('aria-label') || el.textContent || '').trim();
                 if (!t || t.length < 5) continue;
                 let low = t.toLowerCase();
                 if (!low.includes('tin nhắn do') || !low.includes('gửi lúc')) continue;
+
+                // Deduplicate by exact unique aria-label / message signature
+                let cleanSig = t.replace(/\\s+/g, ' ').trim();
+                if (seenSignatures.has(cleanSig)) continue;
+                seenSignatures.add(cleanSig);
 
                 let isUs = low.includes('do bạn gửi') || low.includes('do bạn gởi');
                 let colonIdx = t.lastIndexOf(':');

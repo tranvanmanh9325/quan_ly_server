@@ -68,7 +68,11 @@ class FacebookMessageCache:
         if not norm_key:
             return
 
-        clean_incoming = [m.strip() for m in (incoming_messages or []) if m and m.strip()]
+        raw_incoming = [m.strip() for m in (incoming_messages or []) if m and m.strip()]
+        clean_incoming = []
+        for m in raw_incoming:
+            if not clean_incoming or clean_incoming[-1] != m:
+                clean_incoming.append(m)
 
         async with self._lock:
             existing = self._entries.get(norm_key)

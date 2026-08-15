@@ -32,27 +32,23 @@ public class MetricCollectorJob {
     }
 
     /**
-     * Collect CPU, RAM, and Disk snapshot every 60 seconds and persist to PostgreSQL.
+     * Collect CPU, RAM, and Disk snapshot every 60 seconds (with 2s initial delay on startup)
+     * and persist directly to PostgreSQL.
      *
-     * CPU is measured by reading /proc/stat twice with a 500ms gap and computing the delta.
-     * This is more accurate than `top -b -n 1` because:
-     *   1. No process spawn overhead (awk reads a kernel file directly)
-     *   2. Delta-based: actual CPU activity in the 500ms window, not a stale snapshot
-     *   3. ~10x faster — completes in <50ms vs top's ~500ms
+     * CPU is measured by reading /proc/stat twice with a 300ms gap in-memory:
+     * - Pure in-memory pipe (zero temporary files written to disk)
+     * - Zero process spawn overhead for AWK
+     * - Direct delta calculation: cpu_used% = (1 - idle_delta / total_delta) * 100
      */
-    @Scheduled(fixedRate = 60_000)
+    @Scheduled(fixedRate = 60_000, initialDelay = 2_000)
     public void collectMetrics() {
         try {
-            // Read /proc/stat twice 500ms apart to compute CPU delta.
-            // Format: cpu <user> <nice> <system> <idle> <iowait> <irq> <softirq> ...
-            // cpu_used% = (1 - idle_delta/total_delta) * 100
-            String cmd = "STAT1=$(awk '/^cpu /{print}' /proc/stat); sleep 0.5; STAT2=$(awk '/^cpu /{print}' /proc/stat); "
-                    + "echo $STAT1 > /tmp/_s1; echo $STAT2 > /tmp/_s2; "
-                    + "awk 'FNR==1{for(i=2;i<=NF;i++) a[i]=$i} FNR==2{t=0;id=0;for(i=2;i<=NF;i++){t+=$i-a[i];if(i==5)id=$i-a[i]};printf \"%.1f\", (1-id/t)*100}' /tmp/_s1 /tmp/_s2"
+            String cmd = "(cat /proc/stat; sleep 0.3; cat /proc/stat) | awk '/^cpu / { if (!seen) { for(i=2;i<=NF;i++) a[i]=$i; seen=1 } else { t=0; id=0; for(i=2;i<=NF;i++){ d=$i-a[i]; t+=d; if(i==5) id=d }; if (t>0) printf \"%.1f\\n\", (1-id/t)*100; exit } }'"
                     + " && echo '---'"
                     + " && free -m"
                     + " && echo '---'"
                     + " && df / | tail -1";
+
             String rawData = sshService.executeCommand(cmd);
 
             if (rawData == null || rawData.contains("ERROR")) {
@@ -62,11 +58,10 @@ public class MetricCollectorJob {
 
             String[] parts = rawData.split("---");
             if (parts.length < 3) {
-                log.warn("[MetricCollectorJob] Unexpected output format, skipping snapshot.");
+                log.warn("[MetricCollectorJob] Unexpected output format, skipping snapshot: {}", rawData);
                 return;
             }
 
-            // parts[0] is now a plain float like "12.3" — parse directly
             Double cpuPercent  = parseCpuDirect(parts[0]);
             Double ramPercent  = parseRam(parts[1]);
             Double diskPercent = parseDisk(parts[2]);
@@ -79,22 +74,24 @@ public class MetricCollectorJob {
                         .diskPercent(diskPercent)
                         .build();
                 metricRepository.save(metric);
-                log.debug("[MetricCollectorJob] Saved: CPU={}%, RAM={}%, Disk={}%",
+                log.info("[MetricCollectorJob] Snapshot saved successfully: CPU={}%, RAM={}%, Disk={}%",
                         cpuPercent, ramPercent, diskPercent);
 
                 // Evaluate thresholds and send Telegram alert if needed
                 double disk = (diskPercent != null) ? diskPercent : 0.0;
                 telegramService.checkAndAlert(cpuPercent, ramPercent, disk);
+            } else {
+                log.warn("[MetricCollectorJob] Failed to parse metrics (cpu={}, ram={}) from rawData:\n{}",
+                        cpuPercent, ramPercent, rawData);
             }
         } catch (Exception e) {
-            log.error("[MetricCollectorJob] Error during metric collection: {}", e.getMessage());
+            log.error("[MetricCollectorJob] Error during metric collection: {}", e.getMessage(), e);
         }
     }
 
     /**
      * Daily cleanup at 03:00 to enforce the 7-day retention window.
      * Uses a single bulk DELETE which is efficient for ~10k-row tables.
-     * (If the table grew to millions of rows, partitioning + pg_cron would be preferred.)
      */
     @Scheduled(cron = "0 0 3 * * *")
     public void purgeOldMetrics() {
@@ -119,7 +116,7 @@ public class MetricCollectorJob {
             if (raw == null || raw.contains("ERROR")) return null;
             String trimmed = raw.trim();
             // Try direct float first (new /proc/stat delta format)
-            if (trimmed.matches("[0-9]+\\.?[0-9]*")) {
+            if (trimmed.matches("^[0-9]+(\\.[0-9]+)?$")) {
                 double value = Double.parseDouble(trimmed);
                 return Math.round(value * 10.0) / 10.0;
             }
@@ -169,16 +166,11 @@ public class MetricCollectorJob {
     private Double parseDisk(String raw) {
         try {
             if (raw == null || raw.contains("ERROR")) return null;
-            // `df /` may print a 2-line output (header + data) or a single data line.
-            // Always parse the last non-empty line to skip the header safely.
             String[] lines = raw.strip().split("\n");
             String dataLine = "";
             for (int i = lines.length - 1; i >= 0; i--) {
                 if (!lines[i].isBlank()) { dataLine = lines[i].trim(); break; }
             }
-            // df columns: Filesystem 1K-blocks Used Available Use% Mountpoint
-            // Use% is at index 4 (0-based); fixed index is more robust than
-            // scanning for tokens ending with '%' (could match filesystem names).
             String[] tokens = dataLine.split("\\s+");
             if (tokens.length >= 5) {
                 String usePercent = tokens[4]; // e.g. "46%"

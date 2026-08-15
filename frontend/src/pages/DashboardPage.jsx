@@ -90,25 +90,45 @@ export default function DashboardPage() {
   const [isChangingFan, setIsChangingFan] = useState(false);
   const [historyChart, setHistoryChart] = useState([]);
 
-  // Fetch 24h historical data once on mount for the trend charts
+  // Fetch 24h historical data on mount and poll every 60s
   useEffect(() => {
-    axios.get('/api/metrics/history/24h')
-      .then(res => {
-        if (res.data && res.data.length > 0) {
-          const formatted = res.data.map(item => {
-            const d = new Date(item.timestamp + 'Z'); // Force UTC parse (LocalDateTime has no tz suffix)
-            return {
-              time: d.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' }),
-              cpu:  item.cpuPercent  ?? null,
-              ram:  item.ramPercent  ?? null,
-              disk: item.diskPercent ?? null,
-            };
-          });
-          const downsampled = lttbDownsample(formatted, 120);
-          setHistoryChart(downsampled);
-        }
-      })
-      .catch(() => { /* silently fail — DB might be empty on first run */ });
+    let isMounted = true;
+    const fetchHistory = () => {
+      axios.get('/api/metrics/history/24h')
+        .then(res => {
+          if (!isMounted) return;
+          if (res.data && res.data.length > 0) {
+            const formatted = res.data.map(item => {
+              let timeStr = '';
+              if (item.timestamp) {
+                if (typeof item.timestamp === 'string' && item.timestamp.includes('T')) {
+                  const parts = item.timestamp.split('T')[1].split(':');
+                  timeStr = `${parts[0]}:${parts[1]}`;
+                } else {
+                  const d = new Date(item.timestamp);
+                  timeStr = isNaN(d.getTime()) ? '' : d.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' });
+                }
+              }
+              return {
+                time: timeStr,
+                cpu:  item.cpuPercent  ?? null,
+                ram:  item.ramPercent  ?? null,
+                disk: item.diskPercent ?? null,
+              };
+            });
+            const downsampled = lttbDownsample(formatted, 120);
+            setHistoryChart(downsampled);
+          }
+        })
+        .catch(() => { /* silently fail — DB might be empty on first run */ });
+    };
+
+    fetchHistory();
+    const interval = setInterval(fetchHistory, 60000);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
   }, []);
 
 

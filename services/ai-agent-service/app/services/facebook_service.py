@@ -1097,12 +1097,14 @@ class FacebookService:
                                 if last_sender == "us":
                                     logger.info("[FB-Service] '%s': last message is from us; no auto-reply needed.", clean_name)
                                     is_auto = any(m in last_msg_text for m in AWAY_REPLY_MARKERS)
+                                    logger.info("[FB-Service] '%s': is_auto=%s, last_msg_text=%s", clean_name, is_auto, last_msg_text[:60] if last_msg_text else "(empty)")
 
                                     # ── Unsend trigger (DB-backed, restart-safe) ──────────────
                                     # Condition: the last msg is human's direct reply (not bot's away msg),
                                     # AND the DB records a pending auto-reply for this thread.
                                     if not is_auto:
                                         pending_reply_text = await self.get_thread_auto_reply(t_href)
+                                        logger.info("[FB-Service] '%s': pending_reply_text in DB = %s", clean_name, bool(pending_reply_text))
                                         if pending_reply_text:
                                             logger.info(
                                                 "[FB-Service] '%s': human replied after bot auto-reply — attempting unsend (DB-backed).",

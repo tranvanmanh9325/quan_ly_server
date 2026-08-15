@@ -391,6 +391,12 @@ class BrowserAgentService:
             }
             """)
 
+            logger.info(
+                "[BrowserAgent] Profile resolve: candidates=%d query_tokens=%s",
+                len(candidates),
+                query_tokens,
+            )
+
             best_score = 0.0
             best_href: Optional[str] = None
 
@@ -403,6 +409,7 @@ class BrowserAgentService:
                 if not overlap:
                     continue
                 score = overlap / max(len(query_tokens), len(text_tokens))
+                logger.info("[BrowserAgent]  candidate sc=%.2f text=%s", score, c.get("text", "")[:40])
                 if score > best_score:
                     best_score = score
                     best_href = c.get("href")

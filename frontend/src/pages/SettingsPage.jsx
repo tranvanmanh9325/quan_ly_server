@@ -389,10 +389,10 @@ export default function SettingsPage() {
           setFbConfig({
             enabled:             d.enabled             ?? false,
             threshold:           d.threshold           ?? 5,
-            scanIntervalMinutes: d.scanIntervalMinutes ?? 5,
-            cookiesJson:         d.cookiesJson         || '',
-            customMessage:       d.customMessage       || '',
-            lastStatus:          d.lastStatus          || 'Tắt',
+            scanIntervalMinutes: d.scanIntervalMinutes ?? d.scan_interval_minutes ?? 5,
+            cookiesJson:         d.cookiesJson         || d.cookies_json || '',
+            customMessage:       d.customMessage       || d.custom_message || '',
+            lastStatus:          d.lastStatus          || d.last_status || 'Tắt',
           });
         }
       })
@@ -567,13 +567,14 @@ export default function SettingsPage() {
         });
         const cfgRes = await axios.get('/api/facebook/config');
         if (cfgRes.data) {
+          const cd = cfgRes.data;
           setFbConfig({
-            enabled:             cfgRes.data.enabled             ?? true,
-            threshold:           cfgRes.data.threshold           ?? 5,
-            scanIntervalMinutes: cfgRes.data.scanIntervalMinutes ?? 5,
-            cookiesJson:         cfgRes.data.cookiesJson         || '',
-            customMessage:       cfgRes.data.customMessage       || '',
-            lastStatus:          cfgRes.data.lastStatus          || 'Đã lưu phiên từ Server Chromium',
+            enabled:             cd.enabled             ?? true,
+            threshold:           cd.threshold           ?? 5,
+            scanIntervalMinutes: cd.scanIntervalMinutes ?? cd.scan_interval_minutes ?? 5,
+            cookiesJson:         cd.cookiesJson         || cd.cookies_json || '',
+            customMessage:       cd.customMessage       || cd.custom_message || '',
+            lastStatus:          cd.lastStatus          || cd.last_status || 'Đã lưu phiên từ Server Chromium',
           });
         }
       } else {

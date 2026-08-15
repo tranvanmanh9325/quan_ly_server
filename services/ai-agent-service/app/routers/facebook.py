@@ -37,7 +37,25 @@ def get_ai_agent(request: Request) -> AiAgentService:
 @router.get("/config")
 async def get_config(fb: FacebookService = Depends(get_fb_service)):
     cfg = await fb.get_config_from_db()
-    return cfg
+    cookies = cfg.get("cookies_json", "")
+    enabled = bool(cfg.get("enabled", False))
+    threshold = int(cfg.get("threshold", 5))
+    scan_interval = int(cfg.get("scan_interval_minutes", 5))
+    custom_msg = cfg.get("custom_message", "")
+    last_status = cfg.get("last_status", "Tắt")
+    return {
+        "id": cfg.get("id", 1),
+        "enabled": enabled,
+        "threshold": threshold,
+        "scanIntervalMinutes": scan_interval,
+        "scan_interval_minutes": scan_interval,
+        "cookiesJson": cookies,
+        "cookies_json": cookies,
+        "customMessage": custom_msg,
+        "custom_message": custom_msg,
+        "lastStatus": last_status,
+        "last_status": last_status,
+    }
 
 
 @router.post("/config")

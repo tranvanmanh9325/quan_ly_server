@@ -941,9 +941,11 @@ class FacebookService:
 
             removed = False
             remove_patterns = [
+                re.compile(r"^Thu hồi$", re.I),
                 re.compile(r"^Gỡ$", re.I),
                 re.compile(r"^Remove$", re.I),
                 re.compile(r"^Xóa$", re.I),
+                re.compile(r"^Unsend$", re.I),
             ]
             for pattern in remove_patterns:
                 try:
@@ -957,7 +959,7 @@ class FacebookService:
 
             if not removed:
                 # Fallback: try getByText
-                for label in ("Gỡ", "Remove", "Xóa"):
+                for label in ("Thu hồi", "Gỡ", "Remove", "Xóa", "Unsend"):
                     try:
                         item = page.get_by_text(label, exact=True)
                         if await item.count() > 0 and await item.first().is_visible():
@@ -975,7 +977,7 @@ class FacebookService:
                             const all = [...document.querySelectorAll('[role="menuitem"], [role="option"], [role="listitem"], li, div[tabindex]')];
                             const target = all.find(el => {
                                 const t = (el.innerText || '').trim();
-                                return /^(Gỡ|Remove|Xóa)$/.test(t) && el.getBoundingClientRect().width > 0;
+                                return /^(Thu hồi|Gỡ|Remove|Xóa|Unsend)$/i.test(t) && el.getBoundingClientRect().width > 0;
                             });
                             if (target) { target.click(); return true; }
                             return false;
@@ -992,12 +994,20 @@ class FacebookService:
 
             await asyncio.sleep(0.8)
 
-            # 7. Confirm "Gỡ cho mọi người" / "Remove for everyone" in the confirmation dialog
+            # 7. Confirm "Thu hồi cho mọi người" / "Gỡ cho mọi người" / "Remove for everyone"
+            # Screenshot to see what dialog appeared
+            try:
+                await page.screenshot(path="/app/browser_data/unsend_confirm_dialog.png")
+            except Exception:
+                pass
+
             confirmed = False
             confirm_patterns = [
+                re.compile(r"Thu hồi cho mọi người", re.I),
                 re.compile(r"Gỡ cho mọi người", re.I),
                 re.compile(r"Remove for everyone", re.I),
                 re.compile(r"Xóa cho mọi người", re.I),
+                re.compile(r"Unsend for everyone", re.I),
             ]
             for pattern in confirm_patterns:
                 try:
@@ -1006,6 +1016,24 @@ class FacebookService:
                         await btn.first().click()
                         confirmed = True
                         break
+                except Exception:
+                    pass
+
+            if not confirmed:
+                # JS fallback for confirm dialog
+                try:
+                    confirmed = await page.evaluate("""
+                        () => {
+                            const btns = [...document.querySelectorAll('[role="button"], button')];
+                            const target = btns.find(b => {
+                                const t = (b.innerText || '').trim();
+                                return /(Thu hồi|Gỡ|Remove|Xóa|Unsend).*(mọi người|everyone)/i.test(t)
+                                    && b.getBoundingClientRect().width > 0;
+                            });
+                            if (target) { target.click(); return true; }
+                            return false;
+                        }
+                    """)
                 except Exception:
                     pass
 

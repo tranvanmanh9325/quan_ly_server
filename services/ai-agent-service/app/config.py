@@ -35,12 +35,17 @@ class Settings(BaseSettings):
     TELEGRAM_CHAT_ID: str = Field(default="", alias="TELEGRAM_CHAT_ID")
     TELEGRAM_POLLING_ENABLED: bool = Field(default=True, alias="TELEGRAM_POLLING_ENABLED")
 
-    # Groq Multi-Key Pool
+    # Groq Multi-Key Pool (Supports 10+ keys with dynamic environment discovery)
     GROQ_API_KEY: str = Field(default="", alias="GROQ_API_KEY")
     GROQ_API_KEY_2: str = Field(default="", alias="GROQ_API_KEY_2")
     GROQ_API_KEY_3: str = Field(default="", alias="GROQ_API_KEY_3")
     GROQ_API_KEY_4: str = Field(default="", alias="GROQ_API_KEY_4")
     GROQ_API_KEY_5: str = Field(default="", alias="GROQ_API_KEY_5")
+    GROQ_API_KEY_6: str = Field(default="", alias="GROQ_API_KEY_6")
+    GROQ_API_KEY_7: str = Field(default="", alias="GROQ_API_KEY_7")
+    GROQ_API_KEY_8: str = Field(default="", alias="GROQ_API_KEY_8")
+    GROQ_API_KEY_9: str = Field(default="", alias="GROQ_API_KEY_9")
+    GROQ_API_KEY_10: str = Field(default="", alias="GROQ_API_KEY_10")
     GROQ_MODEL: str = Field(default="llama-3.3-70b-versatile", alias="GROQ_MODEL")
 
     @property
@@ -55,8 +60,27 @@ class Settings(BaseSettings):
             self.GROQ_API_KEY_3,
             self.GROQ_API_KEY_4,
             self.GROQ_API_KEY_5,
+            self.GROQ_API_KEY_6,
+            self.GROQ_API_KEY_7,
+            self.GROQ_API_KEY_8,
+            self.GROQ_API_KEY_9,
+            self.GROQ_API_KEY_10,
         ]
-        return [k.strip() for k in keys if k and k.strip()]
+        # Also dynamically discover any extra GROQ_API_KEY_* environment variables
+        for env_k, env_v in os.environ.items():
+            if env_k.startswith("GROQ_API_KEY") and env_v and env_v.strip():
+                if env_v.strip() not in keys:
+                    keys.append(env_v.strip())
+
+        # Return unique, non-empty stripped keys while preserving order
+        seen = set()
+        result = []
+        for k in keys:
+            clean = k.strip() if k else ""
+            if clean and clean not in seen:
+                seen.add(clean)
+                result.append(clean)
+        return result
 
 
 settings = Settings()

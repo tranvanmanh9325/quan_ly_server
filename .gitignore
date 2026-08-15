@@ -5,6 +5,7 @@
 # File biến môi trường chứa bí mật (SSH credentials, Database password)
 .env
 .env.*
+!.env.example
 .env.local
 
 # Build artifacts (Maven, Node & Python)

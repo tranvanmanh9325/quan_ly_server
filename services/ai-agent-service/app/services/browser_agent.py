@@ -92,6 +92,10 @@ class BrowserAgentService:
         self._lock = asyncio.Lock()
         self._playwright: Optional[Playwright] = None
         self._context: Optional[BrowserContext] = None
+        # Persistent active page — shared across multi-step tool calls so that
+        # browser_navigate() followed by browser_scroll() / browser_type() etc.
+        # all operate on the same page without it being closed in between.
+        self._active_page: Optional[Page] = None
 
     # ──────────────────────────────────────────────────────────────────────────
     # Lifecycle
@@ -646,11 +650,12 @@ class BrowserAgentService:
     async def browser_navigate(self, url: str) -> Dict[str, Any]:
         """
         Navigate to any URL and take a screenshot.
-        Returns image_path, page_title, and extracted page text.
+        The page is kept open (not closed) so subsequent tools like
+        browser_scroll / browser_click can continue interacting with it.
         """
         logger.info("[BrowserAgent] browser_navigate('%s')", url)
         async with self._lock:
-            page = await self._new_page()
+            page = await self._get_or_create_active_page()
             try:
                 try:
                     await page.goto(url, wait_until="commit", timeout=NAV_TIMEOUT_MS)
@@ -663,22 +668,17 @@ class BrowserAgentService:
                 title = await page.title()
                 page_text = await self._extract_page_text(page, max_chars=3000)
                 img_path = await self._screenshot(page, f"browse_{_safe_filename(url[:50])}")
-                final_url = page.url
-                await page.close()
+                # Page intentionally left open for follow-up tool calls
 
                 return {
                     "success": True,
                     "image_path": img_path,
                     "page_title": title,
                     "page_text": page_text,
-                    "url": final_url,
+                    "url": page.url,
                 }
             except Exception as e:
                 logger.error("[BrowserAgent] browser_navigate error: %s", e, exc_info=True)
-                try:
-                    await page.close()
-                except Exception:
-                    pass
                 return {"success": False, "error": str(e), "url": url}
 
 
@@ -797,9 +797,29 @@ class BrowserAgentService:
     # ──────────────────────────────────────────────────────────────────────────
 
     def _get_active_page(self, ctx: BrowserContext) -> Optional[Page]:
-        """Return the most recently active page in the context, or None."""
-        pages = ctx.pages
-        return pages[-1] if pages else None
+        """Return the persistent active page if it is still open, else None."""
+        if self._active_page and not self._active_page.is_closed():
+            return self._active_page
+        # Fall back to the last page in the context
+        pages = [p for p in ctx.pages if not p.is_closed()]
+        if pages:
+            self._active_page = pages[-1]
+            return self._active_page
+        return None
+
+    async def _get_or_create_active_page(self) -> Page:
+        """Return the persistent active page, creating one if needed.
+
+        This ensures all multi-step browser tools (scroll, click, type…)
+        operate on the same page that browser_navigate() loaded — even across
+        separate tool calls within the same ReAct turn.
+        """
+        ctx = await self._ensure_context()
+        if self._active_page and not self._active_page.is_closed():
+            return self._active_page
+        page = await self._new_page()
+        self._active_page = page
+        return page
 
     # ──────────────────────────────────────────────────────────────────────────
     # Extended Browser Control Tools
@@ -822,10 +842,7 @@ class BrowserAgentService:
         """
         logger.info("[BrowserAgent] browser_type(selector=%s, text=%r, enter=%s)", selector, text[:50], press_enter)
         async with self._lock:
-            ctx = await self._ensure_context()
-            page = self._get_active_page(ctx)
-            if not page:
-                return {"success": False, "error": "Không có trang nào đang mở."}
+            page = await self._get_or_create_active_page()
             try:
                 el = None
                 for strategy in (
@@ -881,10 +898,7 @@ class BrowserAgentService:
         """
         logger.info("[BrowserAgent] browser_scroll(direction=%s, pixels=%d)", direction, pixels)
         async with self._lock:
-            ctx = await self._ensure_context()
-            page = self._get_active_page(ctx)
-            if not page:
-                return {"success": False, "error": "Không có trang nào đang mở."}
+            page = await self._get_or_create_active_page()
             try:
                 direction = direction.lower().strip()
                 if direction == "top":
@@ -914,10 +928,7 @@ class BrowserAgentService:
         """Navigate back to the previous page in the browser history."""
         logger.info("[BrowserAgent] browser_go_back()")
         async with self._lock:
-            ctx = await self._ensure_context()
-            page = self._get_active_page(ctx)
-            if not page:
-                return {"success": False, "error": "Không có trang nào đang mở."}
+            page = await self._get_or_create_active_page()
             try:
                 await page.go_back(wait_until="commit", timeout=NAV_TIMEOUT_MS)
                 await asyncio.sleep(2)
@@ -939,10 +950,7 @@ class BrowserAgentService:
         """Navigate forward to the next page in the browser history."""
         logger.info("[BrowserAgent] browser_go_forward()")
         async with self._lock:
-            ctx = await self._ensure_context()
-            page = self._get_active_page(ctx)
-            if not page:
-                return {"success": False, "error": "Không có trang nào đang mở."}
+            page = await self._get_or_create_active_page()
             try:
                 await page.go_forward(wait_until="commit", timeout=NAV_TIMEOUT_MS)
                 await asyncio.sleep(2)
@@ -968,10 +976,7 @@ class BrowserAgentService:
         """
         logger.info("[BrowserAgent] browser_get_text(selector=%s)", selector)
         async with self._lock:
-            ctx = await self._ensure_context()
-            page = self._get_active_page(ctx)
-            if not page:
-                return {"success": False, "error": "Không có trang nào đang mở."}
+            page = await self._get_or_create_active_page()
             try:
                 text = await page.locator(selector).first.inner_text(timeout=8000)
                 return {
@@ -995,10 +1000,7 @@ class BrowserAgentService:
         """
         logger.info("[BrowserAgent] browser_press_key(key=%s)", key)
         async with self._lock:
-            ctx = await self._ensure_context()
-            page = self._get_active_page(ctx)
-            if not page:
-                return {"success": False, "error": "Không có trang nào đang mở."}
+            page = await self._get_or_create_active_page()
             try:
                 await page.keyboard.press(key)
                 await asyncio.sleep(1.5)
@@ -1023,10 +1025,7 @@ class BrowserAgentService:
         """
         logger.info("[BrowserAgent] browser_hover(target=%s)", selector_or_text)
         async with self._lock:
-            ctx = await self._ensure_context()
-            page = self._get_active_page(ctx)
-            if not page:
-                return {"success": False, "error": "Không có trang nào đang mở."}
+            page = await self._get_or_create_active_page()
             try:
                 try:
                     await page.hover(selector_or_text, timeout=8000)
@@ -1056,10 +1055,7 @@ class BrowserAgentService:
         """
         logger.info("[BrowserAgent] browser_select_option(selector=%s, value=%s)", selector, value)
         async with self._lock:
-            ctx = await self._ensure_context()
-            page = self._get_active_page(ctx)
-            if not page:
-                return {"success": False, "error": "Không có trang nào đang mở."}
+            page = await self._get_or_create_active_page()
             try:
                 selected = None
                 for strategy in (
@@ -1101,10 +1097,7 @@ class BrowserAgentService:
         """
         logger.info("[BrowserAgent] browser_execute_js(script=%r)", script[:120])
         async with self._lock:
-            ctx = await self._ensure_context()
-            page = self._get_active_page(ctx)
-            if not page:
-                return {"success": False, "error": "Không có trang nào đang mở."}
+            page = await self._get_or_create_active_page()
             try:
                 wrapped = f"() => {{ {script} }}"
                 result = await page.evaluate(wrapped)
@@ -1135,10 +1128,7 @@ class BrowserAgentService:
         """
         logger.info("[BrowserAgent] browser_fill_form(fields=%s, submit=%s)", list(fields.keys()), submit_selector)
         async with self._lock:
-            ctx = await self._ensure_context()
-            page = self._get_active_page(ctx)
-            if not page:
-                return {"success": False, "error": "Không có trang nào đang mở."}
+            page = await self._get_or_create_active_page()
             try:
                 filled = []
                 for selector, value in fields.items():
@@ -1190,10 +1180,7 @@ class BrowserAgentService:
         """
         logger.info("[BrowserAgent] browser_wait_for(selector=%s, timeout=%d, state=%s)", selector, timeout_ms, state)
         async with self._lock:
-            ctx = await self._ensure_context()
-            page = self._get_active_page(ctx)
-            if not page:
-                return {"success": False, "error": "Không có trang nào đang mở."}
+            page = await self._get_or_create_active_page()
             try:
                 await page.wait_for_selector(selector, state=state, timeout=timeout_ms)
                 img_path = await self._screenshot(page, f"wait_{_safe_filename(selector[:30])}")

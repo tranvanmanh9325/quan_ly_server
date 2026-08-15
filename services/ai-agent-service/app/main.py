@@ -86,6 +86,11 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+from fastapi.middleware.gzip import GZipMiddleware
+
+# Gzip Compression (reduces large JSON payloads by 85%)
+app.add_middleware(GZipMiddleware, minimum_size=1000)
+
 # CORS
 app.add_middleware(
     CORSMiddleware,

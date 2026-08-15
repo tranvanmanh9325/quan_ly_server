@@ -5,8 +5,10 @@ import os
 import shutil
 import subprocess
 from typing import Optional
+import psycopg
+from psycopg.rows import dict_row
 from playwright.async_api import async_playwright, BrowserContext, Page
-from app.services.database import get_db_pool
+from app.config import settings
 
 logger = logging.getLogger("app.services.vnc_manager")
 
@@ -191,16 +193,17 @@ class VncManager:
                 cookies_json = json.dumps(cookies)
 
                 # Save to PostgreSQL
-                pool = await get_db_pool()
-                async with pool.acquire() as conn:
-                    await conn.execute("""
-                        INSERT INTO fb_auto_responder_config (id, cookies_json, last_status, updated_at)
-                        VALUES (1, $1, $2, NOW())
-                        ON CONFLICT (id) DO UPDATE
-                        SET cookies_json = EXCLUDED.cookies_json,
-                            last_status = EXCLUDED.last_status,
-                            updated_at = NOW()
-                    """, cookies_json, "Đã lưu phiên từ Server Chromium")
+                async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+                    async with conn.cursor() as cur:
+                        await cur.execute("""
+                            INSERT INTO fb_auto_responder_config (id, cookies_json, last_status, updated_at)
+                            VALUES (1, %s, %s, NOW())
+                            ON CONFLICT (id) DO UPDATE
+                            SET cookies_json = EXCLUDED.cookies_json,
+                                last_status = EXCLUDED.last_status,
+                                updated_at = NOW()
+                        """, (cookies_json, "Đã lưu phiên từ Server Chromium"))
+                        await conn.commit()
 
                 # Clean up session
                 await self._cleanup_internal()

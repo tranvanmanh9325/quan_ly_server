@@ -247,37 +247,74 @@ class BrowserAgentService:
     # Action Primitives (public API consumed by AiAgentService)
     # ──────────────────────────────────────────────────────────────────────────
 
-    async def facebook_view_profile(self, name_query: str) -> Dict[str, Any]:
+    async def facebook_view_profile(self, name_query: str, profile_url: Optional[str] = None) -> Dict[str, Any]:
         """
-        Autonomously searches for a Facebook user by name, navigates directly to
-        their profile URL (no DOM click — avoids selector instability), extracts
-        bio information, and returns a screenshot + structured data.
+        Autonomously navigates to a Facebook user's profile.
 
-        Flow:
+        Resolution order (highest precision first):
+          1. If `profile_url` is provided (derived from thread_href user_id), navigate
+             directly — this guarantees the exact correct person from Messenger.
+          2. Otherwise fall back to Facebook People Search + token-scored link picking.
+
+        Flow (case 2 only):
           1. Navigate to Facebook People Search with the query.
-          2. Wait for React to hydrate search results (up to 5 s).
-          3. Collect all candidate profile hrefs via JS evaluation.
-          4. Score each candidate against the query via token overlap.
-          5. Navigate directly to the best-match URL (goto, not click).
-          6. Wait for the profile React SPA to fully hydrate (up to 10 s).
-          7. Dismiss overlays, scroll to load intro, extract text, screenshot.
+          2. Wait dynamically for profile links to appear.
+          3. Score each candidate by token overlap with the query.
+          4. Navigate directly to the best-match URL (no DOM click).
+          5. Wait for the profile React SPA to hydrate (up to 10 s).
+          6. Dismiss overlays, scroll to load intro, extract text, screenshot.
         """
-        logger.info("[BrowserAgent] facebook_view_profile('%s')", name_query)
+        logger.info(
+            "[BrowserAgent] facebook_view_profile('%s', profile_url=%s)",
+            name_query,
+            profile_url or "none",
+        )
 
         async with self._lock:
             page = await self._new_page()
             try:
-                # ── Step 1: People Search ─────────────────────────────────────
+                if profile_url:
+                    # ── Direct navigation from thread_href user_id ────────────
+                    logger.info("[BrowserAgent] Direct profile URL: %s", profile_url)
+                    try:
+                        await page.goto(profile_url, wait_until="commit", timeout=NAV_TIMEOUT_MS)
+                    except Exception as e:
+                        logger.warning("[BrowserAgent] Direct goto notice: %s", e)
+                    await asyncio.sleep(10)
+                    await self._dismiss_overlays(page)
+                    try:
+                        await page.evaluate("window.scrollBy(0, 350)")
+                    except Exception:
+                        pass
+                    await asyncio.sleep(1.5)
+
+                    try:
+                        profile_name = await page.locator("h1").first.inner_text(timeout=5000)
+                    except Exception:
+                        profile_name = name_query
+
+                    intro_text = await self._extract_intro_text(page)
+                    await self._dismiss_overlays(page)
+                    img_path = await self._screenshot(page, f"fb_profile_{_safe_filename(name_query)}")
+                    final_url = page.url
+                    await page.close()
+                    return {
+                        "success": True,
+                        "image_path": img_path,
+                        "profile_name": profile_name.strip(),
+                        "profile_url": final_url,
+                        "intro_text": intro_text,
+                        "source": "direct",
+                    }
+
+                # ── Fallback: People Search ────────────────────────────────────
                 search_url = FB_PEOPLE_SEARCH.format(query=quote(name_query))
                 try:
                     await page.goto(search_url, wait_until="commit", timeout=NAV_TIMEOUT_MS)
                 except Exception as e:
                     logger.warning("[BrowserAgent] Search goto notice: %s", e)
 
-                # ── Step 2: Wait for search results to render ─────────────────
-                # Wait for any profile link to appear in the DOM, then give FB
-                # an extra 2 s to finish rendering all results. This is more
-                # reliable than a fixed sleep because it adapts to network speed.
+                # ── Wait dynamically for profile links to appear ───────────────
                 try:
                     await page.wait_for_function(
                         """() => {
@@ -292,19 +329,14 @@ class BrowserAgentService:
                     )
                     await asyncio.sleep(2)
                 except Exception:
-                    # Fallback: just wait 8 seconds
                     await asyncio.sleep(8)
 
-                current_url = page.url
-                logger.info("[BrowserAgent] Search page URL: %s", current_url)
+                logger.info("[BrowserAgent] Search page URL: %s", page.url)
                 await self._dismiss_overlays(page)
 
-                # ── Step 3-4: Collect profile hrefs and pick best match ───────
                 profile_href = await self._resolve_best_profile_href(page, name_query)
 
-
                 if not profile_href:
-                    # Fallback: return search results page itself
                     logger.info("[BrowserAgent] No matching profile found; returning search page.")
                     intro_text = await self._extract_page_text(page, max_chars=1500)
                     img_path = await self._screenshot(page, f"fb_search_{_safe_filename(name_query)}")
@@ -318,20 +350,14 @@ class BrowserAgentService:
                         "note": "Không tìm thấy kết quả khớp chính xác — hiển thị trang kết quả tìm kiếm.",
                     }
 
-                # ── Step 5: Navigate directly to profile URL ─────────────────
                 logger.info("[BrowserAgent] Navigating to profile: %s", profile_href)
                 try:
                     await page.goto(profile_href, wait_until="commit", timeout=NAV_TIMEOUT_MS)
                 except Exception as e:
                     logger.warning("[BrowserAgent] Profile goto notice: %s", e)
 
-                # ── Step 6: Wait for React SPA to hydrate ────────────────────
-                # Facebook's SPA starts rendering ~3-5 s after the network commit;
-                # waiting 10 s is more reliable than polling for a selector.
                 await asyncio.sleep(10)
                 await self._dismiss_overlays(page)
-
-                # Scroll slightly to expose the intro / about widget
                 try:
                     await page.evaluate("window.scrollBy(0, 350)")
                 except Exception:

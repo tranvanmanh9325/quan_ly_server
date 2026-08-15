@@ -314,7 +314,22 @@ Với mọi yêu cầu phức tạp (tra cứu web, xem profile, tìm kiếm), h
                 if not self.browser_agent:
                     return "Browser agent chưa được khởi tạo."
                 name_query = tool_args.get("name_query", "").strip()
-                res = await self.browser_agent.facebook_view_profile(name_query)
+
+                # Resolve the exact profile URL from the Messenger thread data.
+                # This guarantees we open the right person even when multiple
+                # Facebook users share the same name.
+                resolved_profile_url = await self._resolve_profile_url_from_thread(name_query)
+                if resolved_profile_url:
+                    logger.info(
+                        "[AiAgent] Resolved profile URL for '%s': %s",
+                        name_query,
+                        resolved_profile_url,
+                    )
+
+                res = await self.browser_agent.facebook_view_profile(
+                    name_query,
+                    profile_url=resolved_profile_url,
+                )
                 return await self._handle_browser_result(
                     res,
                     chat_id=chat_id,
@@ -325,6 +340,7 @@ Với mọi yêu cầu phức tạp (tra cứu web, xem profile, tìm kiếm), h
                         f"📝 Giới thiệu:\n{res.get('intro_text', 'Không có thông tin.')[:600]}"
                     ),
                 )
+
 
             if tool_name == "browser_navigate":
                 if not self.browser_agent:
@@ -417,6 +433,66 @@ Với mọi yêu cầu phức tạp (tra cứu web, xem profile, tìm kiếm), h
             )
         return success_prefix
 
+    async def _resolve_profile_url_from_thread(self, name_query: str) -> Optional[str]:
+        """
+        Resolves the exact Facebook profile URL for a contact by looking up their
+        Messenger thread_href in the message cache and the persistent DB.
+
+        Facebook Messenger thread URLs follow the pattern:
+          - Standard:  https://www.facebook.com/messages/t/<user_id>/
+          - E2EE:      https://www.facebook.com/messages/e2ee/t/<thread_id>/
+
+        The <user_id> segment is the person's numeric Facebook ID, which maps
+        directly to their profile at: https://www.facebook.com/<user_id>
+
+        Priority:
+          1. message_cache (in-memory, most recent scan data)
+          2. facebook_known_threads DB table (persistent across restarts)
+          3. None → caller falls back to People Search
+        """
+        thread_href: Optional[str] = None
+
+        # 1. Check in-memory message cache (fastest)
+        if self.message_cache:
+            thread_href = await self.message_cache.find_thread_href(name_query)
+
+        # 2. Check DB if not found in cache
+        if not thread_href and self.fb_service:
+            try:
+                db_threads = await self.fb_service.get_known_threads_from_db()
+                best_score = 0.0
+                for t in db_threads:
+                    score = self.fb_service._name_match_score(name_query, t.get("text", ""))
+                    if score > best_score and score >= 0.5:
+                        best_score = score
+                        thread_href = t.get("href", "")
+            except Exception as e:
+                logger.warning("[AiAgent] DB thread lookup error: %s", e)
+
+        if not thread_href:
+            return None
+
+        # Extract user_id from thread URL and build profile URL.
+        # Handles both /messages/t/<id>/ and /messages/e2ee/t/<id>/
+        import re as _re
+        m = _re.search(r"/messages/(?:e2ee/)?t/(\d+)", thread_href)
+        if m:
+            user_id = m.group(1)
+            profile_url = f"https://www.facebook.com/{user_id}"
+            logger.info(
+                "[AiAgent] Thread '%s' → user_id=%s → profile_url=%s",
+                thread_href,
+                user_id,
+                profile_url,
+            )
+            return profile_url
+
+        logger.info(
+            "[AiAgent] thread_href '%s' has no numeric user_id; using People Search fallback.",
+            thread_href,
+        )
+        return None
+
     # ──────────────────────────────────────────────────────────────────────────
     # Direct-return tools — skip the second LLM call to avoid hallucination
     # ──────────────────────────────────────────────────────────────────────────
@@ -430,6 +506,7 @@ Với mọi yêu cầu phức tạp (tra cứu web, xem profile, tìm kiếm), h
         "browser_take_screenshot",
         "server_capture_screenshot",
     })
+
 
     # ──────────────────────────────────────────────────────────────────────────
     # Main Chat Loop (ReAct)

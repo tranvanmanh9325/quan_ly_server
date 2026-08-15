@@ -311,13 +311,19 @@ export default function SettingsPage() {
   const vncPollRef = useRef(null);
 
   useEffect(() => {
+    let hbTimer = null;
     if (vncOpen) {
       document.body.style.overflow = 'hidden';
+      // Send heartbeat every 30 seconds to keep the VNC session alive while modal is open
+      hbTimer = setInterval(() => {
+        axios.post('/api/facebook/vnc-heartbeat').catch(() => {});
+      }, 30000);
     } else {
       document.body.style.overflow = '';
     }
     return () => {
       document.body.style.overflow = '';
+      if (hbTimer) clearInterval(hbTimer);
     };
   }, [vncOpen]);
 

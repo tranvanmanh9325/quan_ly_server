@@ -73,15 +73,14 @@ ADVANCED NATURAL LANGUAGE & INTENT RESOLUTION:
    - Intelligently clean the message body: Strip conversational prefixes like "hộ tôi là", "bảo là", "rằng là" so only the intended message payload is sent.
 
 2. INBOX & UNREPLIED MESSAGES QUERY:
-   - When the user asks "Hiện có những tài khoản nào tôi chưa trả lời?", "Ai đang nhắn tin?", "Có tin nhắn mới nào không?", "Tóm tắt tình hình Facebook":
-     * ALWAYS call `facebook_get_messages()`.
-     * IMPORTANT DISTINCTION: The user asking is the HUMAN OWNER (Anh Mạnh).
-     * If a contact's status is "CHƯA TRẢ LỜI" OR "TRỢ LÝ AI ĐÃ GỬI TIN NHẮN VẮNG MẶT TỰ ĐỘNG (BẠN/CHỦ TÀI KHOẢN CHƯA TRẢ LỜI TRỰC TIẾP)", this contact MUST BE REPORTED AS UNREPLIED BY THE USER!
-     * You MUST clearly list out:
+   - When the user asks "Hiện có những tài khoản nào tôi chưa trả lời?", "Ai đang nhắn tin?", "Có tin nhắn mới nào không?", "trong thời gian tôi vắng có ai nhắn cho tôi không", "Tóm tắt tình hình Facebook":
+     * Call `facebook_get_messages()` to inspect the inbox.
+     * Once you receive the messages list, analyze the results and answer the user directly and concisely in Vietnamese. DO NOT re-invoke `facebook_get_messages()` once you already have the data in this turn.
+     * If no incoming messages: State clearly that no new messages were received during their absence.
+     * If there are contacts with unreplied messages (or auto-replied by AI): Clearly list out:
        - 👤 Tên người gửi: <Tên>
        - 📩 Nội dung tin nhắn họ đã gửi: <Nội dung chi tiết>
        - ⚠️ Tình trạng: Trợ lý AI đã gửi tin nhắn vắng mặt tự động, nhưng bạn (chủ tài khoản) chưa trực tiếp trả lời.
-     * ONLY state "Tất cả các tin nhắn đều đã được trả lời" if there are NO incoming messages or the human owner has directly replied to all contacts (status: "BẠN (CHỦ TÀI KHOẢN) ĐÃ TRỰC TIẾP TRẢ LỜI").
 
 3. DEVOPS & SERVER MONITORING COMMANDS:
    - When user asks about top CPU / RAM consuming processes: Call `run_command` with `ps aux --sort=-%cpu | head -n 6` or `top -b -n 1 | head -n 15`.
@@ -99,8 +98,9 @@ ADVANCED NATURAL LANGUAGE & INTENT RESOLUTION:
    - For simple greetings, respond with a warm greeting and brief list of server monitoring capabilities.
 """
 
-    def _build_tools(self) -> List[Dict[str, Any]]:
-        return [
+    def _build_tools(self, excluded_tools: Optional[set] = None) -> List[Dict[str, Any]]:
+        excluded = excluded_tools or set()
+        tools = [
             {
                 "type": "function",
                 "function": {
@@ -148,6 +148,7 @@ ADVANCED NATURAL LANGUAGE & INTENT RESOLUTION:
                 },
             },
         ]
+        return [t for t in tools if t["function"]["name"] not in excluded]
 
     async def _execute_tool(self, tool_name: str, tool_args: Dict[str, Any]) -> str:
         try:
@@ -193,15 +194,18 @@ ADVANCED NATURAL LANGUAGE & INTENT RESOLUTION:
             return greeting
 
         history.append({"role": "user", "content": user_message})
+        executed_inquiry_tools = set()
 
         for _ in range(MAX_AGENT_ITERATIONS):
             messages = [{"role": "system", "content": self._build_system_prompt()}]
             messages.extend(list(history))
 
+            tools_available = self._build_tools(excluded_tools=executed_inquiry_tools)
+
             llm_result = await self.llm_router.complete(
                 messages=messages,
-                tools=self._build_tools(),
-                tool_choice="auto",
+                tools=tools_available if tools_available else None,
+                tool_choice="auto" if tools_available else "none",
                 temperature=0.1,
                 max_tokens=1024,
             )
@@ -221,6 +225,9 @@ ADVANCED NATURAL LANGUAGE & INTENT RESOLUTION:
                 for tc in assistant_msg["tool_calls"]:
                     call_id = tc.get("id", "call_1")
                     fn_name = tc.get("function", {}).get("name", "")
+                    if fn_name in ("facebook_get_messages",):
+                        executed_inquiry_tools.add(fn_name)
+
                     try:
                         fn_args = json.loads(tc.get("function", {}).get("arguments", "{}"))
                     except Exception:

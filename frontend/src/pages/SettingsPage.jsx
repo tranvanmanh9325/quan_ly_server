@@ -555,15 +555,21 @@ export default function SettingsPage() {
       const res = await axios.post('/api/facebook/save-browser-session');
       if (res.data.status === 'success') {
         setVncOpen(false);
-        setFbTestResult(res.data.message);
+        setVncStatusMsg('');
+        setFbScanModal({
+          open: true,
+          status: 'success',
+          message: res.data.message,
+        });
         const cfgRes = await axios.get('/api/facebook/config');
         if (cfgRes.data) {
           setFbConfig({
-            enabled:         cfgRes.data.enabled         ?? false,
-            threshold:       cfgRes.data.threshold       ?? 5,
-            cookiesJson:     cfgRes.data.cookiesJson     || '',
-            customMessage:   cfgRes.data.customMessage   || '',
-            lastStatus:      cfgRes.data.lastStatus      || 'Tắt',
+            enabled:             cfgRes.data.enabled             ?? true,
+            threshold:           cfgRes.data.threshold           ?? 5,
+            scanIntervalMinutes: cfgRes.data.scanIntervalMinutes ?? 5,
+            cookiesJson:         cfgRes.data.cookiesJson         || '',
+            customMessage:       cfgRes.data.customMessage       || '',
+            lastStatus:          cfgRes.data.lastStatus          || 'Đã lưu phiên từ Server Chromium',
           });
         }
       } else {
@@ -1047,8 +1053,8 @@ export default function SettingsPage() {
                 </button>
               </div>
 
-              {vncStatusMsg && (
-                <div style={{ fontSize: '0.78rem', color: 'var(--accent-cyan)', fontFamily: 'Share Tech Mono' }}>
+              {vncStatusMsg && !vncOpen && (
+                <div style={{ fontSize: '0.78rem', color: 'var(--accent-cyan)', fontFamily: 'Share Tech Mono', marginTop: '4px' }}>
                   {vncStatusMsg}
                 </div>
               )}

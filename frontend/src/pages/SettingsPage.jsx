@@ -6,7 +6,7 @@ import {
   SciFiConsoleIcon, SciFiCyberLockIcon, SciFiDashboardIcon,
   SciFiTelegramIcon, SciFiInfoIcon, SciFiTerminalPromptIcon,
   SciFiBrowserLaunchIcon, SciFiChronoSpinnerIcon, SciFiCheckCircleIcon, SciFiCloseIcon,
-  SciFiFacebookIcon
+  SciFiFacebookIcon, SciFiQuantumIcon
 } from '../components/SciFiIcons';
 import { loadSettings, saveSettings, SETTINGS_DEFAULTS } from '../utils/settings';
 import { useTranslation } from '../i18n/index.jsx';
@@ -326,6 +326,23 @@ export default function SettingsPage() {
       if (hbTimer) clearInterval(hbTimer);
     };
   }, [vncOpen]);
+
+  // ── 9Router AI Gateway Telemetry state ──────────────────────────────────
+  const [routerStatus, setRouterStatus]   = useState(null);
+  const [routerLoading, setRouterLoading] = useState(true);
+
+  const fetchRouterStatus = useCallback(() => {
+    axios.get('/api/ai/router/status')
+      .then(res => setRouterStatus(res.data))
+      .catch(() => {})
+      .finally(() => setRouterLoading(false));
+  }, []);
+
+  useEffect(() => {
+    fetchRouterStatus();
+    const timer = setInterval(fetchRouterStatus, 20000);
+    return () => clearInterval(timer);
+  }, [fetchRouterStatus]);
 
 
 
@@ -1374,7 +1391,145 @@ export default function SettingsPage() {
         )}
       </div>
 
-      {/* ── Section 6: About ──────────────────────────────────────────────── */}
+      {/* ── Section 7: 9Router AI Gateway Telemetry ────────────────────────── */}
+      <div style={card}>
+        <SectionHeader
+          icon={<SciFiQuantumIcon size={18} color="var(--accent-magenta)" />}
+          title="9ROUTER AI GATEWAY & MULTI-PROVIDER POOL"
+          subtitle="Smart Tiered Routing · Multi-Key Load Balancer · RTK Token Killer · Auto-Fallback"
+        />
+
+        {routerLoading ? (
+          <div style={{ color: 'var(--text-secondary)', fontFamily: 'Share Tech Mono', fontSize: '0.8rem', opacity: 0.6 }}>
+            Loading 9Router status...
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            {/* Quick Metrics Bar */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '10px' }}>
+              <div style={{ padding: '10px 14px', background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(0,243,255,0.1)' }}>
+                <div style={{ fontSize: '0.65rem', color: 'var(--accent-cyan)', fontFamily: 'Share Tech Mono', letterSpacing: '1px' }}>
+                  ROUTER STATUS
+                </div>
+                <div style={{ fontSize: '0.95rem', color: 'var(--accent-green)', fontFamily: 'Share Tech Mono', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '6px', marginTop: '3px' }}>
+                  <SciFiPulseBadge size={12} color="var(--accent-green)" /> {routerStatus?.status?.toUpperCase() || 'ONLINE'}
+                </div>
+              </div>
+
+              <div style={{ padding: '10px 14px', background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(0,243,255,0.1)' }}>
+                <div style={{ fontSize: '0.65rem', color: 'var(--accent-cyan)', fontFamily: 'Share Tech Mono', letterSpacing: '1px' }}>
+                  TOTAL ROUTED
+                </div>
+                <div style={{ fontSize: '0.95rem', color: 'var(--text-primary)', fontFamily: 'Share Tech Mono', fontWeight: 'bold', marginTop: '3px' }}>
+                  {routerStatus?.total_routed ?? 0} requests
+                </div>
+              </div>
+
+              <div style={{ padding: '10px 14px', background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(0,243,255,0.1)' }}>
+                <div style={{ fontSize: '0.65rem', color: 'var(--accent-cyan)', fontFamily: 'Share Tech Mono', letterSpacing: '1px' }}>
+                  RTK TOKENS SAVED
+                </div>
+                <div style={{ fontSize: '0.95rem', color: 'var(--accent-yellow)', fontFamily: 'Share Tech Mono', fontWeight: 'bold', marginTop: '3px' }}>
+                  ~{routerStatus?.rtk?.estimated_tokens_saved ?? 0} tok ({routerStatus?.rtk?.total_compressions ?? 0} runs)
+                </div>
+              </div>
+
+              <div style={{ padding: '10px 14px', background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(0,243,255,0.1)' }}>
+                <div style={{ fontSize: '0.65rem', color: 'var(--accent-cyan)', fontFamily: 'Share Tech Mono', letterSpacing: '1px' }}>
+                  AUTO-FAILOVERS
+                </div>
+                <div style={{ fontSize: '0.95rem', color: (routerStatus?.total_failovers || 0) > 0 ? 'var(--accent-pink)' : 'var(--accent-cyan)', fontFamily: 'Share Tech Mono', fontWeight: 'bold', marginTop: '3px' }}>
+                  {routerStatus?.total_failovers ?? 0}
+                </div>
+              </div>
+            </div>
+
+            {/* Providers & Keys List */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '6px' }}>
+              {(routerStatus?.providers || []).map((prov) => (
+                <div key={prov.name} style={{
+                  padding: '12px 16px',
+                  background: 'rgba(0,0,0,0.25)',
+                  border: `1px solid ${prov.tier === 1 ? 'rgba(0,243,255,0.2)' : 'rgba(255,0,255,0.2)'}`,
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', flexWrap: 'wrap', gap: '8px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span style={{
+                        padding: '2px 8px',
+                        background: prov.tier === 1 ? 'rgba(0,243,255,0.15)' : 'rgba(255,0,255,0.15)',
+                        border: `1px solid ${prov.tier === 1 ? 'var(--accent-cyan)' : 'var(--accent-magenta)'}`,
+                        color: prov.tier === 1 ? 'var(--accent-cyan)' : 'var(--accent-magenta)',
+                        fontSize: '0.68rem',
+                        fontFamily: 'Share Tech Mono',
+                      }}>
+                        TIER {prov.tier}: {prov.name.toUpperCase()}
+                      </span>
+                      <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontFamily: 'Share Tech Mono' }}>
+                        Model: <code style={{ color: 'var(--accent-cyan)' }}>{prov.model}</code>
+                      </span>
+                    </div>
+
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontFamily: 'Share Tech Mono' }}>
+                      Active Keys: <strong style={{ color: 'var(--accent-green)' }}>{prov.active_keys}</strong> / {prov.total_keys} · Success: {prov.successful_requests}/{prov.total_requests}
+                    </div>
+                  </div>
+
+                  {/* Key pills */}
+                  <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                    {(prov.keys || []).map((k) => (
+                      <div key={k.key_id} style={{
+                        padding: '4px 8px',
+                        background: k.available ? 'rgba(0,255,102,0.08)' : 'rgba(255,0,85,0.12)',
+                        border: `1px solid ${k.available ? 'rgba(0,255,102,0.3)' : 'rgba(255,0,85,0.4)'}`,
+                        fontSize: '0.68rem',
+                        fontFamily: 'Share Tech Mono',
+                        color: k.available ? 'var(--accent-green)' : 'var(--accent-pink)',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '5px',
+                      }}>
+                        <span>Key #{k.key_id} ({k.masked})</span>
+                        {k.available ? (
+                          <span style={{ opacity: 0.7 }}>· {k.usage_count} req</span>
+                        ) : (
+                          <span style={{ color: 'var(--accent-pink)', fontWeight: 'bold' }}>
+                            [429 Cooldown {k.cooldown_remaining_sec}s]
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* OpenAI API Gateway Connection Endpoint */}
+            <div style={{
+              marginTop: '4px', padding: '10px 14px',
+              background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(0,243,255,0.08)',
+              fontSize: '0.72rem', color: 'var(--text-secondary)',
+              fontFamily: 'Share Tech Mono', opacity: 0.8,
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px'
+            }}>
+              <div>
+                <SciFiTerminalPromptIcon size={14} color="var(--accent-cyan)" /> OpenAI Gateway: <code>POST /v1/chat/completions</code> (Port 8084)
+              </div>
+              <button
+                onClick={fetchRouterStatus}
+                style={{
+                  background: 'rgba(0,243,255,0.1)', border: '1px solid rgba(0,243,255,0.3)',
+                  color: 'var(--accent-cyan)', padding: '3px 10px', fontSize: '0.7rem',
+                  cursor: 'pointer', fontFamily: 'Share Tech Mono'
+                }}
+              >
+                Refresh Telemetry
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ── Section 8: About ──────────────────────────────────────────────── */}
       <div style={card}>
         <SectionHeader
           icon={<SciFiInfoIcon size={18} color="var(--accent-cyan)" />}

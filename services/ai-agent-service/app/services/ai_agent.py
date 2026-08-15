@@ -2,16 +2,14 @@ import asyncio
 import json
 import logging
 from typing import Any, Dict, List, Optional
-import httpx
 
 from app.config import settings
-from app.core.groq_pool import GroqKeyPool
+from app.core.llm_router import LlmRouter
 from app.core.ssh_client import SshClient
 from app.services.message_cache import FacebookMessageCache
 
 logger = logging.getLogger(__name__)
 
-GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 MAX_AGENT_ITERATIONS = 5
 MAX_HISTORY_MESSAGES = 6
 
@@ -19,126 +17,22 @@ MAX_HISTORY_MESSAGES = 6
 class AiAgentService:
     def __init__(
         self,
-        groq_pool: GroqKeyPool,
+        llm_router: LlmRouter,
         ssh_client: SshClient,
         message_cache: FacebookMessageCache,
         fb_service_ref: Any = None,
     ):
-        self.groq_pool = groq_pool
+        self.llm_router = llm_router
         self.ssh_client = ssh_client
         self.message_cache = message_cache
         self.fb_service = fb_service_ref
-        self.model = settings.GROQ_MODEL
         self._history_map: Dict[str, List[Dict[str, Any]]] = {}
-        self._http_client = httpx.AsyncClient(timeout=120.0)
 
     def set_fb_service(self, fb_service: Any) -> None:
         self.fb_service = fb_service
 
     def is_configured(self) -> bool:
-        return self.groq_pool.has_keys() or bool(settings.OPENROUTER_API_KEY.strip())
-
-    async def _call_llm(self, messages: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-        """
-        Executes LLM completion with Primary (Groq Multi-Key Pool) -> Secondary (OpenRouter Fallback).
-        Returns the parsed message dict from choices[0] or None on failure.
-        """
-        tools = self._build_tools()
-
-        # ─── TIER 1: Groq Multi-Key Pool ──────────────────────────────────────────
-        if self.groq_pool.has_keys():
-            for _ in range(min(3, max(1, self.groq_pool.key_count))):
-                key = await self.groq_pool.get_next_key()
-                if not key:
-                    break
-
-                payload = {
-                    "model": self.model,
-                    "messages": messages,
-                    "tools": tools,
-                    "tool_choice": "auto",
-                    "temperature": 0.1,
-                    "max_tokens": 1024,
-                }
-
-                try:
-                    response = await self._http_client.post(
-                        GROQ_API_URL,
-                        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-                        json=payload,
-                    )
-
-                    if response.status_code == 429:
-                        await self.groq_pool.mark_rate_limited(key)
-                        continue
-
-                    if response.status_code == 200:
-                        data = response.json()
-                        choice = data["choices"][0]
-                        return {
-                            "provider": "groq",
-                            "message": choice.get("message", {}),
-                            "finish_reason": choice.get("finish_reason", "stop"),
-                        }
-
-                    # Resilient parser for Groq tool_use_failed (400)
-                    if response.status_code == 400 and "failed_generation" in response.text:
-                        err_data = response.json()
-                        failed_gen = err_data.get("error", {}).get("failed_generation", "")
-                        if failed_gen:
-                            import re
-                            cleaned = re.sub(r"<function=.*?>.*?</function>", "", failed_gen, flags=re.DOTALL).strip()
-                            cleaned = re.sub(r"<function=.*", "", cleaned, flags=re.DOTALL).strip()
-                            if cleaned:
-                                return {
-                                    "provider": "groq_failed_gen",
-                                    "message": {"role": "assistant", "content": cleaned},
-                                    "finish_reason": "stop",
-                                }
-
-                    logger.warning("[AiAgent] Groq HTTP %d: %s. Attempting fallback...", response.status_code, response.text[:200])
-                    break
-                except Exception as ex:
-                    logger.warning("[AiAgent] Groq request error: %s. Attempting fallback...", ex)
-                    break
-
-        # ─── TIER 2: OpenRouter Multi-Model Fallback ──────────────────────────────
-        if settings.OPENROUTER_API_KEY and settings.OPENROUTER_API_KEY.strip():
-            try:
-                openrouter_payload = {
-                    "model": settings.OPENROUTER_MODEL,
-                    "messages": messages,
-                    "tools": tools,
-                    "tool_choice": "auto",
-                    "temperature": 0.1,
-                    "max_tokens": 1024,
-                }
-                openrouter_headers = {
-                    "Authorization": f"Bearer {settings.OPENROUTER_API_KEY.strip()}",
-                    "Content-Type": "application/json",
-                    "HTTP-Referer": "https://dashboard.kirito.server",
-                    "X-Title": "Server Dashboard AI",
-                }
-                logger.info("[AiAgent] Calling OpenRouter fallback with model: %s", settings.OPENROUTER_MODEL)
-                response = await self._http_client.post(
-                    settings.OPENROUTER_API_URL,
-                    headers=openrouter_headers,
-                    json=openrouter_payload,
-                )
-                if response.status_code == 200:
-                    data = response.json()
-                    choice = data["choices"][0]
-                    return {
-                        "provider": "openrouter",
-                        "message": choice.get("message", {}),
-                        "finish_reason": choice.get("finish_reason", "stop"),
-                    }
-                else:
-                    logger.error("[AiAgent] OpenRouter HTTP %d: %s", response.status_code, response.text[:200])
-            except Exception as ex:
-                logger.error("[AiAgent] OpenRouter request exception: %s", ex)
-
-        return None
+        return self.llm_router.has_active_providers
 
     def clear_history(self, chat_id: str) -> None:
         self._history_map.pop(chat_id, None)
@@ -162,7 +56,7 @@ SERVER ENVIRONMENT & PROJECT CONTEXT:
   * `dashboard_metrics_service` (Spring Boot Metrics & Telemetry Service - Port 8082)
   * `dashboard_auth_service` (Spring Boot Authentication Service - Port 8081)
   * `dashboard_file_service` (Spring Boot File Manager Service - Port 8083)
-  * `dashboard_ai_agent` (Python FastAPI + Playwright AI Agent - Port 8084)
+  * `dashboard_ai_agent` (Python FastAPI + Playwright AI Agent & 9Router Gateway - Port 8084)
   * `dashboard_db` (PostgreSQL 17 Database)
 
 CRITICAL MARKDOWN & TELEGRAM ESCAPING RULES:
@@ -200,9 +94,9 @@ ADVANCED NATURAL LANGUAGE & INTENT RESOLUTION:
    - When `facebook_send_reply` succeeds, confirm clearly: `Đã gửi tin nhắn cho "<recipient_name>": "<message>"`.
    - Never hallucinate fake responses. Always rely on actual tool execution returns.
 
-COMMUNICATION TONE & FORMAT:
-- ALWAYS respond in Vietnamese when the user writes in Vietnamese.
-- Be polite, professional, concise, and structured. Use Markdown formatting (`code blocks`, *bold*, emojis).
+5. LANGUAGE RULE:
+   - Answer directly and helpfully in Vietnamese unless requested otherwise.
+   - For simple greetings, respond with a warm greeting and brief list of server monitoring capabilities.
 """
 
     def _build_tools(self) -> List[Dict[str, Any]]:
@@ -211,16 +105,13 @@ COMMUNICATION TONE & FORMAT:
                 "type": "function",
                 "function": {
                     "name": "run_command",
-                    "description": (
-                        "Execute a read-only Linux shell command on the remote server via SSH. "
-                        "Use this whenever you need real-time server data such as IP, CPU, RAM, Disk, or Docker status."
-                    ),
+                    "description": "Execute a non-interactive bash command on the Linux server via SSH to inspect metrics or system state.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "command": {
                                 "type": "string",
-                                "description": "The shell command to execute, e.g. 'df -h' or 'curl -s https://api.ipify.org'.",
+                                "description": "The bash command to execute (e.g., 'free -m', 'df -h', 'docker ps', 'top -b -n 1').",
                             }
                         },
                         "required": ["command"],
@@ -231,35 +122,25 @@ COMMUNICATION TONE & FORMAT:
                 "type": "function",
                 "function": {
                     "name": "facebook_get_messages",
-                    "description": (
-                        "Get the list of Facebook Messenger messages received while the owner was away. "
-                        "Returns sender names, incoming message lists, timestamps, and whether auto-replies were sent."
-                    ),
-                    "parameters": {
-                        "type": "object",
-                        "properties": {},
-                        "required": [],
-                    },
+                    "description": "Retrieve recent scanned Facebook Messenger conversations, incoming messages, and reply statuses.",
+                    "parameters": {"type": "object", "properties": {}},
                 },
             },
             {
                 "type": "function",
                 "function": {
                     "name": "facebook_send_reply",
-                    "description": (
-                        "Send a Facebook Messenger message to a specific person by name. "
-                        "Only call when the user explicitly requests to send a message."
-                    ),
+                    "description": "Send a direct reply message to a Facebook contact in Messenger. NEVER invent or send a message unless the user explicitly requested to reply to that specific contact.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "recipient_name": {
                                 "type": "string",
-                                "description": "Full or partial name of the Facebook contact.",
+                                "description": "The exact or partial name of the Facebook contact (e.g., 'Trần Văn Mạnh').",
                             },
                             "message": {
                                 "type": "string",
-                                "description": "The message text to send.",
+                                "description": "The exact message text to send to the recipient.",
                             },
                         },
                         "required": ["recipient_name", "message"],
@@ -270,15 +151,18 @@ COMMUNICATION TONE & FORMAT:
 
     async def _execute_tool(self, tool_name: str, tool_args: Dict[str, Any]) -> str:
         if tool_name == "run_command":
-            cmd = tool_args.get("command", "").strip()
+            cmd = tool_args.get("command", "")
             if not cmd:
-                return "No command provided."
-            return await self.ssh_client.execute_command(cmd)
+                return "Error: No command specified."
+            raw_output = await self.ssh_client.execute_command(cmd)
+            # Apply 9Router RTK output compression to conserve tokens
+            return self.llm_router.rtk.compress(raw_output, max_chars=3000, max_lines=40)
 
-        elif tool_name == "facebook_get_messages":
-            return await self.message_cache.to_ai_summary()
+        if tool_name == "facebook_get_messages":
+            raw_cache = self.message_cache.format_for_prompt()
+            return self.llm_router.rtk.compress(raw_cache, max_chars=3000, max_lines=40)
 
-        elif tool_name == "facebook_send_reply":
+        if tool_name == "facebook_send_reply":
             if not self.fb_service:
                 return "Facebook service is not initialized."
             recipient = tool_args.get("recipient_name", "").strip()
@@ -295,7 +179,7 @@ COMMUNICATION TONE & FORMAT:
 
         if self._is_greeting(user_message):
             greeting = (
-                'Xin chào! Tôi là "Tiểu Bảo Bảo trợ lí của Mạnh (Cua)", trợ lý tự động giám sát máy chủ Linux. '
+                'Xin chào! Tôi là "Tiểu Bảo Bảo trợ lí của Mạnh (Cua)", trợ lý tự động giám sát máy chủ Linux (Được tăng tốc bởi 9Router AI Gateway). '
                 "Tôi có thể giúp bạn kiểm tra CPU, RAM, Disk, Docker containers, hoặc các tiến trình theo thời gian thực. "
                 "Bạn có câu hỏi nào về máy chủ không?"
             )
@@ -310,13 +194,21 @@ COMMUNICATION TONE & FORMAT:
             messages = [{"role": "system", "content": self._build_system_prompt()}]
             messages.extend(list(history))
 
-            llm_result = await self._call_llm(messages)
+            llm_result = await self.llm_router.complete(
+                messages=messages,
+                tools=self._build_tools(),
+                tool_choice="auto",
+                temperature=0.1,
+                max_tokens=1024,
+            )
+
             if not llm_result:
                 self.clear_history(chat_id)
-                return "Xin lỗi, tất cả các nhà cung cấp AI (Groq & OpenRouter) hiện đều không khả dụng. Vui lòng thử lại sau giây lát."
+                return "Xin lỗi, 9Router AI Gateway hiện không kết nối được tới các nhà cung cấp AI. Vui lòng thử lại sau giây lát."
 
-            assistant_msg = llm_result["message"]
-            finish_reason = llm_result.get("finish_reason", "stop")
+            choice = llm_result["choices"][0]
+            assistant_msg = choice.get("message", {})
+            finish_reason = choice.get("finish_reason", "stop")
             raw_content = assistant_msg.get("content") or ""
             has_tool_calls = finish_reason == "tool_calls" and bool(assistant_msg.get("tool_calls"))
 

@@ -3,15 +3,16 @@ import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 
 from app.config import settings
-from app.core.groq_pool import GroqKeyPool
+from app.core.llm_router import LlmRouter
 from app.core.ssh_client import SshClient
 from app.services.message_cache import FacebookMessageCache
 from app.services.facebook_service import FacebookService
 from app.services.ai_agent import AiAgentService
 from app.services.telegram_bot import TelegramBot
-from app.routers import health, facebook
+from app.routers import health, facebook, openai_gateway
 
 logging.basicConfig(
     level=logging.INFO,
@@ -42,21 +43,21 @@ async def facebook_periodic_scan_loop(fb_service: FacebookService):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("Starting up AI Agent Service (Python)...")
+    logger.info("Starting up AI Agent & 9Router Service (Python)...")
 
-    # 1. Initialize core components
-    groq_pool = GroqKeyPool(settings.groq_keys)
+    # 1. Initialize core 9Router Engine & Infrastructure
+    llm_router = LlmRouter()
     ssh_client = SshClient()
     message_cache = FacebookMessageCache()
 
     # 2. Initialize domain services with bidirectional wiring
     fb_service = FacebookService(message_cache)
-    ai_agent = AiAgentService(groq_pool, ssh_client, message_cache, fb_service)
+    ai_agent = AiAgentService(llm_router, ssh_client, message_cache, fb_service)
     fb_service.set_ai_agent(ai_agent)
     telegram_bot = TelegramBot(ai_agent, ssh_client)
 
     # 3. Attach to app state for dependency injection in routers
-    app.state.groq_pool = groq_pool
+    app.state.llm_router = llm_router
     app.state.ssh_client = ssh_client
     app.state.message_cache = message_cache
     app.state.fb_service = fb_service
@@ -69,7 +70,7 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    logger.info("Shutting down AI Agent Service...")
+    logger.info("Shutting down AI Agent & 9Router Service...")
     telegram_bot.stop()
     telegram_task.cancel()
     fb_scan_task.cancel()
@@ -80,13 +81,11 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="AI Agent & Automation Microservice",
-    description="Python Async FastAPI microservice for AI Agent, Telegram Bot & Facebook Messenger Automation",
-    version="1.0.0",
+    title="9Router AI Gateway & Automation Microservice",
+    description="Python Async FastAPI microservice with 9Router OpenAI-compatible Gateway, Telegram Bot & Facebook Messenger Automation",
+    version="2.0.0",
     lifespan=lifespan,
 )
-
-from fastapi.middleware.gzip import GZipMiddleware
 
 # Gzip Compression (reduces large JSON payloads by 85%)
 app.add_middleware(GZipMiddleware, minimum_size=1000)
@@ -103,3 +102,4 @@ app.add_middleware(
 # Include Routers
 app.include_router(health.router)
 app.include_router(facebook.router)
+app.include_router(openai_gateway.router)

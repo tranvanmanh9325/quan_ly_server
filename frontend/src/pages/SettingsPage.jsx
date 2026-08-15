@@ -417,6 +417,10 @@ export default function SettingsPage() {
     setFbTestResult(null);
   }, []);
 
+  const closeFbScanModal = useCallback(() => {
+    setFbScanModal(prev => ({ ...prev, open: false }));
+  }, []);
+
   const handleSaveFacebook = async () => {
     try {
       await axios.post('/api/facebook/config', fbConfig);

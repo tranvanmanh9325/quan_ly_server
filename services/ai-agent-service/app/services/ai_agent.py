@@ -91,13 +91,13 @@ Bạn là "Tiểu Bảo Bảo" — Trợ lý AI kiêm Kỹ sư DevOps tự hành
                 "type": "function",
                 "function": {
                     "name": "run_command",
-                    "description": "Execute a non-interactive bash command on the Linux server via SSH to inspect metrics or system state.",
+                    "description": "Thực thi lệnh shell / bash trên máy chủ Linux kirito-server qua SSH để lấy thông tin CPU, RAM, Disk, Docker, Network, tiến trình.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "command": {
                                 "type": "string",
-                                "description": "The bash command to execute (e.g., 'free -m', 'df -h', 'docker ps', 'top -b -n 1').",
+                                "description": "Lệnh bash cần chạy (ví dụ: 'free -h', 'df -h', 'docker ps', 'ps aux --sort=-%cpu | head -n 6').",
                             }
                         },
                         "required": ["command"],
@@ -108,7 +108,7 @@ Bạn là "Tiểu Bảo Bảo" — Trợ lý AI kiêm Kỹ sư DevOps tự hành
                 "type": "function",
                 "function": {
                     "name": "facebook_get_messages",
-                    "description": "Retrieve recent scanned Facebook Messenger conversations, incoming messages, and reply statuses.",
+                    "description": "Lấy danh sách các tin nhắn Facebook Messenger mới, tin nhắn lúc vắng mặt, ai đã nhắn tin và trạng thái phản hồi. Luôn gọi tool này khi người dùng hỏi về tin nhắn mới hoặc ai nhắn trong lúc vắng mặt.",
                     "parameters": {"type": "object", "properties": {}},
                 },
             },
@@ -116,17 +116,17 @@ Bạn là "Tiểu Bảo Bảo" — Trợ lý AI kiêm Kỹ sư DevOps tự hành
                 "type": "function",
                 "function": {
                     "name": "facebook_send_reply",
-                    "description": "Send a direct reply message to a Facebook contact in Messenger. NEVER invent or send a message unless the user explicitly requested to reply to that specific contact.",
+                    "description": "Gửi tin nhắn trả lời trực tiếp cho một liên hệ trên Facebook Messenger.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "recipient_name": {
                                 "type": "string",
-                                "description": "The exact or partial name of the Facebook contact (e.g., 'Trần Văn Mạnh').",
+                                "description": "Tên người nhận (ví dụ: 'Trần Văn Mạnh', 'Thảo', 'Nam').",
                             },
                             "message": {
                                 "type": "string",
-                                "description": "The exact message text to send to the recipient.",
+                                "description": "Nội dung tin nhắn cần gửi.",
                             },
                         },
                         "required": ["recipient_name", "message"],

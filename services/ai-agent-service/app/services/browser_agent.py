@@ -54,6 +54,14 @@ GOOGLE_SEARCH = "https://www.google.com/search?q={query}&hl=vi"
 DEFAULT_TIMEOUT_MS = 30_000
 NAV_TIMEOUT_MS = 45_000
 
+# Screenshot quality thresholds
+# A skeleton/blank FB page compresses to ~20-50 KB at 1366x768.
+# A real profile with cover photo is typically 150 KB+.
+# We use 60 KB as a conservative minimum for a "valid" profile screenshot.
+SCREENSHOT_MIN_BYTES = 60 * 1024   # 60 KB
+SCREENSHOT_MAX_RETRIES = 3          # retry count before giving up
+SCREENSHOT_RETRY_WAIT_S = 4.0       # extra seconds to wait between retries
+
 
 # ─── Helper ───────────────────────────────────────────────────────────────────
 
@@ -224,11 +232,120 @@ class BrowserAgentService:
             pass
 
     async def _screenshot(self, page: Page, name: str) -> str:
-        """Take a full-page screenshot and return its absolute path."""
+        """Take a viewport screenshot and return its absolute path."""
         path = str(SCREENSHOT_DIR / f"{name}_{_now_ms()}.png")
         await page.screenshot(path=path, full_page=False)
         logger.info("[BrowserAgent] Screenshot saved → %s", path)
         return path
+
+    async def _wait_for_profile_content(self, page: Page) -> None:
+        """Wait until the Facebook profile page has rendered real content.
+
+        Facebook's profile SPA renders in two phases:
+          Phase 1 – Skeleton (gray placeholder blocks): DOM structure is present
+                    but images are missing and h1 is empty / not rendered.
+          Phase 2 – Real content: h1 contains the person's name, at least one
+                    <img> with a non-data-URI src appears in the viewport area.
+
+        We wait for Phase 2 with a JS poll so we don't rely on fixed sleeps.
+        Falls back gracefully after 25 s (better a slightly-loaded page than a timeout).
+        """
+        js_check = """
+        () => {
+            // h1 must exist and contain non-whitespace text
+            const h1 = document.querySelector('h1');
+            if (!h1 || !h1.innerText.trim()) return false;
+
+            // At least one real image (not data: URI, not 1x1 tracking pixel)
+            // must be visible in the upper half of the page (cover / avatar area).
+            const imgs = document.querySelectorAll('img[src]');
+            for (const img of imgs) {
+                const src = img.src || '';
+                if (src.startsWith('data:')) continue;
+                if (img.naturalWidth < 50 || img.naturalHeight < 50) continue;
+                const rect = img.getBoundingClientRect();
+                if (rect.top < window.innerHeight * 0.7 && rect.width > 50) return true;
+            }
+            return false;
+        }
+        """
+        try:
+            await page.wait_for_function(js_check, timeout=25000)
+            logger.info("[BrowserAgent] Profile content detected (h1 + images visible).")
+        except Exception:
+            logger.warning("[BrowserAgent] Profile content wait timed out; proceeding anyway.")
+
+    def _is_screenshot_valid(self, path: str) -> bool:
+        """Check whether a saved PNG screenshot contains real page content.
+
+        Rationale: PNG compresses repetitive/uniform areas extremely well.
+        A skeleton / blank page (mostly solid gray blocks) will compress to
+        ~20–50 KB at 1366×768, while a real profile page with a colourful cover
+        photo and text will exceed 100 KB. We use 60 KB as a conservative lower
+        bound to flag 'loading' screenshots for retry.
+        """
+        try:
+            file_size = Path(path).stat().st_size
+            logger.info(
+                "[BrowserAgent] Screenshot quality check: %s → %d bytes (%.1f KB)",
+                Path(path).name,
+                file_size,
+                file_size / 1024,
+            )
+            return file_size >= SCREENSHOT_MIN_BYTES
+        except Exception as e:
+            logger.warning("[BrowserAgent] Could not stat screenshot %s: %s", path, e)
+            return True  # assume OK if we can't check
+
+    async def _screenshot_with_quality_check(
+        self,
+        page: Page,
+        name: str,
+        wait_fn: Optional[str] = None,
+    ) -> str:
+        """Take a screenshot and retry up to SCREENSHOT_MAX_RETRIES times if the
+        file is suspiciously small (indicating a skeleton / loading state).
+
+        Between retries the helper:
+          1. Waits SCREENSHOT_RETRY_WAIT_S seconds for more content to render.
+          2. Scrolls back to top (some FB elements only render when in viewport).
+          3. Re-dismisses any overlays that might have appeared.
+          4. Optionally re-evaluates the caller-supplied wait_fn JS condition.
+        """
+        for attempt in range(1, SCREENSHOT_MAX_RETRIES + 1):
+            path = str(SCREENSHOT_DIR / f"{name}_{_now_ms()}.png")
+            await page.screenshot(path=path, full_page=False)
+
+            if self._is_screenshot_valid(path):
+                logger.info("[BrowserAgent] Screenshot OK (attempt %d).", attempt)
+                return path
+
+            logger.warning(
+                "[BrowserAgent] Screenshot too small (attempt %d/%d); page may still be loading. Retrying in %.0fs.",
+                attempt,
+                SCREENSHOT_MAX_RETRIES,
+                SCREENSHOT_RETRY_WAIT_S,
+            )
+
+            if attempt < SCREENSHOT_MAX_RETRIES:
+                await asyncio.sleep(SCREENSHOT_RETRY_WAIT_S)
+                # Scroll to top so cover photo is in the viewport
+                try:
+                    await page.evaluate("window.scrollTo(0, 0)")
+                except Exception:
+                    pass
+                await self._dismiss_overlays(page)
+                # If a JS readiness condition was provided, wait for it again
+                if wait_fn:
+                    try:
+                        await page.wait_for_function(wait_fn, timeout=10000)
+                    except Exception:
+                        pass
+
+        # All retries exhausted — return the last screenshot regardless
+        logger.warning("[BrowserAgent] All %d screenshot attempts returned small file; using last one.", SCREENSHOT_MAX_RETRIES)
+        return path  # noqa: F821 — defined in last loop iteration
+
 
     async def _extract_page_text(self, page: Page, max_chars: int = 4000) -> str:
         """Extract visible text from page body, truncated to max_chars."""
@@ -280,13 +397,17 @@ class BrowserAgentService:
                         await page.goto(profile_url, wait_until="commit", timeout=NAV_TIMEOUT_MS)
                     except Exception as e:
                         logger.warning("[BrowserAgent] Direct goto notice: %s", e)
-                    await asyncio.sleep(10)
+
+                    # Wait for real profile content (h1 + images), not skeleton
+                    await self._wait_for_profile_content(page)
                     await self._dismiss_overlays(page)
+
+                    # Scroll to expose intro section below the cover photo
                     try:
                         await page.evaluate("window.scrollBy(0, 350)")
+                        await asyncio.sleep(1)
                     except Exception:
                         pass
-                    await asyncio.sleep(1.5)
 
                     try:
                         profile_name = await page.locator("h1").first.inner_text(timeout=5000)
@@ -295,7 +416,14 @@ class BrowserAgentService:
 
                     intro_text = await self._extract_intro_text(page)
                     await self._dismiss_overlays(page)
-                    img_path = await self._screenshot(page, f"fb_profile_{_safe_filename(name_query)}")
+                    # Scroll back to top so cover photo is visible in the screenshot
+                    try:
+                        await page.evaluate("window.scrollTo(0, 0)")
+                    except Exception:
+                        pass
+                    img_path = await self._screenshot_with_quality_check(
+                        page, f"fb_profile_{_safe_filename(name_query)}"
+                    )
                     final_url = page.url
                     await page.close()
                     return {
@@ -306,6 +434,7 @@ class BrowserAgentService:
                         "intro_text": intro_text,
                         "source": "direct",
                     }
+
 
                 # ── Fallback: People Search ────────────────────────────────────
                 search_url = FB_PEOPLE_SEARCH.format(query=quote(name_query))
@@ -356,15 +485,17 @@ class BrowserAgentService:
                 except Exception as e:
                     logger.warning("[BrowserAgent] Profile goto notice: %s", e)
 
-                await asyncio.sleep(10)
+                # Wait for real profile content (h1 + images), not skeleton
+                await self._wait_for_profile_content(page)
                 await self._dismiss_overlays(page)
+
+                # Scroll to expose intro section below the cover photo
                 try:
                     await page.evaluate("window.scrollBy(0, 350)")
+                    await asyncio.sleep(1)
                 except Exception:
                     pass
-                await asyncio.sleep(1.5)
 
-                # ── Step 7: Extract name & intro ─────────────────────────────
                 try:
                     profile_name = await page.locator("h1").first.inner_text(timeout=5000)
                 except Exception:
@@ -372,9 +503,15 @@ class BrowserAgentService:
 
                 intro_text = await self._extract_intro_text(page)
 
-                # ── Step 8: Screenshot ────────────────────────────────────────
                 await self._dismiss_overlays(page)
-                img_path = await self._screenshot(page, f"fb_profile_{_safe_filename(name_query)}")
+                # Scroll back to top so cover photo is in the viewport
+                try:
+                    await page.evaluate("window.scrollTo(0, 0)")
+                except Exception:
+                    pass
+                img_path = await self._screenshot_with_quality_check(
+                    page, f"fb_profile_{_safe_filename(name_query)}"
+                )
                 final_url = page.url
                 await page.close()
 
@@ -384,7 +521,9 @@ class BrowserAgentService:
                     "profile_name": profile_name.strip(),
                     "profile_url": final_url,
                     "intro_text": intro_text,
+                    "source": "search",
                 }
+
 
             except Exception as e:
                 logger.error("[BrowserAgent] facebook_view_profile error: %s", e, exc_info=True)

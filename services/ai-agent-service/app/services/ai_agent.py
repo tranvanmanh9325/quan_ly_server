@@ -498,6 +498,9 @@ Với mọi yêu cầu phức tạp (tra cứu web, xem profile, tìm kiếm), h
 
                     try:
                         fn_args = json.loads(tc.get("function", {}).get("arguments", "{}"))
+                        # Groq sometimes corrupts Vietnamese diacritics in tool_call JSON.
+                        # Restore the original name from the user's message when possible.
+                        fn_args = self._repair_unicode_args(fn_args, user_message)
                     except Exception:
                         fn_args = {}
 
@@ -596,3 +599,58 @@ Với mọi yêu cầu phức tạp (tra cứu web, xem profile, tìm kiếm), h
                 pass
 
         return calls
+
+    def _repair_unicode_args(self, args: Dict[str, Any], source_text: str) -> Dict[str, Any]:
+        """
+        Repair Vietnamese diacritics lost by Groq API in tool_call JSON arguments.
+
+        Groq's tool-calling implementation occasionally strips or corrupts Unicode
+        combining characters in the JSON string values it generates. For example,
+        'Trần Văn Mạnh' can become 'Trán Ván Mạnh'. Since the correct form must
+        appear somewhere in the original user_message, we detect corruption and
+        substitute the best-matching span from that source.
+
+        Strategy (per string arg):
+          1. Normalise both the arg value and every same-length window in source_text
+             to NFC and strip diacritics via NFD decomposition.
+          2. Compare the stripped (ASCII-ish) forms — if they are equal, the source
+             window is the diacritic-correct version of the arg value.
+          3. Replace the arg value with the source window.
+        """
+        import unicodedata
+
+        def _strip(s: str) -> str:
+            """Remove Unicode combining characters (diacritics)."""
+            return "".join(
+                c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn"
+            ).lower().strip()
+
+        if not source_text or not args:
+            return args
+
+        repaired = dict(args)
+        for key, value in args.items():
+            if not isinstance(value, str) or len(value) < 3:
+                continue
+            stripped_val = _strip(value)
+            # Slide a window of same word-count over the source text
+            src_words = source_text.split()
+            val_words = value.split()
+            wlen = len(val_words)
+            if wlen == 0:
+                continue
+            best_candidate = value
+            for i in range(len(src_words) - wlen + 1):
+                window = " ".join(src_words[i:i + wlen])
+                if _strip(window) == stripped_val:
+                    best_candidate = window
+                    break
+            if best_candidate != value:
+                logger.info(
+                    "[AiAgent] Unicode repair: '%s' → '%s' (key=%s)",
+                    value,
+                    best_candidate,
+                    key,
+                )
+            repaired[key] = best_candidate
+        return repaired

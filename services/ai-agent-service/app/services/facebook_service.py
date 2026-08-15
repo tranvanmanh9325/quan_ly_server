@@ -23,6 +23,10 @@ VN_TZ = timezone(timedelta(hours=7))
 # headless mode because Facebook's E2EE requires local IndexedDB encryption keys.
 BROWSER_DATA_DIR = "/app/browser_data"
 
+# Marker strings uniquely identifying the bot's auto-reply (away message).
+# Used both to detect "this is a bot message" in DOM and to skip scan logic.
+AWAY_REPLY_MARKERS = ("Tiểu Bảo Bảo", "trợ lí AI", "vắng mặt")
+
 
 class FacebookService:
     def __init__(self, message_cache: FacebookMessageCache, ai_agent_ref: Any = None):
@@ -693,6 +697,139 @@ class FacebookService:
             logger.warning("[FB-Service] Failed to send message in chat: %s", e)
             return False
 
+    async def _unsend_message(self, page: Page, message_text: str) -> bool:
+        """
+        Unsends (recalls) a specific message by its text content in the currently open chat.
+
+        Flow: Hover message bubble → reveal "..." (More) button → click Gỡ (Remove) →
+              confirm "Gỡ cho mọi người" (Remove for everyone).
+
+        Uses multiple fallback selectors because Facebook's obfuscated CSS classes
+        change frequently; role/label-based selectors are most resilient.
+        """
+        try:
+            # 1. Use the first ~40 chars as a unique search key (avoids issues with very long text)
+            search_snippet = message_text[:40].strip()
+            if not search_snippet:
+                return False
+
+            # 2. Scroll to bottom — auto-reply is recent, should be near the bottom
+            await page.keyboard.press("End")
+            await asyncio.sleep(1.0)
+
+            # 3. Locate the message bubble containing our text (last match = most recent)
+            #    Facebook renders message text inside div[dir="auto"] elements
+            msg_locator = page.locator('div[dir="auto"]').filter(has_text=search_snippet)
+            count = await msg_locator.count()
+            if count == 0:
+                # Retry after short scroll up in case it's above viewport
+                await page.mouse.wheel(0, -800)
+                await asyncio.sleep(0.8)
+                count = await msg_locator.count()
+
+            if count == 0:
+                logger.warning("[FB-Service] Unsend: message bubble not found for snippet: %s", search_snippet)
+                return False
+
+            target_msg = msg_locator.nth(count - 1)  # last (most recent) occurrence
+            await target_msg.scroll_into_view_if_needed()
+            await asyncio.sleep(0.5)
+
+            # 4. Hover over the bubble to trigger Facebook's hover action toolbar
+            await target_msg.hover()
+            await asyncio.sleep(0.8)
+
+            # 5. Find and click the "More" (three-dot) button that appears on hover.
+            #    Try multiple aria-labels because Facebook uses different strings per locale.
+            more_btn = None
+            more_labels = ["Thêm hành động", "Thêm", "More", "More actions", "Tùy chọn thêm"]
+            for label in more_labels:
+                try:
+                    candidate = page.get_by_label(label, exact=False)
+                    if await candidate.count() > 0:
+                        # Prefer the button closest to our message by taking last visible one
+                        for i in range(await candidate.count() - 1, -1, -1):
+                            btn = candidate.nth(i)
+                            if await btn.is_visible():
+                                more_btn = btn
+                                break
+                    if more_btn:
+                        break
+                except Exception:
+                    continue
+
+            if not more_btn:
+                # Fallback: look for any small circular button near the message with role=button
+                logger.warning("[FB-Service] Unsend: could not locate 'More' hover button via aria-label")
+                return False
+
+            await more_btn.click()
+            await asyncio.sleep(0.6)
+
+            # 6. Click "Gỡ" / "Remove" from the context menu
+            removed = False
+            remove_patterns = [
+                re.compile(r"^Gỡ$", re.I),
+                re.compile(r"^Remove$", re.I),
+                re.compile(r"^Xóa$", re.I),
+            ]
+            for pattern in remove_patterns:
+                try:
+                    item = page.get_by_role("menuitem", name=pattern)
+                    if await item.count() > 0 and await item.first().is_visible():
+                        await item.first().click()
+                        removed = True
+                        break
+                except Exception:
+                    pass
+
+            if not removed:
+                # Fallback: try getByText
+                for label in ("Gỡ", "Remove", "Xóa"):
+                    try:
+                        item = page.get_by_text(label, exact=True)
+                        if await item.count() > 0 and await item.first().is_visible():
+                            await item.first().click()
+                            removed = True
+                            break
+                    except Exception:
+                        pass
+
+            if not removed:
+                logger.warning("[FB-Service] Unsend: could not find Remove option in context menu")
+                return False
+
+            await asyncio.sleep(0.8)
+
+            # 7. Confirm "Gỡ cho mọi người" / "Remove for everyone" in the confirmation dialog
+            confirmed = False
+            confirm_patterns = [
+                re.compile(r"Gỡ cho mọi người", re.I),
+                re.compile(r"Remove for everyone", re.I),
+                re.compile(r"Xóa cho mọi người", re.I),
+            ]
+            for pattern in confirm_patterns:
+                try:
+                    btn = page.get_by_role("button", name=pattern)
+                    if await btn.count() > 0 and await btn.first().is_visible():
+                        await btn.first().click()
+                        confirmed = True
+                        break
+                except Exception:
+                    pass
+
+            if not confirmed:
+                logger.warning("[FB-Service] Unsend: could not find 'Remove for everyone' confirmation button")
+                return False
+
+            await asyncio.sleep(1.5)
+            logger.info("[FB-Service] Auto-reply message successfully unsent.")
+            return True
+
+        except Exception as exc:
+            logger.error("[FB-Service] _unsend_message error: %s", exc, exc_info=True)
+            return False
+
     async def _sidebar_thread_links(self, page: Page) -> List[Dict[str, str]]:
         """Attempts to extract thread links from the sidebar.
 
@@ -914,7 +1051,34 @@ class FacebookService:
                                 #    The conversation is already replied to. NEVER send away message!
                                 if last_sender == "us":
                                     logger.info("[FB-Service] '%s': last message is from us; no auto-reply needed.", clean_name)
-                                    is_auto = "Tiểu Bảo Bảo" in last_msg_text or "trợ lí AI" in last_msg_text or "vắng mặt" in last_msg_text
+                                    is_auto = any(m in last_msg_text for m in AWAY_REPLY_MARKERS)
+
+                                    # ── Unsend trigger: human replied after bot sent auto-reply ──
+                                    # Condition: current last msg is human's direct reply (not bot),
+                                    # but a previous cache entry shows bot had sent an auto-reply
+                                    # that hasn't been unsent yet.
+                                    if not is_auto:
+                                        prev_entry = self.message_cache._find_entry_sync(clean_name)
+                                        if (
+                                            prev_entry
+                                            and prev_entry.was_auto_replied
+                                            and not prev_entry.auto_reply_unsent
+                                            and prev_entry.last_reply_sent
+                                        ):
+                                            logger.info(
+                                                "[FB-Service] '%s': human replied after bot auto-reply — attempting unsend.",
+                                                clean_name,
+                                            )
+                                            unsent_ok = await self._unsend_message(page, prev_entry.last_reply_sent)
+                                            if unsent_ok:
+                                                logger.info("[FB-Service] '%s': auto-reply successfully unsent.", clean_name)
+                                                await self.message_cache.mark_auto_reply_unsent(clean_name)
+                                            else:
+                                                logger.warning(
+                                                    "[FB-Service] '%s': unsend failed — will retry on next scan cycle.",
+                                                    clean_name,
+                                                )
+
                                     await self.message_cache.add_or_update(
                                         sender_name=clean_name,
                                         incoming_messages=incoming_msgs,

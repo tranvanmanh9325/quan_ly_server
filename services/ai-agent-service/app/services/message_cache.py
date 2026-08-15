@@ -35,6 +35,8 @@ class MessageEntry(BaseModel):
     was_auto_replied: bool = False
     replied_by_human: bool = False
     reply_type: str = "none"  # "none" | "ai_auto" | "human_direct"
+    # Tracks whether the bot's auto-reply was successfully unsent after human replied
+    auto_reply_unsent: bool = False
 
 
 class FacebookMessageCache:
@@ -67,6 +69,16 @@ class FacebookMessageCache:
         if not self._last_human_interaction_at:
             return None
         return max(0.0, (datetime.now(VN_TZ) - self._last_human_interaction_at).total_seconds() / 60.0)
+
+    async def mark_auto_reply_unsent(self, sender_name: str) -> None:
+        """Marks the auto-reply for this sender as successfully unsent."""
+        norm_key = _fast_normalize_name(sender_name)
+        if not norm_key:
+            return
+        async with self._lock:
+            entry = self._entries.get(norm_key)
+            if entry:
+                entry.auto_reply_unsent = True
 
     async def add_or_update(
         self,

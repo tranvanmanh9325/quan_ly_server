@@ -48,6 +48,11 @@ class Settings(BaseSettings):
     GROQ_API_KEY_10: str = Field(default="", alias="GROQ_API_KEY_10")
     GROQ_MODEL: str = Field(default="llama-3.3-70b-versatile", alias="GROQ_MODEL")
 
+    # OpenRouter Multi-Model Fallback
+    OPENROUTER_API_KEY: str = Field(default="", alias="OPENROUTER_API_KEY")
+    OPENROUTER_MODEL: str = Field(default="nvidia/nemotron-3-super-120b-a12b:free", alias="OPENROUTER_MODEL")
+    OPENROUTER_API_URL: str = Field(default="https://openrouter.ai/api/v1/chat/completions", alias="OPENROUTER_API_URL")
+
     @property
     def database_url(self) -> str:
         return f"postgresql://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.POSTGRES_DB}"

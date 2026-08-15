@@ -36,7 +36,109 @@ class AiAgentService:
         self.fb_service = fb_service
 
     def is_configured(self) -> bool:
-        return self.groq_pool.has_keys()
+        return self.groq_pool.has_keys() or bool(settings.OPENROUTER_API_KEY.strip())
+
+    async def _call_llm(self, messages: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """
+        Executes LLM completion with Primary (Groq Multi-Key Pool) -> Secondary (OpenRouter Fallback).
+        Returns the parsed message dict from choices[0] or None on failure.
+        """
+        tools = self._build_tools()
+
+        # ─── TIER 1: Groq Multi-Key Pool ──────────────────────────────────────────
+        if self.groq_pool.has_keys():
+            for _ in range(min(3, max(1, self.groq_pool.key_count))):
+                key = await self.groq_pool.get_next_key()
+                if not key:
+                    break
+
+                payload = {
+                    "model": self.model,
+                    "messages": messages,
+                    "tools": tools,
+                    "tool_choice": "auto",
+                    "temperature": 0.1,
+                    "max_tokens": 1024,
+                }
+
+                try:
+                    response = await self._http_client.post(
+                        GROQ_API_URL,
+                        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                        json=payload,
+                    )
+
+                    if response.status_code == 429:
+                        await self.groq_pool.mark_rate_limited(key)
+                        continue
+
+                    if response.status_code == 200:
+                        data = response.json()
+                        choice = data["choices"][0]
+                        return {
+                            "provider": "groq",
+                            "message": choice.get("message", {}),
+                            "finish_reason": choice.get("finish_reason", "stop"),
+                        }
+
+                    # Resilient parser for Groq tool_use_failed (400)
+                    if response.status_code == 400 and "failed_generation" in response.text:
+                        err_data = response.json()
+                        failed_gen = err_data.get("error", {}).get("failed_generation", "")
+                        if failed_gen:
+                            import re
+                            cleaned = re.sub(r"<function=.*?>.*?</function>", "", failed_gen, flags=re.DOTALL).strip()
+                            cleaned = re.sub(r"<function=.*", "", cleaned, flags=re.DOTALL).strip()
+                            if cleaned:
+                                return {
+                                    "provider": "groq_failed_gen",
+                                    "message": {"role": "assistant", "content": cleaned},
+                                    "finish_reason": "stop",
+                                }
+
+                    logger.warning("[AiAgent] Groq HTTP %d: %s. Attempting fallback...", response.status_code, response.text[:200])
+                    break
+                except Exception as ex:
+                    logger.warning("[AiAgent] Groq request error: %s. Attempting fallback...", ex)
+                    break
+
+        # ─── TIER 2: OpenRouter Multi-Model Fallback ──────────────────────────────
+        if settings.OPENROUTER_API_KEY and settings.OPENROUTER_API_KEY.strip():
+            try:
+                openrouter_payload = {
+                    "model": settings.OPENROUTER_MODEL,
+                    "messages": messages,
+                    "tools": tools,
+                    "tool_choice": "auto",
+                    "temperature": 0.1,
+                    "max_tokens": 1024,
+                }
+                openrouter_headers = {
+                    "Authorization": f"Bearer {settings.OPENROUTER_API_KEY.strip()}",
+                    "Content-Type": "application/json",
+                    "HTTP-Referer": "https://dashboard.kirito.server",
+                    "X-Title": "Server Dashboard AI",
+                }
+                logger.info("[AiAgent] Calling OpenRouter fallback with model: %s", settings.OPENROUTER_MODEL)
+                response = await self._http_client.post(
+                    settings.OPENROUTER_API_URL,
+                    headers=openrouter_headers,
+                    json=openrouter_payload,
+                )
+                if response.status_code == 200:
+                    data = response.json()
+                    choice = data["choices"][0]
+                    return {
+                        "provider": "openrouter",
+                        "message": choice.get("message", {}),
+                        "finish_reason": choice.get("finish_reason", "stop"),
+                    }
+                else:
+                    logger.error("[AiAgent] OpenRouter HTTP %d: %s", response.status_code, response.text[:200])
+            except Exception as ex:
+                logger.error("[AiAgent] OpenRouter request exception: %s", ex)
+
+        return None
 
     def clear_history(self, chat_id: str) -> None:
         self._history_map.pop(chat_id, None)
@@ -187,7 +289,7 @@ COMMUNICATION TONE & FORMAT:
 
     async def chat(self, chat_id: str, user_message: str) -> str:
         if not self.is_configured():
-            return "AI chưa được cấu hình. Vui lòng thêm ít nhất 1 GROQ_API_KEY vào file .env."
+            return "AI chưa được cấu hình. Vui lòng thêm ít nhất 1 GROQ_API_KEY hoặc OPENROUTER_API_KEY vào file .env."
 
         history = self._history_map.setdefault(chat_id, [])
 
@@ -208,129 +310,80 @@ COMMUNICATION TONE & FORMAT:
             messages = [{"role": "system", "content": self._build_system_prompt()}]
             messages.extend(list(history))
 
-            key = await self.groq_pool.get_next_key()
-            if not key:
-                return "Không tìm thấy Groq API Key hợp lệ."
+            llm_result = await self._call_llm(messages)
+            if not llm_result:
+                self.clear_history(chat_id)
+                return "Xin lỗi, tất cả các nhà cung cấp AI (Groq & OpenRouter) hiện đều không khả dụng. Vui lòng thử lại sau giây lát."
 
-            payload = {
-                "model": self.model,
-                "messages": messages,
-                "tools": self._build_tools(),
-                "tool_choice": "auto",
-                "temperature": 0.1,
-                "max_tokens": 1024,
-            }
+            assistant_msg = llm_result["message"]
+            finish_reason = llm_result.get("finish_reason", "stop")
+            raw_content = assistant_msg.get("content") or ""
+            has_tool_calls = finish_reason == "tool_calls" and bool(assistant_msg.get("tool_calls"))
 
-            try:
-                response = await self._http_client.post(
-                    GROQ_API_URL,
-                    headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-                    json=payload,
-                )
+            if has_tool_calls:
+                history.append(assistant_msg)
+                for tc in assistant_msg["tool_calls"]:
+                    call_id = tc.get("id", "call_1")
+                    fn_name = tc.get("function", {}).get("name", "")
+                    try:
+                        fn_args = json.loads(tc.get("function", {}).get("arguments", "{}"))
+                    except Exception:
+                        fn_args = {}
 
-                if response.status_code == 429:
-                    await self.groq_pool.mark_rate_limited(key)
-                    continue
-
-                if response.status_code != 200:
-                    # Resilient parser: if Groq model generated inline function text triggering tool_use_failed (400)
-                    if response.status_code == 400 and "failed_generation" in response.text:
-                        try:
-                            err_data = response.json()
-                            failed_gen = err_data.get("error", {}).get("failed_generation", "")
-                            if failed_gen:
-                                import re
-                                cleaned_text = re.sub(r"<function=.*?>.*?</function>", "", failed_gen, flags=re.DOTALL).strip()
-                                cleaned_text = re.sub(r"<function=.*", "", cleaned_text, flags=re.DOTALL).strip()
-                                if cleaned_text:
-                                    history.append({"role": "assistant", "content": cleaned_text})
-                                    self._trim_history(history)
-                                    return cleaned_text
-                        except Exception:
-                            pass
-
-                    print(f"[AiAgent] Groq error {response.status_code}: {response.text}", flush=True)
-                    logger.error("[AiAgent] Groq error %d: %s", response.status_code, response.text)
-                    self.clear_history(chat_id)
-                    return "Xin lỗi, đã xảy ra lỗi khi gọi AI. Vui lòng thử lại sau giây lát."
-
-                data = response.json()
-                choice = data["choices"][0]
-                finish_reason = choice.get("finish_reason", "stop")
-                assistant_msg = choice.get("message", {})
-
-                raw_content = assistant_msg.get("content") or ""
-                has_tool_calls = finish_reason == "tool_calls" and bool(assistant_msg.get("tool_calls"))
-
-                if has_tool_calls:
-                    history.append(assistant_msg)
-                    for tc in assistant_msg["tool_calls"]:
-                        call_id = tc.get("id", "call_1")
-                        fn_name = tc.get("function", {}).get("name", "")
-                        try:
-                            fn_args = json.loads(tc.get("function", {}).get("arguments", "{}"))
-                        except Exception:
-                            fn_args = {}
-
-                        tool_result = await self._execute_tool(fn_name, fn_args)
-                        # For direct Facebook message sending, return tool result directly
-                        # to eliminate any possible AI LLM hallucination or misreporting
-                        if fn_name == "facebook_send_reply":
-                            history.append({
-                                "role": "tool",
-                                "tool_call_id": call_id,
-                                "content": tool_result,
-                            })
-                            history.append({
-                                "role": "assistant",
-                                "content": tool_result,
-                            })
-                            self._trim_history(history)
-                            return tool_result
-
+                    tool_result = await self._execute_tool(fn_name, fn_args)
+                    # For direct Facebook message sending, return tool result directly
+                    # to eliminate any possible AI LLM hallucination or misreporting
+                    if fn_name == "facebook_send_reply":
                         history.append({
                             "role": "tool",
                             "tool_call_id": call_id,
                             "content": tool_result,
                         })
-                    continue
-
-                # Fallback: Check if model emitted pseudo-XML function tags in plain text
-                pseudo_calls = self._extract_pseudo_tool_calls(raw_content)
-                if pseudo_calls:
-                    assistant_msg["tool_calls"] = [
-                        {
-                            "id": f"call_pseudo_{idx}",
-                            "type": "function",
-                            "function": {
-                                "name": pc["name"],
-                                "arguments": json.dumps(pc["args"]),
-                            },
-                        }
-                        for idx, pc in enumerate(pseudo_calls)
-                    ]
-                    assistant_msg["content"] = None
-                    history.append(assistant_msg)
-
-                    for idx, pc in enumerate(pseudo_calls):
-                        fn_name = pc["name"]
-                        fn_args = pc["args"]
-                        tool_result = await self._execute_tool(fn_name, fn_args)
                         history.append({
-                            "role": "tool",
-                            "tool_call_id": f"call_pseudo_{idx}",
+                            "role": "assistant",
                             "content": tool_result,
                         })
-                    continue
+                        self._trim_history(history)
+                        return tool_result
 
+                    history.append({
+                        "role": "tool",
+                        "tool_call_id": call_id,
+                        "content": tool_result,
+                    })
+                continue
+
+            # Fallback: Check if model emitted pseudo-XML function tags in plain text
+            pseudo_calls = self._extract_pseudo_tool_calls(raw_content)
+            if pseudo_calls:
+                assistant_msg["tool_calls"] = [
+                    {
+                        "id": f"call_pseudo_{idx}",
+                        "type": "function",
+                        "function": {
+                            "name": pc["name"],
+                            "arguments": json.dumps(pc["args"]),
+                        },
+                    }
+                    for idx, pc in enumerate(pseudo_calls)
+                ]
+                assistant_msg["content"] = None
                 history.append(assistant_msg)
-                self._trim_history(history)
-                return raw_content.strip() or "Xin lỗi, tôi không thể xử lý yêu cầu lúc này."
 
-            except Exception as e:
-                print(f"[AiAgent] Agent execution exception: {e}", flush=True)
-                logger.error("[AiAgent] Agent execution exception: %s", e, exc_info=True)
-                return f"Đã xảy ra lỗi khi xử lý câu hỏi: {e}"
+                for idx, pc in enumerate(pseudo_calls):
+                    fn_name = pc["name"]
+                    fn_args = pc["args"]
+                    tool_result = await self._execute_tool(fn_name, fn_args)
+                    history.append({
+                        "role": "tool",
+                        "tool_call_id": f"call_pseudo_{idx}",
+                        "content": tool_result,
+                    })
+                continue
+
+            history.append(assistant_msg)
+            self._trim_history(history)
+            return raw_content.strip() or "Xin lỗi, tôi không thể xử lý yêu cầu lúc này."
 
         self._trim_history(history)
         return "AI đã thử nhiều bước nhưng chưa hoàn thành yêu cầu."

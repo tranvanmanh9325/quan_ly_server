@@ -845,11 +845,6 @@ Với mọi yêu cầu phức tạp (tra cứu web, xem profile, tìm kiếm), h
         numeric Facebook user ID. E2EE threads (/messages/e2ee/t/<thread_id>/) use
         an internal conversation ID that is NOT a valid profile URL — so we
         explicitly exclude them.
-
-        Priority:
-          1. message_cache (in-memory) — standard thread only
-          2. facebook_known_threads DB — standard thread only (best name match)
-          3. None → caller falls back to People Search
         """
         import re as _re
 
@@ -912,16 +907,20 @@ Với mọi yêu cầu phức tạp (tra cứu web, xem profile, tìm kiếm), h
     # Direct-return tools — skip the second LLM call to avoid hallucination
     # ──────────────────────────────────────────────────────────────────────────
 
+    # Tools that always terminate the ReAct loop — the screenshot IS the final answer.
     _DIRECT_RETURN_TOOLS = frozenset({
-        # Facebook tools (always send photo via Telegram)
         "facebook_send_reply",
         "facebook_capture_screenshot",
         "facebook_view_profile",
-        # High-level browser tools (always send photo via Telegram)
+        "server_capture_screenshot",
+        "browser_take_screenshot",
+    })
+
+    # Fine-grained browser tools: produce a screenshot observation that the LLM
+    # can inspect to decide the NEXT action. NOT terminal — the loop continues.
+    _SCREENSHOT_TOOLS = frozenset({
         "browser_navigate",
         "browser_search_google",
-        "browser_take_screenshot",
-        # Fine-grained browser interaction tools (send photo + action summary)
         "browser_click",
         "browser_type",
         "browser_scroll",
@@ -933,8 +932,6 @@ Với mọi yêu cầu phức tạp (tra cứu web, xem profile, tìm kiếm), h
         "browser_execute_js",
         "browser_fill_form",
         "browser_wait_for",
-        # Server screenshot
-        "server_capture_screenshot",
     })
 
 
@@ -1020,11 +1017,19 @@ Với mọi yêu cầu phức tạp (tra cứu web, xem profile, tìm kiếm), h
                         "content": tool_result,
                     })
 
-                    # For action tools: return immediately to avoid LLM hallucination
+                    # Terminal tools — return immediately (screenshot IS the final answer)
                     if fn_name in self._DIRECT_RETURN_TOOLS:
                         history.append({"role": "assistant", "content": tool_result})
                         self._trim_history(history)
                         return tool_result
+
+                    # Screenshot/interaction tools — send photo but continue the ReAct loop
+                    # so the LLM can decide the next action (multi-step browsing).
+                    # Add to executed_once_tools so navigate/search aren't called twice.
+                    if fn_name in self._SCREENSHOT_TOOLS:
+                        executed_once_tools.add(fn_name)
+                        # The tool_result already went into history above as an observation.
+                        # The loop will continue and the LLM will see the observation.
 
                 continue  # Feed observation back into the next LLM call
 

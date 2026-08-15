@@ -205,97 +205,93 @@ class BrowserAgentService:
 
     async def facebook_view_profile(self, name_query: str) -> Dict[str, Any]:
         """
-        Autonomously searches for a Facebook user by name and navigates to their profile.
+        Autonomously searches for a Facebook user by name, navigates directly to
+        their profile URL (no DOM click — avoids selector instability), extracts
+        bio information, and returns a screenshot + structured data.
 
         Flow:
-          1. Navigate to Facebook People Search with the given query.
-          2. Wait for search results to render.
-          3. Click the first result whose name best matches the query.
-          4. Wait for the profile page to load; dismiss overlays.
-          5. Extract bio / intro text; take screenshot.
-
-        Returns a structured dict with:
-          - success (bool)
-          - image_path (str): absolute path to the screenshot PNG
-          - profile_name (str): the name found on the profile page
-          - profile_url (str): the URL of the profile page
-          - intro_text (str): extracted bio / about section text
-          - error (str): set only on failure
+          1. Navigate to Facebook People Search with the query.
+          2. Wait for React to hydrate search results (up to 5 s).
+          3. Collect all candidate profile hrefs via JS evaluation.
+          4. Score each candidate against the query via token overlap.
+          5. Navigate directly to the best-match URL (goto, not click).
+          6. Wait for the profile React SPA to fully hydrate (up to 10 s).
+          7. Dismiss overlays, scroll to load intro, extract text, screenshot.
         """
         logger.info("[BrowserAgent] facebook_view_profile('%s')", name_query)
 
         async with self._lock:
             page = await self._new_page()
             try:
-                # 1. Navigate to Facebook People Search
+                # ── Step 1: People Search ─────────────────────────────────────
                 search_url = FB_PEOPLE_SEARCH.format(query=quote(name_query))
-                await self._safe_goto(page, search_url)
-
-                # 2. Wait for search results
                 try:
-                    await page.wait_for_selector(
-                        'div[data-pagelet="SearchResults"], div[role="feed"], a[role="link"]',
-                        timeout=20000,
-                    )
-                except Exception:
-                    pass
-                await asyncio.sleep(2.5)
+                    await page.goto(search_url, wait_until="commit", timeout=NAV_TIMEOUT_MS)
+                except Exception as e:
+                    logger.warning("[BrowserAgent] Search goto notice: %s", e)
+
+                # ── Step 2: Wait for results to render ────────────────────────
+                # Facebook renders search results asynchronously; wait generously.
+                await asyncio.sleep(5)
                 await self._dismiss_overlays(page)
 
-                # 3. Find and click the best matching result link
-                profile_url = await self._click_best_search_result(page, name_query)
+                # ── Step 3-4: Collect profile hrefs and pick best match ───────
+                profile_href = await self._resolve_best_profile_href(page, name_query)
 
-                # 4. If no clickable result found, try direct URL navigation via graph
-                if not profile_url:
-                    logger.info("[BrowserAgent] No clickable result; falling back to search result page screenshot.")
-                    await self._dismiss_overlays(page)
+                if not profile_href:
+                    # Fallback: return search results page itself
+                    logger.info("[BrowserAgent] No matching profile found; returning search page.")
+                    intro_text = await self._extract_page_text(page, max_chars=1500)
                     img_path = await self._screenshot(page, f"fb_search_{_safe_filename(name_query)}")
-                    page_text = await self._extract_page_text(page)
                     await page.close()
                     return {
                         "success": True,
                         "image_path": img_path,
                         "profile_name": name_query,
                         "profile_url": page.url,
-                        "intro_text": page_text[:1500],
-                        "note": "Không tìm thấy kết quả khớp chính xác; hiển thị trang tìm kiếm.",
+                        "intro_text": intro_text,
+                        "note": "Không tìm thấy kết quả khớp chính xác — hiển thị trang kết quả tìm kiếm.",
                     }
 
-                # 5. Wait for profile page to finish loading
-                await page.wait_for_load_state("domcontentloaded")
+                # ── Step 5: Navigate directly to profile URL ─────────────────
+                logger.info("[BrowserAgent] Navigating to profile: %s", profile_href)
                 try:
-                    await page.wait_for_selector(
-                        '[data-pagelet="ProfileTilesFeed_0"], [data-pagelet="ProfileAppSection_0"], h1, [role="main"]',
-                        timeout=18000,
-                    )
-                except Exception:
-                    pass
-                await asyncio.sleep(2.0)
+                    await page.goto(profile_href, wait_until="commit", timeout=NAV_TIMEOUT_MS)
+                except Exception as e:
+                    logger.warning("[BrowserAgent] Profile goto notice: %s", e)
+
+                # ── Step 6: Wait for React SPA to hydrate ────────────────────
+                # Facebook's SPA starts rendering ~3-5 s after the network commit;
+                # waiting 10 s is more reliable than polling for a selector.
+                await asyncio.sleep(10)
                 await self._dismiss_overlays(page)
 
-                # 6. Scroll slightly to load bio / intro section
-                await page.evaluate("window.scrollBy(0, 300)")
-                await asyncio.sleep(1.0)
+                # Scroll slightly to expose the intro / about widget
+                try:
+                    await page.evaluate("window.scrollBy(0, 350)")
+                except Exception:
+                    pass
+                await asyncio.sleep(1.5)
 
-                # 7. Extract profile name from <h1>
+                # ── Step 7: Extract name & intro ─────────────────────────────
                 try:
                     profile_name = await page.locator("h1").first.inner_text(timeout=5000)
                 except Exception:
                     profile_name = name_query
 
-                # 8. Extract intro / about section
                 intro_text = await self._extract_intro_text(page)
 
-                # 9. Screenshot
+                # ── Step 8: Screenshot ────────────────────────────────────────
                 await self._dismiss_overlays(page)
                 img_path = await self._screenshot(page, f"fb_profile_{_safe_filename(name_query)}")
+                final_url = page.url
                 await page.close()
 
                 return {
                     "success": True,
                     "image_path": img_path,
                     "profile_name": profile_name.strip(),
-                    "profile_url": profile_url,
+                    "profile_url": final_url,
                     "intro_text": intro_text,
                 }
 
@@ -307,42 +303,47 @@ class BrowserAgentService:
                     pass
                 return {"success": False, "error": str(e)}
 
-    async def _click_best_search_result(self, page: Page, name_query: str) -> Optional[str]:
+
+    async def _resolve_best_profile_href(self, page: Page, name_query: str) -> Optional[str]:
         """
-        Evaluates search result links, scores them against name_query using token overlap,
-        clicks the best match (score ≥ 0.5), and returns the resulting URL.
+        Extracts all profile hrefs from the current search-results page using JS,
+        scores each against name_query via Vietnamese-aware token overlap,
+        and returns the href of the best match (score ≥ 0.4) — WITHOUT clicking
+        any DOM element (avoids race conditions with React re-renders).
         """
-        query_norm = re.sub(r"[^\w\s]", "", name_query.lower().strip())
-        query_tokens = set(query_norm.split())
+        # Normalise the query: strip diacritics via simple replacement, lowercase, split tokens
+        import unicodedata
+        def _norm(s: str) -> str:
+            return unicodedata.normalize("NFD", s.lower())
+
+        query_norm = _norm(name_query)
+        query_tokens = set(t for t in re.sub(r"[^\w\s]", " ", query_norm).split() if len(t) > 1)
 
         try:
-            # Collect all profile links with their visible text
             candidates: List[Dict[str, str]] = await page.evaluate("""
             () => {
+                const SKIP = new Set([
+                    '/search/', '/messages/', '/settings', '/help', '/groups/',
+                    '/events/', '/pages/', '/hashtag/', '/reels/', '/reel/',
+                    'facebook.com/friends', 'watch', 'marketplace',
+                ]);
                 const results = [];
                 const seen = new Set();
-                const links = document.querySelectorAll('a[href*="/"][role="link"], a[href*="facebook.com/"]');
+                const links = document.querySelectorAll('a[href]');
                 for (const a of links) {
-                    const href = a.href || '';
+                    const href = (a.href || '').split('?')[0];
                     const text = (a.innerText || a.textContent || '').trim();
-                    // Only profile links (not search/messages/settings)
-                    if (
-                        !href ||
-                        seen.has(href) ||
-                        !text ||
-                        href.includes('/search/') ||
-                        href.includes('/messages/') ||
-                        href.includes('/settings') ||
-                        href.includes('/help') ||
-                        href.includes('/groups/') ||
-                        href.includes('/events/') ||
-                        href.includes('/pages/') ||
-                        text.length > 60
-                    ) continue;
+                    if (!href || seen.has(href) || !text || text.length > 80) continue;
+                    const skip = [...SKIP].some(s => href.includes(s));
+                    if (skip) continue;
+                    // Must look like a profile URL: facebook.com/<slug> or profile.php?id=
+                    const isProfile = (href.indexOf('profile.php') !== -1) ||
+                        (href.indexOf('facebook.com/') !== -1 && !href.split('facebook.com/')[1].includes('/'));
+                    if (!isProfile) continue;
                     seen.add(href);
                     results.push({ href, text });
                 }
-                return results.slice(0, 30);
+                return results.slice(0, 40);
             }
             """)
 
@@ -350,44 +351,58 @@ class BrowserAgentService:
             best_href: Optional[str] = None
 
             for c in candidates:
-                text_norm = re.sub(r"[^\w\s]", "", (c.get("text") or "").lower())
-                text_tokens = set(text_norm.split())
+                text_norm = _norm(c.get("text") or "")
+                text_tokens = set(t for t in re.sub(r"[^\w\s]", " ", text_norm).split() if len(t) > 1)
                 if not text_tokens:
                     continue
                 overlap = len(query_tokens & text_tokens)
+                if not overlap:
+                    continue
                 score = overlap / max(len(query_tokens), len(text_tokens))
                 if score > best_score:
                     best_score = score
                     best_href = c.get("href")
 
-            if best_href and best_score >= 0.4:
-                logger.info("[BrowserAgent] Best match: score=%.2f href=%s", best_score, best_href)
-                await page.goto(best_href, wait_until="domcontentloaded", timeout=NAV_TIMEOUT_MS)
-                return best_href
+            logger.info(
+                "[BrowserAgent] Profile resolve: best_score=%.2f href=%s",
+                best_score,
+                best_href or "none",
+            )
+            return best_href if best_score >= 0.4 else None
 
         except Exception as e:
-            logger.warning("[BrowserAgent] _click_best_search_result error: %s", e)
+            logger.warning("[BrowserAgent] _resolve_best_profile_href error: %s", e)
+            return None
 
-        return None
 
     async def _extract_intro_text(self, page: Page) -> str:
-        """Extract bio, hometown, education, work from the profile intro section."""
+        """Extract bio, hometown, education, work from the profile intro section.
+        Uses multiple fallback selectors to be robust across FB UI versions.
+        """
         try:
             intro = await page.evaluate("""
             () => {
-                // Try the dedicated intro widget first
-                const intro = document.querySelector('[data-pagelet="ProfileAppSection_0"]')
-                           || document.querySelector('[aria-label*="Giới thiệu"]')
-                           || document.querySelector('[aria-label*="Intro"]');
-                if (intro) return intro.innerText;
-                // Fallback: grab main content
-                const main = document.querySelector('[role="main"]');
-                return main ? main.innerText.slice(0, 2000) : '';
+                // Priority 1: Dedicated intro widget (pagelet)
+                const candidates = [
+                    document.querySelector('[data-pagelet="ProfileAppSection_0"]'),
+                    document.querySelector('[data-pagelet="ProfileTilesFeed_0"]'),
+                    document.querySelector('[aria-label*="\u0067i\u1edbi thi\u1ec7u"]'),  // Vietnamese "giới thiệu"
+                    document.querySelector('[aria-label*="Intro"]'),
+                    document.querySelector('[role="main"]'),
+                    document.body,
+                ];
+                for (const el of candidates) {
+                    if (el && el.innerText && el.innerText.trim().length > 20) {
+                        return el.innerText.slice(0, 2000);
+                    }
+                }
+                return '';
             }
             """)
             return (intro or "")[:2000]
         except Exception:
             return ""
+
 
     # ──────────────────────────────────────────────────────────────────────────
 
@@ -400,17 +415,18 @@ class BrowserAgentService:
         async with self._lock:
             page = await self._new_page()
             try:
-                await self._safe_goto(page, url)
                 try:
-                    await page.wait_for_load_state("networkidle", timeout=15000)
-                except Exception:
-                    pass
-                await asyncio.sleep(1.5)
+                    await page.goto(url, wait_until="commit", timeout=NAV_TIMEOUT_MS)
+                except Exception as e:
+                    logger.warning("[BrowserAgent] navigate notice: %s", e)
+                # Wait for JS-heavy SPAs to render
+                await asyncio.sleep(4)
                 await self._dismiss_overlays(page)
 
                 title = await page.title()
                 page_text = await self._extract_page_text(page, max_chars=3000)
                 img_path = await self._screenshot(page, f"browse_{_safe_filename(url[:50])}")
+                final_url = page.url
                 await page.close()
 
                 return {
@@ -418,7 +434,7 @@ class BrowserAgentService:
                     "image_path": img_path,
                     "page_title": title,
                     "page_text": page_text,
-                    "url": url,
+                    "url": final_url,
                 }
             except Exception as e:
                 logger.error("[BrowserAgent] browser_navigate error: %s", e, exc_info=True)
@@ -427,6 +443,7 @@ class BrowserAgentService:
                 except Exception:
                     pass
                 return {"success": False, "error": str(e), "url": url}
+
 
     # ──────────────────────────────────────────────────────────────────────────
 

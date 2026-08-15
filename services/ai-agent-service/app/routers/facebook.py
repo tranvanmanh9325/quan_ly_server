@@ -98,3 +98,41 @@ async def test_ai_chat(
     }
 
 
+from app.services.vnc_manager import vnc_manager
+
+# ─── Live VNC Server Browser Endpoints ────────────────────────────────────────
+
+@router.post("/launch-browser")
+async def launch_browser():
+    """Starts the headful Chromium VNC session on display :99 & websockify:6080."""
+    result = await vnc_manager.start_session()
+    return result
+
+
+@router.get("/vnc-ready")
+async def vnc_ready():
+    """Returns whether the VNC websockify gateway and browser are listening and ready."""
+    is_ready = await vnc_manager.check_ready()
+    return {"ready": is_ready}
+
+
+@router.post("/save-browser-session")
+async def save_browser_session(fb: FacebookService = Depends(get_fb_service)):
+    """Extracts session cookies from the live VNC browser and saves to DB."""
+    result = await vnc_manager.save_session()
+    if result.get("status") == "success":
+        # Reload configuration in facebook_service
+        try:
+            await fb.load_configuration()
+        except Exception:
+            pass
+    return result
+
+
+@router.post("/close-browser-session")
+async def close_browser_session():
+    """Safely terminates the VNC browser session."""
+    await vnc_manager.close_session()
+    return {"status": "success", "message": "Đã đóng trình duyệt Server."}
+
+

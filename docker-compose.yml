@@ -105,6 +105,10 @@ services:
         condition: service_healthy
     networks:
       - dashboard-network
+    ports:
+      - "8084:8084"
+      - "6080:6080"
+    shm_size: '1gb'
     volumes:
       # Persistent Chromium profile: preserves E2EE IndexedDB keys across restarts
       # Without this, Facebook E2EE Messenger sidebar never loads in headless mode

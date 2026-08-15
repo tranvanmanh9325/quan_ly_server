@@ -301,9 +301,25 @@ export default function SettingsPage() {
   const [fbLoading, setFbLoading]   = useState(true);
   const [fbScanModal, setFbScanModal] = useState({ open: false, status: '', message: '' });
 
-  const closeFbScanModal = useCallback(() => {
-    setFbScanModal(prev => ({ ...prev, open: false }));
-  }, []);
+  // ── Live VNC Server Browser state ───────────────────────────────────────
+  const [vncOpen, setVncOpen]           = useState(false);
+  const [vncUrl, setVncUrl]             = useState('');
+  const [vncLaunching, setVncLaunching] = useState(false);
+  const [vncSaving, setVncSaving]       = useState(false);
+  const [vncStatusMsg, setVncStatusMsg] = useState('');
+  const [vncReady, setVncReady]         = useState(false);
+  const vncPollRef = useRef(null);
+
+  useEffect(() => {
+    if (vncOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [vncOpen]);
 
 
 
@@ -458,6 +474,99 @@ export default function SettingsPage() {
         status: 'error',
         message: formatFbTriggerResult(errMsg, t),
       });
+    }
+  };
+
+  const handleLaunchBrowser = async () => {
+    if (vncPollRef.current) {
+      clearInterval(vncPollRef.current);
+      vncPollRef.current = null;
+    }
+
+    setVncLaunching(true);
+    setVncReady(false);
+    setVncOpen(true);
+    setVncStatusMsg(t('settings.facebook.initBrowser'));
+    try {
+      const res = await axios.post('/api/facebook/launch-browser');
+      if (res.data.status === 'success') {
+        setVncUrl('/vnc-embed.html');
+        setVncStatusMsg(t('settings.facebook.waitingVnc'));
+        let attempts = 0;
+        const MAX_ATTEMPTS = 40;
+        vncPollRef.current = setInterval(async () => {
+          attempts++;
+          try {
+            const probe = await axios.get('/api/facebook/vnc-ready');
+            if (probe.data.ready === true) {
+              clearInterval(vncPollRef.current);
+              vncPollRef.current = null;
+              setVncStatusMsg('');
+              setVncReady(true);
+            } else if (attempts >= MAX_ATTEMPTS) {
+              clearInterval(vncPollRef.current);
+              vncPollRef.current = null;
+              setVncStatusMsg(t('settings.facebook.vncTimeout'));
+            } else {
+              setVncStatusMsg(t('settings.facebook.waitingVncProgress', { n: attempts, max: MAX_ATTEMPTS }));
+            }
+          } catch {
+            if (attempts >= MAX_ATTEMPTS) {
+              clearInterval(vncPollRef.current);
+              vncPollRef.current = null;
+              setVncStatusMsg(t('settings.facebook.backendError'));
+            }
+          }
+        }, 1500);
+      } else {
+        setVncStatusMsg(res.data.message || t('settings.facebook.browserError'));
+      }
+    } catch (e) {
+      setVncStatusMsg(t('settings.facebook.serverConnError') + (e.response?.data?.message || e.message));
+    } finally {
+      setVncLaunching(false);
+    }
+  };
+
+  const handleCloseVnc = async () => {
+    if (vncPollRef.current) {
+      clearInterval(vncPollRef.current);
+      vncPollRef.current = null;
+    }
+    setVncOpen(false);
+    setVncReady(false);
+    setVncUrl('');
+    setVncStatusMsg('');
+    try {
+      await axios.post('/api/facebook/close-browser-session');
+    } catch {}
+  };
+
+  const handleSaveBrowserSession = async () => {
+    setVncSaving(true);
+    setVncStatusMsg(t('settings.facebook.extractingCookies'));
+    try {
+      const res = await axios.post('/api/facebook/save-browser-session');
+      if (res.data.status === 'success') {
+        setVncOpen(false);
+        setFbTestResult(res.data.message);
+        const cfgRes = await axios.get('/api/facebook/config');
+        if (cfgRes.data) {
+          setFbConfig({
+            enabled:         cfgRes.data.enabled         ?? false,
+            threshold:       cfgRes.data.threshold       ?? 5,
+            cookiesJson:     cfgRes.data.cookiesJson     || '',
+            customMessage:   cfgRes.data.customMessage   || '',
+            lastStatus:      cfgRes.data.lastStatus      || 'Tắt',
+          });
+        }
+      } else {
+        setVncStatusMsg(res.data.message);
+      }
+    } catch (e) {
+      setVncStatusMsg(t('settings.facebook.sessionSaveError') + (e.response?.data?.message || e.message));
+    } finally {
+      setVncSaving(false);
     }
   };
 
@@ -896,21 +1005,47 @@ export default function SettingsPage() {
               </span>
             </SettingRow>
 
-            {/* Modern Facebook Cookie Instruction Card */}
+            {/* Interactive Server Live Browser Launcher */}
             <div style={{
               margin: '18px 0', padding: '16px 20px',
-              background: 'rgba(0, 243, 255, 0.04)', border: '1px solid rgba(0, 243, 255, 0.25)',
-              borderRadius: '4px', display: 'flex', flexDirection: 'column', gap: '10px'
+              background: 'rgba(187,0,255,0.06)', border: '1px dashed rgba(187,0,255,0.4)',
+              borderRadius: '4px', display: 'flex', flexDirection: 'column', gap: '12px'
             }}>
-              <div style={{ fontSize: '0.92rem', color: 'var(--accent-cyan)', fontWeight: 'bold', letterSpacing: '0.5px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <SciFiBrowserLaunchIcon size={18} color="var(--accent-cyan)" /> HƯỚNG DẪN CẤU HÌNH COOKIE ĐĂNG NHẬP FACEBOOK
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px' }}>
+                <div>
+                  <div style={{ fontSize: '0.92rem', color: 'var(--accent-purple)', fontWeight: 'bold', letterSpacing: '0.5px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <SciFiBrowserLaunchIcon size={18} color="var(--accent-purple)" /> ĐĂNG NHẬP TRỰC TIẾP TRÊN TRÌNH DUYỆT SERVER
+                  </div>
+                  <div style={{ fontSize: '0.74rem', color: 'var(--text-secondary)', opacity: 0.8, marginTop: '2px' }}>
+                    Mở Chromium GUI trực tiếp trên server qua noVNC để đăng nhập, nhập 2FA và giải mã PIN.
+                  </div>
+                </div>
+
+                <button
+                  onClick={handleLaunchBrowser}
+                  disabled={vncLaunching}
+                  style={{
+                    background: 'linear-gradient(135deg, rgba(187,0,255,0.3) 0%, rgba(0,243,255,0.3) 100%)',
+                    border: '1px solid var(--accent-cyan)', color: '#fff',
+                    padding: '10px 22px', fontFamily: 'Share Tech Mono', fontSize: '0.82rem',
+                    cursor: vncLaunching ? 'not-allowed' : 'pointer', letterSpacing: '1px',
+                    boxShadow: '0 0 15px rgba(0,243,255,0.25)', transition: 'all 0.25s ease',
+                    display: 'inline-flex', alignItems: 'center', gap: '8px',
+                  }}
+                >
+                  {vncLaunching ? (
+                    <><SciFiChronoSpinnerIcon size={16} color="#fff" /> ĐANG KHỞI ĐỘNG CHROMIUM...</>
+                  ) : (
+                    <><SciFiBrowserLaunchIcon size={16} color="#fff" /> MỞ TRÌNH DUYỆT SERVER</>
+                  )}
+                </button>
               </div>
-              <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', lineHeight: '1.6', fontFamily: 'Share Tech Mono' }}>
-                <div style={{ marginBottom: '4px' }}>1. Cài đặt tiện ích mở rộng <strong style={{ color: 'var(--accent-cyan)' }}>Cookie-Editor</strong> trên trình duyệt máy tính của bạn (Chrome, Edge, Firefox).</div>
-                <div style={{ marginBottom: '4px' }}>2. Đăng nhập tài khoản Facebook trên trình duyệt máy tính cá nhân.</div>
-                <div style={{ marginBottom: '4px' }}>3. Mở tiện ích <strong>Cookie-Editor</strong> $\rightarrow$ chọn <strong>Export</strong> $\rightarrow$ chọn <strong style={{ color: 'var(--accent-green)' }}>Export as JSON</strong>.</div>
-                <div>4. Dán toàn bộ chuỗi JSON vào ô nhập liệu bên dưới và nhấn nút <strong style={{ color: 'var(--accent-purple)' }}>LƯU CẤU HÌNH FACEBOOK</strong>.</div>
-              </div>
+
+              {vncStatusMsg && (
+                <div style={{ fontSize: '0.78rem', color: 'var(--accent-cyan)', fontFamily: 'Share Tech Mono' }}>
+                  {vncStatusMsg}
+                </div>
+              )}
             </div>
 
             <div style={{ marginTop: '14px', marginBottom: '14px' }}>
@@ -1117,6 +1252,101 @@ export default function SettingsPage() {
                       {t('settings.facebook.close')}
                     </button>
                   </div>
+                </div>
+              </div>,
+              document.body
+            )}
+
+            {/* ── Live VNC Server Chromium Interactive Modal ────────────────── */}
+            {vncOpen && createPortal(
+              <div style={{
+                position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+                width: '100vw', height: '100vh', zIndex: 99999,
+                background: 'rgba(5, 7, 13, 0.94)', backdropFilter: 'blur(14px)', WebkitBackdropFilter: 'blur(14px)',
+                display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                padding: '20px', boxSizing: 'border-box'
+              }}>
+                <div style={{
+                  width: '96vw', maxWidth: '1440px', height: '90vh', maxHeight: '920px',
+                  background: '#090a0f', border: '1px solid var(--accent-cyan)',
+                  borderRadius: '6px', display: 'flex', flexDirection: 'column', overflow: 'hidden',
+                  boxShadow: '0 0 35px rgba(0, 243, 255, 0.35), 0 0 90px rgba(0, 0, 0, 0.95)'
+                }}>
+
+                  <div style={{
+                    padding: '12px 20px', background: 'rgba(0,243,255,0.08)',
+                    borderBottom: '1px solid rgba(0,243,255,0.2)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    flexShrink: 0
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <SciFiBrowserLaunchIcon size={18} color="var(--accent-cyan)" />
+                      <span style={{ color: 'var(--accent-cyan)', fontFamily: 'Share Tech Mono', fontSize: '1rem', fontWeight: 'bold', letterSpacing: '1px' }}>
+                        SERVER LIVE CHROMIUM (noVNC INTERACTIVE)
+                      </span>
+                    </div>
+
+                    <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                      <button
+                        onClick={handleSaveBrowserSession}
+                        disabled={vncSaving}
+                        style={{
+                          background: 'var(--accent-green)', color: '#000', fontWeight: 'bold',
+                          border: 'none', padding: '8px 18px', fontFamily: 'Share Tech Mono',
+                          fontSize: '0.82rem', cursor: vncSaving ? 'not-allowed' : 'pointer',
+                          borderRadius: '3px', boxShadow: '0 0 12px rgba(0, 255, 157, 0.4)',
+                          display: 'inline-flex', alignItems: 'center', gap: '6px',
+                          transition: 'all 0.2s'
+                        }}
+                      >
+                        {vncSaving ? (
+                          <><SciFiChronoSpinnerIcon size={15} color="#000" /> {t('settings.facebook.savingSession')}</>
+                        ) : (
+                          <><SciFiCheckCircleIcon size={15} color="#000" /> {t('settings.facebook.saveSession')}</>
+                        )}
+                      </button>
+                      <button
+                        onClick={handleCloseVnc}
+                        style={{
+                          background: 'rgba(255,0,85,0.15)', border: '1px solid var(--accent-pink)',
+                          color: 'var(--accent-pink)', padding: '8px 16px', fontFamily: 'Share Tech Mono',
+                          fontSize: '0.82rem', cursor: 'pointer', borderRadius: '3px',
+                          display: 'inline-flex', alignItems: 'center', gap: '6px',
+                          transition: 'all 0.2s'
+                        }}
+                      >
+                        <SciFiCloseIcon size={14} color="var(--accent-pink)" /> {t('settings.facebook.close')}
+                      </button>
+                    </div>
+                  </div>
+
+                  {vncStatusMsg && (
+                    <div style={{ padding: '8px 20px', background: 'rgba(0,243,255,0.15)', color: 'var(--accent-cyan)', fontFamily: 'Share Tech Mono', fontSize: '0.8rem', flexShrink: 0, borderBottom: '1px solid rgba(0,243,255,0.2)' }}>
+                      {vncStatusMsg}
+                    </div>
+                  )}
+
+                  <div style={{ flex: 1, minHeight: 0, width: '100%', position: 'relative', overflow: 'hidden', background: '#000' }}>
+                    {vncReady ? (
+                      <iframe
+                        src={vncUrl || '/vnc-embed.html'}
+                        title="Server Live Chromium"
+                        style={{ width: '100%', height: '100%', border: 'none', display: 'block', background: '#000' }}
+                      />
+                    ) : (
+                      <div style={{
+                        width: '100%', height: '100%', display: 'flex', flexDirection: 'column',
+                        alignItems: 'center', justifyContent: 'center', gap: '18px',
+                        background: '#0a0b10'
+                      }}>
+                        <SciFiBrowserLaunchIcon size={48} color="var(--accent-cyan)" />
+                        <p style={{ color: 'var(--accent-cyan)', fontFamily: 'Share Tech Mono', fontSize: '1rem', textAlign: 'center', opacity: 0.8 }}>
+                          {vncLaunching ? t('settings.facebook.launching') : t('settings.facebook.promptLogin')}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+
                 </div>
               </div>,
               document.body

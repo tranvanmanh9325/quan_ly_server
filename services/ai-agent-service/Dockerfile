@@ -10,6 +10,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     ca-certificates \
     tzdata \
+    xvfb \
+    x11vnc \
+    novnc \
+    websockify \
+    openbox \
+    xdotool \
     && ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone \
     && rm -rf /var/lib/apt/lists/*
 
@@ -19,6 +25,6 @@ RUN playwright install --with-deps chromium
 
 COPY app/ ./app/
 
-EXPOSE 8084
+EXPOSE 8084 6080
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8084"]

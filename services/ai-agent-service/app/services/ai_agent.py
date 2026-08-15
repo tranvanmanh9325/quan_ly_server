@@ -233,6 +233,22 @@ COMMUNICATION TONE & FORMAT:
                     continue
 
                 if response.status_code != 200:
+                    # Resilient parser: if Groq model generated inline function text triggering tool_use_failed (400)
+                    if response.status_code == 400 and "failed_generation" in response.text:
+                        try:
+                            err_data = response.json()
+                            failed_gen = err_data.get("error", {}).get("failed_generation", "")
+                            if failed_gen:
+                                import re
+                                cleaned_text = re.sub(r"<function=.*?>.*?</function>", "", failed_gen, flags=re.DOTALL).strip()
+                                cleaned_text = re.sub(r"<function=.*", "", cleaned_text, flags=re.DOTALL).strip()
+                                if cleaned_text:
+                                    history.append({"role": "assistant", "content": cleaned_text})
+                                    self._trim_history(history)
+                                    return cleaned_text
+                        except Exception:
+                            pass
+
                     print(f"[AiAgent] Groq error {response.status_code}: {response.text}", flush=True)
                     logger.error("[AiAgent] Groq error %d: %s", response.status_code, response.text)
                     self.clear_history(chat_id)

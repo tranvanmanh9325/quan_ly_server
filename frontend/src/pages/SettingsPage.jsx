@@ -13,13 +13,16 @@ import { useTranslation } from '../i18n/index.jsx';
 
 
 // ── Sub-components ──────────────────────────────────────────────────────────
-const SectionHeader = ({ icon, title, subtitle }) => (
+const SectionHeader = ({ icon, title, subtitle, badge }) => (
   <div style={{ marginBottom: '20px' }}>
-    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '4px' }}>
-      {icon}
-      <h2 style={{ fontSize: '1rem', letterSpacing: '3px', color: 'var(--accent-cyan)', fontFamily: 'Share Tech Mono', margin: 0 }}>
-        {title}
-      </h2>
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+        {icon}
+        <h2 style={{ fontSize: '1rem', letterSpacing: '3px', color: 'var(--accent-cyan)', fontFamily: 'Share Tech Mono', margin: 0 }}>
+          {title}
+        </h2>
+      </div>
+      {badge && <div>{badge}</div>}
     </div>
     {subtitle && (
       <p style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', marginLeft: '30px', opacity: 0.7 }}>
@@ -286,6 +289,7 @@ export default function SettingsPage() {
   const [tgLoading, setTgLoading]   = useState(true);
   // Guard ref: skip auto-save on the very first mount (when API data is loaded)
   const tgMountedRef = useRef(false);
+  const tgSaveTimeoutRef = useRef(null);
   // ── Facebook state ───────────────────────────────────────────────────────
   const [fbConfig, setFbConfig] = useState({
     enabled: false,
@@ -302,6 +306,8 @@ export default function SettingsPage() {
   const [fbTestResult, setFbTestResult] = useState(null);
   const [fbLoading, setFbLoading]   = useState(true);
   const [fbScanModal, setFbScanModal] = useState({ open: false, status: '', message: '' });
+  const fbMountedRef = useRef(false);
+  const fbSaveTimeoutRef = useRef(null);
 
   // ── Live VNC Server Browser state ───────────────────────────────────────
   const [vncOpen, setVncOpen]           = useState(false);
@@ -381,23 +387,37 @@ export default function SettingsPage() {
       });
   }, []);
 
-  // Auto-save the 'enabled' toggle immediately when it changes (no Save button needed)
+  // Auto-save Telegram settings on any slider or toggle update (debounced 400ms)
   useEffect(() => {
     if (!tgMountedRef.current) return;
-    const payload = {
-      enabled:         tgConfig.enabled,
-      cpuThreshold:    tgConfig.cpuThreshold,
-      ramThreshold:    tgConfig.ramThreshold,
-      diskThreshold:   tgConfig.diskThreshold,
-      cooldownMinutes: tgConfig.cooldownMinutes,
+    if (tgSaveTimeoutRef.current) clearTimeout(tgSaveTimeoutRef.current);
+
+    tgSaveTimeoutRef.current = setTimeout(() => {
+      const payload = {
+        enabled:         tgConfig.enabled,
+        cpuThreshold:    tgConfig.cpuThreshold,
+        ramThreshold:    tgConfig.ramThreshold,
+        diskThreshold:   tgConfig.diskThreshold,
+        cooldownMinutes: tgConfig.cooldownMinutes,
+      };
+      axios.post('/api/telegram/config', payload)
+        .then(() => {
+          setTgSaved(true);
+          setTimeout(() => setTgSaved(false), 2000);
+        })
+        .catch(() => {});
+    }, 400);
+
+    return () => {
+      if (tgSaveTimeoutRef.current) clearTimeout(tgSaveTimeoutRef.current);
     };
-    axios.post('/api/telegram/config', payload)
-      .then(() => {
-        setTgSaved(true);
-        setTimeout(() => setTgSaved(false), 2000);
-      })
-      .catch(() => {});
-  }, [tgConfig.enabled]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [
+    tgConfig.enabled,
+    tgConfig.cpuThreshold,
+    tgConfig.ramThreshold,
+    tgConfig.diskThreshold,
+    tgConfig.cooldownMinutes,
+  ]);
 
   // Load Facebook config from backend
   useEffect(() => {
@@ -418,8 +438,48 @@ export default function SettingsPage() {
         }
       })
       .catch(() => {})
-      .finally(() => setFbLoading(false));
+      .finally(() => {
+        setFbLoading(false);
+        // Allow auto-save to fire AFTER initial data is populated
+        setTimeout(() => {
+          fbMountedRef.current = true;
+        }, 300);
+      });
   }, []);
+
+  // Auto-save Facebook settings on any slider, toggle, or chip update (debounced 400ms)
+  useEffect(() => {
+    if (!fbMountedRef.current) return;
+    if (fbSaveTimeoutRef.current) clearTimeout(fbSaveTimeoutRef.current);
+
+    fbSaveTimeoutRef.current = setTimeout(() => {
+      const payload = {
+        enabled:             fbConfig.enabled,
+        threshold:           fbConfig.threshold,
+        scanIntervalMinutes: fbConfig.scanIntervalMinutes,
+        idleTimeoutMinutes:  fbConfig.idleTimeoutMinutes,
+        humanSessionMinutes: fbConfig.humanSessionMinutes,
+        customMessage:       fbConfig.customMessage,
+        cookiesJson:         fbConfig.cookiesJson,
+      };
+      axios.post('/api/facebook/config', payload)
+        .then(() => {
+          setFbSaved(true);
+          setTimeout(() => setFbSaved(false), 2000);
+        })
+        .catch(() => {});
+    }, 400);
+
+    return () => {
+      if (fbSaveTimeoutRef.current) clearTimeout(fbSaveTimeoutRef.current);
+    };
+  }, [
+    fbConfig.enabled,
+    fbConfig.threshold,
+    fbConfig.scanIntervalMinutes,
+    fbConfig.idleTimeoutMinutes,
+    fbConfig.humanSessionMinutes,
+  ]);
 
   const update = useCallback((key, val) => {
     setSettings(prev => ({ ...prev, [key]: val }));
@@ -871,6 +931,22 @@ export default function SettingsPage() {
           icon={<SciFiTelegramIcon size={18} color="var(--accent-cyan)" />}
           title={t('settings.telegram.title')}
           subtitle={t('settings.telegram.subtitle')}
+          badge={
+            tgSaved ? (
+              <span style={{
+                fontFamily: 'Share Tech Mono',
+                fontSize: '0.72rem',
+                color: 'var(--accent-green)',
+                background: 'rgba(0, 255, 102, 0.12)',
+                border: '1px solid var(--accent-green)',
+                borderRadius: '3px',
+                padding: '2px 8px',
+                textShadow: '0 0 6px rgba(0, 255, 102, 0.6)',
+              }}>
+                ✓ {t('settings.telegram.saved')}
+              </span>
+            ) : null
+          }
         />
 
         {tgLoading ? (
@@ -991,6 +1067,22 @@ export default function SettingsPage() {
           icon={<SciFiFacebookIcon size={18} color="var(--accent-purple)" />}
           title={t('settings.facebook.title')}
           subtitle={t('settings.facebook.subtitle')}
+          badge={
+            fbSaved ? (
+              <span style={{
+                fontFamily: 'Share Tech Mono',
+                fontSize: '0.72rem',
+                color: 'var(--accent-green)',
+                background: 'rgba(0, 255, 102, 0.12)',
+                border: '1px solid var(--accent-green)',
+                borderRadius: '3px',
+                padding: '2px 8px',
+                textShadow: '0 0 6px rgba(0, 255, 102, 0.6)',
+              }}>
+                ✓ {t('settings.facebook.savedConfig')}
+              </span>
+            ) : null
+          }
         />
 
         {fbLoading ? (

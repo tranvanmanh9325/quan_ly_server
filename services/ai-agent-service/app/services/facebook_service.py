@@ -870,28 +870,37 @@ class FacebookService:
                     continue
 
             if not more_btn:
-                # Fallback: use JS to find and click the "More" button near the hovered message
+                # Fallback: use JS to find and click the "More" (⋮) button near the hovered message.
+                # From screenshot analysis: toolbar has [⋮ More | ↩ Reply | 😊 Emoji] — More is leftmost.
                 logger.warning("[FB-Service] Unsend: aria-label not found, trying JS fallback for More button")
                 try:
                     clicked = await page.evaluate("""
                         (snippet) => {
-                            // Find all role=button elements currently visible after hover
+                            // Find the message bubble containing our text
+                            const allDivs = [...document.querySelectorAll('div[dir="auto"]')];
+                            const target = allDivs.reverse().find(d => d.innerText && d.innerText.includes(snippet));
+                            if (!target) return false;
+
+                            const msgRect = target.getBoundingClientRect();
                             const buttons = [...document.querySelectorAll('[role="button"]')];
-                            // Look for buttons that have appeared (opacity > 0, not hidden)
-                            // near the message — they typically contain an SVG (three-dot icon)
-                            const visible_with_svg = buttons.filter(b => {
-                                const rect = b.getBoundingClientRect();
-                                return rect.width > 0 && rect.height > 0 &&
+
+                            // Filter: visible, has SVG icon, within vertical proximity of message
+                            const toolbar_btns = buttons.filter(b => {
+                                const r = b.getBoundingClientRect();
+                                return r.width > 0 && r.height > 0 &&
+                                       r.width < 60 && r.height < 60 &&   // small icon buttons only
                                        window.getComputedStyle(b).display !== 'none' &&
                                        b.querySelector('svg') &&
-                                       (b.getAttribute('aria-label') || '').length < 30;
+                                       Math.abs(r.top + r.height/2 - (msgRect.top + msgRect.height/2)) < 60;
                             });
-                            if (visible_with_svg.length > 0) {
-                                // Click the last one (closest to bottom of page = our message)
-                                visible_with_svg[visible_with_svg.length - 1].click();
-                                return true;
-                            }
-                            return false;
+
+                            if (toolbar_btns.length === 0) return false;
+
+                            // The More (⋮) button is leftmost in the toolbar group
+                            // Sort by x-position and pick the one with smallest x
+                            toolbar_btns.sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left);
+                            toolbar_btns[0].click();
+                            return true;
                         }
                     """, search_snippet)
                     if clicked:

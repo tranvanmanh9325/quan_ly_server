@@ -380,14 +380,14 @@ class BrowserAgentService:
                     except Exception:
                         pass
 
-        # All retries exhausted — return last path and log a warning
+        # All retries exhausted — image is still blank/invalid.
+        # Return "" so callers know NOT to send this to Telegram.
         logger.warning(
-            "[BrowserAgent] All %d screenshot attempts invalid; using last captured file.",
+            "[BrowserAgent] All %d screenshot attempts invalid (blank page). "
+            "Skipping photo — page likely blocked by anti-bot or failed to load.",
             SCREENSHOT_MAX_RETRIES,
         )
-        return path  # path is still set from the last attempt
-
-        return path  # noqa: F821 — defined in last loop iteration
+        return ""
 
 
     async def _extract_page_text(self, page: Page, max_chars: int = 4000) -> str:
@@ -826,6 +826,15 @@ class BrowserAgentService:
             try:
                 img_path = await self._screenshot(page, f"snap_{_now_ms()}")
                 title = await page.title()
+                if not img_path:
+                    # All retries exhausted — page is blank/blocked
+                    return {
+                        "success": False,
+                        "error": f"Trang '{title or page.url}' trả về ảnh trắng sau {SCREENSHOT_MAX_RETRIES} lần thử. "
+                                  "Trang có thể bị chặn bởi anti-bot hoặc chưa tải xong.",
+                        "page_title": title,
+                        "url": page.url,
+                    }
                 return {"success": True, "image_path": img_path, "page_title": title, "url": page.url}
             except Exception as e:
                 logger.error("[BrowserAgent] browser_take_screenshot error: %s", e)

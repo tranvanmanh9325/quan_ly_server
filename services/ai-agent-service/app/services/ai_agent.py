@@ -636,9 +636,22 @@ Với mọi yêu cầu, bạn phải tư duy chặt chẽ theo 5 bước:
                     return "Browser agent chưa được khởi tạo."
                 name_query = tool_args.get("name_query", "").strip()
 
-                # Resolve the exact profile URL from the Messenger thread data.
-                # This guarantees we open the right person even when multiple
-                # Facebook users share the same name.
+                # Check if this person has an active E2EE thread in Messenger
+                is_e2ee_messenger = False
+                if self.fb_service:
+                    try:
+                        db_threads = await self.fb_service.get_known_threads_from_db()
+                        for t in db_threads:
+                            href = t.get("href", "")
+                            tname = t.get("text", "")
+                            score = self.fb_service._name_match_score(name_query, tname)
+                            if score >= 0.85 and "/e2ee/" in href:
+                                is_e2ee_messenger = True
+                                break
+                    except Exception:
+                        pass
+
+                # Resolve standard profile URL if available
                 resolved_profile_url = await self._resolve_profile_url_from_thread(name_query)
                 if resolved_profile_url:
                     logger.info(
@@ -651,6 +664,23 @@ Với mọi yêu cầu, bạn phải tư duy chặt chẽ theo 5 bước:
                     name_query,
                     profile_url=resolved_profile_url,
                 )
+
+                # If this person is in an E2EE Messenger chat, also capture the real chat screenshot for complete context!
+                chat_context_note = ""
+                if is_e2ee_messenger and self.fb_service:
+                    try:
+                        chat_res = await self.fb_service.capture_chat_screenshot(name_query)
+                        if chat_res.get("success") and chat_res.get("image_path"):
+                            if self.telegram_bot and chat_id:
+                                await self.telegram_bot.send_photo(
+                                    chat_id=chat_id,
+                                    photo_path=chat_res.get("image_path"),
+                                    caption=f"💬 Đoạn chat Messenger thực tế với `{name_query}` (Mã hóa đầu cuối E2EE)",
+                                )
+                            chat_context_note = f"\n💬 *(Đã gửi kèm ảnh chụp màn hình cuộc trò chuyện Messenger thực tế với {name_query})*"
+                    except Exception as e:
+                        logger.warning("[AiAgent] Failed to capture companion E2EE chat screenshot: %s", e)
+
                 return await self._handle_browser_result(
                     res,
                     chat_id=chat_id,
@@ -659,6 +689,7 @@ Với mọi yêu cầu, bạn phải tư duy chặt chẽ theo 5 bước:
                         f"👤 **{res.get('profile_name', name_query)}**\n"
                         f"🔗 URL: {res.get('profile_url', 'N/A')}\n"
                         f"📝 Giới thiệu:\n{res.get('intro_text', 'Không có thông tin.')[:600]}"
+                        f"{chat_context_note}"
                     ),
                     send_now=True,  # terminal: always send immediately
                 )

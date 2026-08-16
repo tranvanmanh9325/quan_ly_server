@@ -514,14 +514,14 @@ class FacebookService:
                 }
               }
 
-              // 2. Get Profile URL from Right Sidebar (x > 950, y: 100-380)
+              // 2. Get Profile URL from Right Sidebar (x > 750)
               const rightLinks = Array.from(document.querySelectorAll('a[href]'));
               for (let a of rightLinks) {
                 const r = a.getBoundingClientRect();
-                if (r.x > 950 && r.y >= 100 && r.y <= 380) {
+                if (r.x > 750 && r.y >= 80 && r.y <= 450) {
                   let href = a.getAttribute('href') || a.href || '';
                   let aria = (a.getAttribute('aria-label') || '').toLowerCase();
-                  if (aria.includes('trang cá nhân') || /^\\/\\d+\\/?$/.test(href) || href.includes('facebook.com/1000') || (href.includes('/profile.php') && !href.includes('notif_id'))) {
+                  if (aria.includes('trang cá nhân') || (/^\\/\\d+\\/?$/.test(href) && href.length > 6) || href.includes('facebook.com/1000')) {
                     if (href.startsWith('/')) {
                       profileUrl = 'https://www.facebook.com' + href;
                     } else if (href.startsWith('http')) {
@@ -621,12 +621,16 @@ class FacebookService:
                     info_btn = page.locator('div[role="main"] div[role="button"][aria-label*="thông tin" i], div[role="main"] div[role="button"][aria-label*="Thông tin" i]').first
                     if await info_btn.count() > 0:
                         try:
-                            is_exp = await info_btn.get_attribute("aria-expanded")
-                            if is_exp != "true":
-                                await info_btn.click()
-                                await asyncio.sleep(2.5)
+                            await info_btn.click()
+                            await asyncio.sleep(3.0)
                         except Exception:
                             pass
+
+                    # Try waiting dynamically for profile button in right sidebar
+                    try:
+                        await page.wait_for_selector('a[aria-label*="Trang cá nhân" i], div[role="complementary"] a[href*="/1000"]', timeout=5000)
+                    except Exception:
+                        pass
 
                     info = await self._extract_thread_info_from_page(page)
                     p_url = info.get("profile_url", "")

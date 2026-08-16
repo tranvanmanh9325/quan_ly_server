@@ -428,7 +428,7 @@ class BrowserAgentService:
         async with self._lock:
             page = await self._new_page()
             try:
-                # ── Case 1: Open Messenger thread & click Profile button if no direct URL ──
+                # ── Case 1: Open Messenger thread & extract exact Profile link ──
                 if not profile_url and thread_href:
                     logger.info("[BrowserAgent] Resolving profile live from thread: %s", thread_href)
                     try:
@@ -436,43 +436,31 @@ class BrowserAgentService:
                         await asyncio.sleep(4.0)
 
                         # Handle PIN screen if present
-                        pin_input = page.locator("input[type='password'], input[name='pin']").first
-                        if await pin_input.count() > 0:
-                            await pin_input.fill("090305")
-                            await page.keyboard.press("Enter")
-                            await asyncio.sleep(4.0)
+                        if self.fb_service:
+                            await self.fb_service._handle_e2ee_pin_screen(page)
+                        else:
+                            pin_input = page.locator("input[type='password'], input[name='pin']").first
+                            if await pin_input.count() > 0:
+                                await pin_input.fill("090305")
+                                await page.keyboard.press("Enter")
+                                await asyncio.sleep(3.0)
 
-                        # Expand Right Sidebar
-                        info_btn = page.locator('div[role="main"] div[role="button"][aria-label*="thông tin" i], div[role="main"] div[role="button"][aria-label*="Thông tin" i]').first
-                        if await info_btn.count() > 0:
-                            try:
-                                await info_btn.click()
-                                await asyncio.sleep(2.5)
-                            except Exception:
-                                pass
+                        # Wait for E2EE messages / sidebar hydration to complete
+                        for _ in range(15):
+                            await asyncio.sleep(1.0)
+                            has_spinner = await page.locator('div[role="progressbar"], svg[aria-label*="Đang tải"], [role="status"]').count()
+                            if has_spinner == 0:
+                                break
+                        await asyncio.sleep(2.0)
 
                         # Extract exact profile URL directly from Right Sidebar button href
                         target_url = await page.evaluate("""
                         () => {
-                            const all = Array.from(document.querySelectorAll('a[href], div[role="button"], [role="complementary"] *'));
-                            for (const el of all) {
-                                const r = el.getBoundingClientRect();
-                                const t = (el.innerText || '').trim();
-                                const aria = (el.getAttribute('aria-label') || '').toLowerCase();
-                                let href = el.getAttribute('href') || el.href || '';
-                                if (r.x > 700 && r.y > 80 && r.y < 450) {
-                                    if (aria.includes('trang cá nhân') || t.startsWith('Trang cá') || /^\/\d+\/?$/.test(href) || href.includes('facebook.com/1000')) {
-                                        if (href && !href.startsWith('#') && !href.includes('/messages/')) {
-                                            return href.startsWith('/') ? 'https://www.facebook.com' + href : href;
-                                        }
-                                        const childLink = el.querySelector('a[href]');
-                                        if (childLink) {
-                                            let ch = childLink.getAttribute('href') || childLink.href || '';
-                                            if (ch && !ch.includes('/messages/')) {
-                                                return ch.startsWith('/') ? 'https://www.facebook.com' + ch : ch;
-                                            }
-                                        }
-                                    }
+                            const a = document.querySelector('a[aria-label="Trang cá nhân"], a[aria-label*="Trang cá nhân" i]');
+                            if (a) {
+                                let href = a.getAttribute('href') || a.href || '';
+                                if (href && !href.startsWith('#') && !href.includes('/messages/')) {
+                                    return href.startsWith('/') ? 'https://www.facebook.com' + href : href;
                                 }
                             }
                             return '';
@@ -480,7 +468,9 @@ class BrowserAgentService:
                         """)
                         if target_url:
                             profile_url = target_url
-                            logger.info("[BrowserAgent] Extracted profile URL from thread sidebar: %s", profile_url)
+                            logger.info("[BrowserAgent] Extracted exact profile URL from thread: %s", profile_url)
+                            if self.fb_service:
+                                await self.fb_service.save_known_thread(thread_href, name_query, profile_url=profile_url)
                     except Exception as e:
                         logger.warning("[BrowserAgent] Thread profile extraction attempt notice: %s", e)
 

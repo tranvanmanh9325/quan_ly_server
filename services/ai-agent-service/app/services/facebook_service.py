@@ -615,22 +615,23 @@ class FacebookService:
                     await page.goto(thread_href, wait_until="domcontentloaded", timeout=30000)
                     await asyncio.sleep(4.0)
                     await self._handle_e2ee_pin_screen(page)
-                    await asyncio.sleep(3.0)
+                    
+                    # Wait for E2EE messages / sidebar hydration to complete
+                    for _ in range(15):
+                        await asyncio.sleep(1.0)
+                        has_spinner = await page.locator('div[role="progressbar"], svg[aria-label*="Đang tải"], [role="status"]').count()
+                        if has_spinner == 0:
+                            break
+                    await asyncio.sleep(2.0)
 
                     # Ensure Right Sidebar is open
-                    info_btn = page.locator('div[role="main"] div[role="button"][aria-label*="thông tin" i], div[role="main"] div[role="button"][aria-label*="Thông tin" i]').first
+                    info_btn = page.locator('div[role="button"][aria-label*="thông tin" i], div[role="button"][aria-label*="Thông tin" i]').first
                     if await info_btn.count() > 0:
                         try:
                             await info_btn.click()
-                            await asyncio.sleep(3.0)
+                            await asyncio.sleep(2.5)
                         except Exception:
                             pass
-
-                    # Try waiting dynamically for profile button in right sidebar
-                    try:
-                        await page.wait_for_selector('a[aria-label*="Trang cá nhân" i], div[role="complementary"] a[href*="/1000"]', timeout=5000)
-                    except Exception:
-                        pass
 
                     info = await self._extract_thread_info_from_page(page)
                     p_url = info.get("profile_url", "")

@@ -837,31 +837,64 @@ class BrowserAgentService:
 
 
     async def _extract_intro_text(self, page: Page) -> str:
-        """Extract bio, hometown, education, work from the profile intro section.
-        Uses multiple fallback selectors to be robust across FB UI versions.
+        """Extract clean, well-formatted bio and personal info from profile.
+        Filters out UI tabs, action buttons, tracking IDs, and repeated garbage lines.
         """
         try:
-            intro = await page.evaluate("""
+            raw_items = await page.evaluate("""
             () => {
-                // Priority 1: Dedicated intro widget (pagelet)
-                const candidates = [
-                    document.querySelector('[data-pagelet="ProfileAppSection_0"]'),
-                    document.querySelector('[data-pagelet="ProfileTilesFeed_0"]'),
-                    document.querySelector('[aria-label*="\u0067i\u1edbi thi\u1ec7u"]'),  // Vietnamese "giới thiệu"
-                    document.querySelector('[aria-label*="Intro"]'),
-                    document.querySelector('[role="main"]'),
-                    document.body,
-                ];
-                for (const el of candidates) {
-                    if (el && el.innerText && el.innerText.trim().length > 20) {
-                        return el.innerText.slice(0, 2000);
+                const UI_BLACKLIST = new Set([
+                    'nhắn tin', 'thêm bạn bè', 'tìm kiếm', 'xem thêm', 'bài viết', 
+                    'giới thiệu', 'bạn bè', 'ảnh', 'âm nhạc', 'check in', 'video', 
+                    'reels', 'bộ lọc', 'xem tất cả ảnh', 'facebook', 'viết bình luận...',
+                    'quản lý bài viết', 'chỉnh sửa trang cá nhân', 'chỉnh sửa chi tiết',
+                    'thêm vào tin', 'hủy kết bạn', 'chặn', 'báo cáo', 'sự kiện',
+                    'thông tin trên trang cá nhân'
+                ]);
+
+                const main = document.querySelector('[role="main"]') || document.body;
+                const elements = Array.from(main.querySelectorAll('span, div, a, p'));
+                const lines = [];
+                const seen = new Set();
+
+                for (const el of elements) {
+                    if (el.children.length > 2) continue;
+                    let t = (el.innerText || '').trim();
+                    if (!t || t.includes('\\n') || t.length < 3 || t.length > 150) continue;
+                    
+                    let low = t.toLowerCase();
+                    if (UI_BLACKLIST.has(low)) continue;
+                    if (low.startsWith('facebook') || /^[a-f0-9]{20,}$/.test(t) || /^[a-zA-Z]$/.test(t)) continue;
+
+                    // Keywords that indicate valuable profile information
+                    const isValuable = (
+                        low.includes('người theo dõi') || low.includes('bạn bè') ||
+                        low.includes('sống tại') || low.includes('đến từ') ||
+                        low.includes('làm việc') || low.includes('từng học') ||
+                        low.includes('học tại') || low.includes('độc thân') ||
+                        low.includes('đã kết hôn') || low.includes('hẹn hò') ||
+                        low.includes('tham gia vào') || low.includes('người sáng tạo') ||
+                        low.includes('trang cá nhân') || low.includes('tiểu sử') ||
+                        low.includes('quản trị viên')
+                    );
+
+                    if (isValuable && !seen.has(low)) {
+                        seen.add(low);
+                        lines.push(t);
                     }
                 }
-                return '';
+                return lines;
             }
             """)
-            return (intro or "")[:2000]
-        except Exception:
+            
+            if not raw_items:
+                return ""
+            
+            # Format cleanly with bullet points
+            formatted = "\n".join(f"• {item}" for item in raw_items[:8])
+            return formatted
+        except Exception as e:
+            logger.debug("[BrowserAgent] Error extracting clean intro text: %s", e)
             return ""
 
 

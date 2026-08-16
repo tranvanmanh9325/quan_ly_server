@@ -992,10 +992,16 @@ class FacebookService:
                 logger.warning("[FB-Service] Unsend: could not find Remove option in context menu")
                 return False
 
-            await asyncio.sleep(0.8)
+            # Wait for context menu animation, then wait for confirm dialog to render
+            await asyncio.sleep(1.5)
+            try:
+                await page.wait_for_selector('[role="dialog"], [role="alertdialog"]', timeout=5000)
+                await asyncio.sleep(0.8)
+            except Exception:
+                pass
 
             # 7. Confirm "Thu hồi cho mọi người" / "Gỡ cho mọi người" / "Remove for everyone"
-            # Screenshot to see what dialog appeared
+            # Screenshot after waiting for dialog to fully render
             try:
                 await page.screenshot(path="/app/browser_data/unsend_confirm_dialog.png")
             except Exception:

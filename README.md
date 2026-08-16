@@ -181,42 +181,47 @@ Configure critical alert threshold sliders, global refresh speeds, Telegram/Face
 │   │                                       Frontend (Nginx)                                        │   │
 │   │                                         React 19 SPA                                          │   │
 │   │                                    Host Port: 5173 (Nginx :80)                                │   │
-│   └───────┬──────────────────────┬──────────────────────┬──────────────────────┬──────────────────┘   │
+│   └───────▲──────────────────────▲──────────────────────▲──────────────────────▲──────────────────┘   │
+│           │                      │                      │                      │                      │
 │           │ /api/auth/*          │ /api/metrics/*       │ /api/files/*         │ /api/facebook/*      │
-│           │                      │                      │                      │ /api/ai/* , /v1/*    │
-│           │                      │                      │                      │ /fb-vnc/*            │
+│           │ (JWT Login / Verify) │ (Telemetry / Stream) │ (SFTP File Ops)      │ /api/ai/* , /v1/*    │
+│           │                      │                      │                      │ /fb-vnc/* (WebSocket)│
+│           │ (REST Request/Reply) │ (REST Request/Reply) │ (REST Request/Reply) │ (Duplex Stream/REST) │
 │           ▼                      ▼                      ▼                      ▼                      │
 │   ┌──────────────┐       ┌──────────────┐       ┌──────────────┐       ┌──────────────────────────┐   │
 │   │ Auth Service │       │Metrics Service       │ File Service │       │     AI Agent Service     │   │
 │   │ Spring Boot  │       │ Spring Boot  │       │ Spring Boot  │       │      FastAPI (8084)      │   │
 │   │ (Port 8081)  │       │ (Port 8082)  │       │ (Port 8083)  │       │    noVNC GUI (Port 6080) │   │
-│   └───────┬──────┘       └───────┬──────┘       └───────┬──────┘       └───────┬──────────┬───────┘   │
+│   └───────▲──────┘       └───────▲──────┘       └───────▲──────┘       └───────▲──────────▲───────┘   │
 │           │                      │                      │                      │          │           │
-│           │ (User / JWT Auth)    │ (Telemetry & Alert)  │ (SFTP Navigation)    │ (State)  │           │
+│           │ (User / Auth R/W)    │ (Configs / Logs R/W) │ (SFTP Navigation)    │ (State)  │           │
 │           ▼                      ▼                      │                      ▼          │           │
 │   ┌─────────────────────────────────────┐               │              ┌───────────────┐  │           │
 │   │            PostgreSQL 17            │               │              │ Playwright    │  │           │
 │   │        (Database Container)         │               │              │ Chromium Head │  │           │
-│   │            Port 5432/tcp            │               │              │ (E2EE Session)│  │           │
-│   └─────────────────────────────────────┘               │              └───────┬───────┘  │           │
+│   │     Port 5432/tcp (Bi-directional)  │               │              │ (E2EE Session)│  │           │
+│   └─────────────────────────────────────┘               │              └───────▲───────┘  │           │
 │                                                         │                      │          │           │
 └─────────────────────────────────────────────────────────┼──────────────────────┼──────────┼───────────┘
-               │ (JSch SSH Tunnel)                        │ (JSch SFTP)          │          │ (AsyncSSH)
-               ▼                                          ▼                      │          ▼
+         ▲                                                ▲                      │          ▲
+         │ (JSch SSH Persistent Session)                  │ (JSch SFTP Channel)  │          │ (AsyncSSH)
+         │ [Commands ──▶ / ◀── Metrics Telemetry]         │ [Read/Write Stream]  │          │ [SSH Tools]
+         ▼                                                ▼                      │          ▼
   ┌───────────────────────────────────────────────────────────────────┐          │ ┌────────────────────┐
   │                        Remote Linux Server                        │          │ │  LLM Key Pools     │
   │                       (Managed Target Host)                       │          │ │ ────────────────── │
   │    Standard Linux CLI: top, free, df, sensors, ps, systemctl,     │          │ │ 1. Groq API Pool   │
   │    docker, ss, journalctl, ufw (Zero target agent footprint)      │          │ │ 2. OpenRouter Pool │
-  │                             Port 22/tcp                           │          │ └────────────────────┘
-  └───────────────────────────────────────────────────────────────────┘          │          ▲
-                                                                                 │          │
-                                                                                 ▼          │
-                                      ┌─────────────────────────────────────────────────────┴───────────┐
-                                      │                   External Messaging Integrations               │
+  │                   Port 22/tcp (Full Duplex)                       │          │ └─────────▲──────────┘
+  └───────────────────────────────────────────────────────────────────┘          │           │
+                                                                                 │           │ (Prompt Context ──▶)
+                                                                                 │           │ (◀── Inference Stream)
+                                                                                 ▼           ▼
+                                      ┌─────────────────────────────────────────────────────────────────┐
+                                      │             External Messaging Integrations (2-Way)             │
                                       │ ─────────────────────────────────────────────────────────────── │
-                                      │ • Telegram Bot API (Long Polling Agent Execution)               │
-                                      │ • Facebook Messenger E2EE (Automated PIN Unlock & Unsend Engine)│
+                                      │ • Telegram Bot API (Inbound Polling ◄──► Outbound AI Responses) │
+                                      │ • Facebook Messenger E2EE (Scan Inbox ◄──► Auto-Reply & Unsend) │
                                       └─────────────────────────────────────────────────────────────────┘
 ```
 

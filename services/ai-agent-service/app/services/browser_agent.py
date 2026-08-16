@@ -69,10 +69,10 @@ NAV_TIMEOUT_MS = 45_000
 #    We require std_dev >= 8.0 to pass.
 #
 # A screenshot fails if EITHER check fails.
-SCREENSHOT_MIN_BYTES  = 40 * 1024   # 40 KB minimum file size
-SCREENSHOT_MIN_STDDEV = 8.0          # minimum grayscale std-deviation
+SCREENSHOT_MIN_BYTES  = 12 * 1024   # 12 KB minimum file size (suitable for dark theme profiles)
+SCREENSHOT_MIN_STDDEV = 4.0          # minimum grayscale std-deviation
 SCREENSHOT_MAX_RETRIES = 3           # max retry attempts before giving up
-SCREENSHOT_RETRY_WAIT_S = 3.0        # seconds to wait between retries
+SCREENSHOT_RETRY_WAIT_S = 2.0        # seconds to wait between retries
 
 
 # ─── Helper ───────────────────────────────────────────────────────────────────

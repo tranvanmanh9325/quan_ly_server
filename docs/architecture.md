@@ -7,36 +7,50 @@ A detailed walkthrough of how the Mini Server Dashboard is structured, how data 
 ## High-Level Overview
 
 ```text
-┌────────────────────────────────────────────────────────────────────────────────────────┐
-│                               Docker Network (bridge)                                  │
-│                                                                                        │
-│  ┌──────────────────────┐  /api/auth/*   ┌──────────────────────┐                      │
-│  │       Frontend       │───────────────▶│     Auth Service     │                      │
-│  │   React 19 + Nginx   │                │  Spring Boot (8081)  │──┐                   │
-│  │   Host port 5173:80  │                └──────────────────────┘  │                   │
-│  └──────────┬───────────┘                                          │                   │
-│             │ /api/metrics/*             ┌──────────────────────┐  │ PostgreSQL 17     │
-│             ├───────────────────────────▶│   Metrics Service    │──┼─▶ ┌────────────┐  │
-│             │                            │  Spring Boot (8082)  │  │   │     DB     │  │
-│             │ /api/files/*               └──────────┬───────────┘  │   │Port 5432/tcp│  │
-│             └───────────────────────────┐           │              │   └────────────┘  │
-│                                         ▼           │              │                   │
-│                              ┌──────────────────┐   │              │                   │
-│                              │   File Service   │───┼──────────────┘                   │
-│                              │Spring Boot (8083)│   │                                  │
-│                              └──────────────────┘   │ SSH (22 LAN / 15774 Ngrok)       │
-│                                                     ▼                                  │
-│   ┌──────────────────────┐               ┌──────────────────────┐                      │
-│   │     Telegram API     │◀──────────────│ Remote Linux Server  │                      │
-│   │ (Long Polling Bot)   │               │ (sysadmin execution) │                      │
-│   └──────────┬───────────┘               └──────────────────────┘                      │
-│              │ (Tool Calling)                                                          │
-│              ▼                                                                         │
-│   ┌──────────────────────┐                                                             │
-│   │       Groq AI        │                                                             │
-│   │(llama-3.1-8b-instant)│                                                             │
-│   └──────────────────────┘                                                             │
-└────────────────────────────────────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                       Docker Network (bridge)                                         │
+│                                                                                                       │
+│   ┌───────────────────────────────────────────────────────────────────────────────────────────────┐   │
+│   │                                       Frontend (Nginx)                                        │   │
+│   │                                         React 19 SPA                                          │   │
+│   │                                    Host Port: 5173 (Nginx :80)                                │   │
+│   └───────┬──────────────────────┬──────────────────────┬──────────────────────┬──────────────────┘   │
+│           │ /api/auth/*          │ /api/metrics/*       │ /api/files/*         │ /api/facebook/*      │
+│           │                      │                      │                      │ /api/ai/* , /v1/*    │
+│           │                      │                      │                      │ /fb-vnc/*            │
+│           ▼                      ▼                      ▼                      ▼                      │
+│   ┌──────────────┐       ┌──────────────┐       ┌──────────────┐       ┌──────────────────────────┐   │
+│   │ Auth Service │       │Metrics Service       │ File Service │       │     AI Agent Service     │   │
+│   │ Spring Boot  │       │ Spring Boot  │       │ Spring Boot  │       │      FastAPI (8084)      │   │
+│   │ (Port 8081)  │       │ (Port 8082)  │       │ (Port 8083)  │       │    noVNC GUI (Port 6080) │   │
+│   └───────┬──────┘       └───────┬──────┘       └───────┬──────┘       └───────┬──────────┬───────┘   │
+│           │                      │                      │                      │          │           │
+│           │ (User / JWT Auth)    │ (Telemetry & Alert)  │ (SFTP Navigation)    │ (State)  │           │
+│           ▼                      ▼                      │                      ▼          │           │
+│   ┌─────────────────────────────────────┐               │              ┌───────────────┐  │           │
+│   │            PostgreSQL 17            │               │              │ Playwright    │  │           │
+│   │        (Database Container)         │               │              │ Chromium Head │  │           │
+│   │            Port 5432/tcp            │               │              │ (E2EE Session)│  │           │
+│   └─────────────────────────────────────┘               │              └───────┬───────┘  │           │
+│                                                         │                      │          │           │
+└─────────────────────────────────────────────────────────┼──────────────────────┼──────────┼───────────┘
+               │ (JSch SSH Tunnel)                        │ (JSch SFTP)          │          │ (AsyncSSH)
+               ▼                                          ▼                      │          ▼
+  ┌───────────────────────────────────────────────────────────────────┐          │ ┌────────────────────┐
+  │                        Remote Linux Server                        │          │ │  LLM Key Pools     │
+  │                       (Managed Target Host)                       │          │ │ ────────────────── │
+  │    Standard Linux CLI: top, free, df, sensors, ps, systemctl,     │          │ │ 1. Groq API Pool   │
+  │    docker, ss, journalctl, ufw (Zero target agent footprint)      │          │ │ 2. OpenRouter Pool │
+  │                             Port 22/tcp                           │          │ └────────────────────┘
+  └───────────────────────────────────────────────────────────────────┘          │          ▲
+                                                                                 │          │
+                                                                                 ▼          │
+                                      ┌─────────────────────────────────────────────────────┴───────────┐
+                                      │                   External Messaging Integrations               │
+                                      │ ─────────────────────────────────────────────────────────────── │
+                                      │ • Telegram Bot API (Long Polling Agent Execution)               │
+                                      │ • Facebook Messenger E2EE (Automated PIN Unlock & Unsend Engine)│
+                                      └─────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -47,11 +61,12 @@ A detailed walkthrough of how the Mini Server Dashboard is structured, how data 
 
 | Service | Port | Primary Responsibility | Key Technologies |
 | --- | --- | --- | --- |
-| **Frontend** | `5173` | React 19 SPA, Cyberpunk Sci-Fi UI, custom SVG icons (`SciFiIcons.jsx`), Nginx reverse proxy | React 19, Vite 8, Recharts, Nginx Alpine |
-| **Metrics Service** | `8082` | System telemetry, JSch SSH persistent tunnel, `executeSudoCommand`, Telegram bot polling, Groq AI Agent | Spring Boot 4.1.0, JSch 2.28.5, Groq REST API |
-| **Auth Service** | `8081` | Authentication, JWT token issuance, user credential validation | Spring Boot 4.1.0, Spring Data JPA, JJWT |
-| **File Service** | `8083` | Remote file system browsing, file inspection & manipulation | Spring Boot 4.1.0, Spring Data JPA |
-| **Database (DB)** | `5432` | Relational storage for users, tokens, and audit logs | PostgreSQL 17 Alpine |
+| **Frontend** | `5173:80` | React 19 SPA, Cyberpunk Sci-Fi UI, custom SVG icons (`SciFiIcons.jsx`), Nginx reverse proxy | React 19, Vite 8, Recharts, Nginx Alpine |
+| **Metrics Service** | `8082` | System telemetry, JSch SSH persistent tunnel, `executeSudoCommand`, alert threshold engine | Spring Boot 4.1.0, JSch 2.28.5, Spring Data JPA |
+| **Auth Service** | `8081` | Authentication, JWT token issuance, user credential validation | Spring Boot 4.1.0, Spring Security, JJWT |
+| **File Service** | `8083` | Remote file system browsing, SFTP file inspection & manipulation | Spring Boot 4.1.0, JSch SFTP |
+| **AI Agent Service** | `8084` / `6080` | Telegram Bot AI Assistant, Facebook E2EE Automation, Multi-LLM Pool, noVNC live stream | FastAPI, Python 3.11, Playwright, AsyncSSH, noVNC |
+| **Database (DB)** | `5432` | Relational storage for users, configs, Telegram history & Facebook E2EE thread states | PostgreSQL 17 Alpine |
 
 ---
 

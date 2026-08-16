@@ -63,22 +63,27 @@
 ## 📸 Screenshots / Demo
 
 ### 1. System Overview Dashboard (`/`)
+
 Real-time KPI metric cards, CPU & RAM donut gauges, multi-core temperature sensors, disk partition usage, and fan HUD.
 ![Dashboard Overview](./docs/assets/dashboard-overview.png)
 
 ### 2. Process Explorer (`/processes`)
+
 Live Linux process monitor with column sorting, CPU/Memory threshold filters, process termination modal, and 1-click CSV export.
 ![Process Explorer](./docs/assets/dashboard-processes.png)
 
 ### 3. Services & Docker Runtime Center (`/services`)
+
 Start/stop/restart systemd units, inspect Docker containers, view live streaming container logs, and monitor scheduled system timers.
 ![Services & Docker](./docs/assets/dashboard-services.png)
 
 ### 4. Interactive Web SSH Terminal Console (`/terminal`)
+
 Embedded web terminal with command history, security sandbox, and 1-click Quick Command Macro Chips.
 ![Terminal Console](./docs/assets/dashboard-terminal.png)
 
 ### 5. Control Center & Settings (`/settings`)
+
 Configure critical alert threshold sliders, global refresh speeds, Telegram/Facebook AI agent preferences, and Sci-Fi visual effects.
 ![Settings](./docs/assets/dashboard-settings.png)
 
@@ -87,6 +92,7 @@ Configure critical alert threshold sliders, global refresh speeds, Telegram/Face
 ## 🚀 Key Features
 
 ### 1. Autonomous AI Assistant ("Tiểu Bảo Bảo")
+
 - **Multi-Provider LLM Key Pool:**
   - **Groq AI Pool (`openai/gpt-oss-120b` / `llama-3.1-8b-instant`):** 9router-style round-robin rotation with 60-second smart cooldown on 429 rate limits.
   - **OpenRouter AI Pool (`nvidia/nemotron-3-super-120b-a12b:free` / custom models):** Automatic Tier-2 failover when primary pool experiences outages or quota exhaustion.
@@ -101,54 +107,64 @@ Configure critical alert threshold sliders, global refresh speeds, Telegram/Face
   - **noVNC Visual Console (Port 6080):** Built-in browser GUI stream allowing visual intervention and debugging whenever required.
 
 ### 2. System Overview Dashboard (`/`)
+
 - **Live KPI Telemetry:** CPU utilization, RAM usage breakdown, Partition disk meters, Network TX/RX throughput, Load Average (1m / 5m / 15m).
 - **Hardware Health:** Multi-sensor CPU temperature readings, system voltages, and fan speeds.
 - **CRITICAL ALERT Warning System:** Pulsing visual alerts and notification triggers when user-defined thresholds are exceeded.
 - **Adaptive Polling Engine:** Dynamically throttles polling frequencies when network latency or server load rises.
 
 ### 3. 3D Interactive Globe Map (`/map`)
+
 - **Orthographic 3D Globe:** Rendered using D3-geo and TopoJSON with smooth drag-to-rotate interaction.
 - **Server Geolocation:** Pinpoints server location with glowing neon pins and animated sonar pulse waves.
 - **Active Node Tracker:** Visualizes incoming SSH tunnel connections and client IP metadata.
 
 ### 4. Process Explorer (`/processes`)
+
 - Real-time Linux process table with dynamic sorting by CPU%, Memory MB, PID, and Command Name.
 - Quick filter tabs: `ALL`, `HIGH CPU (>20%)`, `HIGH MEM (>100MB)`.
 - Safe process termination modal with PID verification.
 - Instant CSV export for audit and analysis.
 
 ### 5. Services & Docker Runtime Center (`/services`)
+
 - **Systemd Service Manager:** Live status badges with 1-click Start / Stop / Restart actions.
 - **Systemd Timers:** Tracks scheduled maintenance jobs (such as `apt-daily.timer` and `apt-daily-upgrade.timer`).
 - **Installed Runtimes:** Auto-detects active runtimes (Docker, Node.js, Java, Python) and daemons (Nginx, PostgreSQL, Redis, UFW).
 
 ### 6. Container Management (`/containers`)
+
 - Complete Docker container overview with live container states and port mappings.
 - Container lifecycle controls: start, stop, restart, and inspect.
 - Real-time container log streaming modal (`docker logs --tail`).
 
 ### 7. Remote File Manager (`/files`)
+
 - Full-featured SSH filesystem browser (navigate directories, inspect files, create, rename, and delete items).
 - Built-in syntax-highlighted code and configuration file viewer.
 
 ### 8. Interactive Web SSH Terminal (`/terminal`)
+
 - Browser-based terminal emulator (`root@server:~#`).
 - Command history navigation (Up / Down arrows).
 - Quick command macro chips for frequent diagnostics (`uname -a`, `df -h`, `docker ps`, `ss -tulpn`).
 - Server-side security sandbox preventing destructive commands (`rm -rf /`, `mkfs`, `reboot`).
 
 ### 9. Security & Network Inspector (`/security`)
+
 - **Listening Ports:** Comprehensive TCP / UDP socket scan mapped to respective process names and PIDs (`ss -tulpn`).
 - **Active SSH Sessions:** Real-time user login monitoring via `who` and session tracking.
 - **Colorized System Log Viewer:** Automatic severity parsing (`ERROR`/`DENIED` → Neon Red/Pink, `WARN` → Neon Yellow, `INFO` → Neon Green).
 
 ### 10. Control Center & Preferences (`/settings`)
+
 - Custom threshold sliders for CPU, Memory, and Disk alert triggers.
 - Per-session polling frequency adjustments.
 - Sci-Fi visual toggles: Custom cursor, audio effects, scanline filters, grid overlays.
 - Telegram & Facebook AI integration controls.
 
 ### 11. Futuristic Sci-Fi HUD Interaction Layer
+
 - **Dual-Ring Animated Crosshair Cursor:** Custom SVG HUD cursor replacing standard system pointers.
 - **Tactile Canvas Shockwaves:** Interactive particle bursts and energy ripples on click.
 - **Web Audio API Synthesizer:** Real-time laser chirps and sub-bass audio feedback without external audio assets.
@@ -158,45 +174,50 @@ Configure critical alert threshold sliders, global refresh speeds, Telegram/Face
 ## 🏗 System Architecture
 
 ```text
-┌────────────────────────────────────────────────────────────────────────────────────────┐
-│                               Docker Network (bridge)                                  │
-│                                                                                        │
-│  ┌──────────────────────┐  /api/auth/*   ┌──────────────────────┐                      │
-│  │       Frontend       │───────────────▶│     Auth Service     │                      │
-│  │   React 19 + Nginx   │                │  Spring Boot (8081)  │──┐                   │
-│  │   Host port 5173:80  │                └──────────────────────┘  │                   │
-│  └──────────┬───────────┘                                          │                   │
-│             │ /api/metrics/*             ┌──────────────────────┐  │                   │
-│             ├───────────────────────────▶│   Metrics Service    │──┼─▶ ┌────────────┐  │
-│             │                            │  Spring Boot (8082)  │  │   │ PostgreSQL │  │
-│             │ /api/files/*               └──────────┬───────────┘  │   │     17     │  │
-│             ├───────────────────────────┐           │              │   │  Port 5432 │  │
-│             │                           ▼           │              │   └────────────┘  │
-│             │                ┌──────────────────┐   │              │          ▲        │
-│             │                │   File Service   │───┼──────────────┘          │        │
-│             │                │Spring Boot (8083)│   │                         │        │
-│             │                └──────────────────┘   │                         │        │
-│             │ /api/ai/* , /api/facebook/*           │                         │        │
-│             └───────────────────────────┐           │ SSH (Port 22 LAN)       │        │
-│                                         ▼           ▼                         │        │
-│                              ┌──────────────────────────────────┐             │        │
-│                              │         AI Agent Service         │─────────────┘        │
-│                              │   FastAPI (8084) + noVNC (6080)  │ (State / Threads DB) │
-│                              │ (Tiểu Bảo Bảo / Playwright E2EE) │                      │
-│                              └────────────────┬─────────────────┘                      │
-│                                               │                                        │
-│                        ┌──────────────────────┴──────────────────────┐                 │
-│                        ▼                                             ▼                 │
-│             ┌──────────────────────┐                      ┌──────────────────────┐     │
-│             │     Telegram API     │                      │  Facebook Messenger  │     │
-│             │ (Long Polling Bot)   │                      │  (E2EE Playwright)   │     │
-│             └──────────┬───────────┘                      └──────────────────────┘     │
-│                        │ (LLM Multi-Key Pool)                                          │
-│                        ▼                                                               │
-│             ┌────────────────────────────────────────────────────────┐                 │
-│             │  Groq Pool (Primary)  ──(failover)──▶  OpenRouter Pool  │                 │
-│             └────────────────────────────────────────────────────────┘                 │
-└────────────────────────────────────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                       Docker Network (bridge)                                         │
+│                                                                                                       │
+│   ┌───────────────────────────────────────────────────────────────────────────────────────────────┐   │
+│   │                                       Frontend (Nginx)                                        │   │
+│   │                                         React 19 SPA                                          │   │
+│   │                                    Host Port: 5173 (Nginx :80)                                │   │
+│   └───────┬──────────────────────┬──────────────────────┬──────────────────────┬──────────────────┘   │
+│           │ /api/auth/*          │ /api/metrics/*       │ /api/files/*         │ /api/facebook/*      │
+│           │                      │                      │                      │ /api/ai/* , /v1/*    │
+│           │                      │                      │                      │ /fb-vnc/*            │
+│           ▼                      ▼                      ▼                      ▼                      │
+│   ┌──────────────┐       ┌──────────────┐       ┌──────────────┐       ┌──────────────────────────┐   │
+│   │ Auth Service │       │Metrics Service       │ File Service │       │     AI Agent Service     │   │
+│   │ Spring Boot  │       │ Spring Boot  │       │ Spring Boot  │       │      FastAPI (8084)      │   │
+│   │ (Port 8081)  │       │ (Port 8082)  │       │ (Port 8083)  │       │    noVNC GUI (Port 6080) │   │
+│   └───────┬──────┘       └───────┬──────┘       └───────┬──────┘       └───────┬──────────┬───────┘   │
+│           │                      │                      │                      │          │           │
+│           │ (User / JWT Auth)    │ (Telemetry & Alert)  │ (SFTP Navigation)    │ (State)  │           │
+│           ▼                      ▼                      │                      ▼          │           │
+│   ┌─────────────────────────────────────┐               │              ┌───────────────┐  │           │
+│   │            PostgreSQL 17            │               │              │ Playwright    │  │           │
+│   │        (Database Container)         │               │              │ Chromium Head │  │           │
+│   │            Port 5432/tcp            │               │              │ (E2EE Session)│  │           │
+│   └─────────────────────────────────────┘               │              └───────┬───────┘  │           │
+│                                                         │                      │          │           │
+└─────────────────────────────────────────────────────────┼──────────────────────┼──────────┼───────────┘
+               │ (JSch SSH Tunnel)                        │ (JSch SFTP)          │          │ (AsyncSSH)
+               ▼                                          ▼                      │          ▼
+  ┌───────────────────────────────────────────────────────────────────┐          │ ┌────────────────────┐
+  │                        Remote Linux Server                        │          │ │  LLM Key Pools     │
+  │                       (Managed Target Host)                       │          │ │ ────────────────── │
+  │    Standard Linux CLI: top, free, df, sensors, ps, systemctl,     │          │ │ 1. Groq API Pool   │
+  │    docker, ss, journalctl, ufw (Zero target agent footprint)      │          │ │ 2. OpenRouter Pool │
+  │                             Port 22/tcp                           │          │ └────────────────────┘
+  └───────────────────────────────────────────────────────────────────┘          │          ▲
+                                                                                 │          │
+                                                                                 ▼          │
+                                      ┌─────────────────────────────────────────────────────┴───────────┐
+                                      │                   External Messaging Integrations               │
+                                      │ ─────────────────────────────────────────────────────────────── │
+                                      │ • Telegram Bot API (Long Polling Agent Execution)               │
+                                      │ • Facebook Messenger E2EE (Automated PIN Unlock & Unsend Engine)│
+                                      └─────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -389,6 +410,7 @@ docker compose logs -f
 ### 3. Local Development (Hot Reload)
 
 #### Frontend (React 19 + Vite)
+
 ```bash
 cd frontend
 npm install --legacy-peer-deps
@@ -397,6 +419,7 @@ npm run dev
 ```
 
 #### AI Agent Service (Python 3.11)
+
 ```bash
 cd services/ai-agent-service
 python -m venv venv

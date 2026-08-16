@@ -451,34 +451,38 @@ class BrowserAgentService:
                             except Exception:
                                 pass
 
-                        # Click 'Trang cá nhân' button in right sidebar
-                        clicked = await page.evaluate("""
+                        # Extract exact profile URL directly from Right Sidebar button href
+                        target_url = await page.evaluate("""
                         () => {
-                            const all = Array.from(document.querySelectorAll('*'));
+                            const all = Array.from(document.querySelectorAll('a[href], div[role="button"], [role="complementary"] *'));
                             for (const el of all) {
                                 const r = el.getBoundingClientRect();
                                 const t = (el.innerText || '').trim();
-                                const aria = el.getAttribute('aria-label') || '';
+                                const aria = (el.getAttribute('aria-label') || '').toLowerCase();
+                                let href = el.getAttribute('href') || el.href || '';
                                 if (r.x > 700 && r.y > 80 && r.y < 450) {
-                                    if (t.startsWith('Trang cá') || aria.includes('Trang cá') || t === 'Trang cá nhân') {
-                                        const btn = el.closest('div[role="button"], a') || el;
-                                        btn.click();
-                                        return true;
+                                    if (aria.includes('trang cá nhân') || t.startsWith('Trang cá') || /^\/\d+\/?$/.test(href) || href.includes('facebook.com/1000')) {
+                                        if (href && !href.startsWith('#') && !href.includes('/messages/')) {
+                                            return href.startsWith('/') ? 'https://www.facebook.com' + href : href;
+                                        }
+                                        const childLink = el.querySelector('a[href]');
+                                        if (childLink) {
+                                            let ch = childLink.getAttribute('href') || childLink.href || '';
+                                            if (ch && !ch.includes('/messages/')) {
+                                                return ch.startsWith('/') ? 'https://www.facebook.com' + ch : ch;
+                                            }
+                                        }
                                     }
                                 }
                             }
-                            return false;
+                            return '';
                         }
                         """)
-                        logger.info("[BrowserAgent] Profile button clicked in thread: %s", clicked)
-                        await asyncio.sleep(4.0)
-
-                        # Check if redirected or popup opened
-                        if "/messages/" not in page.url:
-                            profile_url = page.url
-                            logger.info("[BrowserAgent] Successfully navigated to profile: %s", profile_url)
+                        if target_url:
+                            profile_url = target_url
+                            logger.info("[BrowserAgent] Extracted profile URL from thread sidebar: %s", profile_url)
                     except Exception as e:
-                        logger.warning("[BrowserAgent] Thread profile click attempt notice: %s", e)
+                        logger.warning("[BrowserAgent] Thread profile extraction attempt notice: %s", e)
 
                 if profile_url:
                     # ── Direct navigation ─────────────────────────────────────

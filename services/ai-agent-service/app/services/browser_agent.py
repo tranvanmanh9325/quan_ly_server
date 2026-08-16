@@ -378,63 +378,84 @@ class BrowserAgentService:
                     try:
                         await page.wait_for_function(wait_fn, timeout=10_000)
                     except Exception:
-                        pass
-
-        # All retries exhausted — image is still blank/invalid.
-        # Return "" so callers know NOT to send this to Telegram.
-        logger.warning(
-            "[BrowserAgent] All %d screenshot attempts invalid (blank page). "
-            "Skipping photo — page likely blocked by anti-bot or failed to load.",
-            SCREENSHOT_MAX_RETRIES,
-        )
-        return ""
-
-
-    async def _extract_page_text(self, page: Page, max_chars: int = 4000) -> str:
-        """Extract visible text from page body, truncated to max_chars."""
-        try:
-            text = await page.evaluate("""
-            () => {
-                const body = document.querySelector('[role="main"]') || document.body;
-                return body ? body.innerText : '';
-            }
-            """)
-            return (text or "")[:max_chars]
-        except Exception:
-            return ""
-
-    # ──────────────────────────────────────────────────────────────────────────
-    # Action Primitives (public API consumed by AiAgentService)
-    # ──────────────────────────────────────────────────────────────────────────
-
-    async def facebook_view_profile(self, name_query: str, profile_url: Optional[str] = None) -> Dict[str, Any]:
+                          async def facebook_view_profile(
+        self,
+        name_query: str,
+        profile_url: Optional[str] = None,
+        thread_href: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """
         Autonomously navigates to a Facebook user's profile.
 
         Resolution order (highest precision first):
-          1. If `profile_url` is provided (derived from thread_href user_id), navigate
-             directly — this guarantees the exact correct person from Messenger.
-          2. Otherwise fall back to Facebook People Search + token-scored link picking.
-
-        Flow (case 2 only):
-          1. Navigate to Facebook People Search with the query.
-          2. Wait dynamically for profile links to appear.
-          3. Score each candidate by token overlap with the query.
-          4. Navigate directly to the best-match URL (no DOM click).
-          5. Wait for the profile React SPA to hydrate (up to 10 s).
-          6. Dismiss overlays, scroll to load intro, extract text, screenshot.
+          1. If `profile_url` is provided, navigate directly.
+          2. If `thread_href` is provided, open Messenger thread, click Right Sidebar 'Trang cá nhân' button.
+          3. Otherwise fall back to Facebook People Search + token-scored link picking.
         """
         logger.info(
-            "[BrowserAgent] facebook_view_profile('%s', profile_url=%s)",
+            "[BrowserAgent] facebook_view_profile('%s', profile_url=%s, thread_href=%s)",
             name_query,
             profile_url or "none",
+            thread_href or "none",
         )
 
         async with self._lock:
             page = await self._new_page()
             try:
+                # ── Case 1: Open Messenger thread & click Profile button if no direct URL ──
+                if not profile_url and thread_href:
+                    logger.info("[BrowserAgent] Resolving profile live from thread: %s", thread_href)
+                    try:
+                        await page.goto(thread_href, wait_until="domcontentloaded", timeout=NAV_TIMEOUT_MS)
+                        await asyncio.sleep(4.0)
+
+                        # Handle PIN screen if present
+                        pin_input = page.locator("input[type='password'], input[name='pin']").first
+                        if await pin_input.count() > 0:
+                            await pin_input.fill("090305")
+                            await page.keyboard.press("Enter")
+                            await asyncio.sleep(4.0)
+
+                        # Expand Right Sidebar
+                        info_btn = page.locator('div[role="main"] div[role="button"][aria-label*="thông tin" i], div[role="main"] div[role="button"][aria-label*="Thông tin" i]').first
+                        if await info_btn.count() > 0:
+                            try:
+                                await info_btn.click()
+                                await asyncio.sleep(2.5)
+                            except Exception:
+                                pass
+
+                        # Click 'Trang cá nhân' button in right sidebar
+                        clicked = await page.evaluate("""
+                        () => {
+                            const all = Array.from(document.querySelectorAll('*'));
+                            for (const el of all) {
+                                const r = el.getBoundingClientRect();
+                                const t = (el.innerText || '').trim();
+                                const aria = el.getAttribute('aria-label') || '';
+                                if (r.x > 700 && r.y > 80 && r.y < 450) {
+                                    if (t.startsWith('Trang cá') || aria.includes('Trang cá') || t === 'Trang cá nhân') {
+                                        const btn = el.closest('div[role="button"], a') || el;
+                                        btn.click();
+                                        return true;
+                                    }
+                                }
+                            }
+                            return false;
+                        }
+                        """)
+                        logger.info("[BrowserAgent] Profile button clicked in thread: %s", clicked)
+                        await asyncio.sleep(4.0)
+
+                        # Check if redirected or popup opened
+                        if not page.url.includes("/messages/"):
+                            profile_url = page.url
+                            logger.info("[BrowserAgent] Successfully navigated to profile: %s", profile_url)
+                    except Exception as e:
+                        logger.warning("[BrowserAgent] Thread profile click attempt notice: %s", e)
+
                 if profile_url:
-                    # ── Direct navigation from thread_href user_id ────────────
+                    # ── Direct navigation ─────────────────────────────────────
                     logger.info("[BrowserAgent] Direct profile URL: %s", profile_url)
                     try:
                         await page.goto(profile_url, wait_until="commit", timeout=NAV_TIMEOUT_MS)
@@ -446,6 +467,38 @@ class BrowserAgentService:
                     await self._dismiss_overlays(page)
 
                     # Scroll to expose intro section below the cover photo
+                    try:
+                        await page.evaluate("window.scrollBy(0, 350)")
+                        await asyncio.sleep(1)
+                    except Exception:
+                        pass
+
+                    try:
+                        profile_name = await page.locator("h1").first.inner_text(timeout=5000)
+                    except Exception:
+                        profile_name = name_query
+
+                    intro_text = await self._extract_intro_text(page)
+                    await self._dismiss_overlays(page)
+                    # Scroll back to top so cover photo is visible in the screenshot
+                    try:
+                        await page.evaluate("window.scrollTo(0, 0)")
+                    except Exception:
+                        pass
+                    img_path = await self._screenshot(
+                        page, f"fb_profile_{_safe_filename(name_query)}"
+                    )
+                    final_url = page.url
+                    await page.close()
+                    return {
+                        "success": True,
+                        "image_path": img_path,
+                        "profile_name": profile_name.strip(),
+                        "profile_url": final_url,
+                        "intro_text": intro_text,
+                        "source": "direct",
+                    }
+                 # Scroll to expose intro section below the cover photo
                     try:
                         await page.evaluate("window.scrollBy(0, 350)")
                         await asyncio.sleep(1)

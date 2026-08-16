@@ -634,21 +634,26 @@ Với mọi yêu cầu, bạn phải tư duy chặt chẽ theo 5 bước:
             if tool_name == "facebook_view_profile":
                 if not self.browser_agent:
                     return "Browser agent chưa được khởi tạo."
-                name_query = tool_args.get("name_query", "").strip()
-
-                # 1. Check if we have a direct standard thread with numeric ID in Messenger
-                resolved_profile_url = await self._resolve_profile_url_from_thread(name_query)
+                # 1. Resolve thread and direct profile URL from known Messenger threads
+                resolved_profile_url, matched_thread_href = await self._resolve_thread_info_for_profile(name_query)
                 if resolved_profile_url:
                     logger.info(
-                        "[AiAgent] Resolved direct profile URL from Messenger thread for '%s': %s",
+                        "[AiAgent] Resolved direct profile URL for '%s': %s",
                         name_query,
                         resolved_profile_url,
                     )
+                elif matched_thread_href:
+                    logger.info(
+                        "[AiAgent] Resolved thread_href for '%s': %s",
+                        name_query,
+                        matched_thread_href,
+                    )
 
-                # 2. View profile using BrowserAgent (direct URL or ranked People Search)
+                # 2. View profile using BrowserAgent (direct URL, thread click, or ranked People Search)
                 res = await self.browser_agent.facebook_view_profile(
                     name_query,
                     profile_url=resolved_profile_url,
+                    thread_href=matched_thread_href,
                 )
 
                 profile_display_name = res.get("profile_name", name_query)
@@ -865,7 +870,8 @@ Với mọi yêu cầu, bạn phải tư duy chặt chẽ theo 5 bước:
                 submit_selector = tool_args.get("submit_selector")
                 res = await self.browser_agent.browser_fill_form(fields, submit_selector)
                 return await self._handle_browser_result(
-                    res, chat_id=chat_id,
+                    res,
+                    chat_id=chat_id,
                     default_caption="📋 Điền form",
                     success_prefix=(
                         f"✅ {res.get('action', 'Đã điền form')}\n"
@@ -897,6 +903,61 @@ Với mọi yêu cầu, bạn phải tư duy chặt chẽ theo 5 bước:
         except Exception as e:
             logger.error("[AiAgent] Tool '%s' error: %s", tool_name, e, exc_info=True)
             return f"Lỗi khi thực thi công cụ `{tool_name}`: {e}"
+
+    async def _resolve_thread_info_for_profile(self, name_query: str) -> Tuple[Optional[str], Optional[str]]:
+        """
+        Resolves the exact Facebook profile URL and/or Messenger thread href for a contact
+        by looking up their thread in the persistent DB or in-memory message cache.
+
+        Returns: (profile_url, thread_href)
+        """
+        import re as _re
+
+        def _extract_standard_user_id(href: str) -> Optional[str]:
+            if not href or "/e2ee/" in href:
+                return None
+            m = _re.search(r"/messages/t/(\d+)", href)
+            return m.group(1) if m else None
+
+        if self.fb_service:
+            try:
+                db_threads = await self.fb_service.get_known_threads_from_db()
+                best_score = 0.0
+                best_thread: Optional[Dict[str, str]] = None
+
+                for t in db_threads:
+                    t_name = t.get("text", "")
+                    score = self.fb_service._name_match_score(name_query, t_name)
+                    if score > best_score and score >= 0.85:
+                        best_score = score
+                        best_thread = t
+
+                if best_thread:
+                    t_href = best_thread.get("href", "")
+                    t_profile = best_thread.get("profile_url", "")
+                    if t_profile and t_profile.startswith("http"):
+                        return (t_profile, t_href)
+
+                    uid = _extract_standard_user_id(t_href)
+                    if uid:
+                        return (f"https://www.facebook.com/{uid}", t_href)
+
+                    return (None, t_href)
+            except Exception as e:
+                logger.warning("[AiAgent] DB thread lookup error: %s", e)
+
+        if self.message_cache:
+            try:
+                thread_href = await self.message_cache.find_thread_href(name_query)
+                if thread_href:
+                    uid = _extract_standard_user_id(thread_href)
+                    if uid:
+                        return (f"https://www.facebook.com/{uid}", thread_href)
+                    return (None, thread_href)
+            except Exception as e:
+                logger.warning("[AiAgent] MessageCache lookup error: %s", e)
+
+        return (None, None)
 
     async def _flush_pending_photos(self, pending_photos: list, chat_id: Optional[str]) -> None:
         """Send the single deferred photo (if any) to Telegram.

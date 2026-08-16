@@ -758,11 +758,16 @@ class BrowserAgentService:
                 if not c_words or not href:
                     continue
 
-                # 1. Exact contiguous substring match (e.g. "manh van tran" in "manh van tran (pandaz foolish)")
-                if f" {q_norm} " in f" {c_norm} " or c_norm.startswith(q_norm):
+                # 1. Exact absolute match (No extra words/nicknames) -> Highest score
+                if c_norm == q_norm:
+                    score = 2.0
+                elif c_norm.startswith(q_norm + " ") or f" {q_norm} " in f" {c_norm} ":
                     score = 1.0
+                    # Slight penalty for extra nicknames/parentheses
+                    if "(" in raw_title or len(c_words) > len(q_words):
+                        score -= 0.2
                 elif q_norm in c_norm:
-                    score = 0.95
+                    score = 0.8
                 else:
                     # 2. Inverted name check (Severe penalty!)
                     # If query is "Mạnh Văn Trần" but candidate is "Trần Văn Mạnh"

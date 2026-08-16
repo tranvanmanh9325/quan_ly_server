@@ -265,6 +265,20 @@ class TelegramBot:
 
             await self.answer_callback_query(query_id)
 
+        # Handle Ready for Appointment
+        elif data.startswith("apt_ready:"):
+            try:
+                await self.answer_callback_query(
+                    query_id,
+                    text="🌟 Tuyệt vời! Chúc anh có buổi gặp mặt/làm việc thật hiệu quả nhé!",
+                    show_alert=True
+                )
+                return
+            except Exception as e:
+                logger.error("[TelegramBot] Error processing apt_ready callback: %s", e)
+
+            await self.answer_callback_query(query_id)
+
     async def _handle_command(self, command: str, chat_id: str) -> None:
         parts = command.strip().split(maxsplit=1)
         raw_cmd = parts[0].split("@")[0].lower()

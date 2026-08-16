@@ -43,6 +43,23 @@ async def facebook_periodic_scan_loop(fb_service: FacebookService):
             await asyncio.sleep(60)
 
 
+async def appointment_reminder_loop(appointment_service: AppointmentService, telegram_bot: TelegramBot):
+    """Background task to periodically dispatch 1-hour appointment reminders."""
+    logger.info("[Reminder-Scheduler] Started 1-hour appointment reminder dispatcher loop.")
+    while True:
+        try:
+            count = await appointment_service.check_and_dispatch_reminders(telegram_bot)
+            if count > 0:
+                logger.info("[Reminder-Scheduler] Dispatched %d proactive appointment reminder(s).", count)
+        except asyncio.CancelledError:
+            logger.info("[Reminder-Scheduler] Reminder loop cancelled.")
+            break
+        except Exception as e:
+            logger.error("[Reminder-Scheduler] Error in appointment reminder loop: %s", e)
+
+        await asyncio.sleep(60)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting up AI Agent & 9Router Service (Python)...")
@@ -77,6 +94,7 @@ async def lifespan(app: FastAPI):
     # 4. Start background workers
     telegram_task = asyncio.create_task(telegram_bot.start_polling())
     fb_scan_task = asyncio.create_task(facebook_periodic_scan_loop(fb_service))
+    reminder_task = asyncio.create_task(appointment_reminder_loop(appointment_service, telegram_bot))
 
     yield
 
@@ -84,8 +102,9 @@ async def lifespan(app: FastAPI):
     telegram_bot.stop()
     telegram_task.cancel()
     fb_scan_task.cancel()
+    reminder_task.cancel()
     try:
-        await asyncio.gather(telegram_task, fb_scan_task, return_exceptions=True)
+        await asyncio.gather(telegram_task, fb_scan_task, reminder_task, return_exceptions=True)
     except Exception:
         pass
     # Gracefully close the autonomous browser context

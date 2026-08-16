@@ -1010,65 +1010,69 @@ class FacebookService:
             confirmed = False
 
             # DIALOG FLOW (from screenshot analysis):
-            # 1. Dialog: "Bạn muốn thu hồi tin nhắn này ở phía ai?"
-            # 2. Radio: "Thu hồi với mọi người" (selected by default) ← ensure this is selected
-            # 3. Button: "Gỡ" (blue confirm button) ← click this to confirm
+            # Title: "Bạn muốn thu hồi tin nhắn này ở phía ai?"
+            # Radio: "Thu hồi với mọi người" (pre-selected) + "Thu hồi với bạn"
+            # Buttons: "Hủy" (cancel) and "Gỡ" (blue confirm)
+            # NOTE: Facebook does NOT use role="dialog" — dialog is a plain div
 
-            # Step 1: Ensure "Thu hồi với mọi người" radio is selected (it's default, but be safe)
+            # Step 1: Ensure "Thu hồi với mọi người" radio is selected (it's default)
             try:
-                radio_patterns = [
-                    re.compile(r"Thu hồi với mọi người", re.I),
-                    re.compile(r"Remove for everyone", re.I),
-                    re.compile(r"Unsend for everyone", re.I),
-                ]
-                for rp in radio_patterns:
+                for rp in [re.compile(r"Thu hồi với mọi người", re.I), re.compile(r"Remove for everyone", re.I)]:
                     radio = page.get_by_label(rp)
                     if await radio.count() > 0:
                         if not await radio.first().is_checked():
                             await radio.first().click()
+                            await asyncio.sleep(0.3)
                         break
             except Exception:
                 pass
 
-            # Step 2: Click the confirm button "Gỡ" in the dialog
-            # In this dialog context, "Gỡ" is the CONFIRM button (blue button)
+            # Step 2: Click "Gỡ" confirm button — try multiple Playwright locators first
+            # "Gỡ" appears both in the Remove context menu AND in this confirm dialog;
+            # here we need the one that's visible RIGHT NOW (context menu is gone, dialog is open)
             confirm_labels = ["Gỡ", "Remove", "Xóa", "Ok", "Confirm", "Đồng ý"]
             for label in confirm_labels:
                 try:
-                    btn = page.get_by_role("button", name=re.compile(rf"^{label}$", re.I))
-                    if await btn.count() > 0 and await btn.first().is_visible():
-                        await btn.first().click()
-                        confirmed = True
+                    # Use get_by_text which is more resilient than get_by_role for FB
+                    btn = page.get_by_text(label, exact=True)
+                    cnt = await btn.count()
+                    for i in range(cnt):
+                        if await btn.nth(i).is_visible():
+                            await btn.nth(i).click()
+                            confirmed = True
+                            break
+                    if confirmed:
                         break
                 except Exception:
                     pass
 
             if not confirmed:
-                # JS fallback: find the blue confirm button in the dialog
+                # JS fallback: search ALL role=button elements in entire page (no dialog wrapper needed)
                 try:
                     confirmed = await page.evaluate("""
                         () => {
-                            // Find any open dialog
-                            const dialog = document.querySelector('[role="dialog"], [role="alertdialog"]');
-                            if (!dialog) return false;
-                            // Find all buttons inside dialog
-                            const btns = [...dialog.querySelectorAll('[role="button"], button')];
-                            // The confirm button text is "Gỡ", "Remove", etc. (short, non-Cancel)
-                            const target = btns.find(b => {
+                            const all = [...document.querySelectorAll('[role="button"], button')];
+                            // Find "Gỡ" — exact match, visible, short text
+                            const target = all.find(b => {
+                                const r = b.getBoundingClientRect();
                                 const t = (b.innerText || '').trim();
-                                return /^(Gỡ|Remove|Xóa|Ok|Confirm|Đồng ý)$/i.test(t)
-                                    && b.getBoundingClientRect().width > 0;
+                                return r.width > 0 && r.height > 0 &&
+                                       /^(Gỡ|Remove|Xóa|Ok|Confirm|Đồng ý)$/i.test(t);
                             });
                             if (target) { target.click(); return true; }
-                            // Last resort: click the last visible button in dialog (usually confirm)
-                            const visible = btns.filter(b => b.getBoundingClientRect().width > 0);
-                            if (visible.length > 0) {
-                                visible[visible.length - 1].click();
-                                return true;
-                            }
                             return false;
                         }
                     """)
+                except Exception:
+                    pass
+
+            if not confirmed:
+                # Absolute last resort: find any button containing "Gỡ" text anywhere
+                try:
+                    btn = page.locator('button, [role="button"]').filter(has_text=re.compile(r"^Gỡ$"))
+                    if await btn.count() > 0:
+                        await btn.first().click()
+                        confirmed = True
                 except Exception:
                     pass
 

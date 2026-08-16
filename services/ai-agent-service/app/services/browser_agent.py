@@ -890,8 +890,17 @@ class BrowserAgentService:
             if not raw_items:
                 return ""
             
+            # Deduplicate items and filter out substrings of longer items
+            final_items = []
+            for item in raw_items:
+                # If this item is a strict substring of another item in the list, skip it
+                if any(item.lower() != other.lower() and item.lower() in other.lower() for other in raw_items):
+                    continue
+                if item not in final_items:
+                    final_items.append(item)
+
             # Format cleanly with bullet points
-            formatted = "\n".join(f"• {item}" for item in raw_items[:8])
+            formatted = "\n".join(f"• {item}" for item in final_items[:8])
             return formatted
         except Exception as e:
             logger.debug("[BrowserAgent] Error extracting clean intro text: %s", e)

@@ -107,6 +107,8 @@ services:
       - "6080:6080"
     shm_size: '1gb'
     volumes:
+      # Mount application source code for instant updates without rebuilding container
+      - ./services/ai-agent-service/app:/app/app
       # Persistent Chromium profile: preserves E2EE IndexedDB keys across restarts
       # Without this, Facebook E2EE Messenger sidebar never loads in headless mode
       - browser_data:/app/browser_data

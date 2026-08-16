@@ -44,24 +44,28 @@ class VncManager:
         self._watchdog_task: Optional[asyncio.Task] = None
 
     def is_running(self) -> bool:
-        return self._is_running and self._context is not None
+        if not self._is_running or not self._context:
+            return False
+        if self._xvfb_proc and self._xvfb_proc.poll() is not None:
+            return False
+        if self._websockify_proc and self._websockify_proc.poll() is not None:
+            return False
+        if self._x11vnc_proc and self._x11vnc_proc.poll() is not None:
+            return False
+        return True
 
     def touch(self):
         """Records user activity / heartbeat to prevent session auto-reaping."""
         self._last_active_time = time.time()
 
     async def check_ready(self) -> bool:
-        """Returns True if VNC websockify port 6080 is listening and page is alive."""
-        if not self._is_running or not self._page:
+        """Returns True if VNC websockify port 6080 and x11vnc 5900 are listening and page is alive."""
+        if not self.is_running() or not self._page:
             return False
-        try:
-            reader, writer = await asyncio.open_connection("127.0.0.1", 6080)
-            writer.close()
-            await writer.wait_closed()
-            self.touch()
-            return True
-        except Exception:
+        if not self._check_port_listening(6080) or not self._check_port_listening(5900):
             return False
+        self.touch()
+        return True
 
     async def _idle_watchdog(self):
         """Background daemon that auto-reaps the session if no activity for MAX_IDLE_SECONDS."""
@@ -91,10 +95,16 @@ class VncManager:
     async def start_session(self) -> dict:
         """Starts the full X11 + VNC + Chromium interactive environment with low-resource flags."""
         async with self._lock:
-            if self._is_running and self._context:
+            # If session is truly active and ports are open, return success
+            if self.is_running() and self._check_port_listening(6080) and self._check_port_listening(5900):
                 self.touch()
-                logger.info("[VNC-Manager] Session already running; returning active state.")
+                logger.info("[VNC-Manager] Session already running and healthy; returning active state.")
                 return {"status": "success", "message": "Phiên VNC đang hoạt động."}
+
+            # If state was inconsistent or processes died, clean up completely first
+            if self._is_running or self._context or self._xvfb_proc:
+                logger.info("[VNC-Manager] Cleaning up inconsistent session before fresh start...")
+                await self._cleanup_internal()
 
             logger.info("[VNC-Manager] Starting optimized interactive VNC browser session...")
             try:

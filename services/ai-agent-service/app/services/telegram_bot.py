@@ -15,6 +15,7 @@ class TelegramBot:
     def __init__(self, ai_agent: AiAgentService, ssh_client: SshClient):
         self.ai_agent = ai_agent
         self.ssh_client = ssh_client
+        self.appointment_service: Optional[Any] = None
         self.token = settings.TELEGRAM_BOT_TOKEN
         self.chat_id = settings.TELEGRAM_CHAT_ID
         self.polling_enabled = settings.TELEGRAM_POLLING_ENABLED
@@ -24,32 +25,111 @@ class TelegramBot:
         if hasattr(self.ai_agent, "set_telegram_bot"):
             self.ai_agent.set_telegram_bot(self)
 
+    def set_appointment_service(self, appointment_service: Any) -> None:
+        self.appointment_service = appointment_service
+
     @property
     def api_url(self) -> str:
         return f"https://api.telegram.org/bot{self.token}"
 
-    async def send_message(self, chat_id: str, text: str, parse_mode: str = "Markdown") -> bool:
+    async def send_message(
+        self,
+        chat_id: str,
+        text: str,
+        reply_markup: Optional[Dict[str, Any]] = None,
+        parse_mode: str = "Markdown"
+    ) -> bool:
+        res = await self.send_message_with_result(chat_id, text, reply_markup=reply_markup, parse_mode=parse_mode)
+        return bool(res)
+
+    async def send_message_with_result(
+        self,
+        chat_id: str,
+        text: str,
+        reply_markup: Optional[Dict[str, Any]] = None,
+        parse_mode: str = "Markdown"
+    ) -> Optional[Dict[str, Any]]:
         if not self.token or not text:
-            return False
+            return None
         try:
             url = f"{self.api_url}/sendMessage"
-            payload = {
+            payload: Dict[str, Any] = {
                 "chat_id": chat_id,
                 "text": text,
                 "parse_mode": parse_mode,
                 "disable_web_page_preview": True,
                 "link_preview_options": {"is_disabled": True},
             }
+            if reply_markup:
+                payload["reply_markup"] = reply_markup
+
+            res = await self._http_client.post(url, json=payload)
+            if res.status_code == 200:
+                data = res.json()
+                return data.get("result")
+
+            # Fallback without parse_mode if Markdown entity formatting failed
+            if "can't parse entities" in res.text.lower():
+                payload.pop("parse_mode", None)
+                res2 = await self._http_client.post(url, json=payload)
+                if res2.status_code == 200:
+                    data2 = res2.json()
+                    return data2.get("result")
+        except Exception as e:
+            logger.error("[TelegramBot] Failed sending message: %s", e)
+        return None
+
+    async def edit_message_text(
+        self,
+        chat_id: str,
+        message_id: int,
+        text: str,
+        reply_markup: Optional[Dict[str, Any]] = None,
+        parse_mode: str = "Markdown"
+    ) -> bool:
+        if not self.token or not text:
+            return False
+        try:
+            url = f"{self.api_url}/editMessageText"
+            payload: Dict[str, Any] = {
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "text": text,
+                "parse_mode": parse_mode,
+                "disable_web_page_preview": True,
+            }
+            if reply_markup is not None:
+                payload["reply_markup"] = reply_markup
+
             res = await self._http_client.post(url, json=payload)
             if res.status_code == 200:
                 return True
-            # Fallback without parse_mode if Markdown parsing failed
             if "can't parse entities" in res.text.lower():
                 payload.pop("parse_mode", None)
                 res2 = await self._http_client.post(url, json=payload)
                 return res2.status_code == 200
         except Exception as e:
-            logger.error("[TelegramBot] Failed sending message: %s", e)
+            logger.error("[TelegramBot] Failed editing message text: %s", e)
+        return False
+
+    async def answer_callback_query(
+        self,
+        callback_query_id: str,
+        text: Optional[str] = None,
+        show_alert: bool = False
+    ) -> bool:
+        if not self.token or not callback_query_id:
+            return False
+        try:
+            url = f"{self.api_url}/answerCallbackQuery"
+            payload: Dict[str, Any] = {"callback_query_id": callback_query_id}
+            if text:
+                payload["text"] = text
+                payload["show_alert"] = show_alert
+            res = await self._http_client.post(url, json=payload)
+            return res.status_code == 200
+        except Exception as e:
+            logger.error("[TelegramBot] Failed answering callback query: %s", e)
         return False
 
     async def send_photo(self, chat_id: str, photo_path: str, caption: Optional[str] = None) -> bool:
@@ -96,45 +176,159 @@ class TelegramBot:
             logger.warning("[TelegramBot] Error claiming update %d: %s", update_id, e)
             return True
 
+    async def _handle_callback_query(self, query: Dict[str, Any]) -> None:
+        query_id = query.get("id")
+        if not query_id:
+            return
+
+        data = query.get("data", "")
+        message = query.get("message", {})
+        chat = message.get("chat", {})
+        chat_id = str(chat.get("id", ""))
+        message_id = message.get("message_id")
+
+        if not data or not chat_id or not message_id:
+            await self.answer_callback_query(query_id)
+            return
+
+        # Handle Appointment Confirmation
+        if data.startswith("apt_confirm:"):
+            try:
+                apt_id = int(data.split(":")[1])
+                if self.appointment_service:
+                    apt = await self.appointment_service.get_appointment_by_id(apt_id)
+                    if apt:
+                        await self.appointment_service.update_status(apt_id, "confirmed")
+                        sender = apt.get("sender_name", "Bạn bè")
+                        summary = apt.get("summary", "Lịch hẹn")
+                        prop_time = apt.get("proposed_time", "Chưa rõ")
+                        loc = apt.get("location", "Chưa rõ")
+
+                        updated_text = (
+                            f"✅ *ĐÃ ĐẶT LỊCH HẸN THÀNH CÔNG!*\n\n"
+                            f"👤 *Người hẹn:* `{sender}`\n"
+                            f"⏰ *Thời gian:* *{prop_time}*\n"
+                            f"📍 *Địa điểm:* {loc}\n"
+                            f"📝 *Nội dung:* {summary}\n"
+                            f"📅 *Trạng thái:* _Đã lưu vào danh mục lịch hẹn của Tiểu Bảo Bảo._"
+                        )
+                        await self.edit_message_text(chat_id, message_id, updated_text, reply_markup=None)
+                        await self.answer_callback_query(query_id, text="✅ Đã lưu lịch hẹn thành công!", show_alert=True)
+                        return
+            except Exception as e:
+                logger.error("[TelegramBot] Error confirming appointment callback: %s", e)
+
+            await self.answer_callback_query(query_id, text="Đã xác nhận lịch hẹn.")
+
+        # Handle Appointment Dismissal
+        elif data.startswith("apt_dismiss:"):
+            try:
+                apt_id = int(data.split(":")[1])
+                if self.appointment_service:
+                    apt = await self.appointment_service.get_appointment_by_id(apt_id)
+                    await self.appointment_service.update_status(apt_id, "dismissed")
+                    sender = apt.get("sender_name", "Bạn bè") if apt else "Liên hệ"
+                    summary = apt.get("summary", "") if apt else ""
+
+                    dismiss_text = (
+                        f"❌ *ĐÃ BỎ QUA LỊCH HẸN*\n\n"
+                        f"👤 *Người gửi:* `{sender}`\n"
+                        f"📝 *Nội dung:* {summary}\n"
+                        f"_(Lịch hẹn này đã bị hủy bỏ và không lưu.)_"
+                    )
+                    await self.edit_message_text(chat_id, message_id, dismiss_text, reply_markup=None)
+                    await self.answer_callback_query(query_id, text="Đã bỏ qua lịch hẹn.")
+                    return
+            except Exception as e:
+                logger.error("[TelegramBot] Error dismissing appointment callback: %s", e)
+
+            await self.answer_callback_query(query_id, text="Đã bỏ qua.")
+
+        # Handle Reply on Facebook
+        elif data.startswith("apt_reply:"):
+            try:
+                apt_id = int(data.split(":")[1])
+                if self.appointment_service:
+                    apt = await self.appointment_service.get_appointment_by_id(apt_id)
+                    sender = apt.get("sender_name", "người này") if apt else "người này"
+                    await self.answer_callback_query(query_id)
+                    guide_msg = (
+                        f"💬 *Để trả lời tin nhắn Facebook cho `{sender}`:*\n"
+                        f"Anh hãy soạn tin nhắn theo cú pháp:\n\n"
+                        f"`/reply {sender} <Nội dung phản hồi>`\n\n"
+                        f"Ví dụ:\n`/reply {sender} Ok em nhé, mai hẹn gặp lúc 9h sáng!`"
+                    )
+                    await self.send_message(chat_id, guide_msg)
+                    return
+            except Exception as e:
+                logger.error("[TelegramBot] Error processing apt_reply callback: %s", e)
+
+            await self.answer_callback_query(query_id)
+
     async def _handle_command(self, command: str, chat_id: str) -> None:
-        cmd = command.split("@")[0].lower().strip()
-        if cmd in ["/start", "/help"]:
+        parts = command.strip().split(maxsplit=1)
+        raw_cmd = parts[0].split("@")[0].lower()
+        args = parts[1] if len(parts) > 1 else ""
+
+        if raw_cmd in ["/start", "/help"]:
             msg = (
-                "🤖 *Tiểu Bảo Bảo — Trợ lý Giám Sát Máy Chủ*\n\n"
+                "🤖 *Tiểu Bảo Bảo — Trợ lý Giám Sát Máy Chủ & Lịch Hẹn*\n\n"
                 "📌 *Các lệnh nhanh:*\n"
                 "• /status — Tổng quan trạng thái server\n"
                 "• /cpu — Mức sử dụng CPU\n"
                 "• /ram — Dung lượng RAM & Swap\n"
                 "• /disk — Dung lượng ổ cứng\n"
+                "• /lich (hoặc /schedule) — Xem danh sách các cuộc hẹn sắp tới\n"
+                "• /reply <tên/id> <nội dung> — Trả lời tin nhắn Facebook\n"
                 "• /ai — Xóa bộ nhớ ngữ cảnh hội thoại\n\n"
-                "💬 *Hoặc bạn có thể hỏi tự nhiên bằng tiếng Việt!*"
+                "💬 *Hoặc bạn có thể chat tự nhiên bằng tiếng Việt!*"
             )
             await self.send_message(chat_id, msg)
 
-        elif cmd == "/status":
+        elif raw_cmd in ["/lich", "/schedule"]:
+            if self.appointment_service:
+                apts = await self.appointment_service.get_upcoming_appointments(limit=10)
+                if not apts:
+                    await self.send_message(chat_id, "📅 Hiện tại không có lịch hẹn nào đang chờ hoặc đã xác nhận.")
+                    return
+
+                lines = ["📅 *DANH SÁCH LỊCH HẸN TỪ FACEBOOK:*\n"]
+                for idx, a in enumerate(apts, 1):
+                    status_icon = "✅ [Đã xác nhận]" if a.get("status") == "confirmed" else "⏳ [Đang chờ xác nhận]"
+                    lines.append(
+                        f"*{idx}. {a.get('summary', 'Lịch hẹn')}* {status_icon}\n"
+                        f"   • 👤 Người hẹn: `{a.get('sender_name', 'Ẩn danh')}`\n"
+                        f"   • ⏰ Thời gian: *{a.get('proposed_time', 'Chưa rõ')}*\n"
+                        f"   • 📍 Địa điểm: {a.get('location', 'Chưa rõ')}\n"
+                    )
+                await self.send_message(chat_id, "\n".join(lines))
+            else:
+                await self.send_message(chat_id, "Dịch vụ quản lý lịch hẹn chưa sẵn sàng.")
+
+        elif raw_cmd == "/status":
             uptime = await self.ssh_client.execute_command("uptime")
             docker = await self.ssh_client.execute_command("docker ps --format 'table {{.Names}}\t{{.Status}}'")
             msg = f"📊 *Trạng Thái Máy Chủ:*\n\n⏱ `{uptime}`\n\n🐳 *Containers:*\n```{docker}```"
             await self.send_message(chat_id, msg)
 
-        elif cmd == "/cpu":
+        elif raw_cmd == "/cpu":
             cpu = await self.ssh_client.execute_command("top -b -n 1 | head -n 5")
             await self.send_message(chat_id, f"⚡ *CPU Status:*\n```{cpu}```")
 
-        elif cmd == "/ram":
+        elif raw_cmd == "/ram":
             ram = await self.ssh_client.execute_command("free -h")
             await self.send_message(chat_id, f"💾 *Bộ Nhớ RAM & Swap:*\n```{ram}```")
 
-        elif cmd == "/disk":
+        elif raw_cmd == "/disk":
             disk = await self.ssh_client.execute_command("df -hT /")
             await self.send_message(chat_id, f"💿 *Dung Lượng Ổ Đĩa:*\n```{disk}```")
 
-        elif cmd == "/ai":
+        elif raw_cmd == "/ai":
             self.ai_agent.clear_history(chat_id)
             await self.send_message(chat_id, "🧹 Đã xóa lịch sử hội thoại AI. Bạn có thể bắt đầu phiên hỏi mới.")
 
         else:
-            # Route unrecognized slash command to AI
+            # Route unrecognized slash command to AI Agent
             reply = await self.ai_agent.chat(chat_id, command)
             await self.send_message(chat_id, reply)
 
@@ -143,6 +337,13 @@ class TelegramBot:
         if not update_id or not await self._claim_update(update_id):
             return
 
+        # 1. Handle Inline Keyboard Button Clicks
+        callback_query = update.get("callback_query")
+        if callback_query:
+            await self._handle_callback_query(callback_query)
+            return
+
+        # 2. Handle Text Messages
         message = update.get("message") or update.get("edited_message")
         if not message:
             return

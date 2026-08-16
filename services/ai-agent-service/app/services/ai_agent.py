@@ -31,6 +31,7 @@ class AiAgentService:
         # Injected post-construction to avoid circular imports
         self.telegram_bot: Any = None
         self.browser_agent: Any = None
+        self.appointment_service: Any = None
         self._history_map: Dict[str, List[Dict[str, Any]]] = {}
 
     def set_fb_service(self, fb_service: Any) -> None:
@@ -41,6 +42,9 @@ class AiAgentService:
 
     def set_browser_agent(self, browser_agent: Any) -> None:
         self.browser_agent = browser_agent
+
+    def set_appointment_service(self, appointment_service: Any) -> None:
+        self.appointment_service = appointment_service
 
     def is_configured(self) -> bool:
         return self.llm_router.has_active_providers
@@ -108,11 +112,12 @@ Với mọi yêu cầu, bạn phải tư duy chặt chẽ theo 5 bước:
 - `browser_search_google`: Tự động tìm kiếm trên Google, trả về ảnh kết quả + top 5 link.
 - `browser_take_screenshot`: Chụp ảnh màn hình trang web đang mở hiện tại.
 
-📩 QUẢN LÝ FACEBOOK MESSENGER:
+📩 QUẢN LÝ FACEBOOK MESSENGER & LỊCH HẸN:
 - `facebook_get_messages`: Đọc danh sách tin nhắn mới nhất trong Messenger.
   Trình bày: **Người gửi đã nhắn các nội dung sau:** với bullet `• [nội dung]`.
 - `facebook_capture_screenshot`: Chụp màn hình cuộc hội thoại Messenger với một người cụ thể.
 - `facebook_send_reply`: Gửi tin nhắn trả lời trực tiếp qua Facebook Messenger. Hệ thống sẽ tự động chụp ảnh màn hình minh chứng xác thực gửi kèm qua Telegram.
+- `get_appointments`: Tra cứu danh sách các lịch hẹn, cuộc gặp, buổi trao đổi, họp mặt từ Facebook Messenger. Dùng khi anh Mạnh hỏi về lịch hẹn sắp tới hoặc các cuộc hẹn đang chờ xác nhận.
 
 📸 CHỤP MÀN HÌNH MÁY CHỦ:
 - `server_capture_screenshot`: Chụp toàn bộ màn hình desktop/server Linux.
@@ -196,6 +201,22 @@ Với mọi yêu cầu, bạn phải tư duy chặt chẽ theo 5 bước:
                             },
                         },
                         "required": ["recipient_name", "message"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_appointments",
+                    "description": "Lấy danh sách các lịch hẹn, cuộc gặp, buổi trao đổi, họp mặt sắp tới hoặc đang chờ từ Facebook Messenger. Dùng khi: 'Có ai hẹn tôi không?', 'Xem lịch hẹn sắp tới', 'Hôm nay/tuần này có lịch gì không'.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "limit": {
+                                "type": "integer",
+                                "description": "Số lượng lịch hẹn tối đa (mặc định 10).",
+                            }
+                        },
                     },
                 },
             },
@@ -585,6 +606,25 @@ Với mọi yêu cầu, bạn phải tư duy chặt chẽ theo 5 bước:
                         return f'✅ Đã gửi tin nhắn cho "{recipient}": "{msg}"'
                     return f"Lỗi khi gửi tin nhắn cho '{recipient}': {res.get('error', 'Unknown error')}"
                 return str(res)
+
+            if tool_name == "get_appointments":
+                if not self.appointment_service:
+                    return "Dịch vụ quản lý lịch hẹn chưa sẵn sàng."
+                limit = tool_args.get("limit", 10)
+                apts = await self.appointment_service.get_upcoming_appointments(limit=limit)
+                if not apts:
+                    return "Hiện tại không có lịch hẹn nào sắp tới từ Facebook Messenger."
+                lines = ["📅 Danh sách lịch hẹn từ Facebook Messenger:"]
+                for idx, a in enumerate(apts, 1):
+                    status_text = "Đã xác nhận" if a.get("status") == "confirmed" else "Đang chờ xác nhận"
+                    lines.append(
+                        f"{idx}. {a.get('summary', 'Lịch hẹn')} ({status_text})\n"
+                        f"   - Người hẹn: {a.get('sender_name', 'Ẩn danh')}\n"
+                        f"   - Thời gian: {a.get('proposed_time', 'Chưa rõ')}\n"
+                        f"   - Địa điểm: {a.get('location', 'Chưa rõ')}\n"
+                        f"   - Tin nhắn gốc: \"{a.get('original_message', '')}\""
+                    )
+                return "\n".join(lines)
 
             # ── Autonomous Browser ──
             if tool_name == "facebook_view_profile":

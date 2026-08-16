@@ -29,9 +29,11 @@ AWAY_REPLY_MARKERS = ("Tiểu Bảo Bảo", "trợ lí AI", "vắng mặt")
 
 
 class FacebookService:
-    def __init__(self, message_cache: FacebookMessageCache, ai_agent_ref: Any = None):
+    def __init__(self, message_cache: FacebookMessageCache, ai_agent_ref: Any = None, appointment_service: Any = None):
         self.message_cache = message_cache
         self.ai_agent = ai_agent_ref
+        self.appointment_service = appointment_service
+        self.telegram_bot: Optional[Any] = None
         self._is_scanning = False
         self._last_scan_status = "idle"
         self._lock = asyncio.Lock()
@@ -41,6 +43,12 @@ class FacebookService:
 
     def set_ai_agent(self, ai_agent: Any) -> None:
         self.ai_agent = ai_agent
+
+    def set_appointment_service(self, appointment_service: Any) -> None:
+        self.appointment_service = appointment_service
+
+    def set_telegram_bot(self, telegram_bot: Any) -> None:
+        self.telegram_bot = telegram_bot
 
     # C-level character mapping table for instant O(1) Vietnamese diacritics removal
     _VN_TRANS_TABLE = str.maketrans(
@@ -1360,6 +1368,18 @@ class FacebookService:
                                     replied_by_human=False,
                                     reply_type="none"
                                 )
+
+                                # 3.1 Trigger Appointment & Scheduling Intent Detection in background
+                                if self.appointment_service and self.telegram_bot and incoming_msgs:
+                                    logger.info("[FB-Service] Checking appointment intent for '%s' (%d msgs)...", clean_name, len(incoming_msgs))
+                                    asyncio.create_task(
+                                        self.appointment_service.process_thread_and_notify(
+                                            thread_href=t_href,
+                                            sender_name=clean_name,
+                                            incoming_messages=incoming_msgs,
+                                            telegram_bot=self.telegram_bot,
+                                        )
+                                    )
 
                                 # 4. Presence Check 1: Global Human Active Session
                                 human_session_minutes = int(cfg.get("human_session_minutes", 10))

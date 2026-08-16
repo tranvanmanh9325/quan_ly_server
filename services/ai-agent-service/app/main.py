@@ -10,6 +10,7 @@ from app.core.llm_router import LlmRouter
 from app.core.ssh_client import SshClient
 from app.services.message_cache import FacebookMessageCache
 from app.services.facebook_service import FacebookService
+from app.services.appointment_service import AppointmentService
 from app.services.ai_agent import AiAgentService
 from app.services.browser_agent import BrowserAgentService
 from app.services.telegram_bot import TelegramBot
@@ -52,12 +53,16 @@ async def lifespan(app: FastAPI):
     message_cache = FacebookMessageCache()
 
     # 2. Initialize domain services with bidirectional wiring
-    fb_service = FacebookService(message_cache)
+    appointment_service = AppointmentService(llm_router)
+    fb_service = FacebookService(message_cache, appointment_service=appointment_service)
     browser_agent = BrowserAgentService()
     ai_agent = AiAgentService(llm_router, ssh_client, message_cache, fb_service)
+    ai_agent.set_appointment_service(appointment_service)
     fb_service.set_ai_agent(ai_agent)
     ai_agent.set_browser_agent(browser_agent)
     telegram_bot = TelegramBot(ai_agent, ssh_client)
+    telegram_bot.set_appointment_service(appointment_service)
+    fb_service.set_telegram_bot(telegram_bot)
 
     # 3. Attach to app state for dependency injection in routers
     app.state.llm_router = llm_router
@@ -67,6 +72,7 @@ async def lifespan(app: FastAPI):
     app.state.browser_agent = browser_agent
     app.state.ai_agent = ai_agent
     app.state.telegram_bot = telegram_bot
+    app.state.appointment_service = appointment_service
 
     # 4. Start background workers
     telegram_task = asyncio.create_task(telegram_bot.start_polling())

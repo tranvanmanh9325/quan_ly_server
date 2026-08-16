@@ -1008,16 +1008,34 @@ class FacebookService:
                 pass
 
             confirmed = False
-            confirm_patterns = [
-                re.compile(r"Thu hồi cho mọi người", re.I),
-                re.compile(r"Gỡ cho mọi người", re.I),
-                re.compile(r"Remove for everyone", re.I),
-                re.compile(r"Xóa cho mọi người", re.I),
-                re.compile(r"Unsend for everyone", re.I),
-            ]
-            for pattern in confirm_patterns:
+
+            # DIALOG FLOW (from screenshot analysis):
+            # 1. Dialog: "Bạn muốn thu hồi tin nhắn này ở phía ai?"
+            # 2. Radio: "Thu hồi với mọi người" (selected by default) ← ensure this is selected
+            # 3. Button: "Gỡ" (blue confirm button) ← click this to confirm
+
+            # Step 1: Ensure "Thu hồi với mọi người" radio is selected (it's default, but be safe)
+            try:
+                radio_patterns = [
+                    re.compile(r"Thu hồi với mọi người", re.I),
+                    re.compile(r"Remove for everyone", re.I),
+                    re.compile(r"Unsend for everyone", re.I),
+                ]
+                for rp in radio_patterns:
+                    radio = page.get_by_label(rp)
+                    if await radio.count() > 0:
+                        if not await radio.first().is_checked():
+                            await radio.first().click()
+                        break
+            except Exception:
+                pass
+
+            # Step 2: Click the confirm button "Gỡ" in the dialog
+            # In this dialog context, "Gỡ" is the CONFIRM button (blue button)
+            confirm_labels = ["Gỡ", "Remove", "Xóa", "Ok", "Confirm", "Đồng ý"]
+            for label in confirm_labels:
                 try:
-                    btn = page.get_by_role("button", name=pattern)
+                    btn = page.get_by_role("button", name=re.compile(rf"^{label}$", re.I))
                     if await btn.count() > 0 and await btn.first().is_visible():
                         await btn.first().click()
                         confirmed = True
@@ -1026,17 +1044,28 @@ class FacebookService:
                     pass
 
             if not confirmed:
-                # JS fallback for confirm dialog
+                # JS fallback: find the blue confirm button in the dialog
                 try:
                     confirmed = await page.evaluate("""
                         () => {
-                            const btns = [...document.querySelectorAll('[role="button"], button')];
+                            // Find any open dialog
+                            const dialog = document.querySelector('[role="dialog"], [role="alertdialog"]');
+                            if (!dialog) return false;
+                            // Find all buttons inside dialog
+                            const btns = [...dialog.querySelectorAll('[role="button"], button')];
+                            // The confirm button text is "Gỡ", "Remove", etc. (short, non-Cancel)
                             const target = btns.find(b => {
                                 const t = (b.innerText || '').trim();
-                                return /(Thu hồi|Gỡ|Remove|Xóa|Unsend).*(mọi người|everyone)/i.test(t)
+                                return /^(Gỡ|Remove|Xóa|Ok|Confirm|Đồng ý)$/i.test(t)
                                     && b.getBoundingClientRect().width > 0;
                             });
                             if (target) { target.click(); return true; }
+                            // Last resort: click the last visible button in dialog (usually confirm)
+                            const visible = btns.filter(b => b.getBoundingClientRect().width > 0);
+                            if (visible.length > 0) {
+                                visible[visible.length - 1].click();
+                                return true;
+                            }
                             return false;
                         }
                     """)
@@ -1044,7 +1073,7 @@ class FacebookService:
                     pass
 
             if not confirmed:
-                logger.warning("[FB-Service] Unsend: could not find 'Remove for everyone' confirmation button")
+                logger.warning("[FB-Service] Unsend: could not find confirm button in dialog")
                 return False
 
             await asyncio.sleep(1.5)

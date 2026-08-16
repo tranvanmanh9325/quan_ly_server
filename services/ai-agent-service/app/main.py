@@ -28,6 +28,13 @@ async def facebook_periodic_scan_loop(fb_service: FacebookService):
     logger.info("[FB-Scheduler] Started periodic scanner loop.")
     while True:
         try:
+            from app.services.vnc_manager import vnc_manager
+            # If user is actively using the live VNC session, pause background scan to prevent lock contention
+            if vnc_manager.is_running():
+                logger.debug("[FB-Scheduler] Live VNC session active; skipping scheduled scan cycle.")
+                await asyncio.sleep(20)
+                continue
+
             cfg = await fb_service.get_config_from_db()
             interval_min = max(3, cfg.get("scan_interval_minutes", 3))
             if cfg.get("enabled", False):

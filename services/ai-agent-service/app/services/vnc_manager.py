@@ -76,6 +76,18 @@ class VncManager:
         except asyncio.CancelledError:
             pass
 
+    @staticmethod
+    def _check_port_listening(port: int, host: str = "127.0.0.1") -> bool:
+        import socket
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(0.5)
+        try:
+            s.connect((host, port))
+            s.close()
+            return True
+        except Exception:
+            return False
+
     async def start_session(self) -> dict:
         """Starts the full X11 + VNC + Chromium interactive environment with low-resource flags."""
         async with self._lock:
@@ -86,27 +98,17 @@ class VncManager:
 
             logger.info("[VNC-Manager] Starting optimized interactive VNC browser session...")
             try:
-                # 1. Kill any stale Xvfb / x11vnc / websockify instances
+                # 1. Kill any stale Xvfb / x11vnc / websockify instances & clean locks
                 self._kill_stale_processes()
+                await asyncio.sleep(0.3)
 
-                # Clean up lock files for display :99
-                for lock in ["/tmp/.X99-lock", "/tmp/.X11-unix/X99"]:
-                    if os.path.exists(lock):
-                        try:
-                            if os.path.isdir(lock):
-                                shutil.rmtree(lock)
-                            else:
-                                os.remove(lock)
-                        except Exception:
-                            pass
-
-                # 2. Start Xvfb with 24-bit color depth
+                # 2. Start Xvfb (1280x800x24 - aligned to 4-byte pixels)
                 self._xvfb_proc = subprocess.Popen(
-                    ["Xvfb", self._display, "-screen", "0", "1366x768x24", "-nolisten", "tcp", "-noreset", "+extension", "GLX"],
+                    ["Xvfb", self._display, "-screen", "0", "1280x800x24", "-nolisten", "tcp", "-noreset", "+extension", "GLX"],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL
                 )
-                await asyncio.sleep(0.4)
+                await asyncio.sleep(0.5)
 
                 # 3. Start Openbox Window Manager
                 env = os.environ.copy()
@@ -117,12 +119,11 @@ class VncManager:
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL
                 )
+                await asyncio.sleep(0.3)
 
-                # 4. Start x11vnc with high-efficiency polling and multi-threaded compression:
-                #    -nap: Sleep when idle to eliminate CPU spinlocks (<3% CPU)
-                #    -wait 16 & -defer 16: Paces framebuffer capture at smooth 60 FPS
-                #    -ncache 10: 10-tile pixel diff cache for low-bandwidth transfer
-                #    -threads 2: Multi-threaded ZRLE/Tight encoding
+                # 4. Start x11vnc with high-efficiency polling:
+                #    -threads: Multi-threaded ZRLE encoding (standalone flag)
+                #    -nap, -wait 16, -defer 16: Smooth 60 FPS pacing, zero CPU spinlock
                 self._x11vnc_proc = subprocess.Popen(
                     [
                         "x11vnc",
@@ -138,14 +139,18 @@ class VncManager:
                         "-defer", "16",
                         "-ncache", "10",
                         "-nowf",
-                        "-threads", "2",
-                        "-speeds", "100000"
+                        "-threads"
                     ],
                     env=env,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL
                 )
-                await asyncio.sleep(0.4)
+
+                # Wait for x11vnc to be ready on port 5900
+                for _ in range(25):
+                    await asyncio.sleep(0.2)
+                    if self._check_port_listening(5900):
+                        break
 
                 # 5. Start websockify serving /usr/share/novnc on port 6080
                 novnc_web = "/usr/share/novnc" if os.path.exists("/usr/share/novnc") else None
@@ -159,13 +164,18 @@ class VncManager:
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL
                 )
-                await asyncio.sleep(0.4)
+
+                # Wait for websockify to be ready on port 6080
+                for _ in range(25):
+                    await asyncio.sleep(0.2)
+                    if self._check_port_listening(6080):
+                        break
 
                 # 6. Launch Playwright Chromium with resource-optimized flags
                 profile_dir = "/app/browser_data"
                 os.makedirs(profile_dir, exist_ok=True)
 
-                # Clean up stale Chromium SingletonLock / SingletonSocket
+                # Clean up stale Chromium locks
                 for item in ["SingletonLock", "SingletonCookie", "SingletonSocket"]:
                     lock_path = os.path.join(profile_dir, item)
                     if os.path.islink(lock_path) or os.path.exists(lock_path):
@@ -186,7 +196,7 @@ class VncManager:
                         "--disable-dev-shm-usage",
                         "--disable-infobars",
                         "--window-position=0,0",
-                        "--window-size=1366,768",
+                        "--window-size=1280,800",
                         "--start-maximized",
                         # Resource optimization flags: cut RAM in half and eliminate background CPU waste
                         "--renderer-process-limit=2",
@@ -307,11 +317,12 @@ class VncManager:
         logger.info("[VNC-Manager] VNC stack stopped and all system resources freed.")
 
     def _kill_stale_processes(self):
+        # 1. Terminate tracked subprocesses
         for proc in [self._websockify_proc, self._x11vnc_proc, self._openbox_proc, self._xvfb_proc]:
             if proc:
                 try:
                     proc.terminate()
-                    proc.wait(timeout=1)
+                    proc.wait(timeout=0.5)
                 except Exception:
                     try:
                         proc.kill()
@@ -322,12 +333,32 @@ class VncManager:
         self._openbox_proc = None
         self._xvfb_proc = None
 
-        # Fallback system-level kill
-        try:
-            subprocess.run(["pkill", "-f", "Xvfb :99"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            subprocess.run(["pkill", "-f", "x11vnc.*:99"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            subprocess.run(["pkill", "-f", "websockify.*6080"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        except Exception:
-            pass
+        # 2. Native /proc scan kill for zero-dependency cleanup
+        my_pid = os.getpid()
+        if os.path.exists("/proc"):
+            for pid_dir in os.listdir("/proc"):
+                if pid_dir.isdigit():
+                    pid = int(pid_dir)
+                    if pid == my_pid:
+                        continue
+                    try:
+                        with open(f"/proc/{pid}/cmdline", "rb") as f:
+                            cmdline = f.read().decode("utf-8", errors="ignore")
+                            if any(target in cmdline for target in ["Xvfb", "x11vnc", "websockify", "openbox"]):
+                                import signal
+                                os.kill(pid, signal.SIGKILL)
+                    except Exception:
+                        pass
+
+        # 3. Clean up lock files for display :99
+        for lock in ["/tmp/.X99-lock", "/tmp/.X11-unix/X99"]:
+            if os.path.exists(lock):
+                try:
+                    if os.path.isdir(lock):
+                        shutil.rmtree(lock)
+                    else:
+                        os.remove(lock)
+                except Exception:
+                    pass
 
 vnc_manager = VncManager()

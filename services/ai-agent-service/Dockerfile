@@ -10,6 +10,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     ca-certificates \
     tzdata \
+    procps \
+    psmisc \
     xvfb \
     x11vnc \
     novnc \

@@ -7,54 +7,69 @@ A reference for diagnosing and resolving the most common issues encountered when
 ## Quick Diagnostic Commands
 
 ```bash
-# Check container status and health
+# Check status and health across all 6 containers
 docker compose ps
 
-# Follow live logs for all services
+# Follow logs for all services
 docker compose logs -f
 
-# Follow backend logs only
-docker compose logs -f backend --tail=100
+# Follow AI Agent logs (Facebook E2EE & Telegram)
+docker compose logs -f ai-agent-service --tail=100
 
-# Check backend API directly
-curl http://localhost:8080/actuator/health
+# Follow Metrics Service logs
+docker compose logs -f metrics-service --tail=100
 
-# Test a specific metric endpoint
-curl http://localhost:8080/api/metrics/cpu
+# Check AI Agent health directly
+curl http://localhost:8084/health
+
+# Check Metrics Service health
+curl http://localhost:8082/actuator/health
 ```
 
 ---
 
 ## Issue Categories
 
+- [Groq 429 Rate Limit & Multi-Key Pool Failover](#groq-429-rate-limit--multi-key-pool-failover)
+- [Facebook E2EE: PIN Code Required / Decryption Failure](#facebook-e2ee-pin-code-required--decryption-failure)
+- [Facebook Unsend: "Thu hồi" or Confirmation Button Not Found](#facebook-unsend-thu-hoi-or-confirmation-button-not-found)
+- [noVNC Console: White Screen / Connection Refused on `:6080`](#novnc-console-white-screen--connection-refused-on-6080)
 - [Dashboard shows "ERROR: no data returned from SSH"](#error-no-data-returned-from-ssh)
 - [Dashboard shows "ERROR: \<exception message\>"](#error-connection-refused--timeout)
-- [Telegram Bot: "AI đang quá tải" (Groq 429 Rate Limit)](#groq-429-rate-limit)
-- [Telegram Bot: "Xin lỗi, AI đã tạo câu lệnh không hợp lệ" (Groq 400 Bad Request)](#groq-400-bad-request)
-- [Telegram Bot stops responding / hangs on `updating..`](#telegram-bot-polling-freeze)
 - [Backend container stuck in "starting" health state](#backend-stuck-in-starting)
-- [Frontend container does not start after backend](#frontend-does-not-start)
-- [All metrics show 0 / N/A after first load](#all-metrics-show-0--na-after-first-load)
-- [Temperature and Voltage show "N/A — sensors not found"](#temperature-and-voltage-show-na--sensors-not-found)
-- [Network speed always shows 0 B/s](#network-speed-always-shows-0-bs)
-- [Process table is empty or stale](#process-table-empty-or-stale)
-- [Docker build fails during Maven package step](#docker-build-fails-maven-package-step)
-- [Frontend build fails with peer dependency errors](#frontend-build-fails-peer-dependency-error)
-- [Dashboard loads but data stops updating](#data-stops-updating)
 
 ---
 
-## Groq 429 Rate Limit
+## Groq 429 Rate Limit & Multi-Key Pool Failover
 
-**Symptom:** Telegram bot replies: `"AI đang quá tải, vui lòng thử lại sau 1 phút."`
+**Symptom:** AI Agent encounters rate limits when processing long queries.
 
-**Cause:** Groq free tier limit is 6,000 Tokens Per Minute (TPM). Large command outputs or long conversation histories exceed this limit.
+**Mechanism & Fix:**
+1. **Multi-Key Rotation:** Provide multiple keys (`GROQ_API_KEY`, `GROQ_API_KEY_2`, `GROQ_API_KEY_3`, ...) in `.env`.
+2. **Smart 60s Cooldown:** The engine automatically marks rate-limited keys as cooling down and rotates to the next available key.
+3. **OpenRouter Fallback:** If all Groq keys are exhausted, the system transparently routes requests to the `OPENROUTER_API_KEY` pool.
 
-**Fix:**
+---
 
-1. Capped `MAX_HISTORY_MESSAGES = 6` (3 Q&A pairs) and `MAX_OUTPUT_CHARS = 1000` in `AiChatService.java`.
-2. Automatic 3-retry backoff with 2.5s delay.
-3. Automatically clears conversation history on 429 errors.
+## Facebook E2EE: PIN Code Required / Decryption Failure
+
+**Symptom:** Facebook Messenger sidebar is blank or shows "Nhập mã PIN để khôi phục đoạn chat".
+
+**Diagnosis & Resolution:**
+1. Ensure `FB_PIN` is set in `.env` matching your 6-digit Facebook E2EE PIN.
+2. The AI Agent automatically types the PIN into the encrypted keypad.
+3. If 2FA checkpoint occurs, open the **noVNC console** at `http://localhost:6080/vnc.html` (or via dashboard `/fb-vnc/`) and solve the checkpoint interactively.
+
+---
+
+## Facebook Unsend: "Thu hồi" or Confirmation Button Not Found
+
+**Symptom:** Log shows `could not find confirm button in dialog` when revoking an away message.
+
+**Resolution:**
+1. The Playwright unsend engine uses localized text matching for Vietnamese locale (`Thu hồi` and `Gỡ`).
+2. The engine uses full-page button locators (`get_by_text('Gỡ', exact=True)`) bypassing non-standard dialog container wrappers.
+3. State is persisted in `facebook_known_threads` (`auto_reply_unsent = TRUE`), preventing duplicate unsend attempts.
 
 ---
 

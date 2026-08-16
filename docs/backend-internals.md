@@ -1,28 +1,24 @@
 # Backend Internals
 
-A technical reference for the Spring Boot backend: package structure, SSH session management, CORS configuration, and runtime properties.
+A technical reference for the backend microservices architecture: Spring Boot services, FastAPI AI Agent service, JSch SSH session pooling, CORS configuration, and runtime properties.
 
 ---
 
-## Tech Stack
+## Tech Stack & Microservices
 
-| Concern | Library / Tool | Version |
-| --- | --- | --- |
-| Framework | Spring Boot | 4.1.0 |
-| Language | Java | 21 |
-| Build | Maven | 3.9.6 (Docker build) |
-| SSH client | JSch (mwiede fork) | 2.28.5 |
-| Health check | Spring Boot Actuator | — (managed by Spring Boot BOM) |
-| AI Integration | Groq REST API (`llama-3.1-8b-instant`) | — |
-| Bot Protocol | Telegram Bot Long Polling | — |
-| Database Driver | PostgreSQL JDBC Driver | 17.10 |
-| Runtime image | Eclipse Temurin JRE Alpine | 21 |
+| Service | Framework / Tool | Language / Runtime | Purpose |
+| --- | --- | --- | --- |
+| **Metrics Service (`:8082`)** | Spring Boot 4.1.0, JSch 2.28.5 | Java 21 / Eclipse Temurin Alpine | System telemetry, JSch persistent SSH tunnel, sudo execution |
+| **Auth Service (`:8081`)** | Spring Boot 4.1.0, JJWT 0.12.6, Spring Security | Java 21 / Eclipse Temurin Alpine | JWT authentication, user credentials & BCrypt hashing |
+| **File Service (`:8083`)** | Spring Boot 4.1.0, JSch SFTP | Java 21 / Eclipse Temurin Alpine | Remote file browsing, syntax viewing & SFTP manipulation |
+| **AI Agent Service (`:8084`)** | FastAPI 0.115+, Playwright, AsyncSSH | Python 3.11 / Debian Slim | Telegram Bot assistant, Playwright Facebook E2EE & Multi-LLM Pool |
+| **Database (`:5432`)** | PostgreSQL Alpine | PostgreSQL 17 | Persistent database storage |
 
 ---
 
-## Metrics Service Package Structure (`com.miniserver.metrics`)
+## 1. Metrics Service Package Structure (`com.miniserver.metrics`)
 
-```
+```text
 com.miniserver.metrics
 ├── MetricsServiceApplication.java     ← Spring Boot entry point (@SpringBootApplication)
 ├── config/
@@ -31,10 +27,31 @@ com.miniserver.metrics
 ├── controller/
 │   └── MetricsController.java         ← @RestController: HTTP telemetry routes → shell commands
 └── service/
-    ├── SshService.java                ← Persistent JSch session (LAN/Ngrok fallback) + sudo executor
-    ├── AiChatService.java             ├── Groq LLM tool calling agent & conversation window manager
-    ├── TelegramBotService.java        ├── Long polling Telegram update receiver & dispatcher
-    └── TelegramNotificationService.java └── Async alert notification transmitter
+    └── SshService.java                ← Persistent JSch session (LAN/fallback) + sudo executor
+```
+
+---
+
+## 2. AI Agent Service Structure (`services/ai-agent-service`)
+
+```text
+ai-agent-service/
+├── app/
+│   ├── main.py                        ← FastAPI application entry point & router registration
+│   ├── config.py                      ← Environment settings & Multi-LLM Pool configuration
+│   ├── db/
+│   │   └── session.py                 ← Async PostgreSQL connection pool (psycopg3)
+│   ├── services/
+│   │   ├── ai_agent.py                ← "Tiểu Bảo Bảo" prompt engine & tool execution
+│   │   ├── groq_pool.py               ← 9router-style Groq multi-key rotation & cooldown
+│   │   ├── openrouter_pool.py         ← OpenRouter fallback pool management
+│   │   ├── telegram_service.py        ← Long Polling Telegram receiver & dispatcher
+│   │   └── facebook_service.py        ← Playwright Facebook E2EE worker & unsend engine
+│   └── routers/
+│       ├── facebook_router.py         ← Facebook manual triggers & status endpoints
+│       └── ai_router.py               ← OpenAI-compatible AI gateway endpoints
+├── Dockerfile                         ← Python 3.11 + Playwright Chromium + Xvfb + noVNC
+└── requirements.txt
 ```
 
 ---

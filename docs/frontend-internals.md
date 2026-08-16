@@ -12,27 +12,39 @@ A technical reference for the React frontend: state management, polling architec
 | Build tool | Vite | 8 |
 | HTTP client | Axios | 1 |
 | Charts | Recharts | 3 |
+| 3D Globe | D3-geo + TopoJSON | 3 / 3 |
 | Icons | Custom Sci-Fi SVG system (`SciFiIcons.jsx`) + Lucide React | latest |
+| Audio & FX | Web Audio API + HTML5 Canvas | Native browser APIs |
 | Production server | Nginx Alpine | latest |
 
 ---
 
 ## File Structure
 
-```
+```text
 frontend/src/
-├── main.jsx            ← React DOM entry point — mounts <App /> into #root
-├── App.jsx             ← Root layout, routing outlet, global state & context
-├── App.css             ← Component-level styles (layout, cards, table, modal, responsive)
-├── index.css           ← Global CSS variables (design tokens), resets, base styles
+├── main.jsx                       ← React DOM entry point — mounts <App /> into #root
+├── App.jsx                        ← Root layout, routing outlet, global state & context
+├── App.css                        ← Component-level styles (layout, cards, table, modal, responsive)
+├── index.css                      ← Global CSS variables (design tokens), resets, base styles
 ├── components/
-│   └── SciFiIcons.jsx  ← Custom SVG vector icon library (SciFiShield, SciFiLightning, SciFiTelegram, etc.)
+│   ├── SciFiIcons.jsx             ← Custom SVG vector icon library (SciFiShield, SciFiLightning, etc.)
+│   ├── SpaceInteractionLayer.jsx  ← Global rotating crosshair, canvas shockwaves & Web Audio laser FX
+│   └── modals/                    ← Process termination, Docker log viewer modals
 ├── pages/
-│   ├── OverviewPage.jsx ← Real-time metrics overview, KPI cards & historical charts
-│   ├── TerminalPage.jsx ← SSH Web Terminal Console with Quick Command Macro Chips & SciFiLightningIcon
-│   └── SettingsPage.jsx ← Telegram notifications, AI bot configuration & system settings
+│   ├── OverviewPage.jsx           ← Real-time telemetry overview, KPI cards & multi-sensor Fan HUD
+│   ├── ProcessesPage.jsx          ← Live process monitor, CPU/Mem filters & CSV export
+│   ├── ServicesPage.jsx           ← Systemd units, container states, timers & host runtimes
+│   ├── ContainersPage.jsx         ← Dedicated Docker container manager & live log streaming
+│   ├── TerminalPage.jsx           ← Web SSH Terminal with macro chips & command sandbox
+│   ├── MapPage.jsx                ← 3D Interactive Orthographic Globe & active SSH node tracer
+│   ├── SecurityPage.jsx           ← Listening ports (ss), active sessions (who), colorized logs
+│   ├── FilesPage.jsx              ← Remote SFTP file browser & syntax-highlighted viewer
+│   └── SettingsPage.jsx           ← Alert threshold sliders, polling speed & AI bot controls
 └── utils/
-    └── parsers.js      ← Pure functions: raw SSH text → typed JavaScript objects
+    ├── parsers.js                 ← Pure functions: raw SSH text → typed JavaScript objects
+    ├── audioFx.js                 ← Synthesized Web Audio laser chirps & sub-bass feedback
+    └── api.js                     ← Axios instance with JWT interceptors & error handlers
 ```
 
 ---

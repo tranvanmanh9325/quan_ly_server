@@ -1,27 +1,19 @@
 # Security Guide
 
-A thorough review of the security posture of Mini Server Dashboard, covering known trade-offs, risks, hardening recommendations, and incident response procedures.
-
-> [!IMPORTANT]
-> This dashboard is designed for **private-network or personal use only**. It has no built-in authentication layer. Read this document before exposing it on any network you do not fully control.
+A thorough review of the security posture of Mini Server Dashboard, covering authentication, terminal sandboxing, E2EE security, and hardening recommendations.
 
 ---
 
-## Known Security Trade-offs
+## Security Architecture & Defenses
 
-The following trade-offs are intentional design decisions, documented here for complete transparency.
+### 1. JWT Authentication Layer (`auth-service`)
+- **Single-Origin Gateway:** All incoming API traffic is routed through Nginx reverse proxy.
+- **JWT Protection:** Sensitive endpoints require a valid `Bearer <token>` issued by `auth-service` using HMAC-SHA256 with strong secrets (`>= 32 chars`).
+- **BCrypt Password Hashing:** User passwords stored in PostgreSQL are hashed using standard BCrypt salts.
 
-### 1. No API Authentication
-
-**Risk:** All `/api/metrics/*` endpoints are publicly accessible to anyone who can reach port `8080` or `5173`.
-
-**Accepted because:** The dashboard is intended to run inside a home network, behind a firewall, or behind a VPN. Exposing a monitoring dashboard to an attacker is problematic regardless of authentication, since it reveals system topology and resource usage.
-
-**Mitigation if you need to expose it publicly:**
-
-- Add Spring Security with HTTP Basic auth or JWT.
-- Use an Nginx `auth_basic` block in front of the dashboard.
-- Put the entire stack behind a VPN (WireGuard, Tailscale).
+### 2. Terminal Command Sandbox
+- **Blocked Destructive Commands:** The backend strictly filters commands to block destructive operations (`rm -rf /`, `mkfs`, `dd`, `shutdown`, `reboot`).
+- **Read-Only Inspection Tools:** AI Agent tool execution enforces non-destructive shell execution.
 
 ---
 

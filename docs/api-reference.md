@@ -242,29 +242,200 @@ printf 'CPU_MODEL:%s\n' "$(lscpu 2>/dev/null | grep 'Model name' | sed 's/Model 
 
 ---
 
-## Health Check
+## Auth Service Endpoints (`:8081`)
 
-**Endpoint:** `GET /actuator/health`
+### POST `/api/auth/login`
+Authenticates user credentials and returns a signed JWT bearer token.
 
-Exposed by Spring Boot Actuator. Returns a simple health status without implementation details.
-
+**Request Body:**
 ```json
-{ "status": "UP" }
+{
+  "username": "admin",
+  "password": "your_secure_password"
+}
 ```
 
-Used by Docker Compose's `healthcheck` to determine when the backend container is ready before the frontend starts.
+**Response (200 OK):**
+```json
+{
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "type": "Bearer",
+  "username": "admin",
+  "role": "ROLE_ADMIN",
+  "expiresIn": 86400000
+}
+```
+
+### GET `/api/auth/verify`
+Validates the current JWT token integrity and expiration.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Response (200 OK):**
+```json
+{
+  "valid": true,
+  "username": "admin",
+  "role": "ROLE_ADMIN"
+}
+```
+
+---
+
+## File Service Endpoints (`:8083`)
+
+### GET `/api/files/list`
+Lists directory contents and file metadata via remote SFTP.
+
+**Query Parameters:** `?path=/var/log`
+
+**Response:**
+```json
+{
+  "path": "/var/log",
+  "items": [
+    { "name": "nginx", "isDirectory": true, "size": 4096, "modified": "2026-08-15T12:00:00Z", "permissions": "rwxr-xr-x" },
+    { "name": "syslog", "isDirectory": false, "size": 1048576, "modified": "2026-08-16T08:30:00Z", "permissions": "rw-r--r--" }
+  ]
+}
+```
+
+### GET `/api/files/content`
+Reads and retrieves the content of a remote file with syntax highlighting support.
+
+**Query Parameters:** `?path=/etc/nginx/nginx.conf`
+
+**Response:**
+```json
+{
+  "path": "/etc/nginx/nginx.conf",
+  "content": "user nginx;\nworker_processes auto;\n...",
+  "size": 1420
+}
+```
+
+### POST `/api/files/action`
+Performs file operations (create, rename, delete) over SFTP.
+
+**Request Body:**
+```json
+{
+  "action": "delete",
+  "path": "/tmp/test.txt"
+}
+```
+
+---
+
+## AI Agent Service Endpoints (`:8084` & `:6080`)
+
+### GET `/health`
+Healthcheck endpoint for the FastAPI AI Agent container.
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "service": "ai-agent-service",
+  "timestamp": "2026-08-16T09:00:00Z"
+}
+```
+
+### POST `/api/facebook/trigger`
+Triggers an immediate Facebook Messenger inbox scan cycle in the background.
+
+**Request Body:**
+```json
+{
+  "action": "scan_inbox"
+}
+```
+
+**Response:**
+```json
+{
+  "status": "started",
+  "message": "Đã kích hoạt quét tin nhắn Facebook trong nền."
+}
+```
+
+### GET `/api/facebook/status`
+Returns the operational state of the Playwright Facebook E2EE worker.
+
+**Response:**
+```json
+{
+  "status": "running",
+  "e2ee_unlocked": true,
+  "last_scan_at": "2026-08-16T09:30:15Z",
+  "active_threads_count": 5
+}
+```
+
+### POST `/api/facebook/send-reply`
+Relays an outbound message to a Facebook conversation thread (triggered from Telegram `/reply`).
+
+**Request Body:**
+```json
+{
+  "thread_id": "100045592363397",
+  "message": "Chào bạn, mình đã nhận được thông tin!"
+}
+```
+
+**Response:**
+```json
+{
+  "status": "success",
+  "thread_id": "100045592363397",
+  "delivered": true
+}
+```
+
+### POST `/api/facebook/test-ai-chat`
+Directly tests the AI assistant prompt logic and tool routing.
+
+**Request Body:**
+```json
+{
+  "message": "Kiểm tra tình trạng RAM và CPU của máy chủ",
+  "chat_id": "debug_session"
+}
+```
+
+**Response:**
+```json
+{
+  "chat_id": "debug_session",
+  "message": "Kiểm tra tình trạng RAM và CPU của máy chủ",
+  "reply": "📊 Hệ thống hiện đang hoạt động bình thường:\n• CPU: 12.4% (Tải nhẹ)\n• RAM: 3.2GB / 7.8GB (41% đã sử dụng)"
+}
+```
+
+### GET & WebSocket `/fb-vnc/` (`Port 6080`)
+Proxied by Nginx to the internal `x11vnc` + `noVNC` bridge. Provides a real-time interactive visual console of the Headless Chromium browser for manual intervention (e.g. login checkpoints or 2FA verification).
+
+---
+
+## Health Checks Summary
+
+| Service | Endpoint | Method | Expected Status |
+| --- | --- | --- | --- |
+| **Metrics Service** | `/actuator/health` | `GET` | `{"status":"UP"}` |
+| **Auth Service** | `/actuator/health` | `GET` | `{"status":"UP"}` |
+| **File Service** | `/actuator/health` | `GET` | `{"status":"UP"}` |
+| **AI Agent Service**| `/health` | `GET` | `{"status":"ok"}` |
+| **Frontend** | `/` | `GET` | `200 OK (HTML)` |
 
 ---
 
 ## Error Handling
 
-All endpoints follow a consistent error model:
+All services adhere to standardized error envelopes:
 
-| Scenario | Response |
+| Scenario | Response Format |
 | --- | --- |
-| SSH connection fails (all retries exhausted) | `{ "data": "ERROR: <exception message>" }` |
-| SSH command produces empty output | `{ "data": "ERROR: no data returned from SSH" }` |
-| Sensors command not found | `{ "data": "N/A" }` (temperature, voltage) |
-| Connections endpoint with no active sessions | `{ "data": [] }` |
-
-The backend logs all SSH errors via SLF4J → Logback at `WARN` level (transient failures) or `ERROR` level (all retries exhausted). Stderr captured from remote commands is also logged at `WARN`. Logs are visible via `docker compose logs backend`.
+| SSH Execution Failure | `{ "data": "ERROR: <exception details>" }` |
+| Invalid JWT Token | `{ "status": 401, "error": "Unauthorized", "message": "JWT expired or invalid" }` |
+| Rate Limit Hit (Groq) | Triggers internal 3-retry backoff + failover to OpenRouter Pool |
+| E2EE PIN Locked | AI Agent triggers automatic 6-digit keypad sequence and logs recovery state |

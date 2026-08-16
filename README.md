@@ -205,7 +205,7 @@ Configure critical alert threshold sliders, global refresh speeds, Telegram/Face
 └─────────────────────────────────────────────────────────┼──────────────────────┼──────────┼───────────┘
          ▲                                                ▲                      │          ▲
          │ (JSch SSH Persistent Session)                  │ (JSch SFTP Channel)  │          │ (AsyncSSH)
-         │ [Commands ──▶ / ◀── Metrics Telemetry]         │ [Read/Write Stream]  │          │ [SSH Tools]
+         │ [Commands ──▶ / ◀── Metrics Telemetry]        │ [Read/Write Stream]  │          │ [SSH Tools]
          ▼                                                ▼                      │          ▼
   ┌───────────────────────────────────────────────────────────────────┐          │ ┌────────────────────┐
   │                        Remote Linux Server                        │          │ │  LLM Key Pools     │

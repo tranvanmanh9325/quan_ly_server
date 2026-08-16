@@ -58,6 +58,25 @@ To prevent `/var` or root disk partitions from filling up with old `.deb` archiv
 ```apt
 APT::Periodic::AutocleanInterval "1";
 Unattended-Upgrade::Remove-Unused-Dependencies "true";
+Unattended-Upgrade::Remove-New-Unused-Dependencies "true";
+```
+
+---
+
+## 3. AI Agent Background Automation (`ai-agent-service`)
+
+### 1. Periodic Inbox Scanner
+- Runs as an asynchronous background worker in FastAPI.
+- Scans active Facebook conversation threads every 60 seconds.
+- Automatically decrypts and verifies new incoming messages.
+
+### 2. Auto-Unsend Garbage Collection
+- Automatically checks `facebook_known_threads` for pending unsend flags.
+- If the owner has responded, it triggers the automated headless Playwright unsend routine without user intervention.
+
+### 3. Chromium Headless Memory Hygiene
+- Persistent IndexedDB storage ensures session survival without unbounded disk growth.
+- Old screenshot debug artifacts in `/app/browser_data` are automatically pruned to prevent container volume bloat.
 Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
 ```
 

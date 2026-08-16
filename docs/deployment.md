@@ -62,82 +62,41 @@ POSTGRES_PASSWORD=your_postgres_password
 APP_AUTH_USERNAME=admin
 APP_AUTH_PASSWORD=your_bcrypt_hashed_password
 JWT_SECRET=your_secret_jwt_key_at_least_32_characters_long
+JWT_EXPIRATION_HOURS=24
 
-# Telegram & Groq AI Agent
-TELEGRAM_BOT_TOKEN=your_telegram_bot_token
-TELEGRAM_CHAT_ID=your_telegram_chat_id
-TELEGRAM_POLLING_ENABLED=true
-GROQ_API_KEY=your_groq_api_key
+# Telegram & Groq Multi-Key Pool (Primary)
+GROQ_API_KEY=gsk_primary_key
+GROQ_API_KEY_2=gsk_second_key
+GROQ_MODEL=openai/gpt-oss-120b
+
+# OpenRouter Multi-Key Pool (Tier-2 Fallback)
+OPENROUTER_API_KEY=sk-or-v1-primary_key
+OPENROUTER_API_KEY_2=sk-or-v1-second_key
+OPENROUTER_MODEL=nvidia/nemotron-3-super-120b-a12b:free
+
+# Facebook Messenger E2EE (Playwright)
+FB_PIN=your_6_digit_pin
 ```
 
 > ⚠️ `.env` is listed in `.gitignore`. Never commit it.
 
-### 1.3 Start the Backend
+### 1.3 Production Deployment (Docker Compose)
 
 ```bash
-cd backend
-mvn spring-boot:run
-```
-
-The API will be available at `http://localhost:8080`.
-
-Test that it's working:
-
-```bash
-curl http://localhost:8080/actuator/health
-# Expected: {"status":"UP"}
-```
-
-### 1.4 Start the Frontend
-
-Open a second terminal:
-
-```bash
-cd frontend
-npm install --legacy-peer-deps   # required due to eslint peer dependency conflict
-npm run dev
-```
-
-The dashboard will be available at `http://localhost:5173`.
-
-Vite automatically proxies all `/api/*` requests to `http://localhost:8080` (configured in `vite.config.js`), so no CORS errors occur during development.
-
-### 1.5 Available Scripts (Frontend)
-
-| Script | Command | Purpose |
-| --- | --- | --- |
-| Dev server | `npm run dev` | Start Vite dev server with HMR |
-| Lint | `npm run lint` | Run ESLint |
-| Build | `npm run build` | Produce optimised `dist/` output |
-| Preview | `npm run preview` | Serve the built `dist/` locally |
-
----
-
-## 2. Production Deployment (Docker Compose)
-
-### 2.1 Clone on the Server
-
-```bash
-git clone https://github.com/<YOUR_USERNAME>/quan_ly_server.git ~/quan_ly_server
-cd ~/quan_ly_server
-```
-
-### 2.2 Configure the Environment File
-
-```bash
-cp backend/.env.example backend/.env
-nano backend/.env   # fill in SSH_HOST, SSH_PORT, SSH_USER, SSH_PASSWORD
-```
-
-> The `backend/.env` file must be present before running `docker compose up`. It is mounted at container runtime via the `env_file` directive in `docker-compose.yml`.
-
-### 2.3 Build and Start All Services
-
-```bash
+# Build and launch the entire 6-container stack in detached mode
 docker compose up -d --build
+
+# Monitor health status across all services
+docker compose ps
 ```
 
-This command:
+The stack orchestrates 6 containers:
+- `dashboard_db` (PostgreSQL 17 on `:5432`)
+- `dashboard_auth_service` (Spring Boot on `:8081`)
+- `dashboard_metrics_service` (Spring Boot on `:8082`)
+- `dashboard_file_service` (Spring Boot on `:8083`)
+- `dashboard_ai_agent` (FastAPI + Playwright on `:8084` & noVNC `:6080`)
+- `dashboard_frontend` (React 19 + Nginx on `:5173`)
 
 1. Builds the backend image (Maven → JRE Alpine, multi-stage).
 2. Builds the frontend image (Node → Nginx Alpine, multi-stage).

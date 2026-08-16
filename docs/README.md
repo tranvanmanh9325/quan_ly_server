@@ -1,46 +1,43 @@
-# Mini Server Dashboard — Documentation
+# Mini Server Dashboard — Technical Documentation
 
-Welcome to the complete documentation for Mini Server Dashboard.
+Welcome to the comprehensive technical documentation for the **Mini Server Dashboard — Sci-Fi Cyberpunk Edition**.
 
 ---
 
-## Table of Contents
+## 📑 Table of Contents
 
 | Document | Description |
 | --- | --- |
-| [Architecture](./architecture.md) | Microservices design, data flow diagrams, key trade-offs, and SSH session lifecycle |
-| [API Reference](./api-reference.md) | All REST endpoints: commands, response shapes, error handling |
-| [Frontend Internals](./frontend-internals.md) | React state management, polling architecture, SciFiIcons, responsive layout |
-| [Backend Internals](./backend-internals.md) | Spring Boot services, JSch SSH fallback, CORS, Maven dependencies |
-| [Telegram AI Agent](./telegram-ai-agent.md) | Autonomous Telegram agent, Groq LLM tool calling, token capping, 429 retries |
-| [Database & Auth](./database-and-auth.md) | Authentication service, JWT tokens, PostgreSQL schema, file service |
-| [System Automation](./system-automation.md) | Systemd daily APT timers (06:00 AM update / 06:30 AM upgrade), auto-cleanup policy |
-| [Deployment Guide](./deployment.md) | Local dev setup, Docker Compose production deployment, CI/CD pipeline, runbooks |
-| [Security Guide](./security.md) | Known trade-offs, hardening recommendations, API key & credential management |
-| [Troubleshooting](./troubleshooting.md) | Diagnostic commands, common error patterns and their fixes |
+| 📖 [Architecture](./architecture.md) | High-level microservices topology, 2-way data flow diagrams, trade-offs, and SSH lifecycle |
+| 🔌 [API Reference](./api-reference.md) | Complete REST API endpoint reference for all 4 microservices (`metrics`, `auth`, `files`, `ai-agent`) |
+| ⚛️ [Frontend Internals](./frontend-internals.md) | React 19 architecture, D3-geo 3D Globe, Sci-Fi HUD canvas layer, and pure-function parsers |
+| ☕ [Backend Internals](./backend-internals.md) | Spring Boot 4.1.0 microservices, JSch SSH session pooling, and FastAPI AI Agent internals |
+| 🤖 [AI Agent & Multi-Provider Ecosystem](./telegram-ai-agent.md) | Autonomous AI ("Tiểu Bảo Bảo"), Groq + OpenRouter key pools, Telegram bot, and Facebook E2EE automation |
+| 🗄 [Database & Auth](./database-and-auth.md) | PostgreSQL 17 schema, JWT token lifecycle, BCrypt auth, and thread persistence |
+| ⏱ [System Automation](./system-automation.md) | Daily system maintenance timers, memory optimization, and periodic scanner background tasks |
+| 🚢 [Deployment Guide](./deployment.md) | Production Docker Compose hardening, environment variables, local hot-reload, and CI/CD |
+| 🛡 [Security Hardening](./security.md) | Threat modeling, terminal command sandboxing, E2EE security, and secret management |
+| 🔧 [Troubleshooting Handbook](./troubleshooting.md) | Diagnostic runbooks, SSH recovery, E2EE PIN issues, and rate-limit mitigation |
 
 ---
 
-## Quick Links
+## 🔗 Quick Links
 
-- **[README](../README.md)** — Project overview and quick-start
-- **[SECURITY.md](../SECURITY.md)** — Vulnerability reporting policy
+- **[Project Root README](../README.md)** — Project overview, features showcase, and quick-start guide
+- **[SECURITY.md](../SECURITY.md)** — Vulnerability reporting policy and responsible disclosure
 - **[LICENSE](../LICENSE)** — MIT License
 
 ---
 
-## Project Summary
+## 🏛 System Architecture Summary
 
-Mini Server Dashboard is a self-hosted, real-time monitoring dashboard and AI-powered server management platform. It connects to a remote Linux server over SSH and visualises live system metrics (CPU, RAM, disk, network, temperature, voltage, and process list) through a modern Cyberpunk dark-themed web interface, while offering an autonomous Telegram AI Agent.
+Mini Server Dashboard is a self-hosted, real-time Linux server monitoring, management, and autonomous AI operational ecosystem. It connects to target Linux servers over SSH with **zero target agent footprint** and renders live telemetry through a futuristic Cyberpunk HUD interface while deploying an autonomous AI assistant ("Tiểu Bảo Bảo") across Telegram and Facebook Messenger E2EE.
 
-The stack consists of:
+### Core Ecosystem Components:
 
-- **Metrics Service:** Spring Boot 4.1.0 (Java 21) on Port `8082` — SSH telemetry tunnel, sudo executor, Telegram Long Polling, and Groq AI Agent (`llama-3.1-8b-instant`).
-- **Auth Service:** Spring Boot 4.1.0 (Java 21) on Port `8081` — JWT authentication, user credential management, and role-based access control.
-- **File Service:** Spring Boot 4.1.0 (Java 21) on Port `8083` — Remote file browsing, log inspection, and file system operations.
-- **Frontend:** React 19 + Vite 8 + Recharts on Port `5173` — Custom Sci-Fi UI system, adaptive polling, Visibility API, pure-function parsers.
-- **Database:** PostgreSQL 17 Alpine on Port `5432` — Central persistent storage.
-- **Serving:** Nginx Alpine — static file server + API reverse proxy.
-- **Infrastructure:** Docker Compose, self-hosted GitHub Actions runner, systemd daily APT timers (06:00 AM update / 06:30 AM upgrade + auto cleanup).
-
-No agent software needs to be installed on the monitored server — only standard Linux utilities (`top`, `free`, `df`, `sensors`, `ps`, `who`, `systemctl`, `apt`, etc.) and SSH access are required.
+1. **Metrics Service (`metrics-service`):** Spring Boot 4.1.0 (Java 21) on Port `8082` — JSch SSH persistent telemetry tunnel, sudo command executor, and hardware health engine.
+2. **Auth Service (`auth-service`):** Spring Boot 4.1.0 (Java 21) on Port `8081` — User credentials, BCrypt password hashing, and JWT token issuance/verification.
+3. **File Service (`file-service`):** Spring Boot 4.1.0 (Java 21) on Port `8083` — Remote SFTP filesystem browser, log tailing, and file manipulation.
+4. **AI Agent Service (`ai-agent-service`):** FastAPI (Python 3.11) on Port `8084` & noVNC `6080` — Telegram Bot assistant, Playwright Facebook E2EE automation (PIN unlock, away messages, and auto-unsend), and Multi-Provider LLM key pool (Groq + OpenRouter).
+5. **Frontend:** React 19 + Vite 8 on Port `5173:80` — Cyberpunk HUD SPA, D3-geo 3D Globe, Web Audio API sound synthesizer, Canvas shockwave effects, and Nginx reverse proxy.
+6. **Database:** PostgreSQL 17 Alpine on Port `5432` — Central persistent storage for users, Telegram configurations, and Facebook thread states.

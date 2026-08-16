@@ -98,16 +98,20 @@ class BrowserAgentService:
     already-authenticated Facebook session without re-login.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, fb_service: Optional[Any] = None) -> None:
         # One global lock to serialise all browser operations across the event loop.
         # This prevents race conditions when multiple Telegram messages arrive simultaneously.
         self._lock = asyncio.Lock()
+        self.fb_service = fb_service
         self._playwright: Optional[Playwright] = None
         self._context: Optional[BrowserContext] = None
         # Persistent active page — shared across multi-step tool calls so that
         # browser_navigate() followed by browser_scroll() / browser_type() etc.
         # all operate on the same page without it being closed in between.
         self._active_page: Optional[Page] = None
+
+    def set_facebook_service(self, fb_service: Any) -> None:
+        self.fb_service = fb_service
 
     # ──────────────────────────────────────────────────────────────────────────
     # Lifecycle
@@ -221,6 +225,38 @@ class BrowserAgentService:
             await page.goto(url, wait_until="domcontentloaded", timeout=NAV_TIMEOUT_MS)
         except Exception as e:
             logger.warning("[BrowserAgent] goto notice (%s): %s", url, e)
+
+    async def _handle_e2ee_pin_screen(self, page: Page) -> bool:
+        """Handle E2EE PIN unlock screen if presented."""
+        try:
+            has_pin_dialog = await page.evaluate("""
+            () => {
+                let txt = (document.body.innerText || '');
+                return txt.includes('Nhập mã PIN') || txt.includes('khôi phục đoạn chat') || 
+                       txt.includes('khôi phục lịch sử') || txt.includes('mã PIN') || 
+                       txt.includes('Enter PIN') || txt.includes('restore your chat');
+            }
+            """)
+            if not has_pin_dialog:
+                return False
+
+            logger.info("[BrowserAgent] E2EE PIN screen detected. Unlocking with PIN 090325...")
+            await page.mouse.click(390, 630)
+            await asyncio.sleep(0.6)
+            await page.keyboard.type("090325", delay=350)
+            await asyncio.sleep(7.0)
+
+            await page.evaluate("""
+            () => {
+                let dialogs = Array.from(document.querySelectorAll('[role="dialog"], [role="alertdialog"], div[aria-modal="true"]'));
+                dialogs.forEach(d => d.remove());
+            }
+            """)
+            logger.info("[BrowserAgent] E2EE PIN unlocked successfully.")
+            return True
+        except Exception as e:
+            logger.warning("[BrowserAgent] Error handling E2EE PIN screen: %s", e)
+            return False
 
     async def _dismiss_overlays(self, page: Page) -> None:
         """Remove modal dialogs and cookie banners that obscure page content."""
@@ -436,14 +472,7 @@ class BrowserAgentService:
                         await asyncio.sleep(4.0)
 
                         # Handle PIN screen if present
-                        if self.fb_service:
-                            await self.fb_service._handle_e2ee_pin_screen(page)
-                        else:
-                            pin_input = page.locator("input[type='password'], input[name='pin']").first
-                            if await pin_input.count() > 0:
-                                await pin_input.fill("090305")
-                                await page.keyboard.press("Enter")
-                                await asyncio.sleep(3.0)
+                        await self._handle_e2ee_pin_screen(page)
 
                         # Wait for E2EE messages / sidebar hydration to complete
                         for _ in range(15):

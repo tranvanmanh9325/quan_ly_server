@@ -5,7 +5,7 @@ import os
 import shutil
 import subprocess
 import time
-from typing import Optional
+from typing import Optional, Union
 import psycopg
 from psycopg.rows import dict_row
 from playwright.async_api import async_playwright, BrowserContext, Page
@@ -128,11 +128,11 @@ class VncManager:
                     with open(rc_path, "w", encoding="utf-8") as f:
                         f.write('<?xml version="1.0" encoding="UTF-8"?><openbox_config xmlns="http://openbox.org/3.4/rc"><applications><application class="*"><decor>no</decor><maximized>yes</maximized></application></applications></openbox_config>')
 
-                env = os.environ.copy()
-                env["DISPLAY"] = self._display
+                env_vars: dict[str, Union[str, float, bool]] = dict(os.environ)
+                env_vars["DISPLAY"] = self._display
                 self._openbox_proc = subprocess.Popen(
                     ["openbox", "--sm-disable"],
-                    env=env,
+                    env=dict(os.environ, DISPLAY=self._display),
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL
                 )
@@ -159,7 +159,7 @@ class VncManager:
                         "-nowf",
                         "-threads"
                     ],
-                    env=env,
+                    env=dict(os.environ, DISPLAY=self._display),
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL
                 )
@@ -229,7 +229,7 @@ class VncManager:
                         "--metrics-recording-only",
                     ],
                     viewport=None,
-                    env=env,
+                    env=env_vars,
                 )
 
                 # Open Facebook messages page
@@ -369,7 +369,8 @@ class VncManager:
                             cmdline = f.read().decode("utf-8", errors="ignore")
                             if any(target in cmdline for target in ["Xvfb", "x11vnc", "websockify", "openbox"]):
                                 import signal
-                                os.kill(pid, signal.SIGKILL)
+                                sig = getattr(signal, "SIGKILL", 9)
+                                os.kill(pid, sig)
                     except Exception:
                         pass
 

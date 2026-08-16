@@ -268,10 +268,34 @@ class TelegramBot:
         # Handle Ready for Appointment
         elif data.startswith("apt_ready:"):
             try:
+                apt_id = int(data.split(":")[1])
+                sender = "Bạn bè"
+                summary = "Cuộc hẹn"
+                prop_time = "Sắp diễn ra"
+                loc = "Chưa rõ địa điểm"
+
+                if self.appointment_service:
+                    apt = await self.appointment_service.get_appointment_by_id(apt_id)
+                    if apt:
+                        sender = apt.get("sender_name") or sender
+                        summary = apt.get("summary") or summary
+                        prop_time = apt.get("proposed_time") or prop_time
+                        loc = apt.get("location") or loc
+
+                ready_text = (
+                    f"✅ *ĐÃ SẴN SÀNG CHO BUỔI HẸN!*\n\n"
+                    f"👤 *Người hẹn:* `{sender}`\n"
+                    f"⏰ *Thời gian:* *{prop_time}*\n"
+                    f"📍 *Địa điểm:* {loc}\n"
+                    f"📝 *Nội dung:* {summary}\n\n"
+                    f"🌟 _Tiểu Bảo Bảo chúc anh có buổi gặp mặt thật thuận lợi và đạt kết quả tốt nhất!_"
+                )
+
+                # Dismiss inline keyboard buttons and update text
+                await self.edit_message_text(chat_id, message_id, ready_text, reply_markup=None)
                 await self.answer_callback_query(
                     query_id,
-                    text="🌟 Tuyệt vời! Chúc anh có buổi gặp mặt/làm việc thật hiệu quả nhé!",
-                    show_alert=True
+                    text="🌟 Đã ghi nhận! Chúc anh có buổi gặp mặt thành công."
                 )
                 return
             except Exception as e:

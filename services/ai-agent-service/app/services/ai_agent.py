@@ -634,6 +634,7 @@ Với mọi yêu cầu, bạn phải tư duy chặt chẽ theo 5 bước:
             if tool_name == "facebook_view_profile":
                 if not self.browser_agent:
                     return "Browser agent chưa được khởi tạo."
+                name_query = tool_args.get("name_query", "").strip()
                 # 1. Resolve thread and direct profile URL from known Messenger threads
                 resolved_profile_url, matched_thread_href = await self._resolve_thread_info_for_profile(name_query)
                 if resolved_profile_url:

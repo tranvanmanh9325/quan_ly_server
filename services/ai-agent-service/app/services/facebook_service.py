@@ -488,47 +488,71 @@ class FacebookService:
     })
 
     async def _extract_thread_name_from_page(self, page: Page) -> str:
-        """Extracts the conversation partner's name from the page header.
+        """Extracts the conversation partner's name from the page header or right sidebar.
 
         Priority:
-        1. h3 containing 'Cu\u1ed9c tr\u00f2 chuy\u1ec7n v\u1edbi X' (most reliable, FB accessibility label)
-        2. First <a> in [role=main] that is a valid name
-        3. Any h3 not in system labels blacklist
-        4. Page title fallback
+        1. Right Sidebar / Header Profile name (large heading next to/above E2EE badge)
+        2. h3 containing 'Cuộc trò chuyện với X' (most reliable, FB accessibility label)
+        3. First <a> in [role=main] or right sidebar that is a valid name
+        4. Any h3 not in system labels blacklist
+        5. Page title fallback
         """
         import re
         try:
             name_from_dom = await page.evaluate("""
             () => {
-              // Priority 1: h3 with 'Cu\u1ed9c tr\u00f2 chuy\u1ec7n v\u1edbi X' — most reliable FB accessibility label
+              const BLACKLIST = new Set([
+                'messenger','facebook','thông báo','được mã hóa đầu cuối',
+                'mã hóa đầu cuối','người dùng facebook','đoạn chat','tin nhắn',
+                'soạn','mới','tìm kiếm','trang cá nhân','tắt thông báo',
+                'thông tin về đoạn chat','tùy chỉnh đoạn chat','file phương tiện và file',
+                'quyền riêng tư và hỗ trợ','bạn bè','đang hoạt động'
+              ]);
+
+              // Priority 1: Check Right Sidebar / Profile section for partner name
+              let sidebar = document.querySelector('[role="complementary"]') ||
+                            Array.from(document.querySelectorAll('div')).find(d => {
+                                let t = (d.innerText || '').toLowerCase();
+                                return t.includes('được mã hóa đầu cuối') && (t.includes('trang cá') || t.includes('tắt thông báo'));
+                            });
+              if (sidebar) {
+                  // Name is usually the first significant heading / span above E2EE badge
+                  let headings = Array.from(sidebar.querySelectorAll('h2, h3, span, a'));
+                  for (let el of headings) {
+                      let txt = (el.innerText || '').trim();
+                      let low = txt.toLowerCase();
+                      if (txt.length >= 2 && txt.length <= 60 && !BLACKLIST.has(low)
+                          && !low.includes('hoạt động') && !low.includes('mã hóa')
+                          && !low.includes('thông tin') && !low.includes('tùy chỉnh')) {
+                          return txt;
+                      }
+                  }
+              }
+
+              // Priority 2: h3 with 'Cuộc trò chuyện với X' — most reliable FB accessibility label
               let h3s = Array.from(document.querySelectorAll('h3'));
               for (let h of h3s) {
                 let txt = (h.innerText || '').trim();
-                let m = txt.match(/Cu\u1ed9c tr\u00f2 chuy\u1ec7n v\u1edbi (.+)/);
+                let m = txt.match(/Cuộc trò chuyện với (.+)/);
                 if (m && m[1].trim().length > 1) return m[1].trim();
               }
 
-              // Priority 2: <a> inside [role=main] — contact link in header
+              // Priority 3: <a> inside [role=main] — contact link in header
               let main = document.querySelector('[role="main"]') || document.body;
-              let BLACKLIST = new Set([
-                'messenger','facebook','th\u00f4ng b\u00e1o','\u0111\u01b0\u1ee3c m\u00e3 h\u00f3a \u0111\u1ea7u cu\u1ed1i',
-                'm\u00e3 h\u00f3a \u0111\u1ea7u cu\u1ed1i','ng\u01b0\u1eddi d\u00f9ng facebook',
-                '\u0111o\u1ea1n chat','tin nh\u1eafn','so\u1ea1n','m\u1edbi','t\u00ecm ki\u1ebfm',
-              ]);
               for (let a of Array.from(main.querySelectorAll('a'))) {
                 let txt = (a.innerText || '').trim();
                 let low = txt.toLowerCase();
                 if (txt.length > 1 && txt.length < 80 && !BLACKLIST.has(low)
-                    && !low.includes('m\u00e3 h\u00f3a') && !low.includes('th\u00f4ng b\u00e1o')) {
+                    && !low.includes('mã hóa') && !low.includes('thông báo')) {
                   return txt;
                 }
               }
 
-              // Priority 3: any h3 not matching system labels
+              // Priority 4: any h3 not matching system labels
               const LABEL_FRAGMENTS = [
-                'tin nh\u1eafn','so\u1ea1n','\u0111o\u1ea1n chat','messenger','m\u00e3 h\u00f3a',
-                'nh\u1eadp m\u00e3','kh\u00f4i ph\u1ee5c','c\u00e0i \u0111\u1eb7t','quy\u1ec1n ri\u00eang t\u01b0',
-                'c\u00f3 th\u1ec3 b\u1ea1n bi\u1ebft','t\u00ecm ki\u1ebfm','th\u00f4ng b\u00e1o',
+                'tin nhắn','soạn','đoạn chat','messenger','mã hóa',
+                'nhập mã','khôi phục','cài đặt','quyền riêng tư',
+                'có thể bạn biết','tìm kiếm','thông báo',
               ];
               for (let h of h3s) {
                 let txt = (h.innerText || '').trim();
@@ -556,7 +580,7 @@ class FacebookService:
                     return name
         except Exception as e:
             logger.debug("[FB-Service] Could not extract thread name: %s", e)
-        return "Ng\u01b0\u1eddi d\u00f9ng Facebook"
+        return "Người dùng Facebook"
 
     async def _extract_conversation_state(self, page: Page) -> Dict[str, Any]:
         """Analyzes the current chat window in depth to determine:

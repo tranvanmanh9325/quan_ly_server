@@ -486,84 +486,53 @@ class FacebookService:
     })
 
     async def _extract_thread_info_from_page(self, page: Page) -> Dict[str, str]:
-        """Extracts both conversation partner's name and exact Facebook profile_url from the page header or right sidebar."""
+        """Extracts both conversation partner's name from Header and exact Facebook profile_url from Right Sidebar."""
         import re
         try:
             info_from_dom = await page.evaluate("""
             () => {
-              const BLACKLIST = new Set([
-                'messenger','facebook','thông báo','được mã hóa đầu cuối',
-                'mã hóa đầu cuối','người dùng facebook','đoạn chat','tin nhắn',
-                'soạn','mới','tìm kiếm','trang cá nhân','tắt thông báo',
-                'thông tin về đoạn chat','tùy chỉnh đoạn chat','file phương tiện và file',
-                'quyền riêng tư và hỗ trợ','bạn bè','đang hoạt động'
-              ]);
-
               let partnerName = '';
               let profileUrl = '';
 
-              // Priority 1: Check Right Sidebar
-              let sidebar = document.querySelector('[role="complementary"]') ||
-                            Array.from(document.querySelectorAll('div')).find(d => {
-                                let t = (d.innerText || '').toLowerCase();
-                                return t.includes('được mã hóa đầu cuối') && (t.includes('trang cá') || t.includes('tắt thông báo'));
-                            });
-              if (sidebar) {
-                  // Extract Profile URL from <a aria-label="Trang cá nhân"> or <a href="/1000...">
-                  let profileLinks = Array.from(sidebar.querySelectorAll('a[href]'));
-                  for (let a of profileLinks) {
-                      let href = a.getAttribute('href') || a.href || '';
-                      let aria = (a.getAttribute('aria-label') || '').toLowerCase();
-                      let txt = (a.innerText || '').trim();
-                      if (aria.includes('trang cá nhân') || href.includes('facebook.com/1000') || /^\/\d+\/?$/.test(href) || href.includes('profile.php')) {
-                          if (href.startsWith('/')) {
-                              profileUrl = 'https://www.facebook.com' + href;
-                          } else if (href.startsWith('http')) {
-                              profileUrl = href;
-                          }
-                          if (!partnerName && txt && !BLACKLIST.has(txt.toLowerCase())) {
-                              partnerName = txt;
-                          }
-                          break;
-                      }
+              // 1. Get exact partner name from Header of chat (role="main", y: 50-130, x: 250-750)
+              const main = document.querySelector('[role="main"]') || document.body;
+              const headerCandidates = Array.from(main.querySelectorAll('h2, h3, span, a, [role="heading"]'));
+              for (let el of headerCandidates) {
+                const r = el.getBoundingClientRect();
+                if (r.y >= 50 && r.y <= 130 && r.x >= 250 && r.x <= 750 && r.width > 20) {
+                  let txt = (el.innerText || '').trim().split('\\n')[0];
+                  let low = txt.toLowerCase();
+                  if (txt.length >= 2 && txt.length <= 60
+                      && !low.includes('hoạt động') && !low.includes('mã hóa')
+                      && !low.includes('thông báo') && !low.includes('cuộc gọi')
+                      && !low.includes('tin nhắn') && !low.includes('soạn')
+                      && !low.includes('bạn bè') && !low.includes('gợi ý')
+                      && !low.includes('messenger') && !low.includes('facebook')) {
+                    partnerName = txt;
+                    break;
                   }
-
-                  if (!partnerName) {
-                      let headings = Array.from(sidebar.querySelectorAll('h2, h3, span, a'));
-                      for (let el of headings) {
-                          let txt = (el.innerText || '').trim();
-                          let low = txt.toLowerCase();
-                          if (txt.length >= 2 && txt.length <= 60 && !BLACKLIST.has(low)
-                              && !low.includes('hoạt động') && !low.includes('mã hóa')
-                              && !low.includes('thông tin') && !low.includes('tùy chỉnh')) {
-                              partnerName = txt;
-                              break;
-                          }
-                      }
-                  }
+                }
               }
 
-              // Priority 2: Check Chat Header top area (y < 130, x between 240 and 800)
-              if (!partnerName) {
-                  let main = document.querySelector('[role="main"]') || document.body;
-                  let headerElements = Array.from(main.querySelectorAll('h2, h3, span, a, [role="heading"], div'));
-                  for (let el of headerElements) {
-                      let rect = el.getBoundingClientRect();
-                      if (rect.y >= 50 && rect.y <= 130 && rect.x >= 240 && rect.x <= 800 && rect.width > 20 && rect.height > 15) {
-                          let txt = (el.innerText || '').trim();
-                          let low = txt.toLowerCase();
-                          if (txt.length >= 2 && txt.length <= 60 && !BLACKLIST.has(low)
-                              && !low.includes('hoạt động') && !low.includes('mã hóa')
-                              && !low.includes('thông báo') && !low.includes('cuộc gọi')
-                              && !low.includes('tin nhắn') && !low.includes('soạn')) {
-                              partnerName = txt.split('\n')[0].trim();
-                              break;
-                          }
-                      }
+              // 2. Get Profile URL from Right Sidebar (x > 950, y: 100-380)
+              const rightLinks = Array.from(document.querySelectorAll('a[href]'));
+              for (let a of rightLinks) {
+                const r = a.getBoundingClientRect();
+                if (r.x > 950 && r.y >= 100 && r.y <= 380) {
+                  let href = a.getAttribute('href') || a.href || '';
+                  let aria = (a.getAttribute('aria-label') || '').toLowerCase();
+                  if (aria.includes('trang cá nhân') || /^\\/\\d+\\/?$/.test(href) || href.includes('facebook.com/1000') || (href.includes('/profile.php') && !href.includes('notif_id'))) {
+                    if (href.startsWith('/')) {
+                      profileUrl = 'https://www.facebook.com' + href;
+                    } else if (href.startsWith('http')) {
+                      profileUrl = href;
+                    }
+                    break;
                   }
+                }
               }
 
-              // Priority 3: h3 with 'Cuộc trò chuyện với X'
+              // Fallback for partner name: h3 with 'Cuộc trò chuyện với X'
               if (!partnerName) {
                   let h3s = Array.from(document.querySelectorAll('h3'));
                   for (let h of h3s) {
@@ -572,24 +541,6 @@ class FacebookService:
                     if (m && m[1].trim().length > 1) {
                         partnerName = m[1].trim();
                         break;
-                    }
-                  }
-              }
-
-              // Priority 4: <a> inside [role=main]
-              if (!partnerName) {
-                  let main = document.querySelector('[role="main"]') || document.body;
-                  for (let a of Array.from(main.querySelectorAll('a'))) {
-                    let txt = (a.innerText || '').trim();
-                    let low = txt.toLowerCase();
-                    if (txt.length > 1 && txt.length < 80 && !BLACKLIST.has(low)
-                        && !low.includes('mã hóa') && !low.includes('thông báo')) {
-                      partnerName = txt;
-                      let h = a.getAttribute('href') || a.href || '';
-                      if (!profileUrl && h && !h.includes('/messages/')) {
-                          profileUrl = h.startsWith('/') ? 'https://www.facebook.com' + h : h;
-                      }
-                      break;
                     }
                   }
               }
@@ -670,17 +621,20 @@ class FacebookService:
                     info_btn = page.locator('div[role="main"] div[role="button"][aria-label*="thông tin" i], div[role="main"] div[role="button"][aria-label*="Thông tin" i]').first
                     if await info_btn.count() > 0:
                         try:
-                            await info_btn.click()
-                            await asyncio.sleep(2.0)
+                            is_exp = await info_btn.get_attribute("aria-expanded")
+                            if is_exp != "true":
+                                await info_btn.click()
+                                await asyncio.sleep(2.5)
                         except Exception:
                             pass
 
                     info = await self._extract_thread_info_from_page(page)
                     p_url = info.get("profile_url", "")
                     p_name = info.get("name", "")
-                    if p_url:
-                        logger.info("[FB-Service] Discovered profile URL for '%s': %s", p_name, p_url)
+                    logger.info("[FB-Service] Extracted info from thread %s -> name='%s', profile_url='%s'", thread_href, p_name, p_url)
+                    if p_name or p_url:
                         await self.save_known_thread(thread_href, p_name or "Người dùng Facebook", profile_url=p_url)
+                    if p_url:
                         return p_url
                 except Exception as e:
                     logger.warning("[FB-Service] Failed to extract profile URL from thread %s: %s", thread_href, e)

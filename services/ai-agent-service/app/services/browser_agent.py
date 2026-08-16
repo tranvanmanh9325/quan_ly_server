@@ -474,7 +474,7 @@ class BrowserAgentService:
                         await asyncio.sleep(4.0)
 
                         # Check if redirected or popup opened
-                        if not page.url.includes("/messages/"):
+                        if "/messages/" not in page.url:
                             profile_url = page.url
                             logger.info("[BrowserAgent] Successfully navigated to profile: %s", profile_url)
                     except Exception as e:

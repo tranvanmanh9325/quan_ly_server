@@ -547,38 +547,6 @@ class BrowserAgentService:
                         "intro_text": intro_text,
                         "source": "direct",
                     }
-                 # Scroll to expose intro section below the cover photo
-                    try:
-                        await page.evaluate("window.scrollBy(0, 350)")
-                        await asyncio.sleep(1)
-                    except Exception:
-                        pass
-
-                    try:
-                        profile_name = await page.locator("h1").first.inner_text(timeout=5000)
-                    except Exception:
-                        profile_name = name_query
-
-                    intro_text = await self._extract_intro_text(page)
-                    await self._dismiss_overlays(page)
-                    # Scroll back to top so cover photo is visible in the screenshot
-                    try:
-                        await page.evaluate("window.scrollTo(0, 0)")
-                    except Exception:
-                        pass
-                    img_path = await self._screenshot(
-                        page, f"fb_profile_{_safe_filename(name_query)}"
-                    )
-                    final_url = page.url
-                    await page.close()
-                    return {
-                        "success": True,
-                        "image_path": img_path,
-                        "profile_name": profile_name.strip(),
-                        "profile_url": final_url,
-                        "intro_text": intro_text,
-                        "source": "direct",
-                    }
 
 
                 # ── Fallback: People Search ────────────────────────────────────

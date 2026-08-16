@@ -21,7 +21,7 @@ import logging
 import re
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, cast
+from typing import Any, Dict, List, Optional, Tuple, cast
 from urllib.parse import quote
 
 from PIL import Image
@@ -506,9 +506,9 @@ class BrowserAgentService:
                 logger.info("[BrowserAgent] Search page URL: %s", page.url)
                 await self._dismiss_overlays(page)
 
-                profile_href = await self._resolve_best_profile_href(page, name_query)
+                ranked_candidates = await self._resolve_ranked_profile_candidates(page, name_query)
 
-                if not profile_href:
+                if not ranked_candidates:
                     logger.info("[BrowserAgent] No matching profile found; returning search page.")
                     intro_text = await self._extract_page_text(page, max_chars=1500)
                     img_path = await self._screenshot(page, f"fb_search_{_safe_filename(name_query)}")
@@ -522,40 +522,76 @@ class BrowserAgentService:
                         "note": "Không tìm thấy kết quả khớp chính xác — hiển thị trang kết quả tìm kiếm.",
                     }
 
-                logger.info("[BrowserAgent] Navigating to profile: %s", profile_href)
-                try:
+                # Try top candidates in order of score to find the exact match
+                chosen_candidate = None
+                profile_name = name_query
+                intro_text = ""
+                final_url = ""
+                img_path = ""
+
+                for score, profile_href, cand_title in ranked_candidates:
+                    logger.info(
+                        "[BrowserAgent] Trying candidate (sc=%.2f, name='%s'): %s",
+                        score, cand_title, profile_href
+                    )
+                    try:
+                        await page.goto(profile_href, wait_until="commit", timeout=NAV_TIMEOUT_MS)
+                    except Exception as e:
+                        logger.warning("[BrowserAgent] Profile goto notice: %s", e)
+
+                    # Wait for real profile content (h1 + images), not skeleton
+                    await self._wait_for_profile_content(page)
+                    await self._dismiss_overlays(page)
+
+                    try:
+                        h1_text = await page.locator("h1").first.inner_text(timeout=5000)
+                        h1_clean = h1_text.strip()
+                    except Exception:
+                        h1_clean = cand_title or name_query
+
+                    # Check if the page belongs to an inverted name (e.g. query "Mạnh Văn Trần" but page is "Trần Văn Mạnh")
+                    # If this candidate is clearly wrong and we have another candidate with score >= 0.5, try next!
+                    q_words = name_query.strip().lower().split()
+                    h1_words = h1_clean.strip().lower().split()
+                    if (
+                        len(q_words) >= 2 and len(h1_words) >= 2
+                        and q_words[0] != h1_words[0] and q_words[-1] != h1_words[-1]
+                        and q_words[0] == h1_words[-1] and q_words[-1] == h1_words[0]
+                    ):
+                        logger.warning(
+                            "[BrowserAgent] Candidate '%s' has inverted H1 '%s' vs query '%s'; trying next candidate...",
+                            cand_title, h1_clean, name_query
+                        )
+                        continue
+
+                    # Candidate accepted!
+                    profile_name = h1_clean
+                    intro_text = await self._extract_intro_text(page)
+                    await self._dismiss_overlays(page)
+                    try:
+                        await page.evaluate("window.scrollTo(0, 0)")
+                    except Exception:
+                        pass
+                    img_path = await self._screenshot(page, f"fb_profile_{_safe_filename(name_query)}")
+                    final_url = page.url
+                    chosen_candidate = profile_href
+                    break
+
+                if not chosen_candidate and ranked_candidates:
+                    # Fallback to first candidate if all were strictly skipped
+                    logger.info("[BrowserAgent] Fallback to top candidate.")
+                    profile_href = ranked_candidates[0][1]
                     await page.goto(profile_href, wait_until="commit", timeout=NAV_TIMEOUT_MS)
-                except Exception as e:
-                    logger.warning("[BrowserAgent] Profile goto notice: %s", e)
+                    await self._wait_for_profile_content(page)
+                    await self._dismiss_overlays(page)
+                    try:
+                        profile_name = (await page.locator("h1").first.inner_text(timeout=5000)).strip()
+                    except Exception:
+                        profile_name = name_query
+                    intro_text = await self._extract_intro_text(page)
+                    img_path = await self._screenshot(page, f"fb_profile_{_safe_filename(name_query)}")
+                    final_url = page.url
 
-                # Wait for real profile content (h1 + images), not skeleton
-                await self._wait_for_profile_content(page)
-                await self._dismiss_overlays(page)
-
-                # Scroll to expose intro section below the cover photo
-                try:
-                    await page.evaluate("window.scrollBy(0, 350)")
-                    await asyncio.sleep(1)
-                except Exception:
-                    pass
-
-                try:
-                    profile_name = await page.locator("h1").first.inner_text(timeout=5000)
-                except Exception:
-                    profile_name = name_query
-
-                intro_text = await self._extract_intro_text(page)
-
-                await self._dismiss_overlays(page)
-                # Scroll back to top so cover photo is in the viewport
-                try:
-                    await page.evaluate("window.scrollTo(0, 0)")
-                except Exception:
-                    pass
-                img_path = await self._screenshot(
-                    page, f"fb_profile_{_safe_filename(name_query)}"
-                )
-                final_url = page.url
                 await page.close()
 
                 return {
@@ -567,7 +603,6 @@ class BrowserAgentService:
                     "source": "search",
                 }
 
-
             except Exception as e:
                 logger.error("[BrowserAgent] facebook_view_profile error: %s", e, exc_info=True)
                 try:
@@ -577,20 +612,29 @@ class BrowserAgentService:
                 return {"success": False, "error": str(e)}
 
 
-    async def _resolve_best_profile_href(self, page: Page, name_query: str) -> Optional[str]:
+    async def _resolve_ranked_profile_candidates(
+        self, page: Page, name_query: str
+    ) -> List[Tuple[float, str, str]]:
         """
-        Extracts all profile hrefs from the current search-results page using JS,
-        scores each against name_query via Vietnamese-aware token overlap,
-        and returns the href of the best match (score ≥ 0.4) — WITHOUT clicking
-        any DOM element (avoids race conditions with React re-renders).
+        Extracts all profile links from Facebook search results and ranks them
+        using strict Vietnamese word-order and position matching.
+        Returns a list of (score, href, title) sorted from highest score to lowest.
         """
-        # Normalise the query: strip diacritics via simple replacement, lowercase, split tokens
         import unicodedata
-        def _norm(s: str) -> str:
-            return unicodedata.normalize("NFD", s.lower())
 
-        query_norm = _norm(name_query)
-        query_tokens = set(t for t in re.sub(r"[^\w\s]", " ", query_norm).split() if len(t) > 1)
+        def _norm(s: str) -> str:
+            if not s:
+                return ""
+            trans = str.maketrans(
+                "àáảãạăằắẳẵặâầấẩẫậèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ"
+                "ÀÁẢÃẠĂẰẮẲẴẶÂẦẤẨẪẬÈÉẺẼẸÊỀẾỂỄỆÌÍỈĨỊÒÓỎÕỌÔỒỐỔỖỘƠỜỚỞỠỢÙÚỦŨỤƯỪỨỬỮỰỲÝỶỸỴĐ",
+                "aaaaaaaaaaaaaaaaaeeeeeeeeeeeiiiiiooooooooooooooooouuuuuuuuuuuyyyyyd"
+                "AAAAAAAAAAAAAAAAAEEEEEEEEEEEIIIIIOOOOOOOOOOOOOOOOOUUUUUUUUUUUYYYYYD"
+            )
+            return s.translate(trans).lower().strip()
+
+        q_norm = _norm(name_query)
+        q_words = [w for w in re.sub(r"[^\w\s]", " ", q_norm).split() if len(w) > 0]
 
         try:
             candidates: List[Dict[str, str]] = await page.evaluate("""
@@ -620,39 +664,69 @@ class BrowserAgentService:
             }
             """)
 
-            logger.info(
-                "[BrowserAgent] Profile resolve: candidates=%d query_tokens=%s",
-                len(candidates),
-                query_tokens,
-            )
-
-            best_score = 0.0
-            best_href: Optional[str] = None
+            ranked: List[Tuple[float, str, str]] = []
 
             for c in candidates:
-                text_norm = _norm(c.get("text") or "")
-                text_tokens = set(t for t in re.sub(r"[^\w\s]", " ", text_norm).split() if len(t) > 1)
-                if not text_tokens:
-                    continue
-                overlap = len(query_tokens & text_tokens)
-                if not overlap:
-                    continue
-                score = overlap / max(len(query_tokens), len(text_tokens))
-                logger.info("[BrowserAgent]  candidate sc=%.2f text=%s", score, c.get("text", "")[:40])
-                if score > best_score:
-                    best_score = score
-                    best_href = c.get("href")
+                raw_title = c.get("text") or ""
+                href = c.get("href") or ""
+                c_norm = _norm(raw_title)
+                c_words = [w for w in re.sub(r"[^\w\s]", " ", c_norm).split() if len(w) > 0]
 
-            logger.info(
-                "[BrowserAgent] Profile resolve: best_score=%.2f href=%s",
-                best_score,
-                best_href or "none",
-            )
-            return best_href if best_score >= 0.4 else None
+                if not c_words or not href:
+                    continue
+
+                # 1. Exact contiguous substring match (e.g. "manh van tran" in "manh van tran (pandaz foolish)")
+                if f" {q_norm} " in f" {c_norm} " or c_norm.startswith(q_norm):
+                    score = 1.0
+                elif q_norm in c_norm:
+                    score = 0.95
+                else:
+                    # 2. Inverted name check (Severe penalty!)
+                    # If query is "Mạnh Văn Trần" but candidate is "Trần Văn Mạnh"
+                    if len(q_words) >= 2 and len(c_words) >= 2:
+                        if q_words[0] != c_words[0] and q_words[-1] != c_words[-1]:
+                            if q_words[0] == c_words[-1] and q_words[-1] == c_words[0]:
+                                score = 0.05
+                                logger.info("[BrowserAgent]  Candidate inverted penalty (sc=0.05): '%s'", raw_title)
+                                ranked.append((score, href, raw_title))
+                                continue
+
+                    score = 0.0
+                    # First word match (Family name or query prefix)
+                    if len(q_words) >= 1 and len(c_words) >= 1 and q_words[0] == c_words[0]:
+                        score += 0.40
+
+                    # Last word match (Given name)
+                    if len(q_words) >= 1 and q_words[-1] in c_words:
+                        if q_words[-1] == c_words[-1] or q_words[-1] == c_words[min(len(q_words)-1, len(c_words)-1)]:
+                            score += 0.35
+                        else:
+                            score += 0.20
+
+                    # Check relative word order
+                    last_idx = -1
+                    in_order = True
+                    for qw in q_words:
+                        try:
+                            cur_idx = c_words.index(qw, last_idx + 1)
+                            last_idx = cur_idx
+                        except ValueError:
+                            in_order = False
+                            break
+                    if in_order and len(q_words) >= 2:
+                        score += 0.25
+
+                logger.info("[BrowserAgent]  Candidate scored: sc=%.2f text='%s' href=%s", score, raw_title, href)
+                if score >= 0.30:
+                    ranked.append((score, href, raw_title))
+
+            # Sort descending by score
+            ranked.sort(key=lambda x: x[0], reverse=True)
+            return ranked
 
         except Exception as e:
-            logger.warning("[BrowserAgent] _resolve_best_profile_href error: %s", e)
-            return None
+            logger.warning("[BrowserAgent] _resolve_ranked_profile_candidates error: %s", e)
+            return []
 
 
     async def _extract_intro_text(self, page: Page) -> str:

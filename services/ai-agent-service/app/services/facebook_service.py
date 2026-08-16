@@ -116,8 +116,8 @@ class FacebookService:
     @classmethod
     @functools.lru_cache(maxsize=4096)
     def _name_match_score(cls, name1: str, name2: str) -> float:
-        """Two-tier Weighted Token + Jaro-Winkler Matching with Given Name & Family Name Strictness.
-        O(1) cached lookup with 100% accuracy on Vietnamese name permutations, titles, and typos.
+        """Strict Vietnamese Name Matching with Word-Order, Given-Name & Family-Name Precision.
+        Guarantees that inverted names (e.g. 'Mạnh Văn Trần' vs 'Trần Văn Mạnh') are never confused.
         """
         n1 = cls._normalize_vn_text(name1)
         n2 = cls._normalize_vn_text(name2)
@@ -125,7 +125,8 @@ class FacebookService:
             return 0.0
         if n1 == n2:
             return 1.0
-        if n1 in n2 or n2 in n1:
+        # Exact contiguous substring match (preserves word order)
+        if f" {n1} " in f" {n2} " or f" {n2} " in f" {n1} ":
             return 0.95
 
         raw_tokens1 = n1.split()
@@ -138,37 +139,45 @@ class FacebookService:
         if not tokens2:
             tokens2 = raw_tokens2
 
-        set1, set2 = set(tokens1), set(tokens2)
-        overlap = set1.intersection(set2)
+        # Inverted Name Check (e.g. "Mạnh Văn Trần" vs "Trần Văn Mạnh")
+        # In Vietnamese: tokens[0] is Family Name, tokens[-1] is Given Name.
+        # If both Family Name and Given Name are inverted, these are two entirely different persons!
+        if len(tokens1) >= 2 and len(tokens2) >= 2:
+            if tokens1[0] != tokens2[0] and tokens1[-1] != tokens2[-1]:
+                # If they are exact mirrors of each other (e.g. [manh, tran] vs [tran, manh])
+                if tokens1[0] == tokens2[-1] and tokens1[-1] == tokens2[0]:
+                    return 0.10
+                return 0.15
 
-        # Check family name mismatch (e.g. Lê Hoàng Nam vs Nguyễn Hoàng Nam)
-        if len(tokens1) >= 3 and len(tokens2) >= 3:
+            # Different Family Name with same Given Name (e.g. "Lê Hoàng Nam" vs "Nguyễn Hoàng Nam")
             if tokens1[0] != tokens2[0] and tokens1[-1] == tokens2[-1]:
-                return 0.50
+                return 0.40
 
-        # Single word query matching target given name (e.g. "anh Mạnh", "bảo Mạnh", "Mạnh Cua" vs "Trần Văn Mạnh")
+            # Same Family Name with different Given Name (e.g. "Trần Văn Mạnh" vs "Trần Văn Hùng")
+            if tokens1[0] == tokens2[0] and tokens1[-1] != tokens2[-1]:
+                return 0.30
+
+            # Same Family Name AND same Given Name (e.g. "Trần Mạnh" vs "Trần Văn Mạnh")
+            if tokens1[0] == tokens2[0] and tokens1[-1] == tokens2[-1]:
+                return 0.92
+
+        # Single word query matching target given name (e.g. "Mạnh" vs "Trần Văn Mạnh")
         given1 = tokens1[-1]
         given2 = tokens2[-1]
+        if len(tokens1) == 1:
+            return 0.90 if tokens1[0] == given2 else 0.20
+        if len(tokens2) == 1:
+            return 0.90 if tokens2[0] == given1 else 0.20
 
-        if len(tokens1) == 1 and (tokens1[0] in set2):
-            return 0.92 if tokens1[0] == given2 else 0.82
-        if len(tokens2) == 1 and (tokens2[0] in set1):
-            return 0.92 if tokens2[0] == given1 else 0.82
-
-        given_match = (given1 == given2) or (tokens1[0] == given2) or (given1 == tokens2[0])
+        set1, set2 = set(tokens1), set(tokens2)
+        overlap = set1.intersection(set2)
         token_score = len(overlap) / max(len(set1), len(set2))
 
-        if given_match:
-            if len(overlap) >= 2:
-                return max(0.88, token_score + 0.15)
-            elif len(set1) <= 2 or len(set2) <= 2:
-                return 0.85
-
         jw_score = cls._jaro_winkler_fast(n1, n2)
-        if jw_score >= 0.90:
+        if jw_score >= 0.92 and tokens1[-1] == tokens2[-1]:
             return jw_score
 
-        return max(token_score, jw_score * 0.7)
+        return min(token_score, 0.45)
 
     # ─── DB helpers ──────────────────────────────────────────────────────────
 

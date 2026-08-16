@@ -97,6 +97,10 @@ Với mọi yêu cầu, bạn phải tư duy chặt chẽ theo 5 bước:
    - Các hành động làm thay đổi dữ liệu, khởi động lại container production, hoặc xóa file quan trọng: Phải phân tích trước tác động (Impact Analysis) và xin xác nhận nếu người dùng chưa ra lệnh dứt khoát.
 4. HIỆU CHUẨN ĐỘ TIN CẬY (CALIBRATED CONFIDENCE):
    - Luôn phân biệt rạch ròi giữa: "Dữ liệu thực tế đã kiểm chứng qua công cụ" và "Nhận định/khuyến nghị mang tính suy luận".
+5. KHI ĐƯỢC ANH MẠNH SỬA LỖI HOẶC BÁO KẾT QUẢ SAI ("Sai rồi", "Không phải", "Nhầm rồi", "Bị đảo tên"):
+   - Lập tức nhận thức và tự kiểm điểm nguyên nhân nhầm lẫn (ví dụ: trật tự Họ & Tên bị đảo ngược giữa Họ và Tên, mở nhầm tài khoản bạn bè).
+   - Tuyệt đối KHÔNG được lặp lại nguyên văn kết quả cũ hoặc dùng lại đường link cũ bị bắt lỗi.
+   - Phân tích cẩn thận trật tự từng từ trong tên người dùng yêu cầu, tìm kiếm chính xác và gửi kết quả đúng kèm lời xin lỗi khiêm tốn, cầu thị.
 
 ━━━ 4. HƯỚNG DẪN CÔNG CỤ (TOOL CALLING) ━━━
 
@@ -1004,7 +1008,7 @@ Với mọi yêu cầu, bạn phải tư duy chặt chẽ theo 5 bước:
                         "[AiAgent] DB thread check: score=%.2f name='%s' href=%s",
                         score, t.get("text", ""), href,
                     )
-                    if score > best_score and score >= 0.5:
+                    if score > best_score and score >= 0.88:
                         best_score = score
                         best_user_id = uid
                 if best_user_id:
@@ -1017,7 +1021,7 @@ Với mọi yêu cầu, bạn phải tư duy chặt chẽ theo 5 bước:
             except Exception as e:
                 logger.warning("[AiAgent] DB thread lookup error: %s", e)
 
-        logger.info("[AiAgent] No standard thread found for '%s'; using People Search.", name_query)
+        logger.info("[AiAgent] No high-confidence standard thread found for '%s'; using People Search.", name_query)
         return None
 
 

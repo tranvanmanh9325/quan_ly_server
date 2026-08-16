@@ -120,7 +120,14 @@ class VncManager:
                 )
                 await asyncio.sleep(0.5)
 
-                # 3. Start Openbox Window Manager
+                # 3. Start Openbox Window Manager (configured for borderless & full maximization)
+                openbox_dir = os.path.expanduser("~/.config/openbox")
+                os.makedirs(openbox_dir, exist_ok=True)
+                rc_path = os.path.join(openbox_dir, "rc.xml")
+                if not os.path.exists(rc_path):
+                    with open(rc_path, "w", encoding="utf-8") as f:
+                        f.write('<?xml version="1.0" encoding="UTF-8"?><openbox_config xmlns="http://openbox.org/3.4/rc"><applications><application class="*"><decor>no</decor><maximized>yes</maximized></application></applications></openbox_config>')
+
                 env = os.environ.copy()
                 env["DISPLAY"] = self._display
                 self._openbox_proc = subprocess.Popen(
@@ -132,8 +139,10 @@ class VncManager:
                 await asyncio.sleep(0.3)
 
                 # 4. Start x11vnc with high-efficiency polling:
-                #    -threads: Multi-threaded ZRLE encoding (standalone flag)
+                #    -threads: Multi-threaded ZRLE encoding
                 #    -nap, -wait 16, -defer 16: Smooth 60 FPS pacing, zero CPU spinlock
+                #    NOTE: Do NOT use -ncache because noVNC does not support client-side caching
+                #    and instead inflates the virtual screen height by Nx, causing vertical shrinkage.
                 self._x11vnc_proc = subprocess.Popen(
                     [
                         "x11vnc",
@@ -147,7 +156,6 @@ class VncManager:
                         "-nap",
                         "-wait", "16",
                         "-defer", "16",
-                        "-ncache", "10",
                         "-nowf",
                         "-threads"
                     ],
@@ -230,6 +238,11 @@ class VncManager:
                     self._page = pages[0]
                 else:
                     self._page = await self._context.new_page()
+
+                try:
+                    await self._page.set_viewport_size({"width": 1280, "height": 800})
+                except Exception:
+                    pass
 
                 # Navigate in background
                 asyncio.create_task(self._safe_navigate(self._page, "https://www.facebook.com/messages/"))

@@ -543,7 +543,27 @@ class FacebookService:
                   }
               }
 
-              // Priority 2: h3 with 'Cuộc trò chuyện với X'
+              // Priority 2: Check Chat Header top area (y < 130, x between 240 and 800)
+              if (!partnerName) {
+                  let main = document.querySelector('[role="main"]') || document.body;
+                  let headerElements = Array.from(main.querySelectorAll('h2, h3, span, a, [role="heading"], div'));
+                  for (let el of headerElements) {
+                      let rect = el.getBoundingClientRect();
+                      if (rect.y >= 50 && rect.y <= 130 && rect.x >= 240 && rect.x <= 800 && rect.width > 20 && rect.height > 15) {
+                          let txt = (el.innerText || '').trim();
+                          let low = txt.toLowerCase();
+                          if (txt.length >= 2 && txt.length <= 60 && !BLACKLIST.has(low)
+                              && !low.includes('hoạt động') && !low.includes('mã hóa')
+                              && !low.includes('thông báo') && !low.includes('cuộc gọi')
+                              && !low.includes('tin nhắn') && !low.includes('soạn')) {
+                              partnerName = txt.split('\n')[0].trim();
+                              break;
+                          }
+                      }
+                  }
+              }
+
+              // Priority 3: h3 with 'Cuộc trò chuyện với X'
               if (!partnerName) {
                   let h3s = Array.from(document.querySelectorAll('h3'));
                   for (let h of h3s) {
@@ -556,7 +576,7 @@ class FacebookService:
                   }
               }
 
-              // Priority 3: <a> inside [role=main]
+              // Priority 4: <a> inside [role=main]
               if (!partnerName) {
                   let main = document.querySelector('[role="main"]') || document.body;
                   for (let a of Array.from(main.querySelectorAll('a'))) {
@@ -1399,6 +1419,17 @@ class FacebookService:
                                 pin_handled = await self._handle_e2ee_pin_screen(page)
                                 if pin_handled:
                                     logger.info("[FB-Service] E2EE PIN unlocked for %s", t_href)
+
+                                # Automatically expand Right Sidebar if collapsed to extract real Profile URL
+                                try:
+                                    info_btn = page.locator('div[role="main"] div[role="button"][aria-label*="thông tin" i], div[role="main"] div[role="button"][aria-label*="Thông tin" i]').first
+                                    if await info_btn.count() > 0:
+                                        is_exp = await info_btn.get_attribute("aria-expanded")
+                                        if is_exp != "true":
+                                            await info_btn.click()
+                                            await asyncio.sleep(1.5)
+                                except Exception:
+                                    pass
 
                                 # Extract contact name & profile URL from DOM / Right Sidebar
                                 thread_info = await self._extract_thread_info_from_page(page)

@@ -79,13 +79,14 @@ async def lifespan(app: FastAPI):
     # 2. Initialize domain services with bidirectional wiring
     appointment_service = AppointmentService(llm_router)
     fb_service = FacebookService(message_cache, appointment_service=appointment_service)
-    browser_agent = BrowserAgentService()
+    browser_agent = BrowserAgentService(fb_service=fb_service)
     ai_agent = AiAgentService(llm_router, ssh_client, message_cache, fb_service)
     ai_agent.set_appointment_service(appointment_service)
-    fb_service.set_ai_agent(ai_agent)
     ai_agent.set_browser_agent(browser_agent)
+    fb_service.set_ai_agent(ai_agent)
     telegram_bot = TelegramBot(ai_agent, ssh_client)
     telegram_bot.set_appointment_service(appointment_service)
+    ai_agent.set_telegram_bot(telegram_bot)
     fb_service.set_telegram_bot(telegram_bot)
 
     # 3. Attach to app state for dependency injection in routers

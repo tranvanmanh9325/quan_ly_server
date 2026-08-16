@@ -965,12 +965,14 @@ Với mọi yêu cầu, bạn phải tư duy chặt chẽ theo 5 bước:
     async def _resolve_profile_url_from_thread(self, name_query: str) -> Optional[str]:
         """
         Resolves the exact Facebook profile URL for a contact by looking up their
-        Messenger thread_href in the message cache and the persistent DB.
+        Messenger thread in the persistent DB or in-memory message cache.
 
-        IMPORTANT: Only standard threads (/messages/t/<user_id>/) contain the real
-        numeric Facebook user ID. E2EE threads (/messages/e2ee/t/<thread_id>/) use
-        an internal conversation ID that is NOT a valid profile URL — so we
-        explicitly exclude them.
+        Resolution strategy:
+        1. Query known threads in DB and rank by Vietnamese name match score.
+        2. If best thread has a saved profile_url, return it immediately.
+        3. If best thread is a standard thread (/messages/t/<user_id>/), construct direct URL.
+        4. If best thread is E2EE (/messages/e2ee/t/<id>/), invoke extract_profile_url_from_thread.
+        5. Otherwise fallback to People Search.
         """
         import re as _re
 
@@ -981,51 +983,76 @@ Với mọi yêu cầu, bạn phải tư duy chặt chẽ theo 5 bước:
             m = _re.search(r"/messages/t/(\d+)", href)
             return m.group(1) if m else None
 
-        # 1. Check in-memory message cache — pick a standard thread
-        if self.message_cache:
-            thread_href = await self.message_cache.find_thread_href(name_query)
-            if thread_href:
-                user_id = _extract_standard_user_id(thread_href)
-                if user_id:
-                    profile_url = f"https://www.facebook.com/{user_id}"
-                    logger.info(
-                        "[AiAgent] Cache hit → thread '%s' → profile_url=%s",
-                        thread_href, profile_url,
-                    )
-                    return profile_url
-                else:
-                    logger.info("[AiAgent] Cache thread is E2EE; checking DB for standard thread.")
-
-        # 2. Check DB — find best name match among standard threads only
         if self.fb_service:
             try:
                 db_threads = await self.fb_service.get_known_threads_from_db()
                 best_score = 0.0
-                best_user_id: Optional[str] = None
+                best_thread: Optional[Dict[str, str]] = None
+
                 for t in db_threads:
-                    href = t.get("href", "")
-                    uid = _extract_standard_user_id(href)
-                    if not uid:
-                        continue  # skip E2EE threads
-                    score = self.fb_service._name_match_score(name_query, t.get("text", ""))
+                    t_name = t.get("text", "")
+                    score = self.fb_service._name_match_score(name_query, t_name)
                     logger.info(
-                        "[AiAgent] DB thread check: score=%.2f name='%s' href=%s",
-                        score, t.get("text", ""), href,
+                        "[AiAgent] DB thread check: score=%.2f name='%s' href=%s profile=%s",
+                        score, t_name, t.get("href", ""), t.get("profile_url", ""),
                     )
-                    if score > best_score and score >= 0.88:
+                    if score > best_score and score >= 0.85:
                         best_score = score
-                        best_user_id = uid
-                if best_user_id:
-                    profile_url = f"https://www.facebook.com/{best_user_id}"
-                    logger.info(
-                        "[AiAgent] DB hit → user_id=%s score=%.2f → profile_url=%s",
-                        best_user_id, best_score, profile_url,
-                    )
-                    return profile_url
+                        best_thread = t
+
+                if best_thread:
+                    t_href = best_thread.get("href", "")
+                    t_profile = best_thread.get("profile_url", "")
+                    if t_profile and t_profile.startswith("http"):
+                        logger.info(
+                            "[AiAgent] DB direct profile hit for '%s' (score=%.2f): %s",
+                            name_query, best_score, t_profile,
+                        )
+                        return t_profile
+
+                    # Check standard thread user ID
+                    uid = _extract_standard_user_id(t_href)
+                    if uid:
+                        profile_url = f"https://www.facebook.com/{uid}"
+                        logger.info(
+                            "[AiAgent] Standard thread hit for '%s' → profile_url=%s",
+                            name_query, profile_url,
+                        )
+                        return profile_url
+
+                    # Check E2EE thread -> extract live profile URL from Right Sidebar
+                    if "/e2ee/" in t_href:
+                        logger.info(
+                            "[AiAgent] E2EE thread matched for '%s' (score=%.2f) → resolving profile via Messenger...",
+                            name_query, best_score,
+                        )
+                        e2ee_profile = await self.fb_service.extract_profile_url_from_thread(t_href)
+                        if e2ee_profile:
+                            return e2ee_profile
             except Exception as e:
                 logger.warning("[AiAgent] DB thread lookup error: %s", e)
 
-        logger.info("[AiAgent] No high-confidence standard thread found for '%s'; using People Search.", name_query)
+        # Fallback check in-memory message cache
+        if self.message_cache:
+            try:
+                thread_href = await self.message_cache.find_thread_href(name_query)
+                if thread_href:
+                    uid = _extract_standard_user_id(thread_href)
+                    if uid:
+                        profile_url = f"https://www.facebook.com/{uid}"
+                        logger.info(
+                            "[AiAgent] Cache hit → thread '%s' → profile_url=%s",
+                            thread_href, profile_url,
+                        )
+                        return profile_url
+                    elif "/e2ee/" in thread_href and self.fb_service:
+                        e2ee_profile = await self.fb_service.extract_profile_url_from_thread(thread_href)
+                        if e2ee_profile:
+                            return e2ee_profile
+            except Exception as e:
+                logger.warning("[AiAgent] Cache lookup error: %s", e)
+
+        logger.info("[AiAgent] No high-confidence thread found for '%s'; using People Search.", name_query)
         return None
 
 

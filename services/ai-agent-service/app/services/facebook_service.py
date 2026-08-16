@@ -268,61 +268,59 @@ class FacebookService:
             logger.warning("[FB-Service] Cooldown record error: %s", e)
 
     async def get_known_threads_from_db(self) -> List[Dict[str, str]]:
-        """Returns all known thread URLs with their last message hash."""
+        """Returns all known thread URLs with their last message hash and profile_url."""
         try:
             async with await psycopg.AsyncConnection.connect(settings.database_url, row_factory=cast(Any, dict_row)) as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(
-                        "SELECT thread_href, sender_name, last_msg_hash FROM facebook_known_threads ORDER BY discovered_at DESC LIMIT 20"
+                        "SELECT thread_href, sender_name, last_msg_hash, profile_url FROM facebook_known_threads ORDER BY discovered_at DESC LIMIT 30"
                     )
                     rows = await cur.fetchall()
                     return [{
                         "href": row["thread_href"],
                         "text": row["sender_name"],
                         "last_msg_hash": row["last_msg_hash"] or "",
+                        "profile_url": row.get("profile_url") or "",
                     } for row in rows]
         except Exception as e:
             logger.warning("[FB-Service] Error fetching known threads: %s", e)
         return []
 
-    async def save_known_thread(self, href: str, sender_name: str, msg_hash: str = "", auto_reply_text: str = "") -> None:
-        """Persists a discovered thread URL and its latest message hash.
-
-        auto_reply_text: If non-empty, records the away-message text the bot just sent.
-        This survives container restarts and is used to trigger the unsend on the next
-        scan cycle when the human has replied.
-        """
+    async def save_known_thread(self, href: str, sender_name: str, msg_hash: str = "", auto_reply_text: str = "", profile_url: str = "") -> None:
+        """Persists a discovered thread URL, sender name, profile_url and latest message hash."""
         if not href:
             return
         try:
+            clean_href = href.split("?")[0]
             async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
                 async with conn.cursor() as cur:
                     if auto_reply_text:
-                        # When recording a new auto-reply: store text and reset unsent flag
                         await cur.execute(
                             """
-                            INSERT INTO facebook_known_threads (thread_href, sender_name, last_msg_hash, auto_reply_text, auto_reply_unsent, last_checked_at, discovered_at)
-                            VALUES (%s, %s, %s, %s, FALSE, NOW(), NOW())
+                            INSERT INTO facebook_known_threads (thread_href, sender_name, last_msg_hash, auto_reply_text, auto_reply_unsent, profile_url, last_checked_at, discovered_at)
+                            VALUES (%s, %s, %s, %s, FALSE, %s, NOW(), NOW())
                             ON CONFLICT (thread_href) DO UPDATE SET
                                 sender_name = EXCLUDED.sender_name,
                                 last_msg_hash = EXCLUDED.last_msg_hash,
                                 auto_reply_text = EXCLUDED.auto_reply_text,
                                 auto_reply_unsent = FALSE,
+                                profile_url = COALESCE(NULLIF(EXCLUDED.profile_url, ''), facebook_known_threads.profile_url),
                                 last_checked_at = NOW()
                             """,
-                            (href.split("?")[0], sender_name, msg_hash, auto_reply_text),
+                            (clean_href, sender_name, msg_hash, auto_reply_text, profile_url or None),
                         )
                     else:
                         await cur.execute(
                             """
-                            INSERT INTO facebook_known_threads (thread_href, sender_name, last_msg_hash, last_checked_at, discovered_at)
-                            VALUES (%s, %s, %s, NOW(), NOW())
+                            INSERT INTO facebook_known_threads (thread_href, sender_name, last_msg_hash, profile_url, last_checked_at, discovered_at)
+                            VALUES (%s, %s, %s, %s, NOW(), NOW())
                             ON CONFLICT (thread_href) DO UPDATE SET
                                 sender_name = EXCLUDED.sender_name,
                                 last_msg_hash = EXCLUDED.last_msg_hash,
+                                profile_url = COALESCE(NULLIF(EXCLUDED.profile_url, ''), facebook_known_threads.profile_url),
                                 last_checked_at = NOW()
                             """,
-                            (href.split("?")[0], sender_name, msg_hash),
+                            (clean_href, sender_name, msg_hash, profile_url or None),
                         )
                     await conn.commit()
         except Exception as e:
@@ -487,19 +485,11 @@ class FacebookService:
         "cu\u1ed9c tr\u00f2 chuy\u1ec7n", "c\u00e0i \u0111\u1eb7t", "quy\u1ec1n ri\u00eang t\u01b0",
     })
 
-    async def _extract_thread_name_from_page(self, page: Page) -> str:
-        """Extracts the conversation partner's name from the page header or right sidebar.
-
-        Priority:
-        1. Right Sidebar / Header Profile name (large heading next to/above E2EE badge)
-        2. h3 containing 'Cuộc trò chuyện với X' (most reliable, FB accessibility label)
-        3. First <a> in [role=main] or right sidebar that is a valid name
-        4. Any h3 not in system labels blacklist
-        5. Page title fallback
-        """
+    async def _extract_thread_info_from_page(self, page: Page) -> Dict[str, str]:
+        """Extracts both conversation partner's name and exact Facebook profile_url from the page header or right sidebar."""
         import re
         try:
-            name_from_dom = await page.evaluate("""
+            info_from_dom = await page.evaluate("""
             () => {
               const BLACKLIST = new Set([
                 'messenger','facebook','thông báo','được mã hóa đầu cuối',
@@ -509,78 +499,174 @@ class FacebookService:
                 'quyền riêng tư và hỗ trợ','bạn bè','đang hoạt động'
               ]);
 
-              // Priority 1: Check Right Sidebar / Profile section for partner name
+              let partnerName = '';
+              let profileUrl = '';
+
+              // Priority 1: Check Right Sidebar
               let sidebar = document.querySelector('[role="complementary"]') ||
                             Array.from(document.querySelectorAll('div')).find(d => {
                                 let t = (d.innerText || '').toLowerCase();
                                 return t.includes('được mã hóa đầu cuối') && (t.includes('trang cá') || t.includes('tắt thông báo'));
                             });
               if (sidebar) {
-                  // Name is usually the first significant heading / span above E2EE badge
-                  let headings = Array.from(sidebar.querySelectorAll('h2, h3, span, a'));
-                  for (let el of headings) {
-                      let txt = (el.innerText || '').trim();
-                      let low = txt.toLowerCase();
-                      if (txt.length >= 2 && txt.length <= 60 && !BLACKLIST.has(low)
-                          && !low.includes('hoạt động') && !low.includes('mã hóa')
-                          && !low.includes('thông tin') && !low.includes('tùy chỉnh')) {
-                          return txt;
+                  // Extract Profile URL from <a aria-label="Trang cá nhân"> or <a href="/1000...">
+                  let profileLinks = Array.from(sidebar.querySelectorAll('a[href]'));
+                  for (let a of profileLinks) {
+                      let href = a.getAttribute('href') || a.href || '';
+                      let aria = (a.getAttribute('aria-label') || '').toLowerCase();
+                      let txt = (a.innerText || '').trim();
+                      if (aria.includes('trang cá nhân') || href.includes('facebook.com/1000') || /^\/\d+\/?$/.test(href) || href.includes('profile.php')) {
+                          if (href.startsWith('/')) {
+                              profileUrl = 'https://www.facebook.com' + href;
+                          } else if (href.startsWith('http')) {
+                              profileUrl = href;
+                          }
+                          if (!partnerName && txt && !BLACKLIST.has(txt.toLowerCase())) {
+                              partnerName = txt;
+                          }
+                          break;
+                      }
+                  }
+
+                  if (!partnerName) {
+                      let headings = Array.from(sidebar.querySelectorAll('h2, h3, span, a'));
+                      for (let el of headings) {
+                          let txt = (el.innerText || '').trim();
+                          let low = txt.toLowerCase();
+                          if (txt.length >= 2 && txt.length <= 60 && !BLACKLIST.has(low)
+                              && !low.includes('hoạt động') && !low.includes('mã hóa')
+                              && !low.includes('thông tin') && !low.includes('tùy chỉnh')) {
+                              partnerName = txt;
+                              break;
+                          }
                       }
                   }
               }
 
-              // Priority 2: h3 with 'Cuộc trò chuyện với X' — most reliable FB accessibility label
-              let h3s = Array.from(document.querySelectorAll('h3'));
-              for (let h of h3s) {
-                let txt = (h.innerText || '').trim();
-                let m = txt.match(/Cuộc trò chuyện với (.+)/);
-                if (m && m[1].trim().length > 1) return m[1].trim();
+              // Priority 2: h3 with 'Cuộc trò chuyện với X'
+              if (!partnerName) {
+                  let h3s = Array.from(document.querySelectorAll('h3'));
+                  for (let h of h3s) {
+                    let txt = (h.innerText || '').trim();
+                    let m = txt.match(/Cuộc trò chuyện với (.+)/);
+                    if (m && m[1].trim().length > 1) {
+                        partnerName = m[1].trim();
+                        break;
+                    }
+                  }
               }
 
-              // Priority 3: <a> inside [role=main] — contact link in header
-              let main = document.querySelector('[role="main"]') || document.body;
-              for (let a of Array.from(main.querySelectorAll('a'))) {
-                let txt = (a.innerText || '').trim();
-                let low = txt.toLowerCase();
-                if (txt.length > 1 && txt.length < 80 && !BLACKLIST.has(low)
-                    && !low.includes('mã hóa') && !low.includes('thông báo')) {
-                  return txt;
-                }
+              // Priority 3: <a> inside [role=main]
+              if (!partnerName) {
+                  let main = document.querySelector('[role="main"]') || document.body;
+                  for (let a of Array.from(main.querySelectorAll('a'))) {
+                    let txt = (a.innerText || '').trim();
+                    let low = txt.toLowerCase();
+                    if (txt.length > 1 && txt.length < 80 && !BLACKLIST.has(low)
+                        && !low.includes('mã hóa') && !low.includes('thông báo')) {
+                      partnerName = txt;
+                      let h = a.getAttribute('href') || a.href || '';
+                      if (!profileUrl && h && !h.includes('/messages/')) {
+                          profileUrl = h.startsWith('/') ? 'https://www.facebook.com' + h : h;
+                      }
+                      break;
+                    }
+                  }
               }
 
-              // Priority 4: any h3 not matching system labels
-              const LABEL_FRAGMENTS = [
-                'tin nhắn','soạn','đoạn chat','messenger','mã hóa',
-                'nhập mã','khôi phục','cài đặt','quyền riêng tư',
-                'có thể bạn biết','tìm kiếm','thông báo',
-              ];
-              for (let h of h3s) {
-                let txt = (h.innerText || '').trim();
-                let low = txt.toLowerCase();
-                if (txt.length < 2 || txt.length > 80) continue;
-                if (LABEL_FRAGMENTS.some(f => low.includes(f))) continue;
-                return txt;
-              }
-              return '';
+              return { name: partnerName, profile_url: profileUrl };
             }
             """)
-            if name_from_dom:
-                name_lower = name_from_dom.lower()
-                is_system = any(label in name_lower for label in self._FB_SYSTEM_LABELS)
-                if not is_system and len(name_from_dom) > 1:
-                    return name_from_dom
+            if isinstance(info_from_dom, dict):
+                p_name = info_from_dom.get("name", "").strip()
+                p_url = info_from_dom.get("profile_url", "").strip()
+                if p_name and not any(label in p_name.lower() for label in self._FB_SYSTEM_LABELS):
+                    return {"name": p_name, "profile_url": p_url}
+                if p_url:
+                    return {"name": p_name or "Người dùng Facebook", "profile_url": p_url}
 
-            # Fallback: page title (format varies, rarely contains name now)
+            # Fallback: page title
             title = await page.title()
             if title and "|" in title:
                 name = title.split("|")[0].strip()
                 name = re.sub(r"^\(\d+\)\s*", "", name).strip()
                 name_lower = name.lower()
                 if name and not any(label in name_lower for label in self._FB_SYSTEM_LABELS):
-                    return name
+                    return {"name": name, "profile_url": ""}
         except Exception as e:
-            logger.debug("[FB-Service] Could not extract thread name: %s", e)
-        return "Người dùng Facebook"
+            logger.debug("[FB-Service] Could not extract thread info: %s", e)
+        return {"name": "Người dùng Facebook", "profile_url": ""}
+
+    async def _extract_thread_name_from_page(self, page: Page) -> str:
+        """Extracts the conversation partner's name from the page header or right sidebar."""
+        info = await self._extract_thread_info_from_page(page)
+        return info.get("name", "Người dùng Facebook")
+
+    async def extract_profile_url_from_thread(self, thread_href: str) -> Optional[str]:
+        """Navigates to a Messenger thread (including E2EE), extracts the exact Profile URL from the Right Sidebar, and saves it to DB."""
+        if not thread_href:
+            return None
+        logger.info("[FB-Service] Extracting exact profile URL from thread: %s", thread_href)
+        browser_data_path = Path(BROWSER_DATA_DIR)
+        for item in ["SingletonLock", "SingletonCookie", "SingletonSocket"]:
+            lock_path = browser_data_path / item
+            if lock_path.is_symlink() or lock_path.exists():
+                try:
+                    lock_path.unlink()
+                except Exception:
+                    pass
+
+        async with self._browser_lock:
+            async with async_playwright() as p:
+                ctx = await p.chromium.launch_persistent_context(
+                    str(browser_data_path),
+                    headless=True,
+                    timezone_id="Asia/Ho_Chi_Minh",
+                    locale="vi-VN",
+                    args=[
+                        "--no-sandbox",
+                        "--disable-dev-shm-usage",
+                        "--disable-blink-features=AutomationControlled",
+                    ],
+                    viewport={"width": 1366, "height": 850},
+                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
+                )
+                try:
+                    cfg = await self.get_config_from_db()
+                    cookies = self._parse_cookies(cfg.get("cookies_json", ""))
+                    if cookies:
+                        await ctx.add_cookies(cast(Any, cookies))
+                except Exception:
+                    pass
+
+                page = await ctx.new_page()
+                try:
+                    await page.goto(thread_href, wait_until="domcontentloaded", timeout=30000)
+                    await asyncio.sleep(4.0)
+                    await self._handle_e2ee_pin_screen(page)
+                    await asyncio.sleep(3.0)
+
+                    # Ensure Right Sidebar is open
+                    info_btn = page.locator('div[role="main"] div[role="button"][aria-label*="thông tin" i], div[role="main"] div[role="button"][aria-label*="Thông tin" i]').first
+                    if await info_btn.count() > 0:
+                        try:
+                            await info_btn.click()
+                            await asyncio.sleep(2.0)
+                        except Exception:
+                            pass
+
+                    info = await self._extract_thread_info_from_page(page)
+                    p_url = info.get("profile_url", "")
+                    p_name = info.get("name", "")
+                    if p_url:
+                        logger.info("[FB-Service] Discovered profile URL for '%s': %s", p_name, p_url)
+                        await self.save_known_thread(thread_href, p_name or "Người dùng Facebook", profile_url=p_url)
+                        return p_url
+                except Exception as e:
+                    logger.warning("[FB-Service] Failed to extract profile URL from thread %s: %s", thread_href, e)
+                finally:
+                    await ctx.close()
+        return None
 
     async def _extract_conversation_state(self, page: Page) -> Dict[str, Any]:
         """Analyzes the current chat window in depth to determine:
@@ -1314,8 +1400,10 @@ class FacebookService:
                                 if pin_handled:
                                     logger.info("[FB-Service] E2EE PIN unlocked for %s", t_href)
 
-                                # Extract contact name from DOM header
-                                clean_name = await self._extract_thread_name_from_page(page)
+                                # Extract contact name & profile URL from DOM / Right Sidebar
+                                thread_info = await self._extract_thread_info_from_page(page)
+                                clean_name = thread_info.get("name", "Người dùng Facebook")
+                                profile_url = thread_info.get("profile_url", "")
 
                                 # Extract conversation state (who sent the last message, unreplied count)
                                 conv_state = await self._extract_conversation_state(page)
@@ -1334,12 +1422,12 @@ class FacebookService:
 
                                 threshold = cfg.get("threshold", 5)
                                 logger.info(
-                                    "[FB-Service] Thread '%s': last_sender=%s, unreplied=%d, threshold=%d, new=%s, hash=%s",
-                                    clean_name, last_sender, consecutive_unreplied, threshold, has_new_messages, current_hash[:8] if current_hash else "∅",
+                                    "[FB-Service] Thread '%s' (profile=%s): last_sender=%s, unreplied=%d, threshold=%d, new=%s, hash=%s",
+                                    clean_name, profile_url or "∅", last_sender, consecutive_unreplied, threshold, has_new_messages, current_hash[:8] if current_hash else "∅",
                                 )
 
-                                # Persist thread URL with updated hash
-                                await self.save_known_thread(t_href, clean_name, current_hash)
+                                # Persist thread URL with updated hash and profile_url
+                                await self.save_known_thread(t_href, clean_name, current_hash, profile_url=profile_url)
                                 try:
                                     await page.screenshot(path="/app/browser_data/proof_chat_screen.png")
                                 except Exception:

@@ -378,7 +378,33 @@ class BrowserAgentService:
                     try:
                         await page.wait_for_function(wait_fn, timeout=10_000)
                     except Exception:
-                          async def facebook_view_profile(
+                        pass
+
+        # All retries exhausted — image is still blank/invalid.
+        logger.warning(
+            "[BrowserAgent] All %d screenshot attempts invalid (blank page).",
+            SCREENSHOT_MAX_RETRIES,
+        )
+        return ""
+
+    async def _extract_page_text(self, page: Page, max_chars: int = 4000) -> str:
+        """Extract visible text from page body, truncated to max_chars."""
+        try:
+            text = await page.evaluate("""
+            () => {
+                const body = document.querySelector('[role="main"]') || document.body;
+                return body ? body.innerText : '';
+            }
+            """)
+            return (text or "")[:max_chars]
+        except Exception:
+            return ""
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Action Primitives (public API consumed by AiAgentService)
+    # ──────────────────────────────────────────────────────────────────────────
+
+    async def facebook_view_profile(
         self,
         name_query: str,
         profile_url: Optional[str] = None,

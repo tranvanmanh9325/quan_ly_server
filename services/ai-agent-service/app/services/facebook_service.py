@@ -1526,26 +1526,44 @@ class FacebookService:
         return []
 
     async def get_group_members(self, group_name_query: str) -> Optional[Dict[str, Any]]:
-        """Finds a group by name (fuzzy match) and returns full member list."""
+        """Finds a group by name (fuzzy token match) and returns full member list."""
         try:
             async with await psycopg.AsyncConnection.connect(
                 settings.database_url, row_factory=cast(Any, dict_row)
             ) as conn:
                 async with conn.cursor() as cur:
-                    # Try exact match first, then ILIKE for fuzzy match
                     await cur.execute(
                         """
                         SELECT thread_href, group_name, member_count, members, last_scanned_at
                         FROM messenger_groups
-                        WHERE LOWER(group_name) LIKE LOWER(%s)
                         ORDER BY last_scanned_at DESC
-                        LIMIT 1
-                        """,
-                        (f"%{group_name_query}%",),
+                        """
                     )
-                    row = await cur.fetchone()
-                    if row:
-                        return dict(row)
+                    rows = await cur.fetchall()
+                    if not rows:
+                        return None
+
+                    # 1. Exact or substring match
+                    q_lower = group_name_query.strip().lower()
+                    for r in rows:
+                        g_name_lower = str(r["group_name"]).lower()
+                        if q_lower in g_name_lower or g_name_lower in q_lower:
+                            return dict(r)
+
+                    # 2. Token-based match (ignores commas, hyphens, extra spaces)
+                    q_tokens = set(re.findall(r"\w+", q_lower))
+                    best_match = None
+                    max_overlap = 0
+
+                    for r in rows:
+                        g_tokens = set(re.findall(r"\w+", str(r["group_name"]).lower()))
+                        overlap = len(q_tokens & g_tokens)
+                        if overlap > max_overlap:
+                            max_overlap = overlap
+                            best_match = dict(r)
+
+                    if best_match and max_overlap > 0:
+                        return best_match
         except Exception as e:
             logger.warning("[FB-Service] Failed to get group members from DB: %s", e)
         return None

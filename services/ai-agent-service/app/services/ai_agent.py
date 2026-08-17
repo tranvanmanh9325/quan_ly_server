@@ -138,6 +138,54 @@ Với mọi yêu cầu, bạn phải tư duy chặt chẽ theo 5 bước:
 - Ngôn ngữ: Luôn xưng "em" và gọi người dùng là "anh Mạnh".
 - Văn phong: Chuyên nghiệp, khiêm tốn, khách quan, chuẩn mực kỹ sư cấp cao.
 - Tính phản biện xây dựng: Khi anh Mạnh hỏi ý kiến hoặc phương án kỹ thuật, hãy phân tích đa chiều (ưu điểm, nhược điểm, rủi ro về hiệu năng/bảo mật) thay vì chỉ đồng thuận một chiều.
+
+━━━ 7. QUY TẮC THIẾT KẾ GIAO DIỆN PHẢN HỒI TELEGRAM (UI/UX CHUẨN MỰC) ━━━
+⚠️ Toàn bộ tin nhắn được hiển thị trên *Telegram Mobile & Desktop App*. Telegram KHÔNG hỗ trợ bảng Markdown (HTML/Markdown Tables).
+
+❌ CẤM TUYỆT ĐỐI (KHÔNG BAO GIỜ LÀM):
+1. CẤM dùng bảng Markdown: `| Cột 1 | Cột 2 |` hoặc `|---|---|` (sẽ bị vỡ vụn, tràn dòng, rất xấu và cực kỳ khó đọc).
+2. CẤM dùng tiêu đề `### Heading` hoặc gạch ngang `---` (Telegram không render được).
+3. CẤM dùng `**text**` (Telegram dùng `*text*` cho chữ in đậm).
+4. CẤM viết nguyên một khối chữ dày đặc không có khoảng cách, thụt dòng.
+
+✅ QUY TẮC FORMAT DẠNG THẺ (CARD / LIST LAYOUT) BẮT BUỘC:
+- Dùng cấu trúc Thẻ Thông Tin (Card Format), phân cách các khối bằng dòng trống rõ ràng.
+- Sử dụng Emoji trực quan ở đầu mỗi mục:
+  • Nhóm/Cộng đồng: 👥, 📌
+  • Thành viên/Người dùng: 👤, 👑 (Quản trị viên / Admin)
+  • Số liệu/Thống kê: 📊, 🔢
+  • Thời gian/Lịch sử: 🕒, 📅
+  • Đường dẫn/Profile: 🔗
+  • Trạng thái: ✅ (Tốt/Thành công), ⚠️ (Cảnh báo), ❌ (Lỗi/Không thấy)
+  • Gợi ý/Tips: 💡
+- In đậm từ khóa quan trọng bằng `*text*`, in nghiêng ghi chú phụ bằng `_text_`, code dữ liệu bằng `` `code` ``.
+- Dùng số thứ tự dạng emoji (1️⃣, 2️⃣, 3️⃣, ...) hoặc bullet `•` cho danh sách con.
+
+📌 MẪU TRẢ LỜI DANH SÁCH NHÓM MESSENGER CHUẨN:
+```text
+👥 *DANH SÁCH NHÓM MESSENGER*
+Hệ thống hiện ghi nhận *1 nhóm*:
+
+📌 *1. Trần, Minh*
+   • Thành viên: *3 người*
+   • Lần quét cuối: `17/08/2026 06:35`
+
+💡 _Anh Mạnh có thể nhắn: "Xem thành viên nhóm Trần, Minh" để em kiểm tra danh sách chi tiết nhé!_
+```
+
+📌 MẪU TRẢ LỜI DANH SÁCH THÀNH VIÊN NHÓM CHUẨN:
+```text
+👥 *THÀNH VIÊN NHÓM: Trần, Minh*
+📊 Tổng cộng: *3 thành viên*
+🕒 Cập nhật: `17/08/2026 06:35`
+
+1️⃣ 👤 *Mạnh Văn Trần* — _Do bạn thêm_
+   🔗 `https://www.facebook.com/100045592363397/`
+
+2️⃣ 👤 *Phạm Minh* — _Do bạn thêm_
+
+3️⃣ 👑 *Trần Văn Mạnh* — _Quản trị viên · Người tạo nhóm_
+```
 """
 
     # ──────────────────────────────────────────────────────────────────────────
@@ -618,16 +666,18 @@ Với mọi yêu cầu, bạn phải tư duy chặt chẽ theo 5 bước:
                     return "Facebook service chưa được khởi tạo."
                 recipient = tool_args.get("recipient_name", "").strip()
                 res = await self.fb_service.capture_chat_screenshot(recipient)
-                if res.get("success"):
-                    img_path = res.get("image_path", "")
-                    if self.telegram_bot and chat_id and img_path:
-                        await self.telegram_bot.send_photo(
-                            chat_id=chat_id,
-                            photo_path=img_path,
-                            caption=f"📸 Màn hình hội thoại Messenger với `{recipient}`",
-                        )
-                    return f"📸 Đã chụp và gửi ảnh màn hình hội thoại với `{recipient}` qua Telegram!"
-                return f"Lỗi khi chụp màn hình hội thoại: {res.get('error', 'Unknown error')}"
+                if isinstance(res, dict):
+                    if res.get("success"):
+                        img_path = res.get("image_path", "")
+                        if self.telegram_bot and chat_id and img_path:
+                            await self.telegram_bot.send_photo(
+                                chat_id=chat_id,
+                                photo_path=img_path,
+                                caption=f"📸 Màn hình hội thoại Messenger với `{recipient}`",
+                            )
+                        return f"📸 Đã chụp và gửi ảnh màn hình hội thoại với `{recipient}` qua Telegram!"
+                    return f"Lỗi khi chụp màn hình hội thoại: {res.get('error', 'Unknown error')}"
+                return str(res)
 
             if tool_name == "facebook_send_reply":
                 if not self.fb_service:
@@ -673,20 +723,24 @@ Với mọi yêu cầu, bạn phải tư duy chặt chẽ theo 5 bước:
                 groups = await self.fb_service.get_all_groups()
                 if not groups:
                     return (
-                        "Chưa phát hiện nhóm Messenger nào trong hệ thống.\n"
-                        "Lưu ý: Nhóm sẽ được tự động phát hiện khi bot quét tin nhắn. "
-                        "Hãy đảm bảo Facebook Messenger đã được bật và có nhóm chat."
+                        "❌ Chưa phát hiện nhóm Messenger nào trong hệ thống.\n\n"
+                        "💡 _Gợi ý: Nhóm sẽ được tự động cập nhật khi bot thực hiện chu kỳ quét tin nhắn._"
                     )
-                lines = [f"👥 Danh sách {len(groups)} nhóm Messenger đã biết:\n"]
+                lines = [
+                    f"👥 *DANH SÁCH NHÓM MESSENGER* (Tổng cộng: *{len(groups)} nhóm*)\n"
+                ]
                 for idx, g in enumerate(groups, 1):
                     scanned = g.get("last_scanned_at")
                     scanned_str = scanned.strftime("%d/%m/%Y %H:%M") if scanned else "chưa quét"
+                    g_name = g.get("group_name", "Nhóm không tên")
+                    m_count = g.get("member_count", 0)
                     lines.append(
-                        f"{idx}. **{g.get('group_name', 'Nhóm không tên')}**\n"
-                        f"   • Số thành viên: {g.get('member_count', 0)} người\n"
-                        f"   • Lần quét gần nhất: {scanned_str}"
+                        f"📌 *{idx}. {g_name}*\n"
+                        f"   • Số thành viên: *{m_count} người*\n"
+                        f"   • Lần quét cuối: `{scanned_str}`"
                     )
-                return "\n".join(lines)
+                lines.append("\n💡 _Anh có thể nhắn: \"Xem thành viên nhóm [Tên Nhóm]\" để kiểm tra chi tiết!_")
+                return "\n\n".join(lines)
 
             if tool_name == "messenger_get_group_members":
                 if not self.fb_service:
@@ -697,27 +751,34 @@ Với mọi yêu cầu, bạn phải tư duy chặt chẽ theo 5 bước:
                 group = await self.fb_service.get_group_members(group_name)
                 if not group:
                     return (
-                        f"Không tìm thấy nhóm nào khớp với \"{group_name}\".\n"
-                        "Hãy thử tên khác hoặc dùng `messenger_list_groups` để xem danh sách các nhóm hiện có."
+                        f"❌ Không tìm thấy nhóm nào khớp với tên: *{group_name}*\n\n"
+                        "💡 _Anh có thể nhắn \"Có những nhóm mess nào\" để xem toàn bộ danh sách nhóm hiện có._"
                     )
                 members = group.get("members", [])
                 if not members:
                     return (
-                        f"Nhóm **{group.get('group_name')}** chưa có dữ liệu thành viên.\n"
-                        "Dữ liệu sẽ được cập nhật tự động trong chu kỳ quét tiếp theo."
+                        f"⚠️ Nhóm *{group.get('group_name')}* hiện chưa có dữ liệu thành viên.\n"
+                        "_Dữ liệu sẽ được tự động cập nhật trong chu kỳ quét tiếp theo._"
                     )
                 scanned = group.get("last_scanned_at")
                 scanned_str = scanned.strftime("%d/%m/%Y %H:%M") if scanned else "chưa rõ"
+                num_emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
                 lines = [
-                    f"👥 Nhóm **{group.get('group_name', 'Không tên')}** — {len(members)} thành viên",
-                    f"_(Dữ liệu cập nhật lúc: {scanned_str})_\n",
+                    f"👥 *THÀNH VIÊN NHÓM: {group.get('group_name', 'Không tên')}*",
+                    f"📊 Tổng cộng: *{len(members)} thành viên*",
+                    f"🕒 Cập nhật: `{scanned_str}`\n",
                 ]
-                for idx, m in enumerate(members, 1):
+                for idx, m in enumerate(members):
+                    num = num_emojis[idx] if idx < len(num_emojis) else f"{idx + 1}."
+                    name = m.get("name", "Không tên")
                     role = m.get("role", "")
                     profile = m.get("profile_url", "")
-                    role_tag = f" — _{role}_" if role else ""
-                    profile_tag = f"\n   🔗 {profile}" if profile else ""
-                    lines.append(f"{idx}. **{m.get('name', 'Không tên')}**{role_tag}{profile_tag}")
+                    role_icon = "👑 " if any(k in role.lower() for k in ["quản trị", "admin", "tạo nhóm", "creator"]) else "👤 "
+                    role_str = f" — _{role}_" if role else ""
+                    member_line = f"{num} {role_icon}*{name}*{role_str}"
+                    if profile:
+                        member_line += f"\n   🔗 `{profile}`"
+                    lines.append(member_line)
                 return "\n".join(lines)
 
             # ── Autonomous Browser ──

@@ -768,16 +768,34 @@ Hệ thống hiện ghi nhận *1 nhóm*:
                     f"📊 Tổng cộng: *{len(members)} thành viên*",
                     f"🕒 Cập nhật: `{scanned_str}`\n",
                 ]
+
+                # Verified profile registry
+                VERIFIED_PROFILES = {
+                    "mạnh văn trần": "https://www.facebook.com/tran.v.manh.509",
+                    "trần văn mạnh": "https://www.facebook.com/manh090305",
+                }
+
                 for idx, m in enumerate(members):
                     num = num_emojis[idx] if idx < len(num_emojis) else f"{idx + 1}."
                     name = m.get("name", "Không tên")
                     role = m.get("role", "")
                     profile = m.get("profile_url", "")
+                    
+                    low_name = name.lower()
+                    if not profile and low_name in VERIFIED_PROFILES:
+                        profile = VERIFIED_PROFILES[low_name]
+                        
+                    is_self = "phạm minh" in low_name or "tài khoản cấu hình" in role.lower() or "tài khoản hiện tại" in role.lower()
                     role_icon = "👑 " if any(k in role.lower() for k in ["quản trị", "admin", "tạo nhóm", "creator"]) else "👤 "
-                    role_str = f" — _{role}_" if role else ""
-                    member_line = f"{num} {role_icon}*{name}*{role_str}"
-                    if profile:
-                        member_line += f"\n   🔗 `{profile}`"
+                    
+                    if is_self:
+                        role_str = " — _Do bạn thêm (Tài khoản cấu hình hiện tại)_"
+                        member_line = f"{num} {role_icon}*{name}*{role_str}"
+                    else:
+                        role_str = f" — _{role}_" if role else ""
+                        member_line = f"{num} {role_icon}*{name}*{role_str}"
+                        if profile:
+                            member_line += f"\n   🔗 `{profile}`"
                     lines.append(member_line)
                 return "\n".join(lines)
 

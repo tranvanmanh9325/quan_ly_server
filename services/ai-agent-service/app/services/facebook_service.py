@@ -1316,31 +1316,38 @@ class FacebookService:
         """Extracts group name and full member list from the Messenger right sidebar.
 
         Strategy:
-        1. Get group name from the chat header.
-        2. Find and click the 'Th\u00e0nh vi\u00ean trong \u0111o\u1ea1n chat' accordion section to expand it.
-        3. Extract each member row: {name, role, profile_url}.
-
-        Returns dict with 'group_name', 'member_count', 'members' list.
+        1. Get group name from the chat header or sidebar top.
+        2. Expand 'Thành viên trong đoạn chat' / 'Members' accordion if collapsed.
+        3. Extract all member items (name, role, profile URL) while strictly excluding UI menus.
         """
         info: Dict[str, Any] = {"group_name": "", "member_count": 0, "members": []}
         try:
-            # 1. Extract group name from header (same position as partner name in 1-1 chats)
+            # 1. Extract group name from header
             header_name = await page.evaluate("""
             () => {
               const main = document.querySelector('[role="main"]') || document.body;
               const candidates = Array.from(main.querySelectorAll('h1, h2, h3, [role="heading"], span'));
               for (let el of candidates) {
                 const r = el.getBoundingClientRect();
-                if (r.y >= 40 && r.y <= 140 && r.x >= 100 && r.x <= 800 && r.width > 20) {
+                if (r.y >= 30 && r.y <= 140 && r.x >= 80 && r.x <= 850 && r.width > 20) {
                   let txt = (el.innerText || '').trim().split('\\n')[0];
                   let low = txt.toLowerCase();
                   if (txt.length >= 2 && txt.length <= 80
-                      && !low.includes('ho\u1ea1t \u0111\u1ed9ng') && !low.includes('m\u00e3 h\u00f3a')
-                      && !low.includes('th\u00f4ng b\u00e1o') && !low.includes('cu\u1ed9c g\u1ecdi')
-                      && !low.includes('tin nh\u1eafn') && !low.includes('messenger')
-                      && !low.includes('facebook') && !low.includes('t\u00ecm ki\u1ebfm')) {
+                      && !low.includes('hoạt động') && !low.includes('mã hóa')
+                      && !low.includes('thông báo') && !low.includes('cuộc gọi')
+                      && !low.includes('tin nhắn') && !low.includes('messenger')
+                      && !low.includes('facebook') && !low.includes('tìm kiếm')) {
                     return txt;
                   }
+                }
+              }
+              // Fallback: Check right sidebar header name
+              const sidebar = document.querySelector('[role="complementary"]') || document.querySelector('aside');
+              if (sidebar) {
+                const sbHeading = sidebar.querySelector('h2, h3, span[style*="bold"], div[style*="bold"]');
+                if (sbHeading && sbHeading.innerText) {
+                  let txt = sbHeading.innerText.trim().split('\\n')[0];
+                  if (txt.length >= 2 && txt.length <= 80) return txt;
                 }
               }
               return '';
@@ -1349,99 +1356,105 @@ class FacebookService:
             if header_name:
                 info["group_name"] = str(header_name).strip()
 
-            # 2. Find and click the 'Th\u00e0nh vi\u00ean trong \u0111o\u1ea1n chat' accordion to expand it
-            # The section is a clickable row in the right sidebar
+            # 2. Find and click 'Thành viên trong đoạn chat' to expand if collapsed
             try:
-                members_section = page.locator(
-                    'div[role="button"]:has-text("Th\u00e0nh vi\u00ean"), '
-                    'div[role="button"]:has-text("Members"), '
-                    'div:has-text("Th\u00e0nh vi\u00ean trong \u0111o\u1ea1n chat")'
-                ).first
-                if await members_section.count() > 0:
-                    # Check if already expanded (look for member items below)
-                    already_expanded = await page.evaluate("""
-                    () => {
-                      // If we can see role/member text in sidebar, it's already expanded
-                      const sidebar = document.querySelector('[role="complementary"]') || document.body;
-                      const txt = sidebar.innerText || '';
-                      return txt.includes('Qu\u1ea3n tr\u1ecb vi\u00ean') || txt.includes('Do b\u1ea1n th\u00eam') ||
-                             txt.includes('Admin') || txt.includes('Group admin');
+                clicked = await page.evaluate("""
+                () => {
+                  const items = Array.from(document.querySelectorAll('div[role="button"], span, div'));
+                  for (let el of items) {
+                    let txt = (el.innerText || '').trim().toLowerCase();
+                    if (txt === 'thành viên trong đoạn chat' || txt === 'thành viên' || txt === 'members in chat' || txt === 'chat members') {
+                      const btn = el.closest('[role="button"]') || el;
+                      // Check if already expanded (aria-expanded or presence of sub-items)
+                      let isExpanded = btn.getAttribute('aria-expanded');
+                      if (isExpanded !== 'true') {
+                        btn.click();
+                        return true;
+                      }
                     }
-                    """)
-                    if not already_expanded:
-                        await members_section.click()
-                        await asyncio.sleep(1.5)
+                  }
+                  return false;
+                }
+                """)
+                if clicked:
+                    logger.info("[FB-Service] Clicked to expand 'Thành viên trong đoạn chat' accordion.")
+                    await asyncio.sleep(2.0)
             except Exception as click_err:
-                logger.debug("[FB-Service] Could not click members section: %s", click_err)
+                logger.debug("[FB-Service] Accordion click error: %s", click_err)
 
-            # 3. Extract member list from the expanded sidebar
+            # 3. Extract real group members from the expanded section
             members_raw = await page.evaluate("""
             () => {
-              const sidebar = document.querySelector('[role="complementary"]') ||
-                              document.querySelector('aside') || document.body;
+              const UI_MENU_BLACKLIST = [
+                'thông tin về đoạn chat', 'tùy chỉnh đoạn chat', 'tùy chọn nhóm',
+                'thành viên trong đoạn chat', 'file phương tiện, file và liên kết',
+                'file phương tiện', 'file và liên kết', 'quyền riêng tư và hỗ trợ',
+                'tắt thông báo', 'tìm kiếm', 'thêm người', 'rời khỏi nhóm',
+                'chặn', 'báo cáo', 'tạo nhóm với', 'đặt biệt danh', 'đổi chủ đề',
+                'thay đổi biểu tượng cảm xúc', 'xem trang cá nhân', 'xem trang'
+              ];
 
-              // Find all elements that look like member rows in the expanded section.
-              // Member rows typically have an avatar image + name text + optional role.
-              // We scan all clickable rows in the sidebar that contain a person's name.
+              const isBlacklisted = (t) => {
+                if (!t) return true;
+                let low = t.trim().toLowerCase();
+                if (low.length < 2 || low.length > 70) return true;
+                return UI_MENU_BLACKLIST.some(b => low === b || low.startsWith(b));
+              };
+
               const results = [];
               const seen = new Set();
 
-              // Strategy A: aria-label on list items / rows containing profile links
-              const profileLinks = Array.from(sidebar.querySelectorAll('a[href*="facebook.com"]'));
-              for (let a of profileLinks) {
+              // Look inside right sidebar or whole document
+              const container = document.querySelector('[role="complementary"]') ||
+                                document.querySelector('aside') || document.body;
+
+              // Method A: Look for member rows with avatar + name + role
+              // Member row in Messenger sidebar usually has:
+              // - A container with an image (avatar) and text
+              // - Or profile links <a>
+              const allLinks = Array.from(container.querySelectorAll('a[href*="facebook.com"]'));
+              for (let a of allLinks) {
                 let href = (a.href || '').split('?')[0];
-                // Only personal profile links (not /messages/, /groups/, etc.)
-                if (!href.match(/facebook\.com\/((?!messages|groups|pages|events|watch|marketplace|gaming|video)[\w.]+)\/?$/) &&
-                    !href.match(/facebook\.com\/\d{5,}\/?$/)) continue;
+                if (href.includes('/messages/') || href.includes('/groups/') || href.includes('/pages/')) continue;
 
-                let r = a.getBoundingClientRect();
-                // Must be in right sidebar area (x > 700)
-                if (r.x < 700) continue;
-
-                // Get the name from the link or its closest text container
-                let name = (a.innerText || a.getAttribute('aria-label') || '').trim();
-                if (!name || name.length < 2 || name.length > 80) {
-                  // Try parent element's text
-                  let parent = a.closest('li') || a.closest('[role="listitem"]') || a.parentElement;
-                  if (parent) name = (parent.querySelector('span') || parent).innerText.split('\\n')[0].trim();
+                let txt = (a.innerText || a.getAttribute('aria-label') || '').trim();
+                let parent = a.closest('[role="listitem"]') || a.closest('li') || a.parentElement;
+                if (!txt && parent) {
+                  txt = (parent.querySelector('span') || parent).innerText.trim().split('\\n')[0];
                 }
-                if (!name || name.length < 2) continue;
-                if (seen.has(name)) continue;
-                seen.add(name);
 
-                // Look for role text nearby (sibling span or sub-text)
-                let roleEl = a.closest('li') || a.closest('[role="listitem"]') || a.parentElement;
-                let allText = roleEl ? (roleEl.innerText || '').trim() : '';
-                let lines = allText.split('\\n').map(s => s.trim()).filter(Boolean);
-                // Role is any line after the name line
-                let role = lines.filter(l => l !== name && l.length > 2 && !l.includes('http')).join(' · ');
-
-                results.push({ name, role: role || '', profile_url: href });
-                if (results.length >= 50) break;
+                if (txt && !isBlacklisted(txt) && !seen.has(txt)) {
+                  seen.add(txt);
+                  let allParentText = parent ? parent.innerText.split('\\n').map(s => s.trim()).filter(Boolean) : [];
+                  let role = allParentText.filter(l => l !== txt && !isBlacklisted(l) && !l.includes('http')).join(' · ');
+                  results.push({ name: txt, role: role || '', profile_url: href });
+                }
               }
 
-              // Strategy B: Fallback — scan all span text in sidebar that looks like names
-              if (results.length === 0) {
-                const allSpans = Array.from(sidebar.querySelectorAll('span'));
-                const roleKeywords = ['qu\u1ea3n tr\u1ecb', 'admin', 'do b\u1ea1n th\u00eam', 'th\u00eam ng', 'added by', 'group admin', 'ng\u01b0\u1eddi t\u1ea1o'];
-                for (let sp of allSpans) {
-                  let r = sp.getBoundingClientRect();
-                  if (r.x < 700 || r.y < 150) continue;
-                  let txt = (sp.innerText || '').trim();
-                  if (txt.length < 2 || txt.length > 80) continue;
-                  // A name span should have font-weight bold or be adjacent to a role span
-                  let style = window.getComputedStyle(sp);
-                  let isBold = parseInt(style.fontWeight) >= 600;
-                  let lowerTxt = txt.toLowerCase();
-                  let isRole = roleKeywords.some(k => lowerTxt.includes(k));
-                  if (isBold && !isRole && !seen.has(txt)) {
-                    seen.add(txt);
-                    // Try to find role sibling
-                    let sibling = sp.parentElement ? sp.parentElement.querySelector('span:not([style*="bold"])') : null;
-                    let role = sibling ? (sibling.innerText || '').trim() : '';
-                    results.push({ name: txt, role, profile_url: '' });
-                    if (results.length >= 50) break;
-                  }
+              // Method B: If Method A didn't find all members, scan list items near 'Thành viên'
+              const listItems = Array.from(container.querySelectorAll('[role="listitem"], li, div[data-visualcompletion="ignore-dynamic"]'));
+              for (let item of listItems) {
+                // Must have avatar image inside
+                const img = item.querySelector('img, svg');
+                if (!img) continue;
+
+                const textLines = item.innerText.split('\\n').map(s => s.trim()).filter(Boolean);
+                if (textLines.length === 0) continue;
+
+                let candidateName = textLines[0];
+                if (isBlacklisted(candidateName) || seen.has(candidateName)) continue;
+
+                // Validate that it looks like a person's name (not a generic button)
+                if (candidateName.length >= 2 && candidateName.length <= 60) {
+                  seen.add(candidateName);
+                  let role = textLines.slice(1).filter(l => !isBlacklisted(l) && !l.includes('http')).join(' · ');
+                  
+                  // Check profile link
+                  let linkEl = item.querySelector('a[href*="facebook.com"]');
+                  let pUrl = linkEl ? linkEl.href.split('?')[0] : '';
+                  if (pUrl.includes('/messages/')) pUrl = '';
+
+                  results.push({ name: candidateName, role: role || '', profile_url: pUrl });
                 }
               }
 
@@ -1462,8 +1475,10 @@ class FacebookService:
                 info["members"] = members
                 info["member_count"] = len(members)
                 logger.info(
-                    "[FB-Service] Extracted %d members from group '%s'",
-                    len(members), info["group_name"] or "(unknown)",
+                    "[FB-Service] Extracted %d real members from group '%s': %s",
+                    len(members),
+                    info["group_name"] or "(unknown)",
+                    [m["name"] for m in members],
                 )
         except Exception as e:
             logger.warning("[FB-Service] _extract_group_info failed: %s", e)

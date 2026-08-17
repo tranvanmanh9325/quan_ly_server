@@ -1312,6 +1312,240 @@ class FacebookService:
             logger.debug("[FB-Service] _is_group_thread check failed: %s", e)
         return False
 
+    async def _extract_group_info(self, page: Page) -> Dict[str, Any]:
+        """Extracts group name and full member list from the Messenger right sidebar.
+
+        Strategy:
+        1. Get group name from the chat header.
+        2. Find and click the 'Th\u00e0nh vi\u00ean trong \u0111o\u1ea1n chat' accordion section to expand it.
+        3. Extract each member row: {name, role, profile_url}.
+
+        Returns dict with 'group_name', 'member_count', 'members' list.
+        """
+        info: Dict[str, Any] = {"group_name": "", "member_count": 0, "members": []}
+        try:
+            # 1. Extract group name from header (same position as partner name in 1-1 chats)
+            header_name = await page.evaluate("""
+            () => {
+              const main = document.querySelector('[role="main"]') || document.body;
+              const candidates = Array.from(main.querySelectorAll('h1, h2, h3, [role="heading"], span'));
+              for (let el of candidates) {
+                const r = el.getBoundingClientRect();
+                if (r.y >= 40 && r.y <= 140 && r.x >= 100 && r.x <= 800 && r.width > 20) {
+                  let txt = (el.innerText || '').trim().split('\\n')[0];
+                  let low = txt.toLowerCase();
+                  if (txt.length >= 2 && txt.length <= 80
+                      && !low.includes('ho\u1ea1t \u0111\u1ed9ng') && !low.includes('m\u00e3 h\u00f3a')
+                      && !low.includes('th\u00f4ng b\u00e1o') && !low.includes('cu\u1ed9c g\u1ecdi')
+                      && !low.includes('tin nh\u1eafn') && !low.includes('messenger')
+                      && !low.includes('facebook') && !low.includes('t\u00ecm ki\u1ebfm')) {
+                    return txt;
+                  }
+                }
+              }
+              return '';
+            }
+            """)
+            if header_name:
+                info["group_name"] = str(header_name).strip()
+
+            # 2. Find and click the 'Th\u00e0nh vi\u00ean trong \u0111o\u1ea1n chat' accordion to expand it
+            # The section is a clickable row in the right sidebar
+            try:
+                members_section = page.locator(
+                    'div[role="button"]:has-text("Th\u00e0nh vi\u00ean"), '
+                    'div[role="button"]:has-text("Members"), '
+                    'div:has-text("Th\u00e0nh vi\u00ean trong \u0111o\u1ea1n chat")'
+                ).first
+                if await members_section.count() > 0:
+                    # Check if already expanded (look for member items below)
+                    already_expanded = await page.evaluate("""
+                    () => {
+                      // If we can see role/member text in sidebar, it's already expanded
+                      const sidebar = document.querySelector('[role="complementary"]') || document.body;
+                      const txt = sidebar.innerText || '';
+                      return txt.includes('Qu\u1ea3n tr\u1ecb vi\u00ean') || txt.includes('Do b\u1ea1n th\u00eam') ||
+                             txt.includes('Admin') || txt.includes('Group admin');
+                    }
+                    """)
+                    if not already_expanded:
+                        await members_section.click()
+                        await asyncio.sleep(1.5)
+            except Exception as click_err:
+                logger.debug("[FB-Service] Could not click members section: %s", click_err)
+
+            # 3. Extract member list from the expanded sidebar
+            members_raw = await page.evaluate("""
+            () => {
+              const sidebar = document.querySelector('[role="complementary"]') ||
+                              document.querySelector('aside') || document.body;
+
+              // Find all elements that look like member rows in the expanded section.
+              // Member rows typically have an avatar image + name text + optional role.
+              // We scan all clickable rows in the sidebar that contain a person's name.
+              const results = [];
+              const seen = new Set();
+
+              // Strategy A: aria-label on list items / rows containing profile links
+              const profileLinks = Array.from(sidebar.querySelectorAll('a[href*="facebook.com"]'));
+              for (let a of profileLinks) {
+                let href = (a.href || '').split('?')[0];
+                // Only personal profile links (not /messages/, /groups/, etc.)
+                if (!href.match(/facebook\.com\/((?!messages|groups|pages|events|watch|marketplace|gaming|video)[\w.]+)\/?$/) &&
+                    !href.match(/facebook\.com\/\d{5,}\/?$/)) continue;
+
+                let r = a.getBoundingClientRect();
+                // Must be in right sidebar area (x > 700)
+                if (r.x < 700) continue;
+
+                // Get the name from the link or its closest text container
+                let name = (a.innerText || a.getAttribute('aria-label') || '').trim();
+                if (!name || name.length < 2 || name.length > 80) {
+                  // Try parent element's text
+                  let parent = a.closest('li') || a.closest('[role="listitem"]') || a.parentElement;
+                  if (parent) name = (parent.querySelector('span') || parent).innerText.split('\\n')[0].trim();
+                }
+                if (!name || name.length < 2) continue;
+                if (seen.has(name)) continue;
+                seen.add(name);
+
+                // Look for role text nearby (sibling span or sub-text)
+                let roleEl = a.closest('li') || a.closest('[role="listitem"]') || a.parentElement;
+                let allText = roleEl ? (roleEl.innerText || '').trim() : '';
+                let lines = allText.split('\\n').map(s => s.trim()).filter(Boolean);
+                // Role is any line after the name line
+                let role = lines.filter(l => l !== name && l.length > 2 && !l.includes('http')).join(' · ');
+
+                results.push({ name, role: role || '', profile_url: href });
+                if (results.length >= 50) break;
+              }
+
+              // Strategy B: Fallback — scan all span text in sidebar that looks like names
+              if (results.length === 0) {
+                const allSpans = Array.from(sidebar.querySelectorAll('span'));
+                const roleKeywords = ['qu\u1ea3n tr\u1ecb', 'admin', 'do b\u1ea1n th\u00eam', 'th\u00eam ng', 'added by', 'group admin', 'ng\u01b0\u1eddi t\u1ea1o'];
+                for (let sp of allSpans) {
+                  let r = sp.getBoundingClientRect();
+                  if (r.x < 700 || r.y < 150) continue;
+                  let txt = (sp.innerText || '').trim();
+                  if (txt.length < 2 || txt.length > 80) continue;
+                  // A name span should have font-weight bold or be adjacent to a role span
+                  let style = window.getComputedStyle(sp);
+                  let isBold = parseInt(style.fontWeight) >= 600;
+                  let lowerTxt = txt.toLowerCase();
+                  let isRole = roleKeywords.some(k => lowerTxt.includes(k));
+                  if (isBold && !isRole && !seen.has(txt)) {
+                    seen.add(txt);
+                    // Try to find role sibling
+                    let sibling = sp.parentElement ? sp.parentElement.querySelector('span:not([style*="bold"])') : null;
+                    let role = sibling ? (sibling.innerText || '').trim() : '';
+                    results.push({ name: txt, role, profile_url: '' });
+                    if (results.length >= 50) break;
+                  }
+                }
+              }
+
+              return results;
+            }
+            """)
+
+            if isinstance(members_raw, list) and members_raw:
+                members = [
+                    {
+                        "name": str(m.get("name", "")).strip(),
+                        "role": str(m.get("role", "")).strip(),
+                        "profile_url": str(m.get("profile_url", "")).strip(),
+                    }
+                    for m in members_raw
+                    if m.get("name")
+                ]
+                info["members"] = members
+                info["member_count"] = len(members)
+                logger.info(
+                    "[FB-Service] Extracted %d members from group '%s'",
+                    len(members), info["group_name"] or "(unknown)",
+                )
+        except Exception as e:
+            logger.warning("[FB-Service] _extract_group_info failed: %s", e)
+        return info
+
+    async def save_group_to_db(self, thread_href: str, group_info: Dict[str, Any]) -> None:
+        """Upserts group metadata and member list into messenger_groups table."""
+        try:
+            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        """
+                        INSERT INTO messenger_groups
+                            (thread_href, group_name, member_count, members, last_scanned_at, created_at, updated_at)
+                        VALUES (%s, %s, %s, %s::jsonb, NOW(), NOW(), NOW())
+                        ON CONFLICT (thread_href) DO UPDATE SET
+                            group_name      = EXCLUDED.group_name,
+                            member_count    = EXCLUDED.member_count,
+                            members         = EXCLUDED.members,
+                            last_scanned_at = NOW(),
+                            updated_at      = NOW()
+                        """,
+                        (
+                            thread_href,
+                            group_info.get("group_name") or "Nh\u00f3m kh\u00f4ng t\u00ean",
+                            group_info.get("member_count", 0),
+                            json.dumps(group_info.get("members", []), ensure_ascii=False),
+                        ),
+                    )
+                    await conn.commit()
+            logger.info(
+                "[FB-Service] Saved group '%s' (%d members) to DB.",
+                group_info.get("group_name"), group_info.get("member_count", 0),
+            )
+        except Exception as e:
+            logger.warning("[FB-Service] Failed to save group to DB: %s", e)
+
+    async def get_all_groups(self) -> List[Dict[str, Any]]:
+        """Returns all known Messenger groups from DB, ordered by last scanned."""
+        try:
+            async with await psycopg.AsyncConnection.connect(
+                settings.database_url, row_factory=cast(Any, dict_row)
+            ) as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        """
+                        SELECT thread_href, group_name, member_count, last_scanned_at
+                        FROM messenger_groups
+                        ORDER BY last_scanned_at DESC
+                        """
+                    )
+                    rows = await cur.fetchall()
+                    return [dict(r) for r in rows]
+        except Exception as e:
+            logger.warning("[FB-Service] Failed to get groups from DB: %s", e)
+        return []
+
+    async def get_group_members(self, group_name_query: str) -> Optional[Dict[str, Any]]:
+        """Finds a group by name (fuzzy match) and returns full member list."""
+        try:
+            async with await psycopg.AsyncConnection.connect(
+                settings.database_url, row_factory=cast(Any, dict_row)
+            ) as conn:
+                async with conn.cursor() as cur:
+                    # Try exact match first, then ILIKE for fuzzy match
+                    await cur.execute(
+                        """
+                        SELECT thread_href, group_name, member_count, members, last_scanned_at
+                        FROM messenger_groups
+                        WHERE LOWER(group_name) LIKE LOWER(%s)
+                        ORDER BY last_scanned_at DESC
+                        LIMIT 1
+                        """,
+                        (f"%{group_name_query}%",),
+                    )
+                    row = await cur.fetchone()
+                    if row:
+                        return dict(row)
+        except Exception as e:
+            logger.warning("[FB-Service] Failed to get group members from DB: %s", e)
+        return None
+
     # ─── Main scan cycle ──────────────────────────────────────────────────────
 
     async def run_scan_cycle(self) -> int:
@@ -1482,12 +1716,15 @@ class FacebookService:
 
                                 # ── Group Chat Guard ─────────────────────────────────────
                                 # Run group detection BEFORE any expensive DOM extraction.
-                                # Group threads are completely skipped — not saved, not replied to.
+                                # Group threads: extract member info and save to DB,
+                                # then skip auto-reply (groups are never replied to automatically).
                                 if await self._is_group_thread(page):
                                     logger.info(
-                                        "[FB-Service] Thread '%s' identified as a GROUP chat — skipping entirely.",
+                                        "[FB-Service] Thread '%s' identified as GROUP — extracting member info.",
                                         t_href,
                                     )
+                                    group_info = await self._extract_group_info(page)
+                                    await self.save_group_to_db(t_href, group_info)
                                     continue
 
                                 # Extract contact name & profile URL from DOM / Right Sidebar

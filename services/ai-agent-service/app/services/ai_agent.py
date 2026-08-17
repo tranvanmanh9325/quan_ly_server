@@ -122,6 +122,10 @@ Với mọi yêu cầu, bạn phải tư duy chặt chẽ theo 5 bước:
 - `facebook_capture_screenshot`: Chụp màn hình cuộc hội thoại Messenger với một người cụ thể.
 - `facebook_send_reply`: Gửi tin nhắn trả lời trực tiếp qua Facebook Messenger. Hệ thống sẽ tự động chụp ảnh màn hình minh chứng xác thực gửi kèm qua Telegram.
 - `get_appointments`: Tra cứu danh sách các lịch hẹn, cuộc gặp, buổi trao đổi, họp mặt từ Facebook Messenger. Dùng khi anh Mạnh hỏi về lịch hẹn sắp tới hoặc các cuộc hẹn đang chờ xác nhận.
+- `messenger_list_groups`: Liệt kê tất cả các nhóm Messenger đã biết (tên nhóm, số thành viên, lần quét gần nhất).
+  Dùng khi: "Có những nhóm mess nào?", "Liệt kê tất cả nhóm chat".
+- `messenger_get_group_members`: Tra cứu danh sách thành viên chi tiết của một nhóm cụ thể (tên, vai trò, link profile).
+  Dùng khi: "Nhóm X có bao nhiêu thành viên?", "Những ai trong nhóm Y?".
 
 📸 CHỤP MÀN HÌNH MÁY CHỦ:
 - `server_capture_screenshot`: Chụp toàn bộ màn hình desktop/server Linux.
@@ -221,6 +225,39 @@ Với mọi yêu cầu, bạn phải tư duy chặt chẽ theo 5 bước:
                                 "description": "Số lượng lịch hẹn tối đa (mặc định 10).",
                             }
                         },
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "messenger_list_groups",
+                    "description": (
+                        "Liệt kê tất cả các nhóm Messenger đã được khám phá và lưu trữ trong hệ thống. "
+                        "Trả về: tên nhóm, số thành viên, thời điểm quét gần nhất. "
+                        "Dùng khi: 'Có những nhóm mess nào?', 'Liệt kê tất cả nhóm chat'."
+                    ),
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "messenger_get_group_members",
+                    "description": (
+                        "Tra cứu danh sách thành viên chi tiết của một nhóm Messenger cụ thể. "
+                        "Trả về: tên từng thành viên, vai trò (quản trị viên, thành viên thường), link trang cá nhân (nếu có). "
+                        "Dùng khi: 'Nhóm X có bao nhiêu thành viên?', 'Ai trong nhóm Y?', 'Liệt kê thành viên nhóm Z'."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "group_name": {
+                                "type": "string",
+                                "description": "Tên hoặc một phần tên nhóm cần tra cứu (tìm kiếm mờ, không cần chính xác 100%).",
+                            }
+                        },
+                        "required": ["group_name"],
                     },
                 },
             },
@@ -628,6 +665,59 @@ Với mọi yêu cầu, bạn phải tư duy chặt chẽ theo 5 bước:
                         f"   - Địa điểm: {a.get('location', 'Chưa rõ')}\n"
                         f"   - Tin nhắn gốc: \"{a.get('original_message', '')}\""
                     )
+                return "\n".join(lines)
+
+            if tool_name == "messenger_list_groups":
+                if not self.fb_service:
+                    return "Facebook service chưa được khởi tạo."
+                groups = await self.fb_service.get_all_groups()
+                if not groups:
+                    return (
+                        "Chưa phát hiện nhóm Messenger nào trong hệ thống.\n"
+                        "Lưu ý: Nhóm sẽ được tự động phát hiện khi bot quét tin nhắn. "
+                        "Hãy đảm bảo Facebook Messenger đã được bật và có nhóm chat."
+                    )
+                lines = [f"👥 Danh sách {len(groups)} nhóm Messenger đã biết:\n"]
+                for idx, g in enumerate(groups, 1):
+                    scanned = g.get("last_scanned_at")
+                    scanned_str = scanned.strftime("%d/%m/%Y %H:%M") if scanned else "chưa quét"
+                    lines.append(
+                        f"{idx}. **{g.get('group_name', 'Nhóm không tên')}**\n"
+                        f"   • Số thành viên: {g.get('member_count', 0)} người\n"
+                        f"   • Lần quét gần nhất: {scanned_str}"
+                    )
+                return "\n".join(lines)
+
+            if tool_name == "messenger_get_group_members":
+                if not self.fb_service:
+                    return "Facebook service chưa được khởi tạo."
+                group_name = tool_args.get("group_name", "").strip()
+                if not group_name:
+                    return "Vui lòng cung cấp tên nhóm cần tra cứu."
+                group = await self.fb_service.get_group_members(group_name)
+                if not group:
+                    return (
+                        f"Không tìm thấy nhóm nào khớp với \"{group_name}\".\n"
+                        "Hãy thử tên khác hoặc dùng `messenger_list_groups` để xem danh sách các nhóm hiện có."
+                    )
+                members = group.get("members", [])
+                if not members:
+                    return (
+                        f"Nhóm **{group.get('group_name')}** chưa có dữ liệu thành viên.\n"
+                        "Dữ liệu sẽ được cập nhật tự động trong chu kỳ quét tiếp theo."
+                    )
+                scanned = group.get("last_scanned_at")
+                scanned_str = scanned.strftime("%d/%m/%Y %H:%M") if scanned else "chưa rõ"
+                lines = [
+                    f"👥 Nhóm **{group.get('group_name', 'Không tên')}** — {len(members)} thành viên",
+                    f"_(Dữ liệu cập nhật lúc: {scanned_str})_\n",
+                ]
+                for idx, m in enumerate(members, 1):
+                    role = m.get("role", "")
+                    profile = m.get("profile_url", "")
+                    role_tag = f" — _{role}_" if role else ""
+                    profile_tag = f"\n   🔗 {profile}" if profile else ""
+                    lines.append(f"{idx}. **{m.get('name', 'Không tên')}**{role_tag}{profile_tag}")
                 return "\n".join(lines)
 
             # ── Autonomous Browser ──

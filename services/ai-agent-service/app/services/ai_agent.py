@@ -568,13 +568,13 @@ Với mọi yêu cầu, bạn phải tư duy chặt chẽ theo 5 bước:
                 cmd = tool_args.get("command", "").strip()
                 if not cmd:
                     return "Error: No command specified."
-                raw = await self.ssh_client.execute_command(cmd)
-                return self.llm_router.rtk.compress(raw, max_chars=3000, max_lines=40)
+                # Raw output; RTK compression applied at chat-loop level before inserting into history
+                return await self.ssh_client.execute_command(cmd)
 
             # ── Messenger ──
             if tool_name == "facebook_get_messages":
-                raw = await self.message_cache.to_ai_summary()
-                return self.llm_router.rtk.compress(raw, max_chars=3000, max_lines=40)
+                # Raw output; RTK compression applied at chat-loop level before inserting into history
+                return await self.message_cache.to_ai_summary()
 
             if tool_name == "facebook_capture_screenshot":
                 if not self.fb_service:
@@ -1190,8 +1190,23 @@ Với mọi yêu cầu, bạn phải tư duy chặt chẽ theo 5 bước:
 
             tools_available = self._build_tools(excluded_tools=executed_once_tools)
 
+            # Apply RTK compression to oversized messages (tool results, long user/assistant turns)
+            # before passing to the LLM. System prompt is intentionally exempt.
+            rtk_messages = []
+            for m in messages:
+                if m.get("role") == "system":
+                    rtk_messages.append(m)
+                    continue
+                content = m.get("content")
+                if isinstance(content, str) and len(content) > 1000:
+                    m_copy = dict(m)
+                    m_copy["content"] = self.llm_router.rtk.compress(content, max_chars=3000, max_lines=40)
+                    rtk_messages.append(m_copy)
+                else:
+                    rtk_messages.append(m)
+
             llm_result = await self.llm_router.complete(
-                messages=messages,
+                messages=rtk_messages,
                 tools=tools_available if tools_available else None,
                 tool_choice="auto" if tools_available else "none",
                 temperature=0.1,
@@ -1230,6 +1245,19 @@ Với mọi yêu cầu, bạn phải tư duy chặt chẽ theo 5 bước:
                     tool_result = await self._execute_tool(
                         fn_name, fn_args, chat_id=chat_id, pending_photos=pending_photos
                     )
+
+                    # Apply RTK compression to ALL tool results before inserting into history.
+                    # This is the primary source of token savings — large SSH/browser outputs
+                    # can easily be 5-10x longer than the model needs to understand the result.
+                    # Tools that return structured markdown (facebook_view_profile, etc.) are
+                    # intentionally excluded to avoid mangling user-facing text.
+                    _NON_COMPRESS_TOOLS = {
+                        "facebook_view_profile", "facebook_send_reply",
+                        "facebook_capture_screenshot", "server_capture_screenshot",
+                        "browser_take_screenshot",
+                    }
+                    if fn_name not in _NON_COMPRESS_TOOLS and isinstance(tool_result, str) and len(tool_result) > 800:
+                        tool_result = self.llm_router.rtk.compress(tool_result, max_chars=3000, max_lines=40)
 
                     history.append({
                         "role": "tool",

@@ -1222,6 +1222,96 @@ class FacebookService:
             logger.debug("[FB-Service] Sidebar link extraction failed: %s", e)
         return []
 
+    async def _is_group_thread(self, page: Page) -> bool:
+        """Multi-signal heuristic to detect if the current Messenger thread is a group chat.
+
+        Uses 4 independent DOM signals — any single positive signal is sufficient
+        to classify the thread as a group. Designed to be fast (runs in < 200 ms)
+        and safe to call inside the scan loop.
+
+        Signals (in order of reliability):
+        1. Sidebar 'Members' section — present only in groups (most reliable)
+        2. Header sub-label with member count ('N members', 'N thành viên')
+        3. aria-label on the header/panel containing 'nhóm' or 'group'
+        4. Right sidebar: multiple distinct profile-picture links (≥ 3 different hrefs)
+        """
+        try:
+            result = await page.evaluate("""
+            () => {
+                // Signal 1: 'Thành viên' / 'Members' section in the right info panel
+                // This element only appears in group threads.
+                const memberLabels = Array.from(document.querySelectorAll(
+                    '[aria-label*="Thành viên" i], [aria-label*="Members" i], ' +
+                    '[role="heading"]'
+                ));
+                for (let el of memberLabels) {
+                    let txt = (el.innerText || el.getAttribute('aria-label') || '').toLowerCase();
+                    if (txt.includes('thành viên') || txt.includes('members')) {
+                        return { is_group: true, signal: 'members_section' };
+                    }
+                }
+
+                // Signal 2: Header secondary text showing member count
+                // e.g. '3 thành viên', '5 members', 'Nhóm · 4 người'
+                const allSpans = Array.from(document.querySelectorAll(
+                    '[role="main"] span, [role="main"] a'
+                ));
+                const memberCountRx = /\\d+\\s*(thành viên|members?|người tham gia|participants?)/i;
+                const groupHeaderRx = /^(nhóm|nhóm chat|group\\s*·|cuộc trò chuyện nhóm)/i;
+                for (let el of allSpans) {
+                    let r = el.getBoundingClientRect();
+                    // Only look within chat header region (y: 40-140)
+                    if (r.y < 40 || r.y > 140) continue;
+                    let txt = (el.innerText || '').trim();
+                    if (memberCountRx.test(txt) || groupHeaderRx.test(txt)) {
+                        return { is_group: true, signal: 'header_member_count', txt: txt };
+                    }
+                }
+
+                // Signal 3: aria-label containing 'nhóm' or 'group' on header/panel elements
+                const panelEls = Array.from(document.querySelectorAll(
+                    '[role="main"] [aria-label], [role="complementary"] [aria-label]'
+                ));
+                for (let el of panelEls) {
+                    let label = (el.getAttribute('aria-label') || '').toLowerCase();
+                    if ((label.includes('nhóm') || label.includes('group')) &&
+                        (label.includes('trò chuyện') || label.includes('chat') || label.includes('conversation'))) {
+                        return { is_group: true, signal: 'aria_label_group', label: label.slice(0, 80) };
+                    }
+                }
+
+                // Signal 4: Right sidebar (x > 750) has 3 or more DISTINCT person profile links
+                // Individual chat sidebar only has 1 profile link.
+                const rightLinks = Array.from(document.querySelectorAll('a[href]')).filter(a => {
+                    let r = a.getBoundingClientRect();
+                    return r.x > 750 && r.y > 80 && r.y < 600;
+                });
+                const profileHrefs = new Set();
+                for (let a of rightLinks) {
+                    let href = a.href || '';
+                    // Match personal profile URLs (/numeric_id or /username format)
+                    if (/facebook\\.com\/(?!messages|groups|pages|events|watch)\\S+/.test(href)) {
+                        profileHrefs.add(href.split('?')[0]);
+                    }
+                }
+                if (profileHrefs.size >= 3) {
+                    return { is_group: true, signal: 'multi_profile_links', count: profileHrefs.size };
+                }
+
+                return { is_group: false, signal: 'none' };
+            }
+            """)
+            if isinstance(result, dict) and result.get("is_group"):
+                logger.info(
+                    "[FB-Service] Group thread detected via signal='%s' detail='%s'",
+                    result.get("signal"),
+                    result.get("txt") or result.get("label") or result.get("count", ""),
+                )
+                return True
+        except Exception as e:
+            logger.debug("[FB-Service] _is_group_thread check failed: %s", e)
+        return False
+
     # ─── Main scan cycle ──────────────────────────────────────────────────────
 
     async def run_scan_cycle(self) -> int:
@@ -1389,6 +1479,16 @@ class FacebookService:
                                             await asyncio.sleep(1.5)
                                 except Exception:
                                     pass
+
+                                # ── Group Chat Guard ─────────────────────────────────────
+                                # Run group detection BEFORE any expensive DOM extraction.
+                                # Group threads are completely skipped — not saved, not replied to.
+                                if await self._is_group_thread(page):
+                                    logger.info(
+                                        "[FB-Service] Thread '%s' identified as a GROUP chat — skipping entirely.",
+                                        t_href,
+                                    )
+                                    continue
 
                                 # Extract contact name & profile URL from DOM / Right Sidebar
                                 thread_info = await self._extract_thread_info_from_page(page)

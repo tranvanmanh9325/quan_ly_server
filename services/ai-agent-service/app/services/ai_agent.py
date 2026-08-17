@@ -123,9 +123,10 @@ Với mọi yêu cầu, bạn phải tư duy chặt chẽ theo 5 bước:
 - `facebook_send_reply`: Gửi tin nhắn trả lời trực tiếp qua Facebook Messenger. Hệ thống sẽ tự động chụp ảnh màn hình minh chứng xác thực gửi kèm qua Telegram.
 - `get_appointments`: Tra cứu danh sách các lịch hẹn, cuộc gặp, buổi trao đổi, họp mặt từ Facebook Messenger. Dùng khi anh Mạnh hỏi về lịch hẹn sắp tới hoặc các cuộc hẹn đang chờ xác nhận.
 - `messenger_list_groups`: Liệt kê tất cả các nhóm Messenger đã biết (tên nhóm, số thành viên, lần quét gần nhất).
-  Dùng khi: "Có những nhóm mess nào?", "Liệt kê tất cả nhóm chat".
+  Dùng khi: "Có những nhóm mess nào?", "Liệt kê tất cả nhóm chat", "Hiện tại có bao nhiêu nhóm?".
 - `messenger_get_group_members`: Tra cứu danh sách thành viên chi tiết của một nhóm cụ thể (tên, vai trò, link profile).
-  Dùng khi: "Nhóm X có bao nhiêu thành viên?", "Những ai trong nhóm Y?".
+  Dùng khi: "Xem thành viên nhóm X", "Nhóm X có bao nhiêu thành viên?", "Những ai trong nhóm Y?".
+  ⚠️ Luôn chủ động gọi `messenger_get_group_members` ngay khi người dùng hỏi về thành viên nhóm (kể cả khi tên nhóm người dùng gọi vắn tắt như "Trần Minh", "Trần, Minh", "Trần Văn Mạnh"). Tool đã tích hợp sẵn thuật toán Fuzzy Matching tự động tìm kiếm thông minh.
 
 📸 CHỤP MÀN HÌNH MÁY CHỦ:
 - `server_capture_screenshot`: Chụp toàn bộ màn hình desktop/server Linux.

@@ -3,7 +3,7 @@ const ko = {
     overview: "개요", processes: "프로세스", services: "서비스",
     fileManager: "파일 관리자", dockerContainers: "Docker 컨테이너",
     globalMap: "글로벌 맵", terminal: "터미널 콘솔",
-    security: "보안 & 로그", settings: "설정",
+    security: "보안 및 로그", aiAgents: "AI 에이전트", settings: "설정",
   },
   header: {
     systemOnline: "시스템 상태: 온라인", criticalAlert: "심각한 알림",

@@ -1,9 +1,9 @@
 const ja = {
   nav: {
     overview: "概要", processes: "プロセス", services: "サービス",
-    fileManager: "ファイルマネージャー", dockerContainers: "Dockerコンテナ",
-    globalMap: "グローバルマップ", terminal: "ターミナルコンソール",
-    security: "セキュリティ＆ログ", settings: "設定",
+    fileManager: "ファイル管理", dockerContainers: "Dockerコンテナ",
+    globalMap: "世界地図", terminal: "ターミナル",
+    security: "セキュリティ＆ログ", aiAgents: "AIエージェント", settings: "設定",
   },
   header: {
     systemOnline: "システム状態: オンライン", criticalAlert: "重大なアラート",

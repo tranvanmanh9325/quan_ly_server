@@ -534,3 +534,55 @@ export const SciFiFacebookIcon = ({ size = 18, color = 'var(--accent-purple)' })
     <circle cx="20" cy="20" r="0.8" fill={color} />
   </svg>
 );
+
+// 36. AI BOT / AGENT — Futuristic Cyber AI Core & Visor
+export const SciFiBotIcon = ({ size = 20, color = 'var(--accent-cyan)' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
+    {/* Head chassis */}
+    <rect x="3" y="6" width="18" height="14" rx="3" stroke={color} strokeWidth="1.5" fill="rgba(0, 243, 255, 0.08)" />
+    {/* Antenna */}
+    <line x1="12" y1="2" x2="12" y2="6" stroke={color} strokeWidth="1.5" strokeLinecap="round" />
+    <circle cx="12" cy="2" r="1.5" fill={color} />
+    {/* Visor / Eye display */}
+    <rect x="6" y="10" width="12" height="4" rx="1.5" stroke={color} strokeWidth="1.2" fill={color} fillOpacity="0.2" />
+    <circle cx="8.5" cy="12" r="1" fill={color} />
+    <circle cx="15.5" cy="12" r="1" fill={color} />
+    {/* Side ears / connectors */}
+    <rect x="1" y="10" width="2" height="6" rx="0.5" fill={color} fillOpacity="0.6" />
+    <rect x="21" y="10" width="2" height="6" rx="0.5" fill={color} fillOpacity="0.6" />
+    {/* Mouth / Data port */}
+    <line x1="9" y1="17" x2="15" y2="17" stroke={color} strokeWidth="1.2" strokeLinecap="round" />
+  </svg>
+);
+
+// 37. ZALO — Cyber messaging bubble
+export const SciFiZaloIcon = ({ size = 18, color = '#0068FF' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
+    <rect x="2" y="2" width="20" height="20" rx="5" stroke={color} strokeWidth="1.5" fill="rgba(0, 104, 255, 0.12)" />
+    <path d="M6 8H18L8 16H18" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+// 38. GMAIL — Cyber envelope with laser folds
+export const SciFiGmailIcon = ({ size = 18, color = '#EA4335' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
+    <rect x="3" y="4" width="18" height="16" rx="2" stroke={color} strokeWidth="1.5" fill="rgba(234, 67, 53, 0.1)" />
+    <polyline points="3,6 12,13 21,6" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+// 39. TIKTOK — Cyber musical rhythm note
+export const SciFiTikTokIcon = ({ size = 18, color = '#00F2FE' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
+    <rect x="2" y="2" width="20" height="20" rx="5" stroke={color} strokeWidth="1.5" fill="rgba(0, 242, 254, 0.08)" />
+    <path d="M14 4V14.5C14 16.43 12.43 18 10.5 18C8.57 18 7 16.43 7 14.5C7 12.57 8.57 11 10.5 11C11.03 11 11.53 11.12 11.97 11.33V7.5C13.2 8.64 14.8 9.35 16.57 9.35V6.5C15.15 6.5 14 5.38 14 4Z" fill={color} />
+  </svg>
+);
+
+// 40. YOUTUBE — Cyber video screen with play reticle
+export const SciFiYouTubeIcon = ({ size = 18, color = '#FF0033' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
+    <rect x="2" y="4" width="20" height="16" rx="4" stroke={color} strokeWidth="1.5" fill="rgba(255, 0, 51, 0.1)" />
+    <polygon points="10,8.5 16,12 10,15.5" fill={color} />
+  </svg>
+);

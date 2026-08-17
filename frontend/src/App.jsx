@@ -18,6 +18,7 @@ const FileManagerPage = lazy(() => import('./pages/FileManagerPage'));
 const ContainersPage  = lazy(() => import('./pages/ContainersPage'));
 const TerminalPage    = lazy(() => import('./pages/TerminalPage'));
 const WorldMapPage    = lazy(() => import('./pages/WorldMapPage'));
+const AiAgentsPage    = lazy(() => import('./pages/AiAgentsPage'));
 const SettingsPage    = lazy(() => import('./pages/SettingsPage'));
 
 // Route loading spinner fallback
@@ -339,6 +340,7 @@ function App() {
               <Route path="map" element={<WorldMapPage />} />
               <Route path="terminal" element={<TerminalPage />} />
               <Route path="security" element={<SecurityPage />} />
+              <Route path="ai-agents" element={<AiAgentsPage />} />
               <Route path="settings" element={<SettingsPage />} />
             </Route>
           </Routes>

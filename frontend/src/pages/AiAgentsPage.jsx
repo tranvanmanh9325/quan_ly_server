@@ -1,0 +1,1047 @@
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
+import axios from 'axios';
+import {
+  SciFiBotIcon, SciFiFacebookIcon, SciFiZaloIcon, SciFiGmailIcon,
+  SciFiTikTokIcon, SciFiYouTubeIcon, SciFiRefreshIcon, SciFiPulseBadge,
+  SciFiConsoleIcon, SciFiCyberLockIcon, SciFiBrowserLaunchIcon,
+  SciFiChronoSpinnerIcon, SciFiCheckCircleIcon, SciFiCloseIcon,
+  SciFiQuantumIcon
+} from '../components/SciFiIcons';
+import { useTranslation } from '../i18n/index.jsx';
+
+// ── Sci-Fi Sub-components ───────────────────────────────────────────────────
+const SectionHeader = ({ icon, title, subtitle, badge }) => (
+  <div style={{ marginBottom: '20px' }}>
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+        {icon}
+        <h2 style={{ fontSize: '1rem', letterSpacing: '3px', color: 'var(--accent-cyan)', fontFamily: 'Share Tech Mono', margin: 0 }}>
+          {title}
+        </h2>
+      </div>
+      {badge && <div>{badge}</div>}
+    </div>
+    {subtitle && (
+      <p style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', marginLeft: '30px', opacity: 0.7 }}>
+        {subtitle}
+      </p>
+    )}
+    <div style={{ height: '1px', background: 'linear-gradient(90deg, var(--accent-cyan) 0%, transparent 70%)', marginTop: '10px', opacity: 0.4 }} />
+  </div>
+);
+
+const SettingRow = ({ label, desc, children }) => (
+  <div style={{
+    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+    padding: '14px 0',
+    borderBottom: '1px solid rgba(0, 243, 255, 0.06)',
+  }}>
+    <div style={{ flex: 1 }}>
+      <div style={{ fontSize: '0.88rem', color: 'var(--text-primary)', letterSpacing: '0.5px' }}>{label}</div>
+      {desc && <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', opacity: 0.6, marginTop: '3px' }}>{desc}</div>}
+    </div>
+    <div style={{ marginLeft: '20px', flexShrink: 0 }}>{children}</div>
+  </div>
+);
+
+const Toggle = ({ value, onChange, id }) => (
+  <label htmlFor={id} style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+    <div style={{ position: 'relative', width: '44px', height: '22px' }}>
+      <input
+        id={id}
+        type="checkbox"
+        checked={value}
+        onChange={e => onChange(e.target.checked)}
+        style={{ opacity: 0, width: 0, height: 0, position: 'absolute' }}
+      />
+      <div style={{
+        position: 'absolute', inset: 0,
+        background: value ? 'rgba(0, 243, 255, 0.25)' : 'rgba(255,255,255,0.06)',
+        border: value ? '1px solid var(--accent-cyan)' : '1px solid rgba(255,255,255,0.15)',
+        borderRadius: '2px',
+        transition: 'all 0.25s ease',
+        boxShadow: value ? '0 0 8px rgba(0,243,255,0.4)' : 'none',
+      }} />
+      <div style={{
+        position: 'absolute',
+        top: '3px',
+        left: value ? '24px' : '3px',
+        width: '14px', height: '14px',
+        background: value ? 'var(--accent-cyan)' : 'rgba(255,255,255,0.3)',
+        borderRadius: '1px',
+        transition: 'all 0.25s ease',
+        boxShadow: value ? '0 0 6px var(--accent-cyan)' : 'none',
+      }} />
+    </div>
+    <span style={{ fontSize: '0.75rem', color: value ? 'var(--accent-cyan)' : 'var(--text-secondary)', fontFamily: 'Share Tech Mono', minWidth: '32px' }}>
+      {value ? 'ON' : 'OFF'}
+    </span>
+  </label>
+);
+
+const ThresholdSlider = ({ value, onChange, id, unit = '%', min = 1, max = 100, color = 'var(--accent-cyan)' }) => (
+  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+    <input
+      id={id}
+      type="range"
+      min={min}
+      max={max}
+      value={value}
+      onChange={e => onChange(Number(e.target.value))}
+      style={{
+        width: '140px',
+        accentColor: color,
+        cursor: 'pointer',
+      }}
+    />
+    <span style={{
+      fontSize: '0.8rem',
+      fontFamily: 'Share Tech Mono',
+      color: color,
+      minWidth: '55px',
+      textAlign: 'right',
+    }}>
+      {value}{unit}
+    </span>
+  </div>
+);
+
+// Preset duration button chip
+const DurationChip = ({ label, selected, onClick }) => (
+  <button
+    type="button"
+    onClick={onClick}
+    style={{
+      padding: '2px 7px',
+      fontSize: '0.68rem',
+      fontFamily: 'Share Tech Mono',
+      border: selected ? '1px solid var(--accent-cyan)' : '1px solid rgba(0,243,255,0.2)',
+      background: selected ? 'rgba(0,243,255,0.18)' : 'rgba(0,0,0,0.3)',
+      color: selected ? 'var(--accent-cyan)' : 'var(--text-secondary)',
+      cursor: 'pointer',
+      borderRadius: '2px',
+      transition: 'all 0.15s ease',
+      boxShadow: selected ? '0 0 6px rgba(0,243,255,0.3)' : 'none',
+    }}
+  >
+    {label}
+  </button>
+);
+
+export default function AiAgentsPage() {
+  const { t } = useTranslation();
+  const [activePlatform, setActivePlatform] = useState('facebook');
+
+  // ── Facebook state ────────────────────────────────────────────────────────
+  const [fbConfig, setFbConfig] = useState({
+    enabled: false,
+    threshold: 5,
+    cookiesJson: '',
+    idleTimeoutMinutes: 1,
+    autoScanIntervalMinutes: 1,
+    humanActivitySuppressionMinutes: 5,
+  });
+  const [fbStatus, setFbStatus] = useState({
+    enabled: false,
+    lastScannedAt: null,
+    recentReplies: [],
+    lastStatus: '',
+    hasCookies: false,
+  });
+  const [fbLoading, setFbLoading] = useState(true);
+  const [fbSaving, setFbSaving] = useState(false);
+  const [fbTesting, setFbTesting] = useState(false);
+  const [fbTestResult, setFbTestResult] = useState('');
+  const [fbSaveSuccess, setFbSaveSuccess] = useState(false);
+
+  // ── noVNC Modal state ─────────────────────────────────────────────────────
+  const [showVncModal, setShowVncModal] = useState(false);
+  const [vncUrl, setVncUrl] = useState('');
+  const [vncStatusMsg, setVncStatusMsg] = useState('');
+  const [vncIsLaunching, setVncIsLaunching] = useState(false);
+  const [vncIsSaving, setVncIsSaving] = useState(false);
+  const heartbeatTimerRef = useRef(null);
+
+  // Keep-alive heartbeat loop while VNC modal is open
+  useEffect(() => {
+    if (showVncModal) {
+      heartbeatTimerRef.current = setInterval(() => {
+        axios.post('/api/facebook/vnc-heartbeat').catch(() => {});
+      }, 15000);
+    } else {
+      if (heartbeatTimerRef.current) {
+        clearInterval(heartbeatTimerRef.current);
+        heartbeatTimerRef.current = null;
+      }
+    }
+    return () => {
+      if (heartbeatTimerRef.current) {
+        clearInterval(heartbeatTimerRef.current);
+      }
+    };
+  }, [showVncModal]);
+
+  // Format Facebook system status text
+  const formatFbStatus = (rawStatus, lastScannedAt, recentReplies) => {
+    if (!rawStatus) return t('settings.facebook.statusOff');
+    if (rawStatus === 'need_cookies') return t('settings.facebook.statusNeedCookies');
+    const time = lastScannedAt
+      ? new Date(lastScannedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+      : '---';
+    if (rawStatus.startsWith('active')) {
+      const count = recentReplies ? recentReplies.length : 0;
+      if (count > 0) return t('settings.facebook.statusActiveWithReplies', { time, count });
+      return t('settings.facebook.statusActive', { time });
+    }
+    if (rawStatus.startsWith('error')) {
+      return t('settings.facebook.statusError') + ': ' + rawStatus.replace(/^(?:Lỗi|Error):\s*/, '');
+    }
+    return rawStatus;
+  };
+
+  // Load Facebook config from backend
+  const fetchFbConfig = useCallback(() => {
+    setFbLoading(true);
+    axios.get('/api/facebook/config')
+      .then(res => {
+        const d = res.data;
+        setFbConfig({
+          enabled: Boolean(d.enabled),
+          threshold: Number(d.threshold ?? 5),
+          cookiesJson: d.cookiesJson || '',
+          idleTimeoutMinutes: Number(d.idleTimeoutMinutes ?? 1),
+          autoScanIntervalMinutes: Number(d.autoScanIntervalMinutes ?? 1),
+          humanActivitySuppressionMinutes: Number(d.humanActivitySuppressionMinutes ?? 5),
+        });
+        setFbStatus({
+          enabled: Boolean(d.enabled),
+          lastScannedAt: d.lastScannedAt,
+          recentReplies: d.recentReplies || [],
+          lastStatus: d.lastStatus || '',
+          hasCookies: Boolean(d.hasCookies),
+        });
+      })
+      .catch(() => {})
+      .finally(() => setFbLoading(false));
+  }, []);
+
+  useEffect(() => {
+    fetchFbConfig();
+  }, [fetchFbConfig]);
+
+  // Debounced auto-save on slider/toggle updates
+  const fbDebounceRef = useRef(null);
+  const handleFbConfigChange = (key, value) => {
+    setFbConfig(prev => {
+      const updated = { ...prev, [key]: value };
+      if (key !== 'cookiesJson') {
+        if (fbDebounceRef.current) clearTimeout(fbDebounceRef.current);
+        fbDebounceRef.current = setTimeout(() => {
+          const payload = {
+            enabled: updated.enabled,
+            threshold: updated.threshold,
+            idleTimeoutMinutes: updated.idleTimeoutMinutes,
+            autoScanIntervalMinutes: updated.autoScanIntervalMinutes,
+            humanActivitySuppressionMinutes: updated.humanActivitySuppressionMinutes,
+          };
+          axios.post('/api/facebook/config', payload)
+            .then(() => {
+              setFbSaveSuccess(true);
+              setTimeout(() => setFbSaveSuccess(false), 2000);
+            })
+            .catch(() => {});
+        }, 400);
+      }
+      return updated;
+    });
+  };
+
+  // Manual save for cookies JSON
+  const handleSaveFacebook = async () => {
+    setFbSaving(true);
+    setFbTestResult('');
+    try {
+      await axios.post('/api/facebook/config', fbConfig);
+      setFbSaveSuccess(true);
+      setTimeout(() => setFbSaveSuccess(false), 3000);
+    } catch {
+      setFbTestResult(t('settings.facebook.saveConfigError'));
+    } finally {
+      setFbSaving(false);
+    }
+  };
+
+  // Manual Trigger Scan Now
+  const handleTriggerFacebook = async () => {
+    setFbTesting(true);
+    setFbTestResult(t('settings.facebook.scanning') || 'Đang quét Messenger...');
+    try {
+      await axios.post('/api/facebook/trigger');
+      let attempts = 0;
+      const pollInterval = setInterval(async () => {
+        attempts++;
+        try {
+          const s = await axios.get('/api/facebook/scan-status');
+          const d = s.data;
+          if (d.status === 'idle') {
+            clearInterval(pollInterval);
+            setFbTesting(false);
+            setFbTestResult(d.message || t('settings.facebook.scanSuccess') || 'Quét hoàn tất!');
+            fetchFbConfig();
+          } else if (d.status === 'error') {
+            clearInterval(pollInterval);
+            setFbTesting(false);
+            setFbTestResult(t('settings.facebook.scanError') || 'Lỗi trong quá trình quét.');
+            fetchFbConfig();
+          }
+        } catch {
+          if (attempts > 15) {
+            clearInterval(pollInterval);
+            setFbTesting(false);
+          }
+        }
+      }, 2000);
+    } catch (e) {
+      setFbTesting(false);
+      setFbTestResult(e.response?.data?.message || t('settings.facebook.scanError'));
+    }
+  };
+
+  // Launch Server Browser via noVNC
+  const handleLaunchVncBrowser = async () => {
+    setVncIsLaunching(true);
+    setVncStatusMsg(t('settings.facebook.initBrowser'));
+    try {
+      const res = await axios.post('/api/facebook/launch-browser');
+      if (res.data.status === 'success' || res.data.status === 'already_running') {
+        setVncStatusMsg(t('settings.facebook.waitingVnc'));
+        let attempts = 0;
+        const MAX_ATTEMPTS = 20;
+        const checkReady = setInterval(async () => {
+          attempts++;
+          try {
+            const probe = await axios.get('/api/facebook/vnc-ready');
+            if (probe.data.ready) {
+              clearInterval(checkReady);
+              setVncUrl(probe.data.vnc_url || '/fb-vnc/vnc_lite.html?autoconnect=true&resize=scale');
+              setShowVncModal(true);
+              setVncIsLaunching(false);
+              setVncStatusMsg('');
+            } else if (attempts >= MAX_ATTEMPTS) {
+              clearInterval(checkReady);
+              setVncIsLaunching(false);
+              setVncStatusMsg(t('settings.facebook.vncTimeout'));
+            }
+          } catch {
+            if (attempts >= MAX_ATTEMPTS) {
+              clearInterval(checkReady);
+              setVncIsLaunching(false);
+            }
+          }
+        }, 1000);
+      } else {
+        setVncIsLaunching(false);
+        setVncStatusMsg(res.data.message || t('settings.facebook.browserError'));
+      }
+    } catch (e) {
+      setVncIsLaunching(false);
+      setVncStatusMsg(t('settings.facebook.serverConnError') + (e.response?.data?.message || e.message));
+    }
+  };
+
+  const handleCloseVncModal = async () => {
+    setShowVncModal(false);
+    setVncUrl('');
+    try {
+      await axios.post('/api/facebook/close-browser-session');
+    } catch {}
+  };
+
+  const handleSaveBrowserSession = async () => {
+    setVncIsSaving(true);
+    setVncStatusMsg(t('settings.facebook.extractingCookies'));
+    try {
+      const res = await axios.post('/api/facebook/save-browser-session');
+      if (res.data.status === 'success') {
+        setVncStatusMsg(`✓ ${res.data.message}`);
+        const cfgRes = await axios.get('/api/facebook/config');
+        if (cfgRes.data?.cookiesJson) {
+          setFbConfig(prev => ({ ...prev, cookiesJson: cfgRes.data.cookiesJson }));
+          setFbStatus(prev => ({ ...prev, hasCookies: true }));
+        }
+        setTimeout(() => {
+          setShowVncModal(false);
+          setVncUrl('');
+          setVncStatusMsg('');
+          fetchFbConfig();
+        }, 1200);
+      } else {
+        setVncStatusMsg(`⚠️ ${res.data.message}`);
+      }
+    } catch (e) {
+      setVncStatusMsg(t('settings.facebook.sessionSaveError') + (e.response?.data?.message || e.message));
+    } finally {
+      setVncIsSaving(false);
+    }
+  };
+
+  const platforms = [
+    { id: 'facebook', name: 'Facebook Messenger', icon: <SciFiFacebookIcon size={18} color="var(--accent-purple)" />, status: 'ACTIVE', color: 'var(--accent-purple)' },
+    { id: 'zalo', name: 'Zalo AI Agent', icon: <SciFiZaloIcon size={18} color="#0068FF" />, status: 'COMING SOON', color: '#0068FF' },
+    { id: 'gmail', name: 'Gmail AI Assistant', icon: <SciFiGmailIcon size={18} color="#EA4335" />, status: 'COMING SOON', color: '#EA4335' },
+    { id: 'tiktok', name: 'TikTok Social Agent', icon: <SciFiTikTokIcon size={18} color="#00F2FE" />, status: 'COMING SOON', color: '#00F2FE' },
+    { id: 'youtube', name: 'YouTube Comment Agent', icon: <SciFiYouTubeIcon size={18} color="#FF0033" />, status: 'COMING SOON', color: '#FF0033' },
+  ];
+
+  return (
+    <div style={{ padding: '24px', maxWidth: '1280px', margin: '0 auto' }}>
+      
+      {/* ── Page Header ───────────────────────────────────────────────────── */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '24px' }}>
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <SciFiBotIcon size={28} color="var(--accent-cyan)" />
+            <h1 className="title-glow" style={{ fontSize: '1.4rem', letterSpacing: '3px', margin: 0 }}>
+              MULTI-PLATFORM AI AGENTS
+            </h1>
+          </div>
+          <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', margin: '6px 0 0 40px', opacity: 0.75 }}>
+            Hệ thống tự động hóa đa kênh: Tự động trả lời, phân tích ý định đặt lịch và tương tác bằng AI
+          </p>
+        </div>
+
+        {/* Global AI Engine Badge */}
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: '10px',
+          background: 'rgba(0, 243, 255, 0.06)',
+          border: '1px solid rgba(0, 243, 255, 0.3)',
+          padding: '6px 14px', borderRadius: '4px',
+          boxShadow: '0 0 12px rgba(0, 243, 255, 0.15)'
+        }}>
+          <SciFiQuantumIcon size={16} color="var(--accent-cyan)" />
+          <span style={{ fontSize: '0.75rem', fontFamily: 'Share Tech Mono', color: 'var(--accent-cyan)' }}>
+            ENGINE: 9ROUTER (GROQ LPU + OPENROUTER)
+          </span>
+        </div>
+      </div>
+
+      {/* ── Platform Tabs Navigation ───────────────────────────────────────── */}
+      <div style={{
+        display: 'flex', gap: '10px', marginBottom: '24px', overflowX: 'auto', paddingBottom: '4px',
+        borderBottom: '1px solid rgba(0, 243, 255, 0.15)'
+      }}>
+        {platforms.map(p => {
+          const isSelected = activePlatform === p.id;
+          return (
+            <button
+              key={p.id}
+              onClick={() => setActivePlatform(p.id)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '10px',
+                padding: '10px 18px',
+                background: isSelected ? 'rgba(0, 243, 255, 0.12)' : 'rgba(5, 10, 20, 0.6)',
+                border: isSelected ? '1px solid var(--accent-cyan)' : '1px solid rgba(255, 255, 255, 0.08)',
+                borderBottom: isSelected ? '2px solid var(--accent-cyan)' : '1px solid rgba(255, 255, 255, 0.08)',
+                color: isSelected ? '#fff' : 'var(--text-secondary)',
+                fontFamily: 'Share Tech Mono',
+                fontSize: '0.82rem',
+                cursor: 'pointer',
+                borderRadius: '4px 4px 0 0',
+                transition: 'all 0.2s ease',
+                boxShadow: isSelected ? '0 0 15px rgba(0, 243, 255, 0.2)' : 'none',
+                whiteSpace: 'nowrap'
+              }}
+            >
+              {p.icon}
+              <span style={{ fontWeight: isSelected ? 'bold' : 'normal' }}>{p.name}</span>
+              <span style={{
+                fontSize: '0.62rem',
+                padding: '1px 6px',
+                borderRadius: '3px',
+                background: p.status === 'ACTIVE' ? 'rgba(0, 255, 102, 0.2)' : 'rgba(255, 255, 255, 0.08)',
+                color: p.status === 'ACTIVE' ? 'var(--accent-green)' : 'var(--text-secondary)',
+                border: p.status === 'ACTIVE' ? '1px solid var(--accent-green)' : '1px solid rgba(255, 255, 255, 0.15)',
+              }}>
+                {p.status}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* ── Tab Content: FACEBOOK MESSENGER ────────────────────────────────── */}
+      {activePlatform === 'facebook' && (
+        <div style={{
+          background: 'rgba(5, 10, 20, 0.85)',
+          border: '1px solid rgba(187, 0, 255, 0.3)',
+          boxShadow: '0 0 20px rgba(187, 0, 255, 0.12)',
+          borderRadius: '4px',
+          padding: '24px',
+        }}>
+          <SectionHeader
+            icon={<SciFiFacebookIcon size={20} color="var(--accent-purple)" />}
+            title="FACEBOOK MESSENGER AI AGENT"
+            subtitle="Tự động trả lời tin nhắn Facebook Messenger khi vắng mặt qua Server Chromium"
+            badge={
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <SciFiPulseBadge
+                  label={fbStatus.enabled ? 'ACTIVE' : 'STANDBY'}
+                  color={fbStatus.enabled ? 'var(--accent-green)' : 'var(--text-secondary)'}
+                />
+                {fbSaveSuccess && (
+                  <span style={{ color: 'var(--accent-green)', fontSize: '0.72rem', fontFamily: 'Share Tech Mono' }}>
+                    ✓ {t('settings.facebook.savedConfig') || 'Đã lưu cấu hình'}
+                  </span>
+                )}
+              </div>
+            }
+          />
+
+          {fbLoading ? (
+            <div style={{ padding: '30px', textAlign: 'center', color: 'var(--text-secondary)', fontFamily: 'Share Tech Mono' }}>
+              ⚡ Đang tải cấu hình Facebook AI Agent...
+            </div>
+          ) : (
+            <>
+              {/* Away Mode Toggle */}
+              <SettingRow label="Chế độ Vắng mặt (Away Mode)" desc="Kích hoạt AI Agent tự động quét và trả lời tin nhắn trên trình duyệt Server">
+                <Toggle
+                  id="fb-enabled"
+                  value={fbConfig.enabled}
+                  onChange={v => handleFbConfigChange('enabled', v)}
+                />
+              </SettingRow>
+
+              {/* Message Activation Threshold */}
+              <SettingRow label="Ngưỡng Kích hoạt Tin nhắn" desc="Số tin nhắn liên tiếp chưa trả lời của đối phương trước khi AI tự động phản hồi (Mặc định: 5)">
+                <ThresholdSlider
+                  id="fb-threshold"
+                  min={1}
+                  max={20}
+                  unit=" msgs"
+                  value={fbConfig.threshold}
+                  color="var(--accent-purple)"
+                  onChange={v => handleFbConfigChange('threshold', v)}
+                />
+              </SettingRow>
+
+              {/* Inactivity Silence Delay */}
+              <SettingRow label="Thời gian Im lặng Cần thiết (Silence Delay)" desc="Khoảng thời gian không có tin nhắn mới từ đối phương trước khi AI trả lời (Tránh cướp lời khi đang gõ liên tục)">
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '6px' }}>
+                  <ThresholdSlider
+                    id="fb-idle-timeout"
+                    min={1}
+                    max={30}
+                    unit=" min"
+                    value={fbConfig.idleTimeoutMinutes}
+                    onChange={v => handleFbConfigChange('idleTimeoutMinutes', v)}
+                  />
+                  <div style={{ display: 'flex', gap: '4px' }}>
+                    {[1, 2, 3, 5, 10, 15].map(m => (
+                      <DurationChip
+                        key={m}
+                        label={`${m}m`}
+                        selected={fbConfig.idleTimeoutMinutes === m}
+                        onClick={() => handleFbConfigChange('idleTimeoutMinutes', m)}
+                      />
+                    ))}
+                  </div>
+                </div>
+              </SettingRow>
+
+              {/* Active Human Session Duration */}
+              <SettingRow label="Khoảng chặn khi Người thật đang Chat" desc="Tạm dừng AI tự động phản hồi nếu bạn vừa gửi tin nhắn trên Facebook trong khoảng thời gian này">
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '6px' }}>
+                  <ThresholdSlider
+                    id="fb-human-suppression"
+                    min={1}
+                    max={60}
+                    unit=" min"
+                    value={fbConfig.humanActivitySuppressionMinutes}
+                    color="var(--accent-purple)"
+                    onChange={v => handleFbConfigChange('humanActivitySuppressionMinutes', v)}
+                  />
+                  <div style={{ display: 'flex', gap: '4px' }}>
+                    {[5, 10, 15, 30, 60].map(m => (
+                      <DurationChip
+                        key={m}
+                        label={`${m}m`}
+                        selected={fbConfig.humanActivitySuppressionMinutes === m}
+                        onClick={() => handleFbConfigChange('humanActivitySuppressionMinutes', m)}
+                      />
+                    ))}
+                  </div>
+                </div>
+              </SettingRow>
+
+              {/* Auto Scan Interval */}
+              <SettingRow label="Tần suất Quét Hộp thư Tự động" desc="Khoảng thời gian giữa mỗi chu kỳ kiểm tra hộp thư Messenger trên trình duyệt Server">
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '6px' }}>
+                  <ThresholdSlider
+                    id="fb-scan-interval"
+                    min={1}
+                    max={30}
+                    unit=" min"
+                    value={fbConfig.autoScanIntervalMinutes}
+                    onChange={v => handleFbConfigChange('autoScanIntervalMinutes', v)}
+                  />
+                  <div style={{ display: 'flex', gap: '4px' }}>
+                    {[1, 2, 5, 10, 15, 30].map(m => (
+                      <DurationChip
+                        key={m}
+                        label={`${m}m`}
+                        selected={fbConfig.autoScanIntervalMinutes === m}
+                        onClick={() => handleFbConfigChange('autoScanIntervalMinutes', m)}
+                      />
+                    ))}
+                  </div>
+                </div>
+              </SettingRow>
+
+              {/* System Status Display */}
+              <SettingRow label="Trạng thái Hoạt động" desc="Nhật ký lần quét cuối cùng từ trình duyệt Server">
+                <span style={{
+                  fontSize: '0.78rem',
+                  fontFamily: 'Share Tech Mono',
+                  color: fbStatus.lastStatus?.startsWith('error') ? 'var(--accent-pink)' : 'var(--accent-cyan)'
+                }}>
+                  {formatFbStatus(fbStatus.lastStatus, fbStatus.lastScannedAt, fbStatus.recentReplies)}
+                </span>
+              </SettingRow>
+
+              {/* Direct Server Browser Login Banner (noVNC) */}
+              <div style={{
+                marginTop: '20px',
+                padding: '16px 20px',
+                background: 'rgba(187, 0, 255, 0.06)',
+                border: '1px solid rgba(187, 0, 255, 0.35)',
+                borderRadius: '4px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: '16px',
+                flexWrap: 'wrap',
+              }}>
+                <div>
+                  <div style={{
+                    display: 'flex', alignItems: 'center', gap: '8px',
+                    color: 'var(--accent-purple)', fontFamily: 'Share Tech Mono',
+                    fontSize: '0.88rem', fontWeight: 'bold', letterSpacing: '1px',
+                  }}>
+                    <SciFiBrowserLaunchIcon size={16} color="var(--accent-purple)" />
+                    ĐĂNG NHẬP TRỰC TIẾP TRÊN TRÌNH DUYỆT SERVER
+                  </div>
+                  <div style={{ color: 'var(--text-secondary)', fontSize: '0.74rem', marginTop: '4px', opacity: 0.8 }}>
+                    Mở giao diện Chromium GUI trực tiếp trên server qua noVNC để đăng nhập tài khoản, nhập mã 2FA và mở khóa PIN E2EE.
+                  </div>
+                  {vncStatusMsg && (
+                    <div style={{ marginTop: '6px', color: 'var(--accent-cyan)', fontSize: '0.74rem', fontFamily: 'Share Tech Mono' }}>
+                      ⚡ {vncStatusMsg}
+                    </div>
+                  )}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleLaunchVncBrowser}
+                  disabled={vncIsLaunching}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: '8px',
+                    padding: '8px 18px',
+                    background: 'rgba(187, 0, 255, 0.2)',
+                    border: '1px solid var(--accent-purple)',
+                    borderRadius: '3px',
+                    color: '#fff',
+                    fontFamily: 'Share Tech Mono',
+                    fontSize: '0.8rem',
+                    letterSpacing: '1px',
+                    cursor: vncIsLaunching ? 'not-allowed' : 'pointer',
+                    opacity: vncIsLaunching ? 0.6 : 1,
+                    boxShadow: '0 0 12px rgba(187, 0, 255, 0.3)',
+                    transition: 'all 0.2s ease',
+                  }}
+                >
+                  {vncIsLaunching ? <SciFiChronoSpinnerIcon size={16} color="#fff" /> : <SciFiBrowserLaunchIcon size={16} color="#fff" />}
+                  {vncIsLaunching ? 'ĐANG KHỞI TẠO...' : 'MỞ TRÌNH DUYỆT SERVER'}
+                </button>
+              </div>
+
+              {/* Cookies JSON Textarea */}
+              <div style={{ marginTop: '20px' }}>
+                <label style={{
+                  display: 'block',
+                  fontSize: '0.82rem',
+                  color: 'var(--text-primary)',
+                  marginBottom: '8px',
+                  fontFamily: 'Share Tech Mono',
+                  letterSpacing: '0.5px'
+                }}>
+                  Facebook Session Cookies (JSON)
+                </label>
+                <textarea
+                  value={fbConfig.cookiesJson}
+                  onChange={e => handleFbConfigChange('cookiesJson', e.target.value)}
+                  placeholder='[{"name":"c_user","value":"..."},{"name":"xs","value":"..."}]'
+                  rows={4}
+                  style={{
+                    width: '100%',
+                    boxSizing: 'border-box',
+                    background: 'rgba(0,0,0,0.5)',
+                    border: '1px solid rgba(0,243,255,0.2)',
+                    borderRadius: '3px',
+                    color: '#fff',
+                    fontFamily: 'Share Tech Mono',
+                    fontSize: '0.75rem',
+                    padding: '10px',
+                    resize: 'vertical',
+                    outline: 'none',
+                  }}
+                />
+              </div>
+
+              {/* Action Buttons */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '16px' }}>
+                <button
+                  type="button"
+                  onClick={handleSaveFacebook}
+                  disabled={fbSaving}
+                  style={{
+                    padding: '8px 20px',
+                    background: 'rgba(0,243,255,0.15)',
+                    border: '1px solid var(--accent-cyan)',
+                    color: 'var(--accent-cyan)',
+                    fontFamily: 'Share Tech Mono',
+                    fontSize: '0.8rem',
+                    cursor: fbSaving ? 'not-allowed' : 'pointer',
+                    borderRadius: '2px',
+                    letterSpacing: '1px',
+                    fontWeight: 'bold',
+                  }}
+                >
+                  {fbSaving ? 'ĐANG LƯU...' : 'LƯU CẤU HÌNH'}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleTriggerFacebook}
+                  disabled={fbTesting}
+                  style={{
+                    padding: '8px 20px',
+                    background: 'rgba(187, 0, 255, 0.15)',
+                    border: '1px solid var(--accent-purple)',
+                    color: 'var(--accent-purple)',
+                    fontFamily: 'Share Tech Mono',
+                    fontSize: '0.8rem',
+                    cursor: fbTesting ? 'not-allowed' : 'pointer',
+                    borderRadius: '2px',
+                    letterSpacing: '1px',
+                    fontWeight: 'bold',
+                  }}
+                >
+                  {fbTesting ? 'ĐANG QUÉT...' : 'QUÉT NGAY (SCAN NOW)'}
+                </button>
+
+                {fbTestResult && (
+                  <span style={{
+                    fontSize: '0.78rem',
+                    fontFamily: 'Share Tech Mono',
+                    color: fbTestResult.includes('Lỗi') || fbTestResult.includes('Error') ? 'var(--accent-pink)' : 'var(--accent-green)',
+                  }}>
+                    {fbTestResult}
+                  </span>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* ── Tab Content: ZALO AI AGENT ─────────────────────────────────────── */}
+      {activePlatform === 'zalo' && (
+        <div style={{
+          background: 'rgba(5, 10, 20, 0.85)',
+          border: '1px solid rgba(0, 104, 255, 0.3)',
+          boxShadow: '0 0 20px rgba(0, 104, 255, 0.12)',
+          borderRadius: '4px',
+          padding: '24px',
+        }}>
+          <SectionHeader
+            icon={<SciFiZaloIcon size={20} color="#0068FF" />}
+            title="ZALO AI AGENT (OFFICIAL ACCOUNT & PERSONAL)"
+            subtitle="Tự động trả lời tin nhắn Zalo OA, chăm sóc khách hàng và đồng bộ lịch hẹn"
+            badge={<SciFiPulseBadge label="IN DEVELOPMENT" color="#0068FF" />}
+          />
+
+          <div style={{ padding: '30px 20px', textAlign: 'center', color: 'var(--text-secondary)' }}>
+            <div style={{ width: '50px', height: '50px', margin: '0 auto 16px', borderRadius: '50%', background: 'rgba(0, 104, 255, 0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #0068FF' }}>
+              <SciFiZaloIcon size={28} color="#0068FF" />
+            </div>
+            <h3 style={{ color: '#fff', fontFamily: 'Share Tech Mono', letterSpacing: '2px', marginBottom: '8px' }}>
+              ZALO AI AGENT INTEGRATION GATEWAY
+            </h3>
+            <p style={{ maxWidth: '600px', margin: '0 auto 20px', fontSize: '0.82rem', lineHeight: '1.6' }}>
+              Module Zalo đang được phát triển để hỗ trợ kết nối Zalo Official Account (Zalo OA API) và Zalo Web Session. Cho phép AI Agent tự động chăm sóc khách hàng, tiếp nhận yêu cầu và xếp lịch hẹn tự động.
+            </p>
+            <div style={{ display: 'inline-flex', gap: '8px', padding: '6px 14px', background: 'rgba(0, 104, 255, 0.08)', border: '1px solid rgba(0, 104, 255, 0.3)', borderRadius: '3px', fontSize: '0.75rem', fontFamily: 'Share Tech Mono', color: '#0068FF' }}>
+              STATUS: ARCHITECTURE DESIGNED ➔ BACKEND PIPELINE READY
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Tab Content: GMAIL AI ASSISTANT ─────────────────────────────────── */}
+      {activePlatform === 'gmail' && (
+        <div style={{
+          background: 'rgba(5, 10, 20, 0.85)',
+          border: '1px solid rgba(234, 67, 53, 0.3)',
+          boxShadow: '0 0 20px rgba(234, 67, 53, 0.12)',
+          borderRadius: '4px',
+          padding: '24px',
+        }}>
+          <SectionHeader
+            icon={<SciFiGmailIcon size={20} color="#EA4335" />}
+            title="GMAIL AI ASSISTANT & SMART INBOX"
+            subtitle="Tự động phân loại email quan trọng, phát hiện lịch hẹn và tạo bản nháp thư thông minh"
+            badge={<SciFiPulseBadge label="IN DEVELOPMENT" color="#EA4335" />}
+          />
+
+          <div style={{ padding: '30px 20px', textAlign: 'center', color: 'var(--text-secondary)' }}>
+            <div style={{ width: '50px', height: '50px', margin: '0 auto 16px', borderRadius: '50%', background: 'rgba(234, 67, 53, 0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #EA4335' }}>
+              <SciFiGmailIcon size={28} color="#EA4335" />
+            </div>
+            <h3 style={{ color: '#fff', fontFamily: 'Share Tech Mono', letterSpacing: '2px', marginBottom: '8px' }}>
+              GMAIL AI ASSISTANT GATEWAY
+            </h3>
+            <p style={{ maxWidth: '600px', margin: '0 auto 20px', fontSize: '0.82rem', lineHeight: '1.6' }}>
+              Kết nối Google OAuth2 & Gmail IMAP/API: AI Agent tự động đọc email mới, trích xuất tóm tắt ngắn gọn báo cáo về Telegram, và tự động soạn thảo email phản hồi chuyên nghiệp.
+            </p>
+            <div style={{ display: 'inline-flex', gap: '8px', padding: '6px 14px', background: 'rgba(234, 67, 53, 0.08)', border: '1px solid rgba(234, 67, 53, 0.3)', borderRadius: '3px', fontSize: '0.75rem', fontFamily: 'Share Tech Mono', color: '#EA4335' }}>
+              STATUS: OAUTH2 HOOKS PREPARED
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Tab Content: TIKTOK SOCIAL AGENT ─────────────────────────────────── */}
+      {activePlatform === 'tiktok' && (
+        <div style={{
+          background: 'rgba(5, 10, 20, 0.85)',
+          border: '1px solid rgba(0, 242, 254, 0.3)',
+          boxShadow: '0 0 20px rgba(0, 242, 254, 0.12)',
+          borderRadius: '4px',
+          padding: '24px',
+        }}>
+          <SectionHeader
+            icon={<SciFiTikTokIcon size={20} color="#00F2FE" />}
+            title="TIKTOK SOCIAL AUTOMATION AGENT"
+            subtitle="Tự động phản hồi bình luận video, trả lời Direct Messages và phân tích tương tác kênh"
+            badge={<SciFiPulseBadge label="IN DEVELOPMENT" color="#00F2FE" />}
+          />
+
+          <div style={{ padding: '30px 20px', textAlign: 'center', color: 'var(--text-secondary)' }}>
+            <div style={{ width: '50px', height: '50px', margin: '0 auto 16px', borderRadius: '50%', background: 'rgba(0, 242, 254, 0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #00F2FE' }}>
+              <SciFiTikTokIcon size={28} color="#00F2FE" />
+            </div>
+            <h3 style={{ color: '#fff', fontFamily: 'Share Tech Mono', letterSpacing: '2px', marginBottom: '8px' }}>
+              TIKTOK SOCIAL AGENT GATEWAY
+            </h3>
+            <p style={{ maxWidth: '600px', margin: '0 auto 20px', fontSize: '0.82rem', lineHeight: '1.6' }}>
+              Tự động hóa kênh TikTok: Phản hồi bình luận của khán giả theo kịch bản thông minh của AI, phát hiện câu hỏi của khách hàng và tự động gửi tin nhắn chào đón khi có tương tác mới.
+            </p>
+            <div style={{ display: 'inline-flex', gap: '8px', padding: '6px 14px', background: 'rgba(0, 242, 254, 0.08)', border: '1px solid rgba(0, 242, 254, 0.3)', borderRadius: '3px', fontSize: '0.75rem', fontFamily: 'Share Tech Mono', color: '#00F2FE' }}>
+              STATUS: WEB AUTOMATION HOOK READY
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Tab Content: YOUTUBE COMMUNITY AGENT ─────────────────────────────── */}
+      {activePlatform === 'youtube' && (
+        <div style={{
+          background: 'rgba(5, 10, 20, 0.85)',
+          border: '1px solid rgba(255, 0, 51, 0.3)',
+          boxShadow: '0 0 20px rgba(255, 0, 51, 0.12)',
+          borderRadius: '4px',
+          padding: '24px',
+        }}>
+          <SectionHeader
+            icon={<SciFiYouTubeIcon size={20} color="#FF0033" />}
+            title="YOUTUBE COMMUNITY & COMMENT AGENT"
+            subtitle="Tự động quản lý bình luận video, lọc spam và tương tác chăm sóc cộng đồng khán giả"
+            badge={<SciFiPulseBadge label="IN DEVELOPMENT" color="#FF0033" />}
+          />
+
+          <div style={{ padding: '30px 20px', textAlign: 'center', color: 'var(--text-secondary)' }}>
+            <div style={{ width: '50px', height: '50px', margin: '0 auto 16px', borderRadius: '50%', background: 'rgba(255, 0, 51, 0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #FF0033' }}>
+              <SciFiYouTubeIcon size={28} color="#FF0033" />
+            </div>
+            <h3 style={{ color: '#fff', fontFamily: 'Share Tech Mono', letterSpacing: '2px', marginBottom: '8px' }}>
+              YOUTUBE COMMUNITY AGENT GATEWAY
+            </h3>
+            <p style={{ maxWidth: '600px', margin: '0 auto 20px', fontSize: '0.82rem', lineHeight: '1.6' }}>
+              Tích hợp YouTube Data API v3: Tự động phát hiện bình luận mới trên các video, trả lời giải đáp thắc mắc người xem, lọc bỏ bình luận độc hại và gửi báo cáo phân tích về Telegram.
+            </p>
+            <div style={{ display: 'inline-flex', gap: '8px', padding: '6px 14px', background: 'rgba(255, 0, 51, 0.08)', border: '1px solid rgba(255, 0, 51, 0.3)', borderRadius: '3px', fontSize: '0.75rem', fontFamily: 'Share Tech Mono', color: '#FF0033' }}>
+              STATUS: API PIPELINE READY
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── noVNC Interactive Fullscreen Modal Portal ──────────────────────── */}
+      {showVncModal && createPortal(
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          background: 'rgba(0, 0, 0, 0.88)',
+          backdropFilter: 'blur(10px)',
+          zIndex: 99999,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '16px',
+          boxSizing: 'border-box',
+          animation: 'fadeIn 0.2s ease-out',
+        }}>
+          <div style={{
+            width: '100%',
+            maxWidth: '1280px',
+            height: '92vh',
+            background: '#0a0d14',
+            border: '1px solid var(--accent-purple)',
+            borderRadius: '6px',
+            boxShadow: '0 0 35px rgba(187, 0, 255, 0.35)',
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
+          }}>
+            {/* Modal Header Bar */}
+            <div style={{
+              padding: '12px 20px',
+              background: 'rgba(187, 0, 255, 0.12)',
+              borderBottom: '1px solid rgba(187, 0, 255, 0.3)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <SciFiBrowserLaunchIcon size={18} color="var(--accent-purple)" />
+                <span style={{
+                  color: '#fff',
+                  fontFamily: 'Share Tech Mono',
+                  fontSize: '0.9rem',
+                  letterSpacing: '1.5px',
+                  fontWeight: 'bold',
+                }}>
+                  SERVER CHROMIUM BROWSER CONSOLE (noVNC)
+                </span>
+                <span style={{
+                  fontSize: '0.7rem',
+                  padding: '2px 8px',
+                  borderRadius: '2px',
+                  background: 'rgba(0, 255, 102, 0.15)',
+                  color: 'var(--accent-green)',
+                  border: '1px solid var(--accent-green)',
+                  fontFamily: 'Share Tech Mono',
+                }}>
+                  ● LIVE
+                </span>
+              </div>
+
+              {/* Header Action Buttons */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <button
+                  type="button"
+                  onClick={handleSaveBrowserSession}
+                  disabled={vncIsSaving}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    padding: '6px 14px',
+                    background: 'rgba(0, 255, 102, 0.2)',
+                    border: '1px solid var(--accent-green)',
+                    borderRadius: '3px',
+                    color: 'var(--accent-green)',
+                    fontFamily: 'Share Tech Mono',
+                    fontSize: '0.78rem',
+                    letterSpacing: '1px',
+                    fontWeight: 'bold',
+                    cursor: vncIsSaving ? 'not-allowed' : 'pointer',
+                    boxShadow: '0 0 10px rgba(0, 255, 102, 0.25)',
+                  }}
+                >
+                  {vncIsSaving ? <SciFiChronoSpinnerIcon size={14} color="var(--accent-green)" /> : <SciFiCheckCircleIcon size={14} color="var(--accent-green)" />}
+                  {vncIsSaving ? 'ĐANG LƯU COOKIES...' : 'LƯU PHIÊN & ĐÓNG'}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleCloseVncModal}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    width: '32px',
+                    height: '32px',
+                    background: 'rgba(255, 0, 85, 0.15)',
+                    border: '1px solid var(--accent-pink)',
+                    borderRadius: '3px',
+                    color: 'var(--accent-pink)',
+                    cursor: 'pointer',
+                  }}
+                  title="Close without saving"
+                >
+                  <SciFiCloseIcon size={16} color="var(--accent-pink)" />
+                </button>
+              </div>
+            </div>
+
+            {/* noVNC Iframe */}
+            <div style={{ flex: 1, position: 'relative', background: '#000' }}>
+              {vncUrl && (
+                <iframe
+                  src={vncUrl}
+                  title="Server Browser noVNC"
+                  style={{
+                    width: '100%',
+                    height: '100%',
+                    border: 'none',
+                    display: 'block',
+                  }}
+                  allow="clipboard-read; clipboard-write; fullscreen"
+                />
+              )}
+            </div>
+
+            {/* Modal Footer Bar */}
+            <div style={{
+              padding: '8px 16px',
+              background: 'rgba(5, 10, 20, 0.95)',
+              borderTop: '1px solid rgba(187, 0, 255, 0.2)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              fontSize: '0.72rem',
+              color: 'var(--text-secondary)',
+              fontFamily: 'Share Tech Mono',
+            }}>
+              <span>
+                💡 Sau khi đăng nhập Facebook thành công, hãy bấm <strong style={{ color: 'var(--accent-green)' }}>[LƯU PHIÊN & ĐÓNG]</strong> để hệ thống tự động trích xuất Cookies.
+              </span>
+              {vncStatusMsg && (
+                <span style={{ color: 'var(--accent-cyan)' }}>
+                  {vncStatusMsg}
+                </span>
+              )}
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+    </div>
+  );
+}

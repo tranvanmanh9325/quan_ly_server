@@ -3,7 +3,7 @@ const en = {
     overview: "Overview", processes: "Processes", services: "Services",
     fileManager: "File Manager", dockerContainers: "Docker Containers",
     globalMap: "Global Map", terminal: "Terminal Console",
-    security: "Security & Logs", settings: "Settings",
+    security: "Security & Logs", aiAgents: "AI Agents", settings: "Settings",
   },
   header: {
     systemOnline: "SYSTEM STATUS: ONLINE", criticalAlert: "CRITICAL ALERT",

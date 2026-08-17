@@ -3,7 +3,7 @@ const zh = {
     overview: "概览", processes: "进程", services: "服务",
     fileManager: "文件管理器", dockerContainers: "Docker容器",
     globalMap: "全球地图", terminal: "终端控制台",
-    security: "安全与日志", settings: "设置",
+    security: "安全与日志", aiAgents: "AI 代理", settings: "设置",
   },
   header: {
     systemOnline: "系统状态：在线", criticalAlert: "严重警报",

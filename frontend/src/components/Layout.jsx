@@ -5,7 +5,7 @@ import {
   SciFiDashboardIcon, SciFiPulseIcon, SciFiServerRackIcon, 
   SciFiCyberLockIcon, SciFiPulseBadge, SciFiRefreshIcon, SciFiConsoleIcon,
   SciFiFolderIcon, SciFiContainerIcon, SciFiGlobeIcon, SciFiSettingsIcon,
-  SciFiLogoIcon
+  SciFiLogoIcon, SciFiBotIcon
 } from './SciFiIcons';
 import '../App.css';
 import '../index.css';
@@ -390,6 +390,11 @@ export default function Layout({ isAlerting, context }) {
           <NavLink to="/security" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
             <SciFiCyberLockIcon size={20} />
             <span>{t('nav.security')}</span>
+          </NavLink>
+
+          <NavLink to="/ai-agents" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+            <SciFiBotIcon size={20} />
+            <span>{t('nav.aiAgents') || 'AI Agents'}</span>
           </NavLink>
 
           <NavLink to="/settings" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>

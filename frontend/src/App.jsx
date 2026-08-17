@@ -1,22 +1,31 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, Suspense, lazy } from 'react';
 import axios from 'axios';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import Layout from './components/Layout';
-import LoginPage from './pages/LoginPage';
 import ProtectedRoute from './components/ProtectedRoute';
-import DashboardPage from './pages/DashboardPage';
-import ProcessesPage from './pages/ProcessesPage';
-import ServicesPage from './pages/ServicesPage';
-import SecurityPage from './pages/SecurityPage';
-import FileManagerPage from './pages/FileManagerPage';
-import ContainersPage from './pages/ContainersPage';
-import TerminalPage from './pages/TerminalPage';
-import WorldMapPage from './pages/WorldMapPage';
 import ErrorBoundary from './components/ErrorBoundary';
 import SpaceInteractionLayer from './components/SpaceInteractionLayer';
-import SettingsPage from './pages/SettingsPage';
 import { loadSettings } from './utils/settings';
 import { getToken, isAuthenticated } from './utils/auth';
+
+// ─── Code Splitting: Lazy-load individual routes to reduce initial bundle size ─
+const LoginPage       = lazy(() => import('./pages/LoginPage'));
+const DashboardPage   = lazy(() => import('./pages/DashboardPage'));
+const ProcessesPage   = lazy(() => import('./pages/ProcessesPage'));
+const ServicesPage    = lazy(() => import('./pages/ServicesPage'));
+const SecurityPage    = lazy(() => import('./pages/SecurityPage'));
+const FileManagerPage = lazy(() => import('./pages/FileManagerPage'));
+const ContainersPage  = lazy(() => import('./pages/ContainersPage'));
+const TerminalPage    = lazy(() => import('./pages/TerminalPage'));
+const WorldMapPage    = lazy(() => import('./pages/WorldMapPage'));
+const SettingsPage    = lazy(() => import('./pages/SettingsPage'));
+
+// Route loading spinner fallback
+const RouteLoader = () => (
+  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '60vh', color: '#94a3b8' }}>
+    <div style={{ width: '32px', height: '32px', border: '3px solid rgba(255,255,255,0.1)', borderTopColor: '#3b82f6', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+  </div>
+);
 // Register the global axios 401 interceptor once at app startup (side-effect only import)
 import './utils/axiosInterceptor';
 import './index.css';
@@ -311,27 +320,29 @@ function App() {
     <ErrorBoundary>
       <SpaceInteractionLayer />
       <BrowserRouter>
-        <Routes>
-          <Route path="/login" element={<LoginPage />} />
-          <Route
-            path="/"
-            element={
-              <ProtectedRoute>
-                <Layout isAlerting={isAlerting} context={context} />
-              </ProtectedRoute>
-            }
-          >
-            <Route index element={<DashboardPage />} />
-            <Route path="processes" element={<ProcessesPage />} />
-            <Route path="services" element={<ServicesPage />} />
-            <Route path="files" element={<FileManagerPage />} />
-            <Route path="containers" element={<ContainersPage />} />
-            <Route path="map" element={<WorldMapPage />} />
-            <Route path="terminal" element={<TerminalPage />} />
-            <Route path="security" element={<SecurityPage />} />
-            <Route path="settings" element={<SettingsPage />} />
-          </Route>
-        </Routes>
+        <Suspense fallback={<RouteLoader />}>
+          <Routes>
+            <Route path="/login" element={<LoginPage />} />
+            <Route
+              path="/"
+              element={
+                <ProtectedRoute>
+                  <Layout isAlerting={isAlerting} context={context} />
+                </ProtectedRoute>
+              }
+            >
+              <Route index element={<DashboardPage />} />
+              <Route path="processes" element={<ProcessesPage />} />
+              <Route path="services" element={<ServicesPage />} />
+              <Route path="files" element={<FileManagerPage />} />
+              <Route path="containers" element={<ContainersPage />} />
+              <Route path="map" element={<WorldMapPage />} />
+              <Route path="terminal" element={<TerminalPage />} />
+              <Route path="security" element={<SecurityPage />} />
+              <Route path="settings" element={<SettingsPage />} />
+            </Route>
+          </Routes>
+        </Suspense>
       </BrowserRouter>
     </ErrorBoundary>
   );

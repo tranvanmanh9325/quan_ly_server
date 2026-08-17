@@ -1657,6 +1657,29 @@ class FacebookService:
 
                     page: Page = await ctx.new_page()
 
+                    # Performance optimization: Route interception to abort heavy media, video streams, fonts and trackers during scan
+                    async def _filter_scan_routes(route):
+                        req = route.request
+                        if req.resource_type in ["media", "font"] or any(
+                            tracker in req.url
+                            for tracker in [
+                                "facebook.com/tr/",
+                                "connect.facebook.net",
+                                "pixel",
+                                "doubleclick",
+                                "google-analytics",
+                                "clarity.ms",
+                            ]
+                        ):
+                            await route.abort()
+                        else:
+                            await route.continue_()
+
+                    try:
+                        await page.route("**/*", _filter_scan_routes)
+                    except Exception:
+                        pass
+
                     try:
                         logger.info("[FB-Service] Navigating to Messenger inbox...")
                         try:

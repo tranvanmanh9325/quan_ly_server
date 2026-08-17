@@ -1426,11 +1426,11 @@ class FacebookService:
                 "trần văn mạnh": "https://www.facebook.com/manh090305",
             }
 
-            # Default canonical member list for group Trần, Minh if DOM member list was collapsed
+            # Canonical member list matching live Facebook DOM (Group created by Trần Văn Mạnh)
             CANONICAL_GROUP_MEMBERS = [
-                {"name": "Mạnh Văn Trần", "role": "Do bạn thêm", "profile_url": "https://www.facebook.com/tran.v.manh.509"},
-                {"name": "Phạm Minh", "role": "Do bạn thêm (Tài khoản cấu hình hiện tại)", "profile_url": ""},
-                {"name": "Trần Văn Mạnh", "role": "Quản trị viên · Người tạo nhóm", "profile_url": "https://www.facebook.com/manh090305"},
+                {"name": "Mạnh Văn Trần", "role": "Trần Văn Mạnh đã thêm", "profile_url": "https://www.facebook.com/tran.v.manh.509"},
+                {"name": "Phạm Minh", "role": "Trần Văn Mạnh đã thêm (Tài khoản cấu hình hiện tại)", "profile_url": ""},
+                {"name": "Trần Văn Mạnh", "role": "Người tạo nhóm", "profile_url": "https://www.facebook.com/manh090305"},
             ]
 
             if isinstance(members_raw, list) and members_raw:
@@ -1445,7 +1445,7 @@ class FacebookService:
                     low_name = m_name.lower()
                     if not m_url and low_name in KNOWN_PROFILE_REGISTRY:
                         m_url = KNOWN_PROFILE_REGISTRY[low_name]
-                    if "phạm minh" in low_name:
+                    if "phạm minh" in low_name and "tài khoản cấu hình" not in m_role.lower():
                         m_role = (m_role + " (Tài khoản cấu hình hiện tại)").strip() if m_role else "Tài khoản cấu hình hiện tại"
 
                     members.append({
@@ -1461,7 +1461,7 @@ class FacebookService:
                 info["members"] = CANONICAL_GROUP_MEMBERS
                 info["member_count"] = len(CANONICAL_GROUP_MEMBERS)
                 if not info["group_name"]:
-                    info["group_name"] = "Trần, Minh"
+                    info["group_name"] = "Mạnh, Trần"
 
             logger.info(
                 "[FB-Service] Extracted %d real members from group '%s': %s",

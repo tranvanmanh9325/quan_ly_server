@@ -810,7 +810,8 @@ Hệ thống hiện ghi nhận *1 nhóm*:
                     role_icon = "👑 " if any(k in role.lower() for k in ["quản trị", "admin", "tạo nhóm", "creator"]) else "👤 "
                     
                     if is_self:
-                        role_str = " — _Do bạn thêm (Tài khoản cấu hình hiện tại)_"
+                        clean_role = role.replace("(Tài khoản cấu hình hiện tại)", "").strip()
+                        role_str = f" — _{clean_role} (Tài khoản cấu hình hiện tại)_" if clean_role else " — _(Tài khoản cấu hình hiện tại)_"
                         member_line = f"{num} {role_icon}*{name}*{role_str}"
                     else:
                         role_str = f" — _{role}_" if role else ""

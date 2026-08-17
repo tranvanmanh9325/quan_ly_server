@@ -8,6 +8,7 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
+import psycopg
 
 from app.config import settings
 
@@ -32,6 +33,24 @@ class RtkCompressor:
     def __init__(self):
         self.total_chars_saved: int = 0
         self.total_compressions: int = 0
+        # Pending delta since last DB persist — avoids writing unchanged data
+        self._pending_chars_saved: int = 0
+        self._pending_compressions: int = 0
+
+    def load(self, chars_saved: int, compressions: int) -> None:
+        """Restore persisted counters at startup (called by LlmRouter after DB load)."""
+        self.total_chars_saved = max(0, chars_saved)
+        self.total_compressions = max(0, compressions)
+        # Reset pending delta — these values are already in DB
+        self._pending_chars_saved = 0
+        self._pending_compressions = 0
+
+    def consume_pending_delta(self) -> tuple[int, int]:
+        """Returns and resets the unsaved delta since last persist cycle."""
+        delta = (self._pending_chars_saved, self._pending_compressions)
+        self._pending_chars_saved = 0
+        self._pending_compressions = 0
+        return delta
 
     def compress(self, text: str, max_chars: int = 2500, max_lines: int = 35) -> str:
         if not text or not isinstance(text, str):
@@ -67,6 +86,9 @@ class RtkCompressor:
         saved = max(0, orig_len - len(cleaned))
         self.total_chars_saved += saved
         self.total_compressions += 1
+        # Track unsaved delta for the periodic DB persist cycle
+        self._pending_chars_saved += saved
+        self._pending_compressions += 1
         return cleaned
 
     @property
@@ -431,3 +453,60 @@ class LlmRouter:
             },
             "providers": providers_info,
         }
+
+    async def load_stats_from_db(self) -> None:
+        """Loads persisted RTK stats from DB into the in-memory compressor at startup."""
+        try:
+            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        "SELECT total_chars_saved, total_compressions FROM rtk_stats WHERE id = 1"
+                    )
+                    row = await cur.fetchone()
+                    if row:
+                        chars_saved, compressions = row[0], row[1]
+                        self.rtk.load(int(chars_saved), int(compressions))
+                        logger.info(
+                            "[9Router] RTK stats restored from DB: compressions=%d, chars_saved=%d, tokens_saved≈%d",
+                            self.rtk.total_compressions,
+                            self.rtk.total_chars_saved,
+                            self.rtk.estimated_tokens_saved,
+                        )
+        except Exception as e:
+            logger.warning("[9Router] Could not load RTK stats from DB (non-fatal): %s", e)
+
+    async def save_stats_to_db(self) -> None:
+        """Persists RTK stats delta to DB using UPSERT with atomic increment.
+
+        Uses ADD-delta approach (total_chars_saved + delta) instead of SET to avoid
+        race conditions if multiple coroutines call this concurrently.
+        """
+        delta_chars, delta_compressions = self.rtk.consume_pending_delta()
+        # Nothing new to write — skip the round-trip
+        if delta_chars == 0 and delta_compressions == 0:
+            return
+        try:
+            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        """
+                        INSERT INTO rtk_stats (id, total_chars_saved, total_compressions, updated_at)
+                        VALUES (1, %s, %s, NOW())
+                        ON CONFLICT (id) DO UPDATE SET
+                            total_chars_saved  = rtk_stats.total_chars_saved  + %s,
+                            total_compressions = rtk_stats.total_compressions + %s,
+                            updated_at         = NOW()
+                        """,
+                        (delta_chars, delta_compressions, delta_chars, delta_compressions),
+                    )
+                    await conn.commit()
+            logger.debug(
+                "[9Router] RTK stats persisted: +%d chars, +%d compressions",
+                delta_chars, delta_compressions,
+            )
+        except Exception as e:
+            # On failure, return the delta back to pending so it retries next cycle
+            self.rtk._pending_chars_saved += delta_chars
+            self.rtk._pending_compressions += delta_compressions
+            logger.warning("[9Router] Failed to persist RTK stats to DB: %s", e)
+

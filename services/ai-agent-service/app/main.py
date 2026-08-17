@@ -67,6 +67,24 @@ async def appointment_reminder_loop(appointment_service: AppointmentService, tel
         await asyncio.sleep(60)
 
 
+async def rtk_stats_persist_loop(llm_router: LlmRouter):
+    """Background task: persists RTK compression stats to DB every 30 seconds.
+
+    Only writes when there is a pending delta (skips no-op round-trips).
+    On failure, the delta is returned to the pending buffer so it retries next cycle.
+    """
+    logger.info("[RTK-Persist] Started RTK stats persistence loop (interval: 30s).")
+    while True:
+        try:
+            await asyncio.sleep(30)
+            await llm_router.save_stats_to_db()
+        except asyncio.CancelledError:
+            logger.info("[RTK-Persist] Persistence loop cancelled.")
+            break
+        except Exception as e:
+            logger.error("[RTK-Persist] Unexpected error in persist loop: %s", e)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting up AI Agent & 9Router Service (Python)...")
@@ -75,6 +93,9 @@ async def lifespan(app: FastAPI):
     llm_router = LlmRouter()
     ssh_client = SshClient()
     message_cache = FacebookMessageCache()
+
+    # Load persisted RTK stats from DB so the counter survives container restarts
+    await llm_router.load_stats_from_db()
 
     # 2. Initialize domain services with bidirectional wiring
     appointment_service = AppointmentService(llm_router)
@@ -103,6 +124,7 @@ async def lifespan(app: FastAPI):
     telegram_task = asyncio.create_task(telegram_bot.start_polling())
     fb_scan_task = asyncio.create_task(facebook_periodic_scan_loop(fb_service))
     reminder_task = asyncio.create_task(appointment_reminder_loop(appointment_service, telegram_bot))
+    rtk_persist_task = asyncio.create_task(rtk_stats_persist_loop(llm_router))
 
     yield
 
@@ -111,10 +133,14 @@ async def lifespan(app: FastAPI):
     telegram_task.cancel()
     fb_scan_task.cancel()
     reminder_task.cancel()
+    rtk_persist_task.cancel()
     try:
-        await asyncio.gather(telegram_task, fb_scan_task, reminder_task, return_exceptions=True)
+        await asyncio.gather(telegram_task, fb_scan_task, reminder_task, rtk_persist_task, return_exceptions=True)
     except Exception:
         pass
+    # Persist any remaining RTK delta before shutdown
+    await llm_router.save_stats_to_db()
+    logger.info("[RTK-Persist] Final RTK stats flushed to DB on shutdown.")
     # Gracefully close the autonomous browser context
     await browser_agent.close()
 

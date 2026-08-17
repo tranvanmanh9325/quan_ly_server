@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime, timezone, timedelta
 import json
 import logging
 from typing import Any, Dict, List, Optional, Tuple
@@ -9,6 +10,7 @@ from app.core.ssh_client import SshClient
 from app.services.message_cache import FacebookMessageCache
 
 logger = logging.getLogger(__name__)
+VN_TZ = timezone(timedelta(hours=7))
 
 # How many ReAct loop iterations the agent may take before giving up
 MAX_AGENT_ITERATIONS = 8
@@ -63,10 +65,13 @@ class AiAgentService:
     # ──────────────────────────────────────────────────────────────────────────
 
     def _build_system_prompt(self) -> str:
-        return """
+        now_vn = datetime.now(VN_TZ).strftime("%H:%M:%S ngày %d/%m/%Y (Giờ Việt Nam - ICT/UTC+7)")
+        return f"""
 Bạn là "Tiểu Bảo Bảo" — Trợ lý AI Tự Hành cấp cao (Senior Autonomous AI Agent & DevOps Engineer), được trang bị tư duy phản biện sắc bén (Critical Thinking), khả năng tự phản biện nội tâm (Self-Reflection), và cơ chế kiểm chứng chéo (Chain of Verification) trước khi thực thi hoặc kết luận.
 
 ━━━ 1. THÔNG TIN HỆ THỐNG ━━━
+- Thời gian hệ thống hiện tại: `{now_vn}`
+- Múi giờ chuẩn: Việt Nam (ICT / UTC+7) — Mọi mốc thời gian hiển thị cho người dùng BẮT BUỘC theo Giờ Việt Nam.
 - Hostname: `kirito-server` (Ubuntu Linux)
 - Thư mục dự án: `/home/kirito/quan_ly_server`
 - Microservices: `dashboard_frontend` (5173), `dashboard_metrics_service` (8082), `dashboard_auth_service` (8081), `dashboard_file_service` (8083), `dashboard_ai_agent` (8084), `dashboard_db` (5432)
@@ -641,6 +646,21 @@ Hệ thống hiện ghi nhận *1 nhóm*:
     # Tool Execution
     # ──────────────────────────────────────────────────────────────────────────
 
+    def _format_vn_time(self, dt: Optional[Any]) -> str:
+        """Converts UTC or naive database datetime to Vietnam Timezone (ICT, UTC+7)."""
+        if not dt:
+            return "chưa quét"
+        try:
+            if isinstance(dt, str):
+                dt = datetime.fromisoformat(dt)
+            if isinstance(dt, datetime):
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                return dt.astimezone(VN_TZ).strftime("%d/%m/%Y %H:%M")
+        except Exception:
+            pass
+        return str(dt)
+
     async def _execute_tool(
         self,
         tool_name: str,
@@ -732,7 +752,7 @@ Hệ thống hiện ghi nhận *1 nhóm*:
                 ]
                 for idx, g in enumerate(groups, 1):
                     scanned = g.get("last_scanned_at")
-                    scanned_str = scanned.strftime("%d/%m/%Y %H:%M") if scanned else "chưa quét"
+                    scanned_str = self._format_vn_time(scanned)
                     g_name = g.get("group_name", "Nhóm không tên")
                     m_count = g.get("member_count", 0)
                     lines.append(
@@ -762,7 +782,7 @@ Hệ thống hiện ghi nhận *1 nhóm*:
                         "_Dữ liệu sẽ được tự động cập nhật trong chu kỳ quét tiếp theo._"
                     )
                 scanned = group.get("last_scanned_at")
-                scanned_str = scanned.strftime("%d/%m/%Y %H:%M") if scanned else "chưa rõ"
+                scanned_str = self._format_vn_time(scanned)
                 num_emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
                 lines = [
                     f"👥 *THÀNH VIÊN NHÓM: {group.get('group_name', 'Không tên')}*",

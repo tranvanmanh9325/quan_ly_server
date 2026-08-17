@@ -395,7 +395,8 @@ export default function AiAgentsPage() {
   ];
 
   return (
-    <div style={{ padding: '24px', maxWidth: '1280px', margin: '0 auto' }}>
+    <div style={{ padding: '24px 28px', overflowY: 'auto', height: '100%', boxSizing: 'border-box' }}>
+      <div style={{ maxWidth: '1280px', margin: '0 auto', paddingBottom: '60px' }}>
       
       {/* ── Page Header ───────────────────────────────────────────────────── */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '24px' }}>
@@ -1042,6 +1043,7 @@ export default function AiAgentsPage() {
         document.body
       )}
 
+      </div>
     </div>
   );
 }

@@ -235,10 +235,9 @@ class LlmRouter:
     def __init__(self):
         self.rtk = RtkCompressor()
         self.providers: Dict[str, Provider] = {}
-        # High-performance HTTP client with persistent connection pool and HTTP/2
+        # High-performance HTTP client with persistent keepalive connection pool
         self._http_client = httpx.AsyncClient(
             timeout=120.0,
-            http2=True,
             limits=httpx.Limits(
                 max_keepalive_connections=20,
                 max_connections=50,

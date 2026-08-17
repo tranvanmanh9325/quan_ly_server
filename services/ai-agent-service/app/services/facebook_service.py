@@ -1543,27 +1543,43 @@ class FacebookService:
                     if not rows:
                         return None
 
-                    # 1. Exact or substring match
+                    # 1. Exact or substring match on group_name
                     q_lower = group_name_query.strip().lower()
                     for r in rows:
-                        g_name_lower = str(r["group_name"]).lower()
+                        g_name_lower = str(r.get("group_name", "")).lower()
                         if q_lower in g_name_lower or g_name_lower in q_lower:
                             return dict(r)
 
-                    # 2. Token-based match (ignores commas, hyphens, extra spaces)
+                    # 2. Token-based match across group_name AND all member names
                     q_tokens = set(re.findall(r"\w+", q_lower))
+                    meaningful_q_tokens = {
+                        w for w in q_tokens if w not in {"nhóm", "group", "chat", "đoạn", "xem", "thành", "viên", "các"}
+                    } or q_tokens
+
                     best_match = None
                     max_overlap = 0
 
                     for r in rows:
-                        g_tokens = set(re.findall(r"\w+", str(r["group_name"]).lower()))
-                        overlap = len(q_tokens & g_tokens)
+                        members_list = r.get("members", [])
+                        if isinstance(members_list, str):
+                            try:
+                                members_list = json.loads(members_list)
+                            except Exception:
+                                members_list = []
+                        member_names = " ".join([str(m.get("name", "")) for m in members_list])
+                        pool_text = f"{r.get('group_name', '')} {member_names}".lower()
+                        g_tokens = set(re.findall(r"\w+", pool_text))
+                        overlap = len(meaningful_q_tokens & g_tokens)
                         if overlap > max_overlap:
                             max_overlap = overlap
                             best_match = dict(r)
 
                     if best_match and max_overlap > 0:
                         return best_match
+
+                    # 3. If only 1 group exists in DB, return that group
+                    if len(rows) == 1:
+                        return dict(rows[0])
         except Exception as e:
             logger.warning("[FB-Service] Failed to get group members from DB: %s", e)
         return None

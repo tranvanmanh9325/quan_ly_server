@@ -274,6 +274,7 @@ export default function AiAgentsPage() {
 
   // ── noVNC Modal state ─────────────────────────────────────────────────────
   const [showVncModal, setShowVncModal] = useState(false);
+  const [vncPlatform, setVncPlatform] = useState('facebook'); // 'facebook' | 'tiktok'
   const [vncUrl, setVncUrl] = useState('');
   const [vncStatusMsg, setVncStatusMsg] = useState('');
   const [vncIsLaunching, setVncIsLaunching] = useState(false);
@@ -284,7 +285,8 @@ export default function AiAgentsPage() {
   useEffect(() => {
     if (showVncModal) {
       heartbeatTimerRef.current = setInterval(() => {
-        axios.post('/api/facebook/vnc-heartbeat').catch(() => {});
+        const apiPrefix = vncPlatform === 'tiktok' ? '/api/tiktok' : '/api/facebook';
+        axios.post(`${apiPrefix}/vnc-heartbeat`).catch(() => {});
       }, 15000);
     } else {
       if (heartbeatTimerRef.current) {
@@ -297,7 +299,7 @@ export default function AiAgentsPage() {
         clearInterval(heartbeatTimerRef.current);
       }
     };
-  }, [showVncModal]);
+  }, [showVncModal, vncPlatform]);
 
   // Format Facebook system status text with full multi-language support
   const formatFbStatus = (rawStatus, lastScannedAt, recentReplies) => {
@@ -369,13 +371,8 @@ export default function AiAgentsPage() {
             autoScanIntervalMinutes: updated.autoScanIntervalMinutes,
             humanActivitySuppressionMinutes: updated.humanActivitySuppressionMinutes,
           };
-          axios.post('/api/facebook/config', payload)
-            .then(() => {
-              setFbSaveSuccess(true);
-              setTimeout(() => setFbSaveSuccess(false), 2000);
-            })
-            .catch(() => {});
-        }, 400);
+          axios.post('/api/facebook/config', payload).catch(() => {});
+        }, 500);
       }
       return updated;
     });
@@ -384,13 +381,20 @@ export default function AiAgentsPage() {
   // Manual save for cookies JSON
   const handleSaveFacebook = async () => {
     setFbSaving(true);
-    setFbTestResult('');
     try {
-      await axios.post('/api/facebook/config', fbConfig);
+      await axios.post('/api/facebook/config', {
+        enabled: fbConfig.enabled,
+        threshold: fbConfig.threshold,
+        cookiesJson: fbConfig.cookiesJson,
+        idleTimeoutMinutes: fbConfig.idleTimeoutMinutes,
+        autoScanIntervalMinutes: fbConfig.autoScanIntervalMinutes,
+        humanActivitySuppressionMinutes: fbConfig.humanActivitySuppressionMinutes,
+      });
       setFbSaveSuccess(true);
-      setTimeout(() => setFbSaveSuccess(false), 3000);
-    } catch {
-      setFbTestResult(t('aiAgents.facebook.saveConfigError') || 'Error saving Facebook config.');
+      setTimeout(() => setFbSaveSuccess(false), 2500);
+      fetchFbConfig();
+    } catch (e) {
+      alert((t('aiAgents.facebook.saveFailed') || 'Save error: ') + (e.response?.data?.message || e.message));
     } finally {
       setFbSaving(false);
     }
@@ -432,12 +436,16 @@ export default function AiAgentsPage() {
     }
   };
 
-  // Launch Server Browser via noVNC
-  const handleLaunchVncBrowser = async () => {
+  // Launch Server Browser via noVNC (supports facebook & tiktok)
+  const handleLaunchVncBrowser = async (platform = 'facebook') => {
+    setVncPlatform(platform);
     setVncIsLaunching(true);
-    setVncStatusMsg(t('aiAgents.facebook.initBrowser') || 'Initializing Facebook Browser on Server...');
+    const platformName = platform === 'tiktok' ? 'TikTok' : 'Facebook';
+    setVncStatusMsg(t('aiAgents.facebook.initBrowser') || `Initializing ${platformName} Browser on Server...`);
+    const apiPrefix = platform === 'tiktok' ? '/api/tiktok' : '/api/facebook';
+
     try {
-      const res = await axios.post('/api/facebook/launch-browser');
+      const res = await axios.post(`${apiPrefix}/launch-browser`);
       if (res.data.status === 'success' || res.data.status === 'already_running') {
         setVncStatusMsg(t('aiAgents.facebook.waitingVnc') || 'Waiting for VNC stack...');
         let attempts = 0;
@@ -445,10 +453,10 @@ export default function AiAgentsPage() {
         const checkReady = setInterval(async () => {
           attempts++;
           try {
-            const probe = await axios.get('/api/facebook/vnc-ready');
+            const probe = await axios.get(`${apiPrefix}/vnc-ready`);
             if (probe.data.ready) {
               clearInterval(checkReady);
-              setVncUrl(probe.data.vnc_url || '/fb-vnc/vnc_lite.html?autoconnect=true&resize=scale');
+              setVncUrl('/fb-vnc/vnc_lite.html?autoconnect=true&resize=scale');
               setShowVncModal(true);
               setVncIsLaunching(false);
               setVncStatusMsg('');
@@ -477,28 +485,30 @@ export default function AiAgentsPage() {
   const handleCloseVncModal = async () => {
     setShowVncModal(false);
     setVncUrl('');
+    const apiPrefix = vncPlatform === 'tiktok' ? '/api/tiktok' : '/api/facebook';
     try {
-      await axios.post('/api/facebook/close-browser-session');
+      await axios.post(`${apiPrefix}/close-browser-session`);
     } catch {}
   };
 
   const handleSaveBrowserSession = async () => {
     setVncIsSaving(true);
     setVncStatusMsg(t('aiAgents.facebook.extractingCookies') || 'Extracting session cookies...');
+    const apiPrefix = vncPlatform === 'tiktok' ? '/api/tiktok' : '/api/facebook';
+
     try {
-      const res = await axios.post('/api/facebook/save-browser-session');
+      const res = await axios.post(`${apiPrefix}/save-browser-session`);
       if (res.data.status === 'success') {
         setVncStatusMsg(`✓ ${res.data.message}`);
-        const cfgRes = await axios.get('/api/facebook/config');
-        if (cfgRes.data?.cookiesJson) {
-          setFbConfig(prev => ({ ...prev, cookiesJson: cfgRes.data.cookiesJson }));
-          setFbStatus(prev => ({ ...prev, hasCookies: true }));
+        if (vncPlatform === 'tiktok') {
+          fetchTtConfig();
+        } else {
+          fetchFbConfig();
         }
         setTimeout(() => {
           setShowVncModal(false);
           setVncUrl('');
           setVncStatusMsg('');
-          fetchFbConfig();
         }, 1200);
       } else {
         setVncStatusMsg(`⚠️ ${res.data.message}`);
@@ -510,13 +520,234 @@ export default function AiAgentsPage() {
     }
   };
 
+  // ── TikTok state ──────────────────────────────────────────────────────────
+  const [ttConfig, setTtConfig] = useState({
+    enabled: false,
+    streakEnabled: true,
+    streakScheduleHour: 9,
+    streakTargets: [],
+    streakMessageTemplate: 'Video giữ chuỗi hôm nay nè! Chúc bạn ngày mới vui vẻ nha 🔥✨',
+    streakSendType: 'video',
+    threshold: 3,
+    scanIntervalMinutes: 3,
+    idleTimeoutMinutes: 1,
+    humanSessionMinutes: 5,
+    cooldownMinutes: 60,
+    cookiesJson: '',
+    customMessage: '',
+  });
+  const [ttStatus, setTtStatus] = useState({
+    enabled: false,
+    streakEnabled: true,
+    lastCheckAt: null,
+    lastStreakRunAt: null,
+    recentReplies: [],
+    lastStatus: '',
+    hasCookies: false,
+  });
+  const [ttLoading, setTtLoading] = useState(true);
+  const [ttSaving, setTtSaving] = useState(false);
+  const [ttTesting, setTtTesting] = useState(false);
+  const [ttTestResult, setTtTestResult] = useState('');
+  const [ttSaveSuccess, setTtSaveSuccess] = useState(false);
+  const [ttNewFriendUsername, setTtNewFriendUsername] = useState('');
+  const [ttNewFriendNickname, setTtNewFriendNickname] = useState('');
+  const [ttInstantSending, setTtInstantSending] = useState('');
+  const [ttTestSender, setTtTestSender] = useState('Bạn Thân TikTok');
+  const [ttTestMessage, setTtTestMessage] = useState('Alo Mạnh ơi, có video gì hay chưa gửi xem với!');
+  const [ttAiTestResult, setTtAiTestResult] = useState('');
+  const [ttAiTesting, setTtAiTesting] = useState(false);
+
+  const fetchTtConfig = useCallback(() => {
+    setTtLoading(true);
+    axios.get('/api/tiktok/config')
+      .then(res => {
+        const d = res.data;
+        const cookies = d.cookiesJson || '';
+        setTtConfig({
+          enabled: Boolean(d.enabled),
+          streakEnabled: Boolean(d.streakEnabled ?? true),
+          streakScheduleHour: Number(d.streakScheduleHour ?? 9),
+          streakTargets: d.streakTargets || [],
+          streakMessageTemplate: d.streakMessageTemplate || 'Video giữ chuỗi hôm nay nè! Chúc bạn ngày mới vui vẻ nha 🔥✨',
+          streakSendType: d.streakSendType || 'video',
+          threshold: Number(d.threshold ?? 3),
+          scanIntervalMinutes: Number(d.scanIntervalMinutes ?? 3),
+          idleTimeoutMinutes: Number(d.idleTimeoutMinutes ?? 1),
+          humanSessionMinutes: Number(d.humanSessionMinutes ?? 5),
+          cooldownMinutes: Number(d.cooldownMinutes ?? 60),
+          cookiesJson: cookies,
+          customMessage: d.customMessage || '',
+        });
+        setTtStatus({
+          enabled: Boolean(d.enabled),
+          streakEnabled: Boolean(d.streakEnabled ?? true),
+          lastCheckAt: d.lastCheckAt,
+          lastStreakRunAt: d.lastStreakRunAt,
+          recentReplies: d.recentReplies || [],
+          lastStatus: d.lastStatus || '',
+          hasCookies: Boolean(cookies && cookies.length > 20),
+        });
+      })
+      .catch(() => {})
+      .finally(() => setTtLoading(false));
+  }, []);
+
+  useEffect(() => {
+    fetchTtConfig();
+  }, [fetchTtConfig]);
+
+  // Debounced auto-save on TikTok slider/toggle updates
+  const ttDebounceRef = useRef(null);
+  const handleTtConfigChange = (key, value) => {
+    setTtConfig(prev => {
+      const updated = { ...prev, [key]: value };
+      if (key !== 'cookiesJson') {
+        if (ttDebounceRef.current) clearTimeout(ttDebounceRef.current);
+        ttDebounceRef.current = setTimeout(() => {
+          axios.post('/api/tiktok/config', {
+            enabled: updated.enabled,
+            streakEnabled: updated.streakEnabled,
+            streakScheduleHour: updated.streakScheduleHour,
+            streakTargets: updated.streakTargets,
+            streakMessageTemplate: updated.streakMessageTemplate,
+            streakSendType: updated.streakSendType,
+            threshold: updated.threshold,
+            scanIntervalMinutes: updated.scanIntervalMinutes,
+            idleTimeoutMinutes: updated.idleTimeoutMinutes,
+            humanSessionMinutes: updated.humanSessionMinutes,
+            cooldownMinutes: updated.cooldownMinutes,
+            customMessage: updated.customMessage,
+          }).catch(() => {});
+        }, 500);
+      }
+      return updated;
+    });
+  };
+
+  const handleSaveTikTok = async () => {
+    setTtSaving(true);
+    try {
+      await axios.post('/api/tiktok/config', {
+        enabled: ttConfig.enabled,
+        streakEnabled: ttConfig.streakEnabled,
+        streakScheduleHour: ttConfig.streakScheduleHour,
+        streakTargets: ttConfig.streakTargets,
+        streakMessageTemplate: ttConfig.streakMessageTemplate,
+        streakSendType: ttConfig.streakSendType,
+        threshold: ttConfig.threshold,
+        scanIntervalMinutes: ttConfig.scanIntervalMinutes,
+        idleTimeoutMinutes: ttConfig.idleTimeoutMinutes,
+        humanSessionMinutes: ttConfig.humanSessionMinutes,
+        cooldownMinutes: ttConfig.cooldownMinutes,
+        cookiesJson: ttConfig.cookiesJson,
+        customMessage: ttConfig.customMessage,
+      });
+      setTtSaveSuccess(true);
+      setTimeout(() => setTtSaveSuccess(false), 2500);
+      fetchTtConfig();
+    } catch (e) {
+      alert((t('aiAgents.tiktok.saveFailed') || 'Save error: ') + (e.response?.data?.message || e.message));
+    } finally {
+      setTtSaving(false);
+    }
+  };
+
+  const handleTriggerTikTokScan = async () => {
+    setTtTesting(true);
+    setTtTestResult(t('aiAgents.tiktok.scanning') || 'Scanning TikTok DMs...');
+    try {
+      const res = await axios.post('/api/tiktok/trigger-scan');
+      setTtTestResult(res.data.message || (t('aiAgents.tiktok.scanSuccess') || 'Scan completed!'));
+      fetchTtConfig();
+    } catch (e) {
+      setTtTestResult(e.response?.data?.message || t('aiAgents.tiktok.scanError') || 'Error during scan.');
+    } finally {
+      setTtTesting(false);
+    }
+  };
+
+  const handleTriggerTikTokStreak = async (targetUsername = null) => {
+    if (targetUsername) setTtInstantSending(targetUsername);
+    else setTtTesting(true);
+    try {
+      const payload = targetUsername ? { username: targetUsername } : {};
+      const res = await axios.post('/api/tiktok/trigger-streak', payload);
+      setTtTestResult(`🔥 ${res.data.message}`);
+      fetchTtConfig();
+    } catch (e) {
+      setTtTestResult(e.response?.data?.message || 'Error triggering streak.');
+    } finally {
+      setTtInstantSending('');
+      setTtTesting(false);
+    }
+  };
+
+  const handleAddStreakFriend = () => {
+    if (!ttNewFriendUsername.trim()) return;
+    let uname = ttNewFriendUsername.trim();
+    if (!uname.startsWith('@')) uname = `@${uname}`;
+    const nickname = ttNewFriendNickname.trim() || uname;
+
+    const exists = ttConfig.streakTargets.some(t => t.username.toLowerCase() === uname.toLowerCase());
+    if (exists) {
+      alert('Bạn bè này đã có trong danh sách giữ chuỗi!');
+      return;
+    }
+
+    const updated = [
+      ...ttConfig.streakTargets,
+      {
+        username: uname,
+        nickname: nickname,
+        streak_days: 0,
+        status: 'active',
+        last_sent: '',
+      }
+    ];
+    handleTtConfigChange('streakTargets', updated);
+    setTtNewFriendUsername('');
+    setTtNewFriendNickname('');
+  };
+
+  const handleRemoveStreakFriend = (username) => {
+    const updated = ttConfig.streakTargets.filter(t => t.username !== username);
+    handleTtConfigChange('streakTargets', updated);
+  };
+
+  const handleToggleStreakFriend = (username) => {
+    const updated = ttConfig.streakTargets.map(t => {
+      if (t.username === username) {
+        return { ...t, status: t.status === 'active' ? 'paused' : 'active' };
+      }
+      return t;
+    });
+    handleTtConfigChange('streakTargets', updated);
+  };
+
+  const handleTestAiChat = async () => {
+    setTtAiTesting(true);
+    setTtAiTestResult('');
+    try {
+      const res = await axios.post('/api/tiktok/test-ai-chat', {
+        sender_name: ttTestSender,
+        message: ttTestMessage,
+      });
+      setTtAiTestResult(res.data.reply || '');
+    } catch (e) {
+      setTtAiTestResult('Lỗi khi sinh câu trả lời AI: ' + (e.response?.data?.message || e.message));
+    } finally {
+      setTtAiTesting(false);
+    }
+  };
+
   // ── Multi-Platform Catalog ────────────────────────────────────────────────
   const platforms = [
     { id: 'facebook', name: t('aiAgents.tabs.facebook') || 'Facebook Messenger', icon: <SciFiFacebookIcon size={18} color="var(--accent-purple)" />, status: t('aiAgents.statusActive') || 'ACTIVE', isLive: true, color: 'var(--accent-purple)' },
+    { id: 'tiktok', name: t('aiAgents.tabs.tiktok') || 'TikTok Social & Streaks', icon: <SciFiTikTokIcon size={18} color="#00F2FE" />, status: t('aiAgents.statusActive') || 'ACTIVE', isLive: true, color: '#00F2FE' },
     { id: 'telegram', name: t('aiAgents.tabs.telegram') || 'Telegram Bot & Agent', icon: <SciFiTelegramIcon size={18} color="#229ED9" />, status: t('aiAgents.statusActive') || 'ACTIVE', isLive: true, color: '#229ED9' },
     { id: 'zalo', name: t('aiAgents.tabs.zalo') || 'Zalo AI Agent', icon: <SciFiZaloIcon size={18} color="#0068FF" />, status: t('aiAgents.statusComingSoon') || 'COMING SOON', isLive: false, color: '#0068FF' },
     { id: 'gmail', name: t('aiAgents.tabs.gmail') || 'Gmail AI Assistant', icon: <SciFiGmailIcon size={18} color="#EA4335" />, status: t('aiAgents.statusComingSoon') || 'COMING SOON', isLive: false, color: '#EA4335' },
-    { id: 'tiktok', name: t('aiAgents.tabs.tiktok') || 'TikTok Social Agent', icon: <SciFiTikTokIcon size={18} color="#00F2FE" />, status: t('aiAgents.statusComingSoon') || 'COMING SOON', isLive: false, color: '#00F2FE' },
     { id: 'youtube', name: t('aiAgents.tabs.youtube') || 'YouTube Comment Agent', icon: <SciFiYouTubeIcon size={18} color="#FF0033" />, status: t('aiAgents.statusComingSoon') || 'COMING SOON', isLive: false, color: '#FF0033' },
     { id: 'instagram', name: t('aiAgents.tabs.instagram') || 'Instagram Direct Agent', icon: <SciFiInstagramIcon size={18} color="#E1306C" />, status: t('aiAgents.statusComingSoon') || 'COMING SOON', isLive: false, color: '#E1306C' },
     { id: 'whatsapp', name: t('aiAgents.tabs.whatsapp') || 'WhatsApp Business AI', icon: <SciFiWhatsAppIcon size={18} color="#25D366" />, status: t('aiAgents.statusComingSoon') || 'COMING SOON', isLive: false, color: '#25D366' },
@@ -1063,36 +1294,759 @@ export default function AiAgentsPage() {
         </div>
       )}
 
-      {/* ── Tab Content: TIKTOK SOCIAL AGENT ─────────────────────────────────── */}
+      {/* ── Tab Content: TIKTOK SOCIAL AUTOMATION & STREAK KEEPER ───────────── */}
       {activePlatform === 'tiktok' && (
         <div style={{
           background: 'rgba(5, 10, 20, 0.85)',
-          border: '1px solid rgba(0, 242, 254, 0.3)',
-          boxShadow: '0 0 20px rgba(0, 242, 254, 0.12)',
+          border: '1px solid rgba(0, 242, 254, 0.35)',
+          boxShadow: '0 0 25px rgba(0, 242, 254, 0.15)',
           borderRadius: '4px',
           padding: '24px',
         }}>
           <SectionHeader
-            icon={<SciFiTikTokIcon size={20} color="#00F2FE" />}
-            title={t('aiAgents.tiktok.title') || "TIKTOK SOCIAL AUTOMATION AGENT"}
-            subtitle={t('aiAgents.tiktok.subtitle') || "Auto-reply to video comments, Direct Messages, and engagement analytics"}
-            badge={<SciFiPulseBadge label={t('aiAgents.statusInDevelopment') || "IN DEVELOPMENT"} color="#00F2FE" />}
+            icon={<SciFiTikTokIcon size={22} color="#00F2FE" />}
+            title={t('aiAgents.tiktok.title') || "TIKTOK SOCIAL AUTOMATION & STREAK KEEPER"}
+            subtitle={t('aiAgents.tiktok.subtitle') || "Auto-reply Direct Messages & daily automated video streak saver for friends"}
+            badge={
+              <SciFiPulseBadge
+                label={ttConfig.streakEnabled || ttConfig.enabled ? (t('aiAgents.tiktok.statusActive') || "STREAK PIPELINE ACTIVE") : (t('aiAgents.tiktok.statusStandby') || "STANDBY")}
+                color="#00F2FE"
+              />
+            }
           />
 
-          <div style={{ padding: '30px 20px', textAlign: 'center', color: 'var(--text-secondary)' }}>
-            <div style={{ width: '50px', height: '50px', margin: '0 auto 16px', borderRadius: '50%', background: 'rgba(0, 242, 254, 0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #00F2FE' }}>
-              <SciFiTikTokIcon size={28} color="#00F2FE" />
+          {/* TikTok Telemetry 4-Tile Stats Grid */}
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+            gap: '12px',
+            marginBottom: '24px',
+          }}>
+            <div style={{ padding: '12px 14px', background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(0, 242, 254, 0.2)', borderRadius: '3px' }}>
+              <div style={{ fontSize: '0.65rem', color: '#00F2FE', fontFamily: 'Share Tech Mono', letterSpacing: '1px' }}>
+                {t('aiAgents.tiktok.overviewAutoReply') || 'AUTO-REPLY DMs'}
+              </div>
+              <div style={{ fontSize: '0.92rem', color: ttConfig.enabled ? 'var(--accent-green)' : 'var(--accent-pink)', fontFamily: 'Share Tech Mono', fontWeight: 'bold', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: ttConfig.enabled ? 'var(--accent-green)' : 'var(--accent-pink)', boxShadow: `0 0 8px ${ttConfig.enabled ? 'var(--accent-green)' : 'var(--accent-pink)'}` }} />
+                {ttConfig.enabled ? 'ACTIVE (Away Mode)' : 'OFF'}
+              </div>
             </div>
-            <h3 style={{ color: '#fff', fontFamily: 'Share Tech Mono', letterSpacing: '2px', marginBottom: '8px' }}>
-              {t('aiAgents.tiktok.cardTitle') || 'TIKTOK SOCIAL AGENT GATEWAY'}
-            </h3>
-            <p style={{ maxWidth: '600px', margin: '0 auto 20px', fontSize: '0.82rem', lineHeight: '1.6' }}>
-              {t('aiAgents.tiktok.desc') || 'TikTok channel automation: Intelligently reply to viewers\' comments using AI scenarios, capture customer questions, and auto-respond to incoming DMs.'}
-            </p>
-            <div style={{ display: 'inline-flex', gap: '8px', padding: '6px 14px', background: 'rgba(0, 242, 254, 0.08)', border: '1px solid rgba(0, 242, 254, 0.3)', borderRadius: '3px', fontSize: '0.75rem', fontFamily: 'Share Tech Mono', color: '#00F2FE' }}>
-              {t('aiAgents.tiktok.statusBadge') || 'STATUS: WEB AUTOMATION HOOK READY'}
+
+            <div style={{ padding: '12px 14px', background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(0, 242, 254, 0.2)', borderRadius: '3px' }}>
+              <div style={{ fontSize: '0.65rem', color: '#00F2FE', fontFamily: 'Share Tech Mono', letterSpacing: '1px' }}>
+                {t('aiAgents.tiktok.overviewStreakKeeper') || 'STREAK KEEPER 🔥'}
+              </div>
+              <div style={{ fontSize: '0.92rem', color: ttConfig.streakEnabled ? 'var(--accent-cyan)' : 'var(--accent-pink)', fontFamily: 'Share Tech Mono', fontWeight: 'bold', marginTop: '4px' }}>
+                {ttConfig.streakEnabled ? `${ttConfig.streakTargets?.length || 0} Friends Active` : 'PAUSED'}
+              </div>
+            </div>
+
+            <div style={{ padding: '12px 14px', background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(0, 242, 254, 0.2)', borderRadius: '3px' }}>
+              <div style={{ fontSize: '0.65rem', color: '#00F2FE', fontFamily: 'Share Tech Mono', letterSpacing: '1px' }}>
+                {t('aiAgents.tiktok.overviewDailyDispatch') || 'DAILY DISPATCH'}
+              </div>
+              <div style={{ fontSize: '0.92rem', color: 'var(--accent-purple)', fontFamily: 'Share Tech Mono', fontWeight: 'bold', marginTop: '4px' }}>
+                {String(ttConfig.streakScheduleHour).padStart(2, '0')}:00 (Daily)
+              </div>
+            </div>
+
+            <div style={{ padding: '12px 14px', background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(0, 242, 254, 0.2)', borderRadius: '3px' }}>
+              <div style={{ fontSize: '0.65rem', color: '#00F2FE', fontFamily: 'Share Tech Mono', letterSpacing: '1px' }}>
+                {t('aiAgents.tiktok.overviewSession') || 'TIKTOK SESSION'}
+              </div>
+              <div style={{ fontSize: '0.92rem', color: ttStatus.hasCookies ? 'var(--accent-green)' : 'var(--accent-pink)', fontFamily: 'Share Tech Mono', fontWeight: 'bold', marginTop: '4px' }}>
+                {ttStatus.hasCookies ? 'AUTHENTICATED' : 'NO COOKIES'}
+              </div>
             </div>
           </div>
+
+          {ttLoading ? (
+            <div style={{ padding: '30px', textAlign: 'center', color: 'var(--text-secondary)', fontFamily: 'Share Tech Mono', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+              <SciFiChronoSpinnerIcon size={18} color="#00F2FE" />
+              <span>{t('aiAgents.tiktok.loading') || 'Loading TikTok Automation Agent config...'}</span>
+            </div>
+          ) : (
+            <>
+              {/* Direct Server Browser Login Banner (noVNC) */}
+              <div style={{
+                marginBottom: '24px',
+                padding: '16px 20px',
+                background: 'rgba(0, 242, 254, 0.06)',
+                border: '1px solid rgba(0, 242, 254, 0.35)',
+                borderRadius: '4px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: '16px',
+                flexWrap: 'wrap',
+              }}>
+                <div>
+                  <div style={{
+                    display: 'flex', alignItems: 'center', gap: '8px',
+                    color: '#00F2FE', fontFamily: 'Share Tech Mono',
+                    fontSize: '0.88rem', fontWeight: 'bold', letterSpacing: '1px',
+                  }}>
+                    <SciFiBrowserLaunchIcon size={16} color="#00F2FE" />
+                    {t('aiAgents.tiktok.directLoginTitle') || 'DIRECT SERVER BROWSER LOGIN (TIKTOK)'}
+                  </div>
+                  <div style={{ color: 'var(--text-secondary)', fontSize: '0.74rem', marginTop: '4px', opacity: 0.8 }}>
+                    {t('aiAgents.tiktok.directLoginDesc') || 'Open Chromium GUI on server via noVNC to log in to TikTok, scan QR code, and extract session cookies.'}
+                  </div>
+                  {vncStatusMsg && vncPlatform === 'tiktok' && (
+                    <div style={{ marginTop: '6px', color: '#00F2FE', fontSize: '0.74rem', fontFamily: 'Share Tech Mono', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <SciFiEnergyBoltIcon size={14} color="#00F2FE" />
+                      <span>{vncStatusMsg}</span>
+                    </div>
+                  )}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => handleLaunchVncBrowser('tiktok')}
+                  disabled={vncIsLaunching}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: '8px',
+                    padding: '8px 18px',
+                    background: 'rgba(0, 242, 254, 0.18)',
+                    border: '1px solid #00F2FE',
+                    borderRadius: '3px',
+                    color: '#fff',
+                    fontFamily: 'Share Tech Mono',
+                    fontSize: '0.8rem',
+                    letterSpacing: '1px',
+                    cursor: vncIsLaunching ? 'not-allowed' : 'pointer',
+                    opacity: vncIsLaunching ? 0.6 : 1,
+                    boxShadow: '0 0 12px rgba(0, 242, 254, 0.25)',
+                    transition: 'all 0.2s ease',
+                  }}
+                >
+                  {vncIsLaunching ? <SciFiChronoSpinnerIcon size={16} color="#fff" /> : <SciFiBrowserLaunchIcon size={16} color="#fff" />}
+                  {vncIsLaunching ? (t('aiAgents.facebook.launchingBrowser') || 'STARTING...') : (t('aiAgents.tiktok.openBrowserBtn') || 'OPEN TIKTOK BROWSER')}
+                </button>
+              </div>
+
+              {/* ── SECTION 1: AUTO-REPLY DMs (AWAY MODE) ── */}
+              <div style={{
+                marginBottom: '24px',
+                padding: '18px 20px',
+                background: 'rgba(0, 0, 0, 0.3)',
+                border: '1px solid rgba(0, 242, 254, 0.25)',
+                borderRadius: '4px',
+              }}>
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px',
+                  color: '#00F2FE', fontFamily: 'Share Tech Mono', fontSize: '0.86rem', fontWeight: 'bold', letterSpacing: '1px'
+                }}>
+                  <SciFiBotIcon size={16} color="#00F2FE" />
+                  <span>{t('aiAgents.tiktok.sectionDmsTitle') || '1. AUTO-REPLY DIRECT MESSAGES (AWAY MODE)'}</span>
+                </div>
+
+                {/* Away Mode Toggle */}
+                <SettingRow label={t('aiAgents.tiktok.awayMode') || "Auto-Reply Away Mode"} desc={t('aiAgents.tiktok.awayModeDesc') || "Activate AI Agent to automatically reply to TikTok Direct Messages when you are away"}>
+                  <Toggle
+                    id="tt-enabled"
+                    value={ttConfig.enabled}
+                    onChange={v => handleTtConfigChange('enabled', v)}
+                  />
+                </SettingRow>
+
+                {/* Activation Threshold */}
+                <SettingRow label={t('aiAgents.tiktok.threshold') || "Message Activation Threshold"} desc={t('aiAgents.tiktok.thresholdDesc') || "Consecutive unanswered messages before AI auto-replies (Default: 3)"}>
+                  <ThresholdSlider
+                    id="tt-threshold"
+                    min={1}
+                    max={15}
+                    unit={` ${t('aiAgents.facebook.thresholdUnit') || 'msgs'}`}
+                    value={ttConfig.threshold}
+                    color="#00F2FE"
+                    onChange={v => handleTtConfigChange('threshold', v)}
+                  />
+                </SettingRow>
+
+                {/* Inactivity Silence Delay */}
+                <SettingRow label={t('aiAgents.tiktok.idleTimeout') || "Inactivity Silence Delay"} desc={t('aiAgents.tiktok.idleTimeoutDesc') || "Silence duration without new incoming messages before AI replies (Prevents collision while typing)"}>
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '6px' }}>
+                    <ThresholdSlider
+                      id="tt-idle-timeout"
+                      min={1}
+                      max={30}
+                      unit={` ${t('aiAgents.facebook.minutesUnit') || 'min'}`}
+                      value={ttConfig.idleTimeoutMinutes}
+                      onChange={v => handleTtConfigChange('idleTimeoutMinutes', v)}
+                    />
+                    <div style={{ display: 'flex', gap: '4px' }}>
+                      {[1, 2, 3, 5, 10].map(m => (
+                        <DurationChip
+                          key={m}
+                          label={`${m}m`}
+                          selected={ttConfig.idleTimeoutMinutes === m}
+                          onClick={() => handleTtConfigChange('idleTimeoutMinutes', m)}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                </SettingRow>
+
+                {/* Human Session Suppression */}
+                <SettingRow label={t('aiAgents.tiktok.humanSession') || "Active Human Session Duration"} desc={t('aiAgents.tiktok.humanSessionDesc') || "Suppress AI auto-reply if you recently sent a message on TikTok within this window"}>
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '6px' }}>
+                    <ThresholdSlider
+                      id="tt-human-suppression"
+                      min={1}
+                      max={60}
+                      unit={` ${t('aiAgents.facebook.minutesUnit') || 'min'}`}
+                      value={ttConfig.humanSessionMinutes}
+                      color="var(--accent-purple)"
+                      onChange={v => handleTtConfigChange('humanSessionMinutes', v)}
+                    />
+                    <div style={{ display: 'flex', gap: '4px' }}>
+                      {[5, 10, 15, 30].map(m => (
+                        <DurationChip
+                          key={m}
+                          label={`${m}m`}
+                          selected={ttConfig.humanSessionMinutes === m}
+                          onClick={() => handleTtConfigChange('humanSessionMinutes', m)}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                </SettingRow>
+
+                {/* Custom Message Template (Optional) */}
+                <SettingRow label={t('aiAgents.tiktok.customMsgLabel') || "Custom Away Template (Optional)"} desc={t('aiAgents.tiktok.customMsgDesc') || "Leave blank to use 9Router AI dynamic response, or enter a fixed template"}>
+                  <input
+                    type="text"
+                    value={ttConfig.customMessage}
+                    onChange={e => handleTtConfigChange('customMessage', e.target.value)}
+                    placeholder="Chào bạn, mình đang bận chút lát rep nha..."
+                    style={{
+                      width: '320px',
+                      background: 'rgba(0,0,0,0.5)',
+                      border: '1px solid rgba(0, 242, 254, 0.3)',
+                      color: '#fff',
+                      padding: '6px 12px',
+                      fontFamily: 'Share Tech Mono',
+                      fontSize: '0.78rem',
+                      borderRadius: '3px',
+                      outline: 'none',
+                    }}
+                  />
+                </SettingRow>
+              </div>
+
+              {/* ── SECTION 2: DAILY AUTO STREAK KEEPER (🔥 GIỮ CHUỖI TIKTOK) ── */}
+              <div style={{
+                marginBottom: '24px',
+                padding: '18px 20px',
+                background: 'rgba(0, 0, 0, 0.3)',
+                border: '1px solid rgba(254, 44, 85, 0.35)',
+                boxShadow: '0 0 15px rgba(254, 44, 85, 0.08)',
+                borderRadius: '4px',
+              }}>
+                <div style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px', flexWrap: 'wrap', gap: '10px'
+                }}>
+                  <div style={{
+                    display: 'flex', alignItems: 'center', gap: '8px',
+                    color: '#FE2C55', fontFamily: 'Share Tech Mono', fontSize: '0.86rem', fontWeight: 'bold', letterSpacing: '1px'
+                  }}>
+                    <span style={{ fontSize: '1.1rem' }}>🔥</span>
+                    <span>{t('aiAgents.tiktok.sectionStreakTitle') || '2. DAILY AUTO STREAK KEEPER (TỰ ĐỘNG GỬI VIDEO GIỮ CHUỖI)'}</span>
+                  </div>
+                  <SciFiPulseBadge label={ttConfig.streakEnabled ? "STREAKS SAVER ACTIVE" : "STREAKS OFF"} color="#FE2C55" />
+                </div>
+
+                {/* Streak Keeper Master Toggle */}
+                <SettingRow label={t('aiAgents.tiktok.streakMaster') || "Enable Daily Streak Saver"} desc={t('aiAgents.tiktok.streakMasterDesc') || "Automatically dispatch daily streak videos/messages to friends list so you never lose streaks"}>
+                  <Toggle
+                    id="tt-streak-enabled"
+                    value={ttConfig.streakEnabled}
+                    onChange={v => handleTtConfigChange('streakEnabled', v)}
+                  />
+                </SettingRow>
+
+                {/* Daily Schedule Hour */}
+                <SettingRow label={t('aiAgents.tiktok.scheduleHour') || "Daily Schedule Hour"} desc={t('aiAgents.tiktok.scheduleHourDesc') || "Hour of the day to automatically dispatch streak maintenance content"}>
+                  <select
+                    value={ttConfig.streakScheduleHour}
+                    onChange={e => handleTtConfigChange('streakScheduleHour', Number(e.target.value))}
+                    style={{
+                      background: 'rgba(0,0,0,0.6)',
+                      border: '1px solid rgba(254, 44, 85, 0.4)',
+                      color: '#FE2C55',
+                      padding: '6px 14px',
+                      fontSize: '0.8rem',
+                      fontFamily: 'Share Tech Mono',
+                      cursor: 'pointer',
+                      borderRadius: '2px',
+                    }}
+                  >
+                    {[6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23].map(h => (
+                      <option key={h} value={h}>{String(h).padStart(2, '0')}:00 (Daily)</option>
+                    ))}
+                  </select>
+                </SettingRow>
+
+                {/* Content Send Type */}
+                <SettingRow label={t('aiAgents.tiktok.sendType') || "Streak Dispatch Content"} desc={t('aiAgents.tiktok.sendTypeDesc') || "Format of content sent to friends to maintain the streak flame"}>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <button
+                      type="button"
+                      onClick={() => handleTtConfigChange('streakSendType', 'video')}
+                      style={{
+                        padding: '5px 12px',
+                        background: ttConfig.streakSendType === 'video' ? 'rgba(254, 44, 85, 0.25)' : 'rgba(0,0,0,0.4)',
+                        border: ttConfig.streakSendType === 'video' ? '1px solid #FE2C55' : '1px solid rgba(255,255,255,0.1)',
+                        color: ttConfig.streakSendType === 'video' ? '#FE2C55' : 'var(--text-secondary)',
+                        fontFamily: 'Share Tech Mono',
+                        fontSize: '0.74rem',
+                        cursor: 'pointer',
+                        borderRadius: '2px',
+                      }}
+                    >
+                      🎬 Video Xu Hướng / Clip Ngắn
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleTtConfigChange('streakSendType', 'message')}
+                      style={{
+                        padding: '5px 12px',
+                        background: ttConfig.streakSendType === 'message' ? 'rgba(0, 242, 254, 0.25)' : 'rgba(0,0,0,0.4)',
+                        border: ttConfig.streakSendType === 'message' ? '1px solid #00F2FE' : '1px solid rgba(255,255,255,0.1)',
+                        color: ttConfig.streakSendType === 'message' ? '#00F2FE' : 'var(--text-secondary)',
+                        fontFamily: 'Share Tech Mono',
+                        fontSize: '0.74rem',
+                        cursor: 'pointer',
+                        borderRadius: '2px',
+                      }}
+                    >
+                      💬 Tin Nhắn Giữ Chuỗi (Kèm 🔥)
+                    </button>
+                  </div>
+                </SettingRow>
+
+                {/* Streak Message Template */}
+                <SettingRow label={t('aiAgents.tiktok.streakTemplate') || "Streak Message Text"} desc={t('aiAgents.tiktok.streakTemplateDesc') || "Greeting text attached with the daily streak video"}>
+                  <input
+                    type="text"
+                    value={ttConfig.streakMessageTemplate}
+                    onChange={e => handleTtConfigChange('streakMessageTemplate', e.target.value)}
+                    placeholder="Video giữ chuỗi hôm nay nè! Chúc bạn ngày mới vui vẻ nha 🔥✨"
+                    style={{
+                      width: '380px',
+                      background: 'rgba(0,0,0,0.5)',
+                      border: '1px solid rgba(254, 44, 85, 0.3)',
+                      color: '#fff',
+                      padding: '6px 12px',
+                      fontFamily: 'Share Tech Mono',
+                      fontSize: '0.78rem',
+                      borderRadius: '3px',
+                      outline: 'none',
+                    }}
+                  />
+                </SettingRow>
+
+                {/* Friends List & Target Manager */}
+                <div style={{ marginTop: '20px', paddingTop: '16px', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                  <div style={{ fontSize: '0.78rem', color: '#FE2C55', fontFamily: 'Share Tech Mono', letterSpacing: '1px', fontWeight: 'bold', marginBottom: '10px' }}>
+                    DANH SÁCH BẠN BÈ CẦN GIỮ CHUỖI ({ttConfig.streakTargets?.length || 0})
+                  </div>
+
+                  {/* Add Friend Row */}
+                  <div style={{ display: 'flex', gap: '8px', marginBottom: '14px', flexWrap: 'wrap' }}>
+                    <input
+                      type="text"
+                      value={ttNewFriendUsername}
+                      onChange={e => setTtNewFriendUsername(e.target.value)}
+                      placeholder="@username (VD: @linhdan_99)"
+                      style={{
+                        flex: '1', minWidth: '180px',
+                        background: 'rgba(0,0,0,0.5)',
+                        border: '1px solid rgba(255,255,255,0.15)',
+                        color: '#fff',
+                        padding: '6px 12px',
+                        fontFamily: 'Share Tech Mono',
+                        fontSize: '0.76rem',
+                        borderRadius: '2px',
+                      }}
+                    />
+                    <input
+                      type="text"
+                      value={ttNewFriendNickname}
+                      onChange={e => setTtNewFriendNickname(e.target.value)}
+                      placeholder="Tên gợi nhớ (VD: Linh Đan)"
+                      style={{
+                        flex: '1', minWidth: '180px',
+                        background: 'rgba(0,0,0,0.5)',
+                        border: '1px solid rgba(255,255,255,0.15)',
+                        color: '#fff',
+                        padding: '6px 12px',
+                        fontFamily: 'Share Tech Mono',
+                        fontSize: '0.76rem',
+                        borderRadius: '2px',
+                      }}
+                    />
+                    <button
+                      type="button"
+                      onClick={handleAddStreakFriend}
+                      style={{
+                        padding: '6px 16px',
+                        background: 'rgba(254, 44, 85, 0.2)',
+                        border: '1px solid #FE2C55',
+                        color: '#FE2C55',
+                        fontFamily: 'Share Tech Mono',
+                        fontSize: '0.76rem',
+                        fontWeight: 'bold',
+                        cursor: 'pointer',
+                        borderRadius: '2px',
+                      }}
+                    >
+                      + THÊM BẠN BÈ
+                    </button>
+                  </div>
+
+                  {/* Friends Table */}
+                  {ttConfig.streakTargets?.length === 0 ? (
+                    <div style={{ padding: '20px', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '0.76rem', fontFamily: 'Share Tech Mono', background: 'rgba(0,0,0,0.2)', borderRadius: '2px' }}>
+                      Chưa có bạn bè nào trong danh sách. Hãy nhập @username ở trên để thêm người nhận video giữ chuỗi hàng ngày.
+                    </div>
+                  ) : (
+                    <div style={{ overflowX: 'auto' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.76rem', fontFamily: 'Share Tech Mono' }}>
+                        <thead>
+                          <tr style={{ background: 'rgba(254, 44, 85, 0.08)', color: '#FE2C55', textAlign: 'left' }}>
+                            <th style={{ padding: '8px 10px', borderBottom: '1px solid rgba(254, 44, 85, 0.2)' }}>BẠN BÈ</th>
+                            <th style={{ padding: '8px 10px', borderBottom: '1px solid rgba(254, 44, 85, 0.2)' }}>CHUỖI (STREAK)</th>
+                            <th style={{ padding: '8px 10px', borderBottom: '1px solid rgba(254, 44, 85, 0.2)' }}>GỬI GẦN NHẤT</th>
+                            <th style={{ padding: '8px 10px', borderBottom: '1px solid rgba(254, 44, 85, 0.2)' }}>TRẠNG THÁI</th>
+                            <th style={{ padding: '8px 10px', borderBottom: '1px solid rgba(254, 44, 85, 0.2)', textAlign: 'right' }}>THAO TÁC</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {ttConfig.streakTargets.map((friend, idx) => {
+                            const isSendingThis = ttInstantSending === friend.username;
+                            return (
+                              <tr key={idx} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)', background: idx % 2 === 0 ? 'rgba(0,0,0,0.1)' : 'transparent' }}>
+                                <td style={{ padding: '8px 10px' }}>
+                                  <div style={{ fontWeight: 'bold', color: '#fff' }}>{friend.nickname || friend.username}</div>
+                                  <div style={{ fontSize: '0.68rem', color: '#00F2FE', opacity: 0.8 }}>{friend.username}</div>
+                                </td>
+                                <td style={{ padding: '8px 10px' }}>
+                                  <span style={{ padding: '2px 6px', background: 'rgba(254, 44, 85, 0.15)', border: '1px solid rgba(254, 44, 85, 0.4)', borderRadius: '2px', color: '#FE2C55', fontWeight: 'bold' }}>
+                                    🔥 {friend.streak_days || 0} Ngày
+                                  </span>
+                                </td>
+                                <td style={{ padding: '8px 10px', color: 'var(--text-secondary)' }}>
+                                  {friend.last_sent ? friend.last_sent : 'Chưa gửi'}
+                                </td>
+                                <td style={{ padding: '8px 10px' }}>
+                                  <span style={{ color: friend.status === 'active' ? 'var(--accent-green)' : 'var(--text-secondary)' }}>
+                                    {friend.status === 'active' ? '● Đang giữ chuỗi' : '○ Tạm dừng'}
+                                  </span>
+                                </td>
+                                <td style={{ padding: '8px 10px', textAlign: 'right' }}>
+                                  <div style={{ display: 'inline-flex', gap: '6px' }}>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleTriggerTikTokStreak(friend.username)}
+                                      disabled={Boolean(ttInstantSending)}
+                                      style={{
+                                        padding: '3px 8px',
+                                        background: 'rgba(254, 44, 85, 0.15)',
+                                        border: '1px solid #FE2C55',
+                                        color: '#FE2C55',
+                                        fontSize: '0.7rem',
+                                        cursor: 'pointer',
+                                        borderRadius: '2px',
+                                      }}
+                                    >
+                                      {isSendingThis ? 'ĐANG GỬI...' : '🔥 GỬI NGAY'}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleToggleStreakFriend(friend.username)}
+                                      style={{
+                                        padding: '3px 8px',
+                                        background: 'rgba(255,255,255,0.05)',
+                                        border: '1px solid rgba(255,255,255,0.15)',
+                                        color: 'var(--text-secondary)',
+                                        fontSize: '0.7rem',
+                                        cursor: 'pointer',
+                                        borderRadius: '2px',
+                                      }}
+                                    >
+                                      {friend.status === 'active' ? 'Tạm dừng' : 'Bật lại'}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleRemoveStreakFriend(friend.username)}
+                                      style={{
+                                        padding: '3px 8px',
+                                        background: 'rgba(255,0,0,0.1)',
+                                        border: '1px solid rgba(255,0,0,0.3)',
+                                        color: 'var(--accent-pink)',
+                                        fontSize: '0.7rem',
+                                        cursor: 'pointer',
+                                        borderRadius: '2px',
+                                      }}
+                                    >
+                                      Xóa
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Action Buttons Bar */}
+              <div style={{ display: 'flex', gap: '12px', marginTop: '20px', alignItems: 'center', flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  onClick={handleSaveTikTok}
+                  disabled={ttSaving}
+                  style={{
+                    background: ttSaveSuccess ? 'rgba(0,255,102,0.15)' : 'rgba(0, 242, 254, 0.18)',
+                    border: `1px solid ${ttSaveSuccess ? 'var(--accent-green)' : '#00F2FE'}`,
+                    color: ttSaveSuccess ? 'var(--accent-green)' : '#00F2FE',
+                    padding: '8px 22px',
+                    fontFamily: 'Share Tech Mono',
+                    fontSize: '0.82rem',
+                    cursor: ttSaving ? 'not-allowed' : 'pointer',
+                    letterSpacing: '1px',
+                    borderRadius: '3px',
+                    transition: 'all 0.2s ease',
+                    boxShadow: ttSaveSuccess ? '0 0 10px rgba(0,255,102,0.3)' : '0 0 10px rgba(0, 242, 254, 0.2)',
+                  }}
+                >
+                  {ttSaveSuccess ? (t('settings.telegram.saved') || '✓ SAVED') : (t('aiAgents.tiktok.saveBtn') || 'SAVE TIKTOK CONFIG')}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleTriggerTikTokStreak(null)}
+                  disabled={ttTesting}
+                  style={{
+                    background: 'rgba(254, 44, 85, 0.15)',
+                    border: '1px solid #FE2C55',
+                    color: '#FE2C55',
+                    padding: '8px 22px',
+                    fontFamily: 'Share Tech Mono',
+                    fontSize: '0.82rem',
+                    cursor: ttTesting ? 'not-allowed' : 'pointer',
+                    letterSpacing: '1px',
+                    opacity: ttTesting ? 0.6 : 1,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    borderRadius: '3px',
+                  }}
+                >
+                  {ttTesting ? <SciFiChronoSpinnerIcon size={14} color="#FE2C55" /> : <span>🔥</span>}
+                  <span>{ttTesting ? 'ĐANG GỬI CHUỖI...' : 'GỬI TẤT CẢ CHUỖI NGAY BÂY GIỜ'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleTriggerTikTokScan}
+                  disabled={ttTesting}
+                  style={{
+                    background: 'rgba(0, 242, 254, 0.1)',
+                    border: '1px solid rgba(0, 242, 254, 0.4)',
+                    color: '#00F2FE',
+                    padding: '8px 20px',
+                    fontFamily: 'Share Tech Mono',
+                    fontSize: '0.82rem',
+                    cursor: ttTesting ? 'not-allowed' : 'pointer',
+                    letterSpacing: '1px',
+                    borderRadius: '3px',
+                  }}
+                >
+                  QUÉT TIN NHẮN THỦ CÔNG
+                </button>
+
+                {ttTestResult && (
+                  <span style={{
+                    fontSize: '0.78rem',
+                    fontFamily: 'Share Tech Mono',
+                    color: '#00F2FE',
+                    textShadow: '0 0 8px currentColor',
+                  }}>
+                    {ttTestResult}
+                  </span>
+                )}
+              </div>
+
+              {/* ── SECTION 3: SESSION COOKIES & AI SIMULATION SANDBOX ── */}
+              <div style={{
+                marginTop: '24px',
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))',
+                gap: '16px',
+              }}>
+                {/* Cookies Editor */}
+                <div style={{ padding: '16px', background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '3px' }}>
+                  <div style={{ fontSize: '0.78rem', color: 'var(--text-primary)', fontFamily: 'Share Tech Mono', marginBottom: '8px' }}>
+                    TIKTOK SESSION COOKIES (JSON)
+                  </div>
+                  <textarea
+                    value={ttConfig.cookiesJson}
+                    onChange={e => handleTtConfigChange('cookiesJson', e.target.value)}
+                    placeholder='[{"name":"sessionid","value":"..."},{"name":"tt_chain_token","value":"..."}]'
+                    rows={4}
+                    style={{
+                      width: '100%',
+                      boxSizing: 'border-box',
+                      background: 'rgba(0,0,0,0.5)',
+                      border: '1px solid rgba(0, 242, 254, 0.2)',
+                      borderRadius: '2px',
+                      color: '#fff',
+                      fontFamily: 'Share Tech Mono',
+                      fontSize: '0.72rem',
+                      padding: '8px',
+                      resize: 'vertical',
+                      outline: 'none',
+                    }}
+                  />
+                </div>
+
+                {/* AI Chat Sandbox */}
+                <div style={{ padding: '16px', background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '3px' }}>
+                  <div style={{ fontSize: '0.78rem', color: '#00F2FE', fontFamily: 'Share Tech Mono', marginBottom: '8px' }}>
+                    THỬ NGHIỆM SINH CÂU TRẢ LỜI AI 9ROUTER
+                  </div>
+                  <div style={{ display: 'flex', gap: '6px', marginBottom: '8px' }}>
+                    <input
+                      type="text"
+                      value={ttTestSender}
+                      onChange={e => setTtTestSender(e.target.value)}
+                      placeholder="Tên người gửi"
+                      style={{
+                        width: '120px',
+                        background: 'rgba(0,0,0,0.5)',
+                        border: '1px solid rgba(255,255,255,0.15)',
+                        color: '#fff',
+                        padding: '4px 8px',
+                        fontFamily: 'Share Tech Mono',
+                        fontSize: '0.72rem',
+                      }}
+                    />
+                    <input
+                      type="text"
+                      value={ttTestMessage}
+                      onChange={e => setTtTestMessage(e.target.value)}
+                      placeholder="Nội dung tin nhắn thử nghiệm"
+                      style={{
+                        flex: 1,
+                        background: 'rgba(0,0,0,0.5)',
+                        border: '1px solid rgba(255,255,255,0.15)',
+                        color: '#fff',
+                        padding: '4px 8px',
+                        fontFamily: 'Share Tech Mono',
+                        fontSize: '0.72rem',
+                      }}
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleTestAiChat}
+                    disabled={ttAiTesting}
+                    style={{
+                      padding: '5px 12px',
+                      background: 'rgba(0, 242, 254, 0.15)',
+                      border: '1px solid #00F2FE',
+                      color: '#00F2FE',
+                      fontFamily: 'Share Tech Mono',
+                      fontSize: '0.72rem',
+                      cursor: 'pointer',
+                      borderRadius: '2px',
+                    }}
+                  >
+                    {ttAiTesting ? 'ĐANG SINH CÂU TRẢ LỜI...' : '▶ CHẠY THỬ NGHIỆM AI'}
+                  </button>
+                  {ttAiTestResult && (
+                    <div style={{ marginTop: '8px', padding: '8px 10px', background: 'rgba(0, 242, 254, 0.06)', border: '1px solid rgba(0, 242, 254, 0.25)', fontSize: '0.74rem', color: '#fff', borderRadius: '2px' }}>
+                      💬 <strong>AI Trả lời:</strong> {ttAiTestResult}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* ── SECTION 4: RECENT ACTIVITY & STREAK DISPATCHES FEED ── */}
+              <div style={{
+                marginTop: '24px',
+                padding: '16px 20px',
+                background: 'rgba(0, 0, 0, 0.35)',
+                border: '1px solid rgba(255, 255, 255, 0.08)',
+                borderRadius: '4px',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <SciFiTerminalPromptIcon size={16} color="#00F2FE" />
+                    <span style={{ fontSize: '0.82rem', fontFamily: 'Share Tech Mono', color: '#00F2FE', letterSpacing: '1px', fontWeight: 'bold' }}>
+                      NHẬT KÝ HOẠT ĐỘNG & GỬI CHUỖI GẦN ĐÂY
+                    </span>
+                  </div>
+                  <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', fontFamily: 'Share Tech Mono' }}>
+                    {ttStatus.recentReplies?.length || 0} sự kiện
+                  </span>
+                </div>
+
+                {ttStatus.recentReplies?.length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: '20px', color: 'var(--text-secondary)', fontSize: '0.76rem', fontFamily: 'Share Tech Mono' }}>
+                    Chưa có nhật ký gửi tin nhắn hoặc giữ chuỗi nào. Các lượt tự động gửi sẽ được ghi nhận tại đây theo thời gian thực.
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    {ttStatus.recentReplies.map((log, idx) => (
+                      <div key={idx} style={{
+                        padding: '10px 14px',
+                        background: 'rgba(255,255,255,0.02)',
+                        border: '1px solid rgba(255,255,255,0.05)',
+                        borderRadius: '2px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: '12px',
+                        fontSize: '0.74rem',
+                        fontFamily: 'Share Tech Mono',
+                      }}>
+                        <div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <span style={{
+                              padding: '1px 6px',
+                              borderRadius: '2px',
+                              fontSize: '0.65rem',
+                              background: log.targetType?.includes('streak') ? 'rgba(254, 44, 85, 0.2)' : 'rgba(0, 242, 254, 0.2)',
+                              color: log.targetType?.includes('streak') ? '#FE2C55' : '#00F2FE',
+                              border: log.targetType?.includes('streak') ? '1px solid #FE2C55' : '1px solid #00F2FE',
+                            }}>
+                              {log.targetType?.includes('streak') ? '🔥 GIỮ CHUỖI' : '💬 AUTO-REPLY DM'}
+                            </span>
+                            <span style={{ fontWeight: 'bold', color: '#fff' }}>{log.recipientName}</span>
+                            {log.recipientId && <span style={{ color: 'var(--text-secondary)', fontSize: '0.68rem' }}>({log.recipientId})</span>}
+                          </div>
+                          <div style={{ marginTop: '4px', color: 'var(--text-primary)', opacity: 0.85 }}>
+                            {log.replyText}
+                          </div>
+                        </div>
+
+                        <div style={{ textAlign: 'right', flexShrink: 0, fontSize: '0.68rem', color: 'var(--text-secondary)' }}>
+                          <div>{log.createdAt}</div>
+                          <div style={{ color: 'var(--accent-green)', marginTop: '2px' }}>✓ ĐÃ GỬI</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
         </div>
       )}
 

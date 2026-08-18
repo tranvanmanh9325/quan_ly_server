@@ -10,11 +10,12 @@ from app.core.llm_router import LlmRouter
 from app.core.ssh_client import SshClient
 from app.services.message_cache import FacebookMessageCache
 from app.services.facebook_service import FacebookService
+from app.services.tiktok_service import TikTokService
 from app.services.appointment_service import AppointmentService
 from app.services.ai_agent import AiAgentService
 from app.services.browser_agent import BrowserAgentService
 from app.services.telegram_bot import TelegramBot
-from app.routers import health, facebook, openai_gateway
+from app.routers import health, facebook, tiktok, openai_gateway
 
 logging.basicConfig(
     level=logging.INFO,
@@ -47,6 +48,37 @@ async def facebook_periodic_scan_loop(fb_service: FacebookService):
             break
         except Exception as e:
             logger.error("[FB-Scheduler] Unexpected error in scanner loop: %s", e)
+            await asyncio.sleep(60)
+
+
+async def tiktok_periodic_scan_loop(tt_service: TikTokService):
+    """Background task to periodically run TikTok DM auto-reply and daily streak keeper checks."""
+    logger.info("[TikTok-Scheduler] Started periodic scanner & streak keeper loop.")
+    while True:
+        try:
+            from app.services.vnc_manager import vnc_manager
+            if vnc_manager.is_running():
+                logger.debug("[TikTok-Scheduler] Live VNC session active; skipping scheduled scan cycle.")
+                await asyncio.sleep(20)
+                continue
+
+            cfg = await tt_service.get_config_from_db()
+            interval_min = max(3, cfg.get("scan_interval_minutes", 3))
+
+            # 1. Run DM scan if enabled
+            if cfg.get("enabled", False):
+                await tt_service.run_scan_cycle()
+
+            # 2. Check and run daily streak keeper cycle if scheduled
+            if cfg.get("streak_enabled", True):
+                await tt_service.run_streak_keeper_cycle(force=False)
+
+            await asyncio.sleep(interval_min * 60)
+        except asyncio.CancelledError:
+            logger.info("[TikTok-Scheduler] Scanner loop cancelled.")
+            break
+        except Exception as e:
+            logger.error("[TikTok-Scheduler] Unexpected error in scanner loop: %s", e)
             await asyncio.sleep(60)
 
 
@@ -100,6 +132,7 @@ async def lifespan(app: FastAPI):
     # 2. Initialize domain services with bidirectional wiring
     appointment_service = AppointmentService(llm_router)
     fb_service = FacebookService(message_cache, appointment_service=appointment_service)
+    tiktok_service = TikTokService(llm_router=llm_router)
     browser_agent = BrowserAgentService(fb_service=fb_service)
     ai_agent = AiAgentService(llm_router, ssh_client, message_cache, fb_service)
     ai_agent.set_appointment_service(appointment_service)
@@ -109,12 +142,14 @@ async def lifespan(app: FastAPI):
     telegram_bot.set_appointment_service(appointment_service)
     ai_agent.set_telegram_bot(telegram_bot)
     fb_service.set_telegram_bot(telegram_bot)
+    tiktok_service.set_telegram_bot(telegram_bot)
 
     # 3. Attach to app state for dependency injection in routers
     app.state.llm_router = llm_router
     app.state.ssh_client = ssh_client
     app.state.message_cache = message_cache
     app.state.fb_service = fb_service
+    app.state.tiktok_service = tiktok_service
     app.state.browser_agent = browser_agent
     app.state.ai_agent = ai_agent
     app.state.telegram_bot = telegram_bot
@@ -123,6 +158,7 @@ async def lifespan(app: FastAPI):
     # 4. Start background workers
     telegram_task = asyncio.create_task(telegram_bot.start_polling())
     fb_scan_task = asyncio.create_task(facebook_periodic_scan_loop(fb_service))
+    tiktok_scan_task = asyncio.create_task(tiktok_periodic_scan_loop(tiktok_service))
     reminder_task = asyncio.create_task(appointment_reminder_loop(appointment_service, telegram_bot))
     rtk_persist_task = asyncio.create_task(rtk_stats_persist_loop(llm_router))
 
@@ -132,10 +168,11 @@ async def lifespan(app: FastAPI):
     telegram_bot.stop()
     telegram_task.cancel()
     fb_scan_task.cancel()
+    tiktok_scan_task.cancel()
     reminder_task.cancel()
     rtk_persist_task.cancel()
     try:
-        await asyncio.gather(telegram_task, fb_scan_task, reminder_task, rtk_persist_task, return_exceptions=True)
+        await asyncio.gather(telegram_task, fb_scan_task, tiktok_scan_task, reminder_task, rtk_persist_task, return_exceptions=True)
     except Exception:
         pass
     # Persist any remaining RTK delta before shutdown
@@ -147,7 +184,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="9Router AI Gateway & Automation Microservice",
-    description="Python Async FastAPI microservice with 9Router OpenAI-compatible Gateway, Telegram Bot & Facebook Messenger Automation",
+    description="Python Async FastAPI microservice with 9Router OpenAI-compatible Gateway, Telegram Bot, Facebook Messenger & TikTok Automation",
     version="2.0.0",
     lifespan=lifespan,
 )
@@ -167,4 +204,5 @@ app.add_middleware(
 # Include Routers
 app.include_router(health.router)
 app.include_router(facebook.router)
+app.include_router(tiktok.router)
 app.include_router(openai_gateway.router)

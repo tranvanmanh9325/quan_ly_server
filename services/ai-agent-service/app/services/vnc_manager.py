@@ -40,6 +40,7 @@ class VncManager:
         self._context: Optional[BrowserContext] = None
         self._page: Optional[Page] = None
         self._is_running = False
+        self._current_platform = "facebook"
         self._last_active_time = 0.0
         self._watchdog_task: Optional[asyncio.Task] = None
 
@@ -92,21 +93,31 @@ class VncManager:
         except Exception:
             return False
 
-    async def start_session(self) -> dict:
+    async def start_session(self, target_url: Optional[str] = None, platform: str = "facebook") -> dict:
         """Starts the full X11 + VNC + Chromium interactive environment with low-resource flags."""
         async with self._lock:
-            # If session is truly active and ports are open, return success
+            self._current_platform = platform
+            # Determine initial navigation URL
+            if not target_url:
+                if platform == "tiktok":
+                    target_url = "https://www.tiktok.com/messages"
+                else:
+                    target_url = "https://www.facebook.com/messages/"
+
+            # If session is truly active and ports are open, navigate to target and return success
             if self.is_running() and self._check_port_listening(6080) and self._check_port_listening(5900):
                 self.touch()
-                logger.info("[VNC-Manager] Session already running and healthy; returning active state.")
-                return {"status": "success", "message": "Phiên VNC đang hoạt động."}
+                if self._page:
+                    asyncio.create_task(self._safe_navigate(self._page, target_url))
+                logger.info("[VNC-Manager] Session already running; navigated to %s.", target_url)
+                return {"status": "success", "message": f"Phiên VNC đang hoạt động ({platform.upper()})."}
 
             # If state was inconsistent or processes died, clean up completely first
             if self._is_running or self._context or self._xvfb_proc:
                 logger.info("[VNC-Manager] Cleaning up inconsistent session before fresh start...")
                 await self._cleanup_internal()
 
-            logger.info("[VNC-Manager] Starting optimized interactive VNC browser session...")
+            logger.info("[VNC-Manager] Starting optimized interactive VNC browser session for %s...", platform)
             try:
                 # 1. Kill any stale Xvfb / x11vnc / websockify instances & clean locks
                 self._kill_stale_processes()
@@ -141,8 +152,6 @@ class VncManager:
                 # 4. Start x11vnc with high-efficiency polling:
                 #    -threads: Multi-threaded ZRLE encoding
                 #    -nap, -wait 16, -defer 16: Smooth 60 FPS pacing, zero CPU spinlock
-                #    NOTE: Do NOT use -ncache because noVNC does not support client-side caching
-                #    and instead inflates the virtual screen height by Nx, causing vertical shrinkage.
                 self._x11vnc_proc = subprocess.Popen(
                     [
                         "x11vnc",
@@ -224,7 +233,7 @@ class VncManager:
                     env=env_vars,
                 )
 
-                # Open Facebook messages page
+                # Open target page
                 pages = self._context.pages
                 if pages:
                     self._page = pages[0]
@@ -237,7 +246,7 @@ class VncManager:
                     pass
 
                 # Navigate in background
-                asyncio.create_task(self._safe_navigate(self._page, "https://www.facebook.com/messages/"))
+                asyncio.create_task(self._safe_navigate(self._page, target_url))
 
                 self._is_running = True
                 self.touch()
@@ -247,8 +256,8 @@ class VncManager:
                     self._watchdog_task.cancel()
                 self._watchdog_task = asyncio.create_task(self._idle_watchdog())
 
-                logger.info("[VNC-Manager] Optimized interactive VNC session successfully launched.")
-                return {"status": "success", "message": "Trình duyệt Server đã khởi động thành công."}
+                logger.info("[VNC-Manager] Optimized interactive VNC session successfully launched (%s -> %s).", platform, target_url)
+                return {"status": "success", "message": f"Trình duyệt Server ({platform.upper()}) đã khởi động thành công."}
 
             except Exception as e:
                 logger.error("[VNC-Manager] Failed to launch VNC session: %s", e, exc_info=True)
@@ -261,40 +270,70 @@ class VncManager:
         except Exception as e:
             logger.warning("[VNC-Manager] Navigation to %s finished with note: %s", url, e)
 
-    async def save_session(self) -> dict:
-        """Extracts cookies from active context, saves to PostgreSQL facebook_config, and cleans up."""
+    async def save_session(self, platform: Optional[str] = None) -> dict:
+        """Extracts cookies from active context, saves to PostgreSQL (facebook_config or tiktok_config), and cleans up."""
         async with self._lock:
             if not self._context:
                 return {"status": "error", "message": "Không có phiên trình duyệt nào đang mở để lưu."}
 
+            target_platform = platform or self._current_platform or "facebook"
             try:
                 cookies = await self._context.cookies()
-                logger.info("[VNC-Manager] Extracted %d cookies from active browser session.", len(cookies))
-
-                # Check if c_user exists
-                c_user = next((c.get("value") for c in cookies if c.get("name") == "c_user"), None)
-                if not c_user:
-                    logger.warning("[VNC-Manager] No 'c_user' cookie found. User might not be logged in yet.")
+                logger.info("[VNC-Manager] Extracted %d cookies from active browser session for %s.", len(cookies), target_platform)
 
                 cookies_json = json.dumps(cookies)
 
-                # Save to PostgreSQL table facebook_config
+                # Save to PostgreSQL table based on platform
                 async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
                     async with conn.cursor() as cur:
-                        await cur.execute("""
-                            INSERT INTO facebook_config (id, cookies_json, last_status, enabled, threshold, cooldown_minutes, custom_message, created_at, updated_at)
-                            VALUES (1, %s, %s, true, 3, 2, '', NOW(), NOW())
-                            ON CONFLICT (id) DO UPDATE
-                            SET cookies_json = EXCLUDED.cookies_json,
-                                last_status = EXCLUDED.last_status,
-                                updated_at = NOW()
-                        """, (cookies_json, "Đã lưu phiên từ Server Chromium"))
+                        if target_platform == "tiktok":
+                            # Auto-create table if not exists for safety
+                            await cur.execute("""
+                                CREATE TABLE IF NOT EXISTS tiktok_config (
+                                    id BIGINT PRIMARY KEY CHECK (id = 1),
+                                    enabled BOOLEAN NOT NULL DEFAULT false,
+                                    streak_enabled BOOLEAN NOT NULL DEFAULT true,
+                                    streak_schedule_hour INTEGER NOT NULL DEFAULT 9,
+                                    streak_targets TEXT NOT NULL DEFAULT '[]',
+                                    streak_message_template TEXT NOT NULL DEFAULT 'Video giữ chuỗi hôm nay nè! 🔥',
+                                    streak_send_type TEXT NOT NULL DEFAULT 'video',
+                                    threshold INTEGER NOT NULL DEFAULT 3,
+                                    scan_interval_minutes INTEGER NOT NULL DEFAULT 3,
+                                    idle_timeout_minutes INTEGER NOT NULL DEFAULT 1,
+                                    human_session_minutes INTEGER NOT NULL DEFAULT 5,
+                                    cooldown_minutes INTEGER NOT NULL DEFAULT 60,
+                                    cookies_json TEXT NOT NULL DEFAULT '',
+                                    custom_message TEXT NOT NULL DEFAULT '',
+                                    last_status TEXT NOT NULL DEFAULT 'Tắt',
+                                    last_check_at TIMESTAMP,
+                                    last_streak_run_at TIMESTAMP,
+                                    created_at TIMESTAMP NOT NULL DEFAULT now(),
+                                    updated_at TIMESTAMP NOT NULL DEFAULT now()
+                                );
+                            """)
+                            await cur.execute("""
+                                INSERT INTO tiktok_config (id, cookies_json, last_status, enabled, streak_enabled, updated_at)
+                                VALUES (1, %s, %s, true, true, NOW())
+                                ON CONFLICT (id) DO UPDATE
+                                SET cookies_json = EXCLUDED.cookies_json,
+                                    last_status = EXCLUDED.last_status,
+                                    updated_at = NOW()
+                            """, (cookies_json, f"Đã lưu phiên TikTok ({len(cookies)} cookies) từ Server Chromium"))
+                        else:
+                            await cur.execute("""
+                                INSERT INTO facebook_config (id, cookies_json, last_status, enabled, threshold, cooldown_minutes, custom_message, created_at, updated_at)
+                                VALUES (1, %s, %s, true, 3, 2, '', NOW(), NOW())
+                                ON CONFLICT (id) DO UPDATE
+                                SET cookies_json = EXCLUDED.cookies_json,
+                                    last_status = EXCLUDED.last_status,
+                                    updated_at = NOW()
+                            """, (cookies_json, f"Đã lưu phiên Facebook ({len(cookies)} cookies) từ Server Chromium"))
                         await conn.commit()
 
                 # Clean up session and free 100% resources
                 await self._cleanup_internal()
 
-                msg = f"Đã lưu thành công phiên đăng nhập ({len(cookies)} cookies" + (f", User ID: {c_user}" if c_user else "") + ")!"
+                msg = f"Đã lưu thành công phiên {target_platform.upper()} ({len(cookies)} cookies)!"
                 logger.info("[VNC-Manager] %s", msg)
                 return {"status": "success", "message": msg}
 

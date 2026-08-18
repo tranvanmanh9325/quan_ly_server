@@ -182,20 +182,27 @@ export default function AiAgentsPage() {
     };
   }, [showVncModal]);
 
-  // Format Facebook system status text
+  // Format Facebook system status text with full multi-language support
   const formatFbStatus = (rawStatus, lastScannedAt, recentReplies) => {
-    if (!rawStatus) return t('settings.facebook.statusOff');
-    if (rawStatus === 'need_cookies') return t('settings.facebook.statusNeedCookies');
+    if (!rawStatus || rawStatus === 'Tắt' || rawStatus === 'OFF' || rawStatus === 'Disabled') {
+      return t('settings.facebook.statusOff') || 'Disabled';
+    }
+    if (rawStatus === 'need_cookies' || rawStatus.includes('Cần nhập Cookies') || rawStatus.includes('Cookies required')) {
+      return t('settings.facebook.statusNeedCookies') || 'Facebook Cookies required';
+    }
+    if (rawStatus.includes('Đã lưu phiên từ Server Chromium') || rawStatus.includes('Session saved from Server Chromium')) {
+      return t('aiAgents.facebook.savedSessionStatus') || 'Session saved from Server Chromium';
+    }
     const time = lastScannedAt
       ? new Date(lastScannedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
       : '---';
-    if (rawStatus.startsWith('active')) {
+    if (rawStatus.startsWith('active') || rawStatus.startsWith('Hoạt động')) {
       const count = recentReplies ? recentReplies.length : 0;
       if (count > 0) return t('settings.facebook.statusActiveWithReplies', { time, count });
       return t('settings.facebook.statusActive', { time });
     }
-    if (rawStatus.startsWith('error')) {
-      return t('settings.facebook.statusError') + ': ' + rawStatus.replace(/^(?:Lỗi|Error):\s*/, '');
+    if (rawStatus.startsWith('error') || rawStatus.startsWith('Lỗi')) {
+      return (t('settings.facebook.statusError') || 'Error') + ': ' + rawStatus.replace(/^(?:Lỗi|Error):\s*/, '');
     }
     return rawStatus;
   };
@@ -266,7 +273,7 @@ export default function AiAgentsPage() {
       setFbSaveSuccess(true);
       setTimeout(() => setFbSaveSuccess(false), 3000);
     } catch {
-      setFbTestResult(t('settings.facebook.saveConfigError'));
+      setFbTestResult(t('aiAgents.facebook.saveConfigError') || 'Error saving Facebook config.');
     } finally {
       setFbSaving(false);
     }
@@ -275,7 +282,7 @@ export default function AiAgentsPage() {
   // Manual Trigger Scan Now
   const handleTriggerFacebook = async () => {
     setFbTesting(true);
-    setFbTestResult(t('settings.facebook.scanning') || 'Đang quét Messenger...');
+    setFbTestResult(t('aiAgents.facebook.scanning') || 'Scanning Messenger...');
     try {
       await axios.post('/api/facebook/trigger');
       let attempts = 0;
@@ -287,12 +294,12 @@ export default function AiAgentsPage() {
           if (d.status === 'idle') {
             clearInterval(pollInterval);
             setFbTesting(false);
-            setFbTestResult(d.message || t('settings.facebook.scanSuccess') || 'Quét hoàn tất!');
+            setFbTestResult(d.message || t('aiAgents.facebook.scanSuccess') || 'Scan complete!');
             fetchFbConfig();
           } else if (d.status === 'error') {
             clearInterval(pollInterval);
             setFbTesting(false);
-            setFbTestResult(t('settings.facebook.scanError') || 'Lỗi trong quá trình quét.');
+            setFbTestResult(t('aiAgents.facebook.scanError') || 'Error during scan.');
             fetchFbConfig();
           }
         } catch {
@@ -304,18 +311,18 @@ export default function AiAgentsPage() {
       }, 2000);
     } catch (e) {
       setFbTesting(false);
-      setFbTestResult(e.response?.data?.message || t('settings.facebook.scanError'));
+      setFbTestResult(e.response?.data?.message || t('aiAgents.facebook.scanError') || 'Error during scan.');
     }
   };
 
   // Launch Server Browser via noVNC
   const handleLaunchVncBrowser = async () => {
     setVncIsLaunching(true);
-    setVncStatusMsg(t('settings.facebook.initBrowser'));
+    setVncStatusMsg(t('aiAgents.facebook.initBrowser') || 'Initializing Facebook Browser on Server...');
     try {
       const res = await axios.post('/api/facebook/launch-browser');
       if (res.data.status === 'success' || res.data.status === 'already_running') {
-        setVncStatusMsg(t('settings.facebook.waitingVnc'));
+        setVncStatusMsg(t('aiAgents.facebook.waitingVnc') || 'Waiting for VNC stack...');
         let attempts = 0;
         const MAX_ATTEMPTS = 20;
         const checkReady = setInterval(async () => {
@@ -331,7 +338,7 @@ export default function AiAgentsPage() {
             } else if (attempts >= MAX_ATTEMPTS) {
               clearInterval(checkReady);
               setVncIsLaunching(false);
-              setVncStatusMsg(t('settings.facebook.vncTimeout'));
+              setVncStatusMsg(t('aiAgents.facebook.vncTimeout') || 'VNC startup timed out.');
             }
           } catch {
             if (attempts >= MAX_ATTEMPTS) {
@@ -342,11 +349,11 @@ export default function AiAgentsPage() {
         }, 1000);
       } else {
         setVncIsLaunching(false);
-        setVncStatusMsg(res.data.message || t('settings.facebook.browserError'));
+        setVncStatusMsg(res.data.message || t('aiAgents.facebook.browserError') || 'Browser launch error.');
       }
     } catch (e) {
       setVncIsLaunching(false);
-      setVncStatusMsg(t('settings.facebook.serverConnError') + (e.response?.data?.message || e.message));
+      setVncStatusMsg((t('aiAgents.facebook.serverConnError') || 'Server connection error: ') + (e.response?.data?.message || e.message));
     }
   };
 
@@ -360,7 +367,7 @@ export default function AiAgentsPage() {
 
   const handleSaveBrowserSession = async () => {
     setVncIsSaving(true);
-    setVncStatusMsg(t('settings.facebook.extractingCookies'));
+    setVncStatusMsg(t('aiAgents.facebook.extractingCookies') || 'Extracting session cookies...');
     try {
       const res = await axios.post('/api/facebook/save-browser-session');
       if (res.data.status === 'success') {
@@ -380,18 +387,18 @@ export default function AiAgentsPage() {
         setVncStatusMsg(`⚠️ ${res.data.message}`);
       }
     } catch (e) {
-      setVncStatusMsg(t('settings.facebook.sessionSaveError') + (e.response?.data?.message || e.message));
+      setVncStatusMsg((t('aiAgents.facebook.sessionSaveError') || 'Session save error: ') + (e.response?.data?.message || e.message));
     } finally {
       setVncIsSaving(false);
     }
   };
 
   const platforms = [
-    { id: 'facebook', name: 'Facebook Messenger', icon: <SciFiFacebookIcon size={18} color="var(--accent-purple)" />, status: 'ACTIVE', color: 'var(--accent-purple)' },
-    { id: 'zalo', name: 'Zalo AI Agent', icon: <SciFiZaloIcon size={18} color="#0068FF" />, status: 'COMING SOON', color: '#0068FF' },
-    { id: 'gmail', name: 'Gmail AI Assistant', icon: <SciFiGmailIcon size={18} color="#EA4335" />, status: 'COMING SOON', color: '#EA4335' },
-    { id: 'tiktok', name: 'TikTok Social Agent', icon: <SciFiTikTokIcon size={18} color="#00F2FE" />, status: 'COMING SOON', color: '#00F2FE' },
-    { id: 'youtube', name: 'YouTube Comment Agent', icon: <SciFiYouTubeIcon size={18} color="#FF0033" />, status: 'COMING SOON', color: '#FF0033' },
+    { id: 'facebook', name: t('aiAgents.tabs.facebook') || 'Facebook Messenger', icon: <SciFiFacebookIcon size={18} color="var(--accent-purple)" />, status: t('aiAgents.statusActive') || 'ACTIVE', isLive: true, color: 'var(--accent-purple)' },
+    { id: 'zalo', name: t('aiAgents.tabs.zalo') || 'Zalo AI Agent', icon: <SciFiZaloIcon size={18} color="#0068FF" />, status: t('aiAgents.statusComingSoon') || 'COMING SOON', isLive: false, color: '#0068FF' },
+    { id: 'gmail', name: t('aiAgents.tabs.gmail') || 'Gmail AI Assistant', icon: <SciFiGmailIcon size={18} color="#EA4335" />, status: t('aiAgents.statusComingSoon') || 'COMING SOON', isLive: false, color: '#EA4335' },
+    { id: 'tiktok', name: t('aiAgents.tabs.tiktok') || 'TikTok Social Agent', icon: <SciFiTikTokIcon size={18} color="#00F2FE" />, status: t('aiAgents.statusComingSoon') || 'COMING SOON', isLive: false, color: '#00F2FE' },
+    { id: 'youtube', name: t('aiAgents.tabs.youtube') || 'YouTube Comment Agent', icon: <SciFiYouTubeIcon size={18} color="#FF0033" />, status: t('aiAgents.statusComingSoon') || 'COMING SOON', isLive: false, color: '#FF0033' },
   ];
 
   return (
@@ -404,11 +411,11 @@ export default function AiAgentsPage() {
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
             <SciFiBotIcon size={28} color="var(--accent-cyan)" />
             <h1 className="title-glow" style={{ fontSize: '1.4rem', letterSpacing: '3px', margin: 0 }}>
-              MULTI-PLATFORM AI AGENTS
+              {t('aiAgents.pageTitle') || 'MULTI-PLATFORM AI AGENTS'}
             </h1>
           </div>
           <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', margin: '6px 0 0 40px', opacity: 0.75 }}>
-            Hệ thống tự động hóa đa kênh: Tự động trả lời, phân tích ý định đặt lịch và tương tác bằng AI
+            {t('aiAgents.pageSubtitle') || 'Autonomous multi-channel automation: Auto-reply, appointment scheduling, and AI community engagement'}
           </p>
         </div>
 
@@ -422,7 +429,7 @@ export default function AiAgentsPage() {
         }}>
           <SciFiQuantumIcon size={16} color="var(--accent-cyan)" />
           <span style={{ fontSize: '0.75rem', fontFamily: 'Share Tech Mono', color: 'var(--accent-cyan)' }}>
-            ENGINE: 9ROUTER (GROQ LPU + OPENROUTER)
+            {t('aiAgents.engineBadge') || 'ENGINE: 9ROUTER (GROQ LPU + OPENROUTER)'}
           </span>
         </div>
       </div>
@@ -460,9 +467,9 @@ export default function AiAgentsPage() {
                 fontSize: '0.62rem',
                 padding: '1px 6px',
                 borderRadius: '3px',
-                background: p.status === 'ACTIVE' ? 'rgba(0, 255, 102, 0.2)' : 'rgba(255, 255, 255, 0.08)',
-                color: p.status === 'ACTIVE' ? 'var(--accent-green)' : 'var(--text-secondary)',
-                border: p.status === 'ACTIVE' ? '1px solid var(--accent-green)' : '1px solid rgba(255, 255, 255, 0.15)',
+                background: p.isLive ? 'rgba(0, 255, 102, 0.2)' : 'rgba(255, 255, 255, 0.08)',
+                color: p.isLive ? 'var(--accent-green)' : 'var(--text-secondary)',
+                border: p.isLive ? '1px solid var(--accent-green)' : '1px solid rgba(255, 255, 255, 0.15)',
               }}>
                 {p.status}
               </span>
@@ -482,17 +489,17 @@ export default function AiAgentsPage() {
         }}>
           <SectionHeader
             icon={<SciFiFacebookIcon size={20} color="var(--accent-purple)" />}
-            title="FACEBOOK MESSENGER AI AGENT"
-            subtitle="Tự động trả lời tin nhắn Facebook Messenger khi vắng mặt qua Server Chromium"
+            title={t('aiAgents.facebook.title') || "FACEBOOK MESSENGER AI AGENT"}
+            subtitle={t('aiAgents.facebook.subtitle') || "Auto-reply to Facebook Messenger messages when away via Server Chromium"}
             badge={
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <SciFiPulseBadge
-                  label={fbStatus.enabled ? 'ACTIVE' : 'STANDBY'}
+                  label={fbStatus.enabled ? (t('aiAgents.statusActive') || 'ACTIVE') : 'STANDBY'}
                   color={fbStatus.enabled ? 'var(--accent-green)' : 'var(--text-secondary)'}
                 />
                 {fbSaveSuccess && (
                   <span style={{ color: 'var(--accent-green)', fontSize: '0.72rem', fontFamily: 'Share Tech Mono' }}>
-                    ✓ {t('settings.facebook.savedConfig') || 'Đã lưu cấu hình'}
+                    ✓ {t('aiAgents.facebook.savedConfig') || 'Saved config'}
                   </span>
                 )}
               </div>
@@ -501,12 +508,12 @@ export default function AiAgentsPage() {
 
           {fbLoading ? (
             <div style={{ padding: '30px', textAlign: 'center', color: 'var(--text-secondary)', fontFamily: 'Share Tech Mono' }}>
-              ⚡ Đang tải cấu hình Facebook AI Agent...
+              ⚡ {t('aiAgents.facebook.loading') || 'Loading Facebook AI Agent config...'}
             </div>
           ) : (
             <>
               {/* Away Mode Toggle */}
-              <SettingRow label="Chế độ Vắng mặt (Away Mode)" desc="Kích hoạt AI Agent tự động quét và trả lời tin nhắn trên trình duyệt Server">
+              <SettingRow label={t('aiAgents.facebook.awayMode') || "Away Mode"} desc={t('aiAgents.facebook.awayModeDesc') || "Activate AI Agent to automatically scan and reply to messages on Server browser"}>
                 <Toggle
                   id="fb-enabled"
                   value={fbConfig.enabled}
@@ -515,12 +522,12 @@ export default function AiAgentsPage() {
               </SettingRow>
 
               {/* Message Activation Threshold */}
-              <SettingRow label="Ngưỡng Kích hoạt Tin nhắn" desc="Số tin nhắn liên tiếp chưa trả lời của đối phương trước khi AI tự động phản hồi (Mặc định: 5)">
+              <SettingRow label={t('aiAgents.facebook.threshold') || "Message Activation Threshold"} desc={t('aiAgents.facebook.thresholdDesc') || "Consecutive unanswered messages before AI auto-replies (Default: 5)"}>
                 <ThresholdSlider
                   id="fb-threshold"
                   min={1}
                   max={20}
-                  unit=" msgs"
+                  unit={` ${t('aiAgents.facebook.thresholdUnit') || 'msgs'}`}
                   value={fbConfig.threshold}
                   color="var(--accent-purple)"
                   onChange={v => handleFbConfigChange('threshold', v)}
@@ -528,13 +535,13 @@ export default function AiAgentsPage() {
               </SettingRow>
 
               {/* Inactivity Silence Delay */}
-              <SettingRow label="Thời gian Im lặng Cần thiết (Silence Delay)" desc="Khoảng thời gian không có tin nhắn mới từ đối phương trước khi AI trả lời (Tránh cướp lời khi đang gõ liên tục)">
+              <SettingRow label={t('aiAgents.facebook.idleTimeout') || "Inactivity Silence Delay"} desc={t('aiAgents.facebook.idleTimeoutDesc') || "Silence duration without new incoming messages before AI replies (Prevents collision while typing)"}>
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '6px' }}>
                   <ThresholdSlider
                     id="fb-idle-timeout"
                     min={1}
                     max={30}
-                    unit=" min"
+                    unit={` ${t('aiAgents.facebook.minutesUnit') || 'min'}`}
                     value={fbConfig.idleTimeoutMinutes}
                     onChange={v => handleFbConfigChange('idleTimeoutMinutes', v)}
                   />
@@ -552,13 +559,13 @@ export default function AiAgentsPage() {
               </SettingRow>
 
               {/* Active Human Session Duration */}
-              <SettingRow label="Khoảng chặn khi Người thật đang Chat" desc="Tạm dừng AI tự động phản hồi nếu bạn vừa gửi tin nhắn trên Facebook trong khoảng thời gian này">
+              <SettingRow label={t('aiAgents.facebook.humanSession') || "Active Human Session Duration"} desc={t('aiAgents.facebook.humanSessionDesc') || "Suppress AI auto-reply if you recently sent a message on Facebook within this window"}>
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '6px' }}>
                   <ThresholdSlider
                     id="fb-human-suppression"
                     min={1}
                     max={60}
-                    unit=" min"
+                    unit={` ${t('aiAgents.facebook.minutesUnit') || 'min'}`}
                     value={fbConfig.humanActivitySuppressionMinutes}
                     color="var(--accent-purple)"
                     onChange={v => handleFbConfigChange('humanActivitySuppressionMinutes', v)}
@@ -577,13 +584,13 @@ export default function AiAgentsPage() {
               </SettingRow>
 
               {/* Auto Scan Interval */}
-              <SettingRow label="Tần suất Quét Hộp thư Tự động" desc="Khoảng thời gian giữa mỗi chu kỳ kiểm tra hộp thư Messenger trên trình duyệt Server">
+              <SettingRow label={t('aiAgents.facebook.scanInterval') || "Auto Scan Interval"} desc={t('aiAgents.facebook.scanIntervalDesc') || "How frequently the Server browser checks Messenger inbox"}>
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '6px' }}>
                   <ThresholdSlider
                     id="fb-scan-interval"
                     min={1}
                     max={30}
-                    unit=" min"
+                    unit={` ${t('aiAgents.facebook.minutesUnit') || 'min'}`}
                     value={fbConfig.autoScanIntervalMinutes}
                     onChange={v => handleFbConfigChange('autoScanIntervalMinutes', v)}
                   />
@@ -601,11 +608,11 @@ export default function AiAgentsPage() {
               </SettingRow>
 
               {/* System Status Display */}
-              <SettingRow label="Trạng thái Hoạt động" desc="Nhật ký lần quét cuối cùng từ trình duyệt Server">
+              <SettingRow label={t('aiAgents.facebook.systemStatus') || "Operational Status"} desc={t('aiAgents.facebook.systemStatusDesc') || "Last check log from Server Browser"}>
                 <span style={{
                   fontSize: '0.78rem',
                   fontFamily: 'Share Tech Mono',
-                  color: fbStatus.lastStatus?.startsWith('error') ? 'var(--accent-pink)' : 'var(--accent-cyan)'
+                  color: fbStatus.lastStatus?.startsWith('error') || fbStatus.lastStatus?.startsWith('Lỗi') ? 'var(--accent-pink)' : 'var(--accent-cyan)'
                 }}>
                   {formatFbStatus(fbStatus.lastStatus, fbStatus.lastScannedAt, fbStatus.recentReplies)}
                 </span>
@@ -631,10 +638,10 @@ export default function AiAgentsPage() {
                     fontSize: '0.88rem', fontWeight: 'bold', letterSpacing: '1px',
                   }}>
                     <SciFiBrowserLaunchIcon size={16} color="var(--accent-purple)" />
-                    ĐĂNG NHẬP TRỰC TIẾP TRÊN TRÌNH DUYỆT SERVER
+                    {t('aiAgents.facebook.directLoginTitle') || 'DIRECT SERVER BROWSER LOGIN'}
                   </div>
                   <div style={{ color: 'var(--text-secondary)', fontSize: '0.74rem', marginTop: '4px', opacity: 0.8 }}>
-                    Mở giao diện Chromium GUI trực tiếp trên server qua noVNC để đăng nhập tài khoản, nhập mã 2FA và mở khóa PIN E2EE.
+                    {t('aiAgents.facebook.directLoginDesc') || 'Open Chromium GUI on server via noVNC to log in, enter 2FA, and unlock E2EE PIN.'}
                   </div>
                   {vncStatusMsg && (
                     <div style={{ marginTop: '6px', color: 'var(--accent-cyan)', fontSize: '0.74rem', fontFamily: 'Share Tech Mono' }}>
@@ -664,7 +671,7 @@ export default function AiAgentsPage() {
                   }}
                 >
                   {vncIsLaunching ? <SciFiChronoSpinnerIcon size={16} color="#fff" /> : <SciFiBrowserLaunchIcon size={16} color="#fff" />}
-                  {vncIsLaunching ? 'ĐANG KHỞI TẠO...' : 'MỞ TRÌNH DUYỆT SERVER'}
+                  {vncIsLaunching ? (t('aiAgents.facebook.launchingBrowser') || 'STARTING...') : (t('aiAgents.facebook.openBrowserBtn') || 'OPEN SERVER BROWSER')}
                 </button>
               </div>
 
@@ -678,7 +685,7 @@ export default function AiAgentsPage() {
                   fontFamily: 'Share Tech Mono',
                   letterSpacing: '0.5px'
                 }}>
-                  Facebook Session Cookies (JSON)
+                  {t('aiAgents.facebook.cookiesLabel') || 'Facebook Session Cookies (JSON)'}
                 </label>
                 <textarea
                   value={fbConfig.cookiesJson}
@@ -720,7 +727,7 @@ export default function AiAgentsPage() {
                     fontWeight: 'bold',
                   }}
                 >
-                  {fbSaving ? 'ĐANG LƯU...' : 'LƯU CẤU HÌNH'}
+                  {fbSaving ? (t('aiAgents.facebook.savingConfig') || 'SAVING...') : (t('aiAgents.facebook.saveConfigBtn') || 'SAVE CONFIG')}
                 </button>
 
                 <button
@@ -740,7 +747,7 @@ export default function AiAgentsPage() {
                     fontWeight: 'bold',
                   }}
                 >
-                  {fbTesting ? 'ĐANG QUÉT...' : 'QUÉT NGAY (SCAN NOW)'}
+                  {fbTesting ? (t('aiAgents.facebook.scanning') || 'SCANNING...') : (t('aiAgents.facebook.scanNowBtn') || 'SCAN NOW')}
                 </button>
 
                 {fbTestResult && (
@@ -769,9 +776,9 @@ export default function AiAgentsPage() {
         }}>
           <SectionHeader
             icon={<SciFiZaloIcon size={20} color="#0068FF" />}
-            title="ZALO AI AGENT (OFFICIAL ACCOUNT & PERSONAL)"
-            subtitle="Tự động trả lời tin nhắn Zalo OA, chăm sóc khách hàng và đồng bộ lịch hẹn"
-            badge={<SciFiPulseBadge label="IN DEVELOPMENT" color="#0068FF" />}
+            title={t('aiAgents.zalo.title') || "ZALO AI AGENT (OFFICIAL ACCOUNT & PERSONAL)"}
+            subtitle={t('aiAgents.zalo.subtitle') || "Auto-reply to Zalo OA messages, customer care, and calendar sync"}
+            badge={<SciFiPulseBadge label={t('aiAgents.statusInDevelopment') || "IN DEVELOPMENT"} color="#0068FF" />}
           />
 
           <div style={{ padding: '30px 20px', textAlign: 'center', color: 'var(--text-secondary)' }}>
@@ -779,13 +786,13 @@ export default function AiAgentsPage() {
               <SciFiZaloIcon size={28} color="#0068FF" />
             </div>
             <h3 style={{ color: '#fff', fontFamily: 'Share Tech Mono', letterSpacing: '2px', marginBottom: '8px' }}>
-              ZALO AI AGENT INTEGRATION GATEWAY
+              {t('aiAgents.zalo.cardTitle') || 'ZALO AI AGENT INTEGRATION GATEWAY'}
             </h3>
             <p style={{ maxWidth: '600px', margin: '0 auto 20px', fontSize: '0.82rem', lineHeight: '1.6' }}>
-              Module Zalo đang được phát triển để hỗ trợ kết nối Zalo Official Account (Zalo OA API) và Zalo Web Session. Cho phép AI Agent tự động chăm sóc khách hàng, tiếp nhận yêu cầu và xếp lịch hẹn tự động.
+              {t('aiAgents.zalo.desc') || 'The Zalo module is under development to support Zalo Official Account (Zalo OA API) and Zalo Web Session. Enables AI Agent to handle customer inquiries, capture leads, and schedule appointments automatically.'}
             </p>
             <div style={{ display: 'inline-flex', gap: '8px', padding: '6px 14px', background: 'rgba(0, 104, 255, 0.08)', border: '1px solid rgba(0, 104, 255, 0.3)', borderRadius: '3px', fontSize: '0.75rem', fontFamily: 'Share Tech Mono', color: '#0068FF' }}>
-              STATUS: ARCHITECTURE DESIGNED ➔ BACKEND PIPELINE READY
+              {t('aiAgents.zalo.statusBadge') || 'STATUS: ARCHITECTURE DESIGNED ➔ BACKEND PIPELINE READY'}
             </div>
           </div>
         </div>
@@ -802,9 +809,9 @@ export default function AiAgentsPage() {
         }}>
           <SectionHeader
             icon={<SciFiGmailIcon size={20} color="#EA4335" />}
-            title="GMAIL AI ASSISTANT & SMART INBOX"
-            subtitle="Tự động phân loại email quan trọng, phát hiện lịch hẹn và tạo bản nháp thư thông minh"
-            badge={<SciFiPulseBadge label="IN DEVELOPMENT" color="#EA4335" />}
+            title={t('aiAgents.gmail.title') || "GMAIL AI ASSISTANT & SMART INBOX"}
+            subtitle={t('aiAgents.gmail.subtitle') || "Smart email triage, meeting detection, and AI draft generation"}
+            badge={<SciFiPulseBadge label={t('aiAgents.statusInDevelopment') || "IN DEVELOPMENT"} color="#EA4335" />}
           />
 
           <div style={{ padding: '30px 20px', textAlign: 'center', color: 'var(--text-secondary)' }}>
@@ -812,13 +819,13 @@ export default function AiAgentsPage() {
               <SciFiGmailIcon size={28} color="#EA4335" />
             </div>
             <h3 style={{ color: '#fff', fontFamily: 'Share Tech Mono', letterSpacing: '2px', marginBottom: '8px' }}>
-              GMAIL AI ASSISTANT GATEWAY
+              {t('aiAgents.gmail.cardTitle') || 'GMAIL AI ASSISTANT GATEWAY'}
             </h3>
             <p style={{ maxWidth: '600px', margin: '0 auto 20px', fontSize: '0.82rem', lineHeight: '1.6' }}>
-              Kết nối Google OAuth2 & Gmail IMAP/API: AI Agent tự động đọc email mới, trích xuất tóm tắt ngắn gọn báo cáo về Telegram, và tự động soạn thảo email phản hồi chuyên nghiệp.
+              {t('aiAgents.gmail.desc') || 'Google OAuth2 & Gmail IMAP/API integration: AI Agent automatically scans new emails, extracts concise summaries to Telegram, and drafts professional reply templates.'}
             </p>
             <div style={{ display: 'inline-flex', gap: '8px', padding: '6px 14px', background: 'rgba(234, 67, 53, 0.08)', border: '1px solid rgba(234, 67, 53, 0.3)', borderRadius: '3px', fontSize: '0.75rem', fontFamily: 'Share Tech Mono', color: '#EA4335' }}>
-              STATUS: OAUTH2 HOOKS PREPARED
+              {t('aiAgents.gmail.statusBadge') || 'STATUS: OAUTH2 HOOKS PREPARED'}
             </div>
           </div>
         </div>
@@ -835,9 +842,9 @@ export default function AiAgentsPage() {
         }}>
           <SectionHeader
             icon={<SciFiTikTokIcon size={20} color="#00F2FE" />}
-            title="TIKTOK SOCIAL AUTOMATION AGENT"
-            subtitle="Tự động phản hồi bình luận video, trả lời Direct Messages và phân tích tương tác kênh"
-            badge={<SciFiPulseBadge label="IN DEVELOPMENT" color="#00F2FE" />}
+            title={t('aiAgents.tiktok.title') || "TIKTOK SOCIAL AUTOMATION AGENT"}
+            subtitle={t('aiAgents.tiktok.subtitle') || "Auto-reply to video comments, Direct Messages, and engagement analytics"}
+            badge={<SciFiPulseBadge label={t('aiAgents.statusInDevelopment') || "IN DEVELOPMENT"} color="#00F2FE" />}
           />
 
           <div style={{ padding: '30px 20px', textAlign: 'center', color: 'var(--text-secondary)' }}>
@@ -845,13 +852,13 @@ export default function AiAgentsPage() {
               <SciFiTikTokIcon size={28} color="#00F2FE" />
             </div>
             <h3 style={{ color: '#fff', fontFamily: 'Share Tech Mono', letterSpacing: '2px', marginBottom: '8px' }}>
-              TIKTOK SOCIAL AGENT GATEWAY
+              {t('aiAgents.tiktok.cardTitle') || 'TIKTOK SOCIAL AGENT GATEWAY'}
             </h3>
             <p style={{ maxWidth: '600px', margin: '0 auto 20px', fontSize: '0.82rem', lineHeight: '1.6' }}>
-              Tự động hóa kênh TikTok: Phản hồi bình luận của khán giả theo kịch bản thông minh của AI, phát hiện câu hỏi của khách hàng và tự động gửi tin nhắn chào đón khi có tương tác mới.
+              {t('aiAgents.tiktok.desc') || 'TikTok channel automation: Intelligently reply to viewers\' comments using AI scenarios, capture customer questions, and auto-respond to incoming DMs.'}
             </p>
             <div style={{ display: 'inline-flex', gap: '8px', padding: '6px 14px', background: 'rgba(0, 242, 254, 0.08)', border: '1px solid rgba(0, 242, 254, 0.3)', borderRadius: '3px', fontSize: '0.75rem', fontFamily: 'Share Tech Mono', color: '#00F2FE' }}>
-              STATUS: WEB AUTOMATION HOOK READY
+              {t('aiAgents.tiktok.statusBadge') || 'STATUS: WEB AUTOMATION HOOK READY'}
             </div>
           </div>
         </div>
@@ -868,9 +875,9 @@ export default function AiAgentsPage() {
         }}>
           <SectionHeader
             icon={<SciFiYouTubeIcon size={20} color="#FF0033" />}
-            title="YOUTUBE COMMUNITY & COMMENT AGENT"
-            subtitle="Tự động quản lý bình luận video, lọc spam và tương tác chăm sóc cộng đồng khán giả"
-            badge={<SciFiPulseBadge label="IN DEVELOPMENT" color="#FF0033" />}
+            title={t('aiAgents.youtube.title') || "YOUTUBE COMMUNITY & COMMENT AGENT"}
+            subtitle={t('aiAgents.youtube.subtitle') || "Video comments management, spam filtering, and community care"}
+            badge={<SciFiPulseBadge label={t('aiAgents.statusInDevelopment') || "IN DEVELOPMENT"} color="#FF0033" />}
           />
 
           <div style={{ padding: '30px 20px', textAlign: 'center', color: 'var(--text-secondary)' }}>
@@ -878,13 +885,13 @@ export default function AiAgentsPage() {
               <SciFiYouTubeIcon size={28} color="#FF0033" />
             </div>
             <h3 style={{ color: '#fff', fontFamily: 'Share Tech Mono', letterSpacing: '2px', marginBottom: '8px' }}>
-              YOUTUBE COMMUNITY AGENT GATEWAY
+              {t('aiAgents.youtube.cardTitle') || 'YOUTUBE COMMUNITY AGENT GATEWAY'}
             </h3>
             <p style={{ maxWidth: '600px', margin: '0 auto 20px', fontSize: '0.82rem', lineHeight: '1.6' }}>
-              Tích hợp YouTube Data API v3: Tự động phát hiện bình luận mới trên các video, trả lời giải đáp thắc mắc người xem, lọc bỏ bình luận độc hại và gửi báo cáo phân tích về Telegram.
+              {t('aiAgents.youtube.desc') || 'YouTube Data API v3 integration: Detect new comments across channel videos, answer viewers\' questions, filter toxic spam, and send analytics reports to Telegram.'}
             </p>
             <div style={{ display: 'inline-flex', gap: '8px', padding: '6px 14px', background: 'rgba(255, 0, 51, 0.08)', border: '1px solid rgba(255, 0, 51, 0.3)', borderRadius: '3px', fontSize: '0.75rem', fontFamily: 'Share Tech Mono', color: '#FF0033' }}>
-              STATUS: API PIPELINE READY
+              {t('aiAgents.youtube.statusBadge') || 'STATUS: API PIPELINE READY'}
             </div>
           </div>
         </div>
@@ -936,7 +943,7 @@ export default function AiAgentsPage() {
                   letterSpacing: '1.5px',
                   fontWeight: 'bold',
                 }}>
-                  SERVER CHROMIUM BROWSER CONSOLE (noVNC)
+                  {t('aiAgents.facebook.vncModalTitle') || 'SERVER CHROMIUM BROWSER CONSOLE (noVNC)'}
                 </span>
                 <span style={{
                   fontSize: '0.7rem',
@@ -947,7 +954,7 @@ export default function AiAgentsPage() {
                   border: '1px solid var(--accent-green)',
                   fontFamily: 'Share Tech Mono',
                 }}>
-                  ● LIVE
+                  {t('aiAgents.facebook.vncLiveBadge') || '● LIVE'}
                 </span>
               </div>
 
@@ -975,7 +982,7 @@ export default function AiAgentsPage() {
                   }}
                 >
                   {vncIsSaving ? <SciFiChronoSpinnerIcon size={14} color="var(--accent-green)" /> : <SciFiCheckCircleIcon size={14} color="var(--accent-green)" />}
-                  {vncIsSaving ? 'ĐANG LƯU COOKIES...' : 'LƯU PHIÊN & ĐÓNG'}
+                  {vncIsSaving ? (t('aiAgents.facebook.vncSavingCookies') || 'SAVING COOKIES...') : (t('aiAgents.facebook.vncSaveSessionBtn') || 'SAVE SESSION & CLOSE')}
                 </button>
 
                 <button
@@ -1030,7 +1037,7 @@ export default function AiAgentsPage() {
               fontFamily: 'Share Tech Mono',
             }}>
               <span>
-                💡 Sau khi đăng nhập Facebook thành công, hãy bấm <strong style={{ color: 'var(--accent-green)' }}>[LƯU PHIÊN & ĐÓNG]</strong> để hệ thống tự động trích xuất Cookies.
+                {t('aiAgents.facebook.vncFooterTip') || '💡 Once logged into Facebook successfully, click [SAVE SESSION & CLOSE] to automatically extract and store session cookies.'}
               </span>
               {vncStatusMsg && (
                 <span style={{ color: 'var(--accent-cyan)' }}>

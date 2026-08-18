@@ -19,20 +19,36 @@ logger = logging.getLogger(__name__)
 
 class RtkCompressor:
     """
-    Port of the 9Router RTK (Reduction Token Killer) engine.
-    Optimizes tool execution outputs, system commands, and message bodies:
-    - Strips ANSI terminal color escape codes.
-    - Truncates repetitive tabular data (e.g. ps aux, top, docker ps) while retaining headers.
-    - Collapses consecutive empty lines and trailing whitespaces.
-    - Tracks estimated token savings (~4 chars per token).
+    9Router RTK (Reduction Token Killer) Engine.
+    High-performance, semantic-preserving prompt & tool output compressor for LLMs:
+    
+    1. Strips ANSI VT100/Xterm terminal color and cursor escape codes.
+    2. Minifies un-formatted multiline JSON payloads into compact single-line representations.
+    3. Trims repeated divider lines (dashes, equals, asterisks, hashes) to standard length.
+    4. Compacts excessive whitespace in tabular outputs (collapsing 3+ spaces to 2),
+       preserving column structure while eliminating massive token waste.
+    5. Normalizes log timestamps and collapses consecutive blank lines.
+    6. Intelligent Head-Tail sampling for large tables, process lists, and terminal logs.
+    7. Accurate accounting: strictly increments compression count only when tokens are actually saved.
     """
 
-    ANSI_REGEX = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
+    # 1. ANSI & VT100 Terminal Escape Codes
+    ANSI_REGEX = re.compile(
+        r"(?:\x1B[@-Z\\-_]|[\x80-\x9A\x9C-\x9F]|(?:\x1B\[|\x9B)[0-?]*[ -/]*[@-~])"
+    )
+    # 2. Excessive space padding in tables/logs (3+ spaces -> 2 spaces)
+    TABLE_GAP_REGEX = re.compile(r"[ \t]{3,}")
+    # 3. Repeated divider lines (6+ dashes, equals, asterisks, hashes, etc. -> 6 chars)
+    DIVIDER_REGEX = re.compile(r"([-=─═*~#_])\1{5,}")
+    # 4. Consecutive blank lines (3+ newlines -> 2 newlines)
     MULTI_NEWLINE_REGEX = re.compile(r"\n{3,}")
+    # 5. Verbose microsecond timestamps in log streams
+    TIMESTAMP_VERBOSE_REGEX = re.compile(r"\b(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2})\.\d+(?:Z|[+-]\d{2}:\d{2})?\b")
 
     def __init__(self):
         self.total_chars_saved: int = 0
         self.total_compressions: int = 0
+        self.total_scanned_requests: int = 0
         # Pending delta since last DB persist — avoids writing unchanged data
         self._pending_chars_saved: int = 0
         self._pending_compressions: int = 0
@@ -52,43 +68,83 @@ class RtkCompressor:
         self._pending_compressions = 0
         return delta
 
+    def _compact_json(self, text: str) -> str:
+        """Minifies JSON strings if text is valid JSON without corrupting non-JSON text."""
+        stripped = text.strip()
+        if (stripped.startswith("{") and stripped.endswith("}")) or (stripped.startswith("[") and stripped.endswith("]")):
+            try:
+                parsed = json.loads(stripped)
+                minified = json.dumps(parsed, separators=(",", ":"), ensure_ascii=False)
+                if len(minified) < len(text):
+                    return minified
+            except Exception:
+                pass
+        return text
+
     def compress(self, text: str, max_chars: int = 2500, max_lines: int = 35) -> str:
         if not text or not isinstance(text, str):
             return text or ""
 
         orig_len = len(text)
+        self.total_scanned_requests += 1
 
-        # 1. Strip ANSI escape codes
-        cleaned = self.ANSI_REGEX.sub("", text)
+        # 1. Check JSON compaction
+        cleaned = self._compact_json(text)
 
-        # 2. Trim trailing spaces on each line
-        lines = [line.rstrip() for line in cleaned.splitlines()]
+        # 2. Strip ANSI terminal color & cursor escape codes
+        cleaned = self.ANSI_REGEX.sub("", cleaned)
 
-        # 3. Intelligent Table / Process list trimming
+        # 3. Compact verbose timestamps in log streams
+        cleaned = self.TIMESTAMP_VERBOSE_REGEX.sub(r"\1", cleaned)
+
+        # 4. Compact repetitive divider lines (e.g. 80 dashes -> 6 dashes)
+        cleaned = self.DIVIDER_REGEX.sub(r"\1\1\1\1\1\1", cleaned)
+
+        # 5. Trim trailing whitespaces on each line and compact excessive table gaps
+        lines = []
+        for raw_line in cleaned.splitlines():
+            line = raw_line.rstrip()
+            if not line:
+                lines.append("")
+                continue
+            # Collapse 3+ consecutive spaces (e.g. in ps/docker tables) to 2 spaces
+            compacted_line = self.TABLE_GAP_REGEX.sub("  ", line)
+            lines.append(compacted_line)
+
+        # 6. Head-Tail Table & Process list sampling
         if len(lines) > max_lines:
             header_count = min(3, len(lines))
             headers = lines[:header_count]
-            body_start = header_count
-            body_take = max_lines - header_count - 1
-            sample = lines[body_start : body_start + body_take]
-            omitted = len(lines) - (header_count + len(sample))
-            lines = headers + sample + [f"[... {omitted} additional lines truncated by 9Router RTK compressor ...]"]
+            remaining_slots = max_lines - header_count - 1
+            if remaining_slots > 4:
+                head_take = remaining_slots - 2
+                tail_take = 2
+                head_sample = lines[header_count : header_count + head_take]
+                tail_sample = lines[-tail_take:]
+                omitted = len(lines) - (header_count + head_take + tail_take)
+                lines = headers + head_sample + [f"[... {omitted} lines omitted by 9Router RTK ...]"] + tail_sample
+            else:
+                sample = lines[header_count : header_count + remaining_slots]
+                omitted = len(lines) - (header_count + len(sample))
+                lines = headers + sample + [f"[... {omitted} lines omitted by 9Router RTK ...]"]
 
         cleaned = "\n".join(lines)
 
-        # 4. Collapse consecutive empty lines
+        # 7. Collapse 3+ consecutive empty lines
         cleaned = self.MULTI_NEWLINE_REGEX.sub("\n\n", cleaned).strip()
 
-        # 5. Hard cap if still too large
+        # 8. Hard cap character boundary
         if len(cleaned) > max_chars:
-            cleaned = cleaned[:max_chars] + "\n[... truncated by 9Router RTK ...]"
+            cleaned = cleaned[:max_chars].rstrip() + "\n[... truncated by 9Router RTK ...]"
 
         saved = max(0, orig_len - len(cleaned))
-        self.total_chars_saved += saved
-        self.total_compressions += 1
-        # Track unsaved delta for the periodic DB persist cycle
-        self._pending_chars_saved += saved
-        self._pending_compressions += 1
+        # Strictly increment only when tokens/characters are actually saved
+        if saved > 0:
+            self.total_chars_saved += saved
+            self.total_compressions += 1
+            self._pending_chars_saved += saved
+            self._pending_compressions += 1
+
         return cleaned
 
     @property

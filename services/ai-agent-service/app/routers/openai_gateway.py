@@ -43,8 +43,8 @@ async def openai_chat_completions(
     compressed_messages = []
     for m in req.messages:
         content = m.get("content")
-        if isinstance(content, str) and len(content) > 1000:
-            content = llm_router.rtk.compress(content, max_chars=4000)
+        if isinstance(content, str) and len(content) > 150:
+            content = llm_router.rtk.compress(content, max_chars=3000, max_lines=35)
             m_copy = dict(m)
             m_copy["content"] = content
             compressed_messages.append(m_copy)

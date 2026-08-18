@@ -1381,7 +1381,7 @@ Hệ thống hiện ghi nhận *1 nhóm*:
 
             tools_available = self._build_tools(excluded_tools=executed_once_tools)
 
-            # Apply RTK compression to oversized messages (tool results, long user/assistant turns)
+            # Apply RTK compression to messages (tool results, long user/assistant turns)
             # before passing to the LLM. System prompt is intentionally exempt.
             rtk_messages = []
             for m in messages:
@@ -1389,9 +1389,9 @@ Hệ thống hiện ghi nhận *1 nhóm*:
                     rtk_messages.append(m)
                     continue
                 content = m.get("content")
-                if isinstance(content, str) and len(content) > 1000:
+                if isinstance(content, str) and len(content) > 150:
                     m_copy = dict(m)
-                    m_copy["content"] = self.llm_router.rtk.compress(content, max_chars=3000, max_lines=40)
+                    m_copy["content"] = self.llm_router.rtk.compress(content, max_chars=2500, max_lines=35)
                     rtk_messages.append(m_copy)
                 else:
                     rtk_messages.append(m)
@@ -1437,7 +1437,7 @@ Hệ thống hiện ghi nhận *1 nhóm*:
                         fn_name, fn_args, chat_id=chat_id, pending_photos=pending_photos
                     )
 
-                    # Apply RTK compression to ALL tool results before inserting into history.
+                    # Apply RTK compression to tool results before inserting into history.
                     # This is the primary source of token savings — large SSH/browser outputs
                     # can easily be 5-10x longer than the model needs to understand the result.
                     # Tools that return structured markdown (facebook_view_profile, etc.) are
@@ -1447,8 +1447,8 @@ Hệ thống hiện ghi nhận *1 nhóm*:
                         "facebook_capture_screenshot", "server_capture_screenshot",
                         "browser_take_screenshot",
                     }
-                    if fn_name not in _NON_COMPRESS_TOOLS and isinstance(tool_result, str) and len(tool_result) > 800:
-                        tool_result = self.llm_router.rtk.compress(tool_result, max_chars=3000, max_lines=40)
+                    if fn_name not in _NON_COMPRESS_TOOLS and isinstance(tool_result, str) and len(tool_result) > 100:
+                        tool_result = self.llm_router.rtk.compress(tool_result, max_chars=2000, max_lines=30)
 
                     history.append({
                         "role": "tool",
@@ -1491,6 +1491,14 @@ Hệ thống hiện ghi nhận *1 nhóm*:
                     tool_result = await self._execute_tool(
                         fn_name, fn_args, chat_id=chat_id, pending_photos=pending_photos
                     )
+                    _NON_COMPRESS_TOOLS = {
+                        "facebook_view_profile", "facebook_send_reply",
+                        "facebook_capture_screenshot", "server_capture_screenshot",
+                        "browser_take_screenshot",
+                    }
+                    if fn_name not in _NON_COMPRESS_TOOLS and isinstance(tool_result, str) and len(tool_result) > 100:
+                        tool_result = self.llm_router.rtk.compress(tool_result, max_chars=2000, max_lines=30)
+
                     history.append({
                         "role": "tool",
                         "tool_call_id": f"call_pseudo_{iteration}_{idx}",

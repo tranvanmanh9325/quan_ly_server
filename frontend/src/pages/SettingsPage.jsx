@@ -773,7 +773,7 @@ export default function SettingsPage() {
                   RTK TOKENS SAVED
                 </div>
                 <div style={{ fontSize: '0.95rem', color: 'var(--accent-yellow)', fontFamily: 'Share Tech Mono', fontWeight: 'bold', marginTop: '3px' }}>
-                  ≈{routerStatus?.rtk?.estimated_tokens_saved ?? 0} tok ({routerStatus?.rtk?.total_compressions ?? 0} runs)
+                  ≈{(routerStatus?.rtk?.estimated_tokens_saved ?? 0).toLocaleString()} tok ({(routerStatus?.rtk?.total_compressions ?? 0).toLocaleString()} runs)
                 </div>
               </div>
 

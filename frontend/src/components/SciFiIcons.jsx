@@ -586,3 +586,20 @@ export const SciFiYouTubeIcon = ({ size = 18, color = '#FF0033' }) => (
     <polygon points="10,8.5 16,12 10,15.5" fill={color} />
   </svg>
 );
+
+// 41. INSTAGRAM — Cyber camera reticle
+export const SciFiInstagramIcon = ({ size = 18, color = '#E1306C' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
+    <rect x="2" y="2" width="20" height="20" rx="5" stroke={color} strokeWidth="1.5" fill="rgba(225, 48, 108, 0.1)" />
+    <circle cx="12" cy="12" r="4" stroke={color} strokeWidth="1.5" />
+    <circle cx="17" cy="7" r="1.2" fill={color} />
+  </svg>
+);
+
+// 42. WHATSAPP — Cyber chat node
+export const SciFiWhatsAppIcon = ({ size = 18, color = '#25D366' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
+    <rect x="2" y="2" width="20" height="20" rx="5" stroke={color} strokeWidth="1.5" fill="rgba(37, 211, 102, 0.1)" />
+    <path d="M16.5 14.5C16 15.2 14.5 15.5 13.5 15C11.5 14 9.5 12 8.5 10C8 9 8.3 7.5 9 7L10.5 8.5L9.5 10C10.2 11.5 11.5 12.8 13 13.5L14.5 12.5L16.5 14.5Z" fill={color} />
+  </svg>
+);

@@ -657,3 +657,37 @@ h2.title-glow::after {
   50% { box-shadow: 0 0 40px rgba(0, 243, 255, 0.6), inset 0 0 20px rgba(0, 243, 255, 0.4); }
   100% { box-shadow: 0 0 20px rgba(0, 243, 255, 0.2); }
 }
+
+/* Sci-Fi Auto-scrolling Platforms Ribbon */
+@keyframes scifiMarqueeLeft {
+  0% {
+    transform: translate3d(0, 0, 0);
+  }
+  100% {
+    transform: translate3d(-50%, 0, 0);
+  }
+}
+
+.scifi-marquee-container {
+  position: relative;
+  overflow: hidden;
+  width: 100%;
+  mask-image: linear-gradient(to right, transparent 0%, black 2.5%, black 97.5%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to right, transparent 0%, black 2.5%, black 97.5%, transparent 100%);
+  padding: 4px 0 8px 0;
+}
+
+.scifi-marquee-track {
+  display: flex;
+  gap: 12px;
+  width: max-content;
+  will-change: transform;
+}
+
+.scifi-marquee-track.animating {
+  animation: scifiMarqueeLeft 35s linear infinite;
+}
+
+.scifi-marquee-container:hover .scifi-marquee-track.animating {
+  animation-play-state: paused;
+}

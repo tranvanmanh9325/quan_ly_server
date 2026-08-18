@@ -3,8 +3,8 @@ import { createPortal } from 'react-dom';
 import axios from 'axios';
 import {
   SciFiBotIcon, SciFiFacebookIcon, SciFiZaloIcon, SciFiGmailIcon,
-  SciFiTikTokIcon, SciFiYouTubeIcon, SciFiRefreshIcon, SciFiPulseBadge,
-  SciFiConsoleIcon, SciFiCyberLockIcon, SciFiBrowserLaunchIcon,
+  SciFiTikTokIcon, SciFiYouTubeIcon, SciFiTelegramIcon, SciFiInstagramIcon,
+  SciFiWhatsAppIcon, SciFiPulseBadge, SciFiBrowserLaunchIcon,
   SciFiChronoSpinnerIcon, SciFiCheckCircleIcon, SciFiCloseIcon,
   SciFiQuantumIcon
 } from '../components/SciFiIcons';
@@ -132,6 +132,9 @@ const DurationChip = ({ label, selected, onClick }) => (
 export default function AiAgentsPage() {
   const { t } = useTranslation();
   const [activePlatform, setActivePlatform] = useState('facebook');
+  const [isAutoScroll, setIsAutoScroll] = useState(true);
+  const [isHovered, setIsHovered] = useState(false);
+  const marqueeContainerRef = useRef(null);
 
   // ── Facebook state ────────────────────────────────────────────────────────
   const [fbConfig, setFbConfig] = useState({
@@ -393,20 +396,31 @@ export default function AiAgentsPage() {
     }
   };
 
+  // ── Multi-Platform Catalog ────────────────────────────────────────────────
   const platforms = [
     { id: 'facebook', name: t('aiAgents.tabs.facebook') || 'Facebook Messenger', icon: <SciFiFacebookIcon size={18} color="var(--accent-purple)" />, status: t('aiAgents.statusActive') || 'ACTIVE', isLive: true, color: 'var(--accent-purple)' },
     { id: 'zalo', name: t('aiAgents.tabs.zalo') || 'Zalo AI Agent', icon: <SciFiZaloIcon size={18} color="#0068FF" />, status: t('aiAgents.statusComingSoon') || 'COMING SOON', isLive: false, color: '#0068FF' },
     { id: 'gmail', name: t('aiAgents.tabs.gmail') || 'Gmail AI Assistant', icon: <SciFiGmailIcon size={18} color="#EA4335" />, status: t('aiAgents.statusComingSoon') || 'COMING SOON', isLive: false, color: '#EA4335' },
     { id: 'tiktok', name: t('aiAgents.tabs.tiktok') || 'TikTok Social Agent', icon: <SciFiTikTokIcon size={18} color="#00F2FE" />, status: t('aiAgents.statusComingSoon') || 'COMING SOON', isLive: false, color: '#00F2FE' },
     { id: 'youtube', name: t('aiAgents.tabs.youtube') || 'YouTube Comment Agent', icon: <SciFiYouTubeIcon size={18} color="#FF0033" />, status: t('aiAgents.statusComingSoon') || 'COMING SOON', isLive: false, color: '#FF0033' },
+    { id: 'telegram', name: t('aiAgents.tabs.telegram') || 'Telegram Community Bot', icon: <SciFiTelegramIcon size={18} color="#229ED9" />, status: t('aiAgents.statusComingSoon') || 'COMING SOON', isLive: false, color: '#229ED9' },
+    { id: 'instagram', name: t('aiAgents.tabs.instagram') || 'Instagram Direct Agent', icon: <SciFiInstagramIcon size={18} color="#E1306C" />, status: t('aiAgents.statusComingSoon') || 'COMING SOON', isLive: false, color: '#E1306C' },
+    { id: 'whatsapp', name: t('aiAgents.tabs.whatsapp') || 'WhatsApp Business AI', icon: <SciFiWhatsAppIcon size={18} color="#25D366" />, status: t('aiAgents.statusComingSoon') || 'COMING SOON', isLive: false, color: '#25D366' },
   ];
+
+  // Manual scroll buttons for marquee ribbon
+  const handleScrollBy = (offset) => {
+    if (marqueeContainerRef.current) {
+      marqueeContainerRef.current.scrollBy({ left: offset, behavior: 'smooth' });
+    }
+  };
 
   return (
     <div style={{ padding: '24px 28px', overflowY: 'auto', height: '100%', boxSizing: 'border-box' }}>
       <div style={{ maxWidth: '1280px', margin: '0 auto', paddingBottom: '60px' }}>
       
       {/* ── Page Header ───────────────────────────────────────────────────── */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '24px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
             <SciFiBotIcon size={28} color="var(--accent-cyan)" />
@@ -434,48 +448,145 @@ export default function AiAgentsPage() {
         </div>
       </div>
 
-      {/* ── Platform Tabs Navigation ───────────────────────────────────────── */}
+      {/* ── Platform Tabs Subheader Bar (Controls & Marquee Indicator) ─────── */}
       <div style={{
-        display: 'flex', gap: '10px', marginBottom: '24px', overflowX: 'auto', paddingBottom: '4px',
-        borderBottom: '1px solid rgba(0, 243, 255, 0.15)'
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        marginBottom: '10px', padding: '0 4px', fontSize: '0.72rem',
+        fontFamily: 'Share Tech Mono', color: 'var(--text-secondary)'
       }}>
-        {platforms.map(p => {
-          const isSelected = activePlatform === p.id;
-          return (
-            <button
-              key={p.id}
-              onClick={() => setActivePlatform(p.id)}
-              style={{
-                display: 'flex', alignItems: 'center', gap: '10px',
-                padding: '10px 18px',
-                background: isSelected ? 'rgba(0, 243, 255, 0.12)' : 'rgba(5, 10, 20, 0.6)',
-                border: isSelected ? '1px solid var(--accent-cyan)' : '1px solid rgba(255, 255, 255, 0.08)',
-                borderBottom: isSelected ? '2px solid var(--accent-cyan)' : '1px solid rgba(255, 255, 255, 0.08)',
-                color: isSelected ? '#fff' : 'var(--text-secondary)',
-                fontFamily: 'Share Tech Mono',
-                fontSize: '0.82rem',
-                cursor: 'pointer',
-                borderRadius: '4px 4px 0 0',
-                transition: 'all 0.2s ease',
-                boxShadow: isSelected ? '0 0 15px rgba(0, 243, 255, 0.2)' : 'none',
-                whiteSpace: 'nowrap'
-              }}
-            >
-              {p.icon}
-              <span style={{ fontWeight: isSelected ? 'bold' : 'normal' }}>{p.name}</span>
-              <span style={{
-                fontSize: '0.62rem',
-                padding: '1px 6px',
-                borderRadius: '3px',
-                background: p.isLive ? 'rgba(0, 255, 102, 0.2)' : 'rgba(255, 255, 255, 0.08)',
-                color: p.isLive ? 'var(--accent-green)' : 'var(--text-secondary)',
-                border: p.isLive ? '1px solid var(--accent-green)' : '1px solid rgba(255, 255, 255, 0.15)',
-              }}>
-                {p.status}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <span style={{ color: 'var(--accent-cyan)', letterSpacing: '1px', fontWeight: 'bold' }}>
+            CHANNEL SELECTOR
+          </span>
+          <span style={{ opacity: 0.4 }}>|</span>
+          <button
+            type="button"
+            onClick={() => setIsAutoScroll(prev => !prev)}
+            style={{
+              background: isAutoScroll ? 'rgba(0, 243, 255, 0.12)' : 'rgba(255, 255, 255, 0.05)',
+              border: isAutoScroll ? '1px solid var(--accent-cyan)' : '1px solid rgba(255, 255, 255, 0.15)',
+              color: isAutoScroll ? 'var(--accent-cyan)' : 'var(--text-secondary)',
+              padding: '2px 8px',
+              borderRadius: '3px',
+              fontSize: '0.68rem',
+              fontFamily: 'Share Tech Mono',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '5px',
+              transition: 'all 0.2s ease',
+            }}
+          >
+            <span>⚡ {t('aiAgents.autoScroll') || 'AUTO-SCROLL'}: <strong>{isAutoScroll ? 'ON' : 'OFF'}</strong></span>
+            {isAutoScroll && isHovered && (
+              <span style={{ color: 'var(--accent-pink)', fontSize: '0.62rem', marginLeft: '4px' }}>
+                ({t('aiAgents.autoScrollPaused') || 'HOVER PAUSED'})
               </span>
-            </button>
-          );
-        })}
+            )}
+          </button>
+        </div>
+
+        {/* Left / Right Quick Scroll Buttons */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <button
+            type="button"
+            onClick={() => handleScrollBy(-220)}
+            title="Scroll Left"
+            style={{
+              background: 'rgba(5, 10, 20, 0.8)',
+              border: '1px solid rgba(0, 243, 255, 0.25)',
+              color: 'var(--accent-cyan)',
+              width: '24px', height: '22px',
+              borderRadius: '2px',
+              cursor: 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: '0.75rem',
+            }}
+          >
+            ◀
+          </button>
+          <button
+            type="button"
+            onClick={() => handleScrollBy(220)}
+            title="Scroll Right"
+            style={{
+              background: 'rgba(5, 10, 20, 0.8)',
+              border: '1px solid rgba(0, 243, 255, 0.25)',
+              color: 'var(--accent-cyan)',
+              width: '24px', height: '22px',
+              borderRadius: '2px',
+              cursor: 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: '0.75rem',
+            }}
+          >
+            ▶
+          </button>
+        </div>
+      </div>
+
+      {/* ── Auto-scrolling Horizontal Marquee Ribbon ───────────────────────── */}
+      <div
+        ref={marqueeContainerRef}
+        className="scifi-marquee-container"
+        onMouseEnter={() => setIsHovered(true)}
+        onMouseLeave={() => setIsHovered(false)}
+        style={{
+          marginBottom: '24px',
+          borderBottom: '1px solid rgba(0, 243, 255, 0.18)',
+          overflowX: isAutoScroll ? 'hidden' : 'auto',
+        }}
+      >
+        <div
+          className={`scifi-marquee-track ${isAutoScroll ? 'animating' : ''}`}
+          style={{
+            animationPlayState: isHovered ? 'paused' : 'running',
+          }}
+        >
+          {/* Double array for seamless infinite looping to the left */}
+          {(isAutoScroll ? [...platforms, ...platforms] : platforms).map((p, idx) => {
+            const isSelected = activePlatform === p.id;
+            return (
+              <button
+                key={`${p.id}-${idx}`}
+                type="button"
+                onClick={() => setActivePlatform(p.id)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: '10px',
+                  padding: '10px 18px',
+                  background: isSelected ? 'rgba(0, 243, 255, 0.15)' : 'rgba(5, 10, 20, 0.75)',
+                  border: isSelected ? '1px solid var(--accent-cyan)' : '1px solid rgba(255, 255, 255, 0.08)',
+                  borderBottom: isSelected ? '2px solid var(--accent-cyan)' : '1px solid rgba(255, 255, 255, 0.08)',
+                  color: isSelected ? '#fff' : 'var(--text-secondary)',
+                  fontFamily: 'Share Tech Mono',
+                  fontSize: '0.82rem',
+                  cursor: 'pointer',
+                  borderRadius: '4px 4px 0 0',
+                  transition: 'all 0.2s ease',
+                  boxShadow: isSelected ? '0 0 16px rgba(0, 243, 255, 0.25)' : 'none',
+                  whiteSpace: 'nowrap',
+                  flexShrink: 0,
+                }}
+              >
+                {p.icon}
+                <span style={{ fontWeight: isSelected ? 'bold' : 'normal', color: isSelected ? '#fff' : 'var(--text-primary)' }}>
+                  {p.name}
+                </span>
+                <span style={{
+                  fontSize: '0.62rem',
+                  padding: '1px 6px',
+                  borderRadius: '3px',
+                  background: p.isLive ? 'rgba(0, 255, 102, 0.2)' : 'rgba(255, 255, 255, 0.08)',
+                  color: p.isLive ? 'var(--accent-green)' : 'var(--text-secondary)',
+                  border: p.isLive ? '1px solid var(--accent-green)' : '1px solid rgba(255, 255, 255, 0.15)',
+                  letterSpacing: '0.5px',
+                }}>
+                  {p.status}
+                </span>
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {/* ── Tab Content: FACEBOOK MESSENGER ────────────────────────────────── */}
@@ -892,6 +1003,105 @@ export default function AiAgentsPage() {
             </p>
             <div style={{ display: 'inline-flex', gap: '8px', padding: '6px 14px', background: 'rgba(255, 0, 51, 0.08)', border: '1px solid rgba(255, 0, 51, 0.3)', borderRadius: '3px', fontSize: '0.75rem', fontFamily: 'Share Tech Mono', color: '#FF0033' }}>
               {t('aiAgents.youtube.statusBadge') || 'STATUS: API PIPELINE READY'}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Tab Content: TELEGRAM COMMUNITY BOT ──────────────────────────────── */}
+      {activePlatform === 'telegram' && (
+        <div style={{
+          background: 'rgba(5, 10, 20, 0.85)',
+          border: '1px solid rgba(34, 158, 217, 0.3)',
+          boxShadow: '0 0 20px rgba(34, 158, 217, 0.12)',
+          borderRadius: '4px',
+          padding: '24px',
+        }}>
+          <SectionHeader
+            icon={<SciFiTelegramIcon size={20} color="#229ED9" />}
+            title={t('aiAgents.telegram.title') || "TELEGRAM COMMUNITY & CHANNEL AGENT"}
+            subtitle={t('aiAgents.telegram.subtitle') || "Automated group administration, keyword responses, and channel broadcasting"}
+            badge={<SciFiPulseBadge label={t('aiAgents.statusInDevelopment') || "IN DEVELOPMENT"} color="#229ED9" />}
+          />
+
+          <div style={{ padding: '30px 20px', textAlign: 'center', color: 'var(--text-secondary)' }}>
+            <div style={{ width: '50px', height: '50px', margin: '0 auto 16px', borderRadius: '50%', background: 'rgba(34, 158, 217, 0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #229ED9' }}>
+              <SciFiTelegramIcon size={28} color="#229ED9" />
+            </div>
+            <h3 style={{ color: '#fff', fontFamily: 'Share Tech Mono', letterSpacing: '2px', marginBottom: '8px' }}>
+              {t('aiAgents.telegram.cardTitle') || 'TELEGRAM COMMUNITY GATEWAY'}
+            </h3>
+            <p style={{ maxWidth: '600px', margin: '0 auto 20px', fontSize: '0.82rem', lineHeight: '1.6' }}>
+              {t('aiAgents.telegram.desc') || 'Telegram Bot API & MTProto automation: AI Agent auto-moderates group discussions, answers members\' queries in real-time, and schedules announcements.'}
+            </p>
+            <div style={{ display: 'inline-flex', gap: '8px', padding: '6px 14px', background: 'rgba(34, 158, 217, 0.08)', border: '1px solid rgba(34, 158, 217, 0.3)', borderRadius: '3px', fontSize: '0.75rem', fontFamily: 'Share Tech Mono', color: '#229ED9' }}>
+              {t('aiAgents.telegram.statusBadge') || 'STATUS: BOT PIPELINE CONNECTED'}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Tab Content: INSTAGRAM DIRECT AGENT ──────────────────────────────── */}
+      {activePlatform === 'instagram' && (
+        <div style={{
+          background: 'rgba(5, 10, 20, 0.85)',
+          border: '1px solid rgba(225, 48, 108, 0.3)',
+          boxShadow: '0 0 20px rgba(225, 48, 108, 0.12)',
+          borderRadius: '4px',
+          padding: '24px',
+        }}>
+          <SectionHeader
+            icon={<SciFiInstagramIcon size={20} color="#E1306C" />}
+            title={t('aiAgents.instagram.title') || "INSTAGRAM DIRECT & STORY AGENT"}
+            subtitle={t('aiAgents.instagram.subtitle') || "Auto-reply to Direct Messages, story mentions, and comment engagement"}
+            badge={<SciFiPulseBadge label={t('aiAgents.statusInDevelopment') || "IN DEVELOPMENT"} color="#E1306C" />}
+          />
+
+          <div style={{ padding: '30px 20px', textAlign: 'center', color: 'var(--text-secondary)' }}>
+            <div style={{ width: '50px', height: '50px', margin: '0 auto 16px', borderRadius: '50%', background: 'rgba(225, 48, 108, 0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #E1306C' }}>
+              <SciFiInstagramIcon size={28} color="#E1306C" />
+            </div>
+            <h3 style={{ color: '#fff', fontFamily: 'Share Tech Mono', letterSpacing: '2px', marginBottom: '8px' }}>
+              {t('aiAgents.instagram.cardTitle') || 'INSTAGRAM AUTOMATION GATEWAY'}
+            </h3>
+            <p style={{ maxWidth: '600px', margin: '0 auto 20px', fontSize: '0.82rem', lineHeight: '1.6' }}>
+              {t('aiAgents.instagram.desc') || 'Meta Graph API integration: Automated DM triage, lead generation from story reactions, and intelligent interaction with reel comments.'}
+            </p>
+            <div style={{ display: 'inline-flex', gap: '8px', padding: '6px 14px', background: 'rgba(225, 48, 108, 0.08)', border: '1px solid rgba(225, 48, 108, 0.3)', borderRadius: '3px', fontSize: '0.75rem', fontFamily: 'Share Tech Mono', color: '#E1306C' }}>
+              {t('aiAgents.instagram.statusBadge') || 'STATUS: GRAPH API HOOK PREPARED'}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Tab Content: WHATSAPP BUSINESS AI ─────────────────────────────────── */}
+      {activePlatform === 'whatsapp' && (
+        <div style={{
+          background: 'rgba(5, 10, 20, 0.85)',
+          border: '1px solid rgba(37, 211, 102, 0.3)',
+          boxShadow: '0 0 20px rgba(37, 211, 102, 0.12)',
+          borderRadius: '4px',
+          padding: '24px',
+        }}>
+          <SectionHeader
+            icon={<SciFiWhatsAppIcon size={20} color="#25D366" />}
+            title={t('aiAgents.whatsapp.title') || "WHATSAPP BUSINESS AI ASSISTANT"}
+            subtitle={t('aiAgents.whatsapp.subtitle') || "Official WhatsApp Business Cloud API automated 24/7 customer support"}
+            badge={<SciFiPulseBadge label={t('aiAgents.statusInDevelopment') || "IN DEVELOPMENT"} color="#25D366" />}
+          />
+
+          <div style={{ padding: '30px 20px', textAlign: 'center', color: 'var(--text-secondary)' }}>
+            <div style={{ width: '50px', height: '50px', margin: '0 auto 16px', borderRadius: '50%', background: 'rgba(37, 211, 102, 0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #25D366' }}>
+              <SciFiWhatsAppIcon size={28} color="#25D366" />
+            </div>
+            <h3 style={{ color: '#fff', fontFamily: 'Share Tech Mono', letterSpacing: '2px', marginBottom: '8px' }}>
+              {t('aiAgents.whatsapp.cardTitle') || 'WHATSAPP BUSINESS GATEWAY'}
+            </h3>
+            <p style={{ maxWidth: '600px', margin: '0 auto 20px', fontSize: '0.82rem', lineHeight: '1.6' }}>
+              {t('aiAgents.whatsapp.desc') || 'WhatsApp Business Cloud API: AI Agent handles orders, provides instant customer support, and sends real-time order notifications.'}
+            </p>
+            <div style={{ display: 'inline-flex', gap: '8px', padding: '6px 14px', background: 'rgba(37, 211, 102, 0.08)', border: '1px solid rgba(37, 211, 102, 0.3)', borderRadius: '3px', fontSize: '0.75rem', fontFamily: 'Share Tech Mono', color: '#25D366' }}>
+              {t('aiAgents.whatsapp.statusBadge') || 'STATUS: CLOUD API READY'}
             </div>
           </div>
         </div>

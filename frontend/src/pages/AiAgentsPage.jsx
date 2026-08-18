@@ -1,12 +1,14 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
+import { useSearchParams } from 'react-router-dom';
 import axios from 'axios';
 import {
   SciFiBotIcon, SciFiFacebookIcon, SciFiZaloIcon, SciFiGmailIcon,
   SciFiTikTokIcon, SciFiYouTubeIcon, SciFiTelegramIcon, SciFiInstagramIcon,
   SciFiWhatsAppIcon, SciFiPulseBadge, SciFiBrowserLaunchIcon,
   SciFiChronoSpinnerIcon, SciFiCheckCircleIcon, SciFiCloseIcon,
-  SciFiQuantumIcon, SciFiEnergyBoltIcon, SciFiChevronLeftIcon, SciFiChevronRightIcon
+  SciFiQuantumIcon, SciFiEnergyBoltIcon, SciFiChevronLeftIcon, SciFiChevronRightIcon,
+  SciFiTerminalPromptIcon, SciFiInfoIcon
 } from '../components/SciFiIcons';
 import { useTranslation } from '../i18n/index.jsx';
 
@@ -131,10 +133,122 @@ const DurationChip = ({ label, selected, onClick }) => (
 
 export default function AiAgentsPage() {
   const { t } = useTranslation();
-  const [activePlatform, setActivePlatform] = useState('facebook');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const urlTab = searchParams.get('tab');
+  const [activePlatform, setActivePlatform] = useState(urlTab || 'facebook');
   const [isAutoScroll, setIsAutoScroll] = useState(true);
   const [isHovered, setIsHovered] = useState(false);
   const marqueeContainerRef = useRef(null);
+
+  // Sync tab with URL query parameter
+  const handleSelectPlatform = (id) => {
+    setActivePlatform(id);
+    setSearchParams({ tab: id }, { replace: true });
+  };
+
+  useEffect(() => {
+    if (urlTab && urlTab !== activePlatform) {
+      setActivePlatform(urlTab);
+    }
+  }, [urlTab]);
+
+  // ── Telegram state ────────────────────────────────────────────────────────
+  const [tgConfig, setTgConfig] = useState({
+    enabled: false,
+    cpuThreshold: 80,
+    ramThreshold: 85,
+    diskThreshold: 90,
+    cooldownMinutes: 15,
+    _configured: false,
+  });
+  const [tgSaved, setTgSaved] = useState(false);
+  const [tgTesting, setTgTesting] = useState(false);
+  const [tgTestResult, setTgTestResult] = useState(null);
+  const [tgLoading, setTgLoading] = useState(true);
+  const tgSaveTimeoutRef = useRef(null);
+
+  const fetchTgConfig = useCallback(() => {
+    setTgLoading(true);
+    axios.get('/api/telegram/config')
+      .then(res => {
+        const d = res.data;
+        setTgConfig(prev => ({
+          ...prev,
+          enabled: d.enabled ?? false,
+          cpuThreshold: d.cpuThreshold ?? 80,
+          ramThreshold: d.ramThreshold ?? 85,
+          diskThreshold: d.diskThreshold ?? 90,
+          cooldownMinutes: d.cooldownMinutes ?? 15,
+          _configured: d.configured ?? false,
+        }));
+      })
+      .catch(() => {})
+      .finally(() => setTgLoading(false));
+  }, []);
+
+  useEffect(() => {
+    fetchTgConfig();
+  }, [fetchTgConfig]);
+
+  // Auto-save Telegram settings on any slider or toggle update (debounced 400ms)
+  const updateTg = (field, val) => {
+    const next = { ...tgConfig, [field]: val };
+    setTgConfig(next);
+    setTgSaved(false);
+
+    if (tgSaveTimeoutRef.current) clearTimeout(tgSaveTimeoutRef.current);
+    tgSaveTimeoutRef.current = setTimeout(() => {
+      const payload = {
+        enabled: next.enabled,
+        cpuThreshold: next.cpuThreshold,
+        ramThreshold: next.ramThreshold,
+        diskThreshold: next.diskThreshold,
+        cooldownMinutes: next.cooldownMinutes,
+      };
+      axios.post('/api/telegram/config', payload)
+        .then(() => {
+          setTgSaved(true);
+          setTimeout(() => setTgSaved(false), 2500);
+        })
+        .catch(() => {});
+    }, 400);
+  };
+
+  const handleSaveTelegram = async () => {
+    try {
+      const payload = {
+        enabled: tgConfig.enabled,
+        cpuThreshold: tgConfig.cpuThreshold,
+        ramThreshold: tgConfig.ramThreshold,
+        diskThreshold: tgConfig.diskThreshold,
+        cooldownMinutes: tgConfig.cooldownMinutes,
+      };
+      await axios.post('/api/telegram/config', payload);
+      setTgSaved(true);
+      setTimeout(() => setTgSaved(false), 3000);
+    } catch {
+      // ignore
+    }
+  };
+
+  const handleTestTelegram = async () => {
+    setTgTesting(true);
+    setTgTestResult(null);
+    try {
+      const res = await axios.post('/api/telegram/test');
+      setTgTestResult({
+        status: res.data?.status || 'success',
+        message: res.data?.message || (t('aiAgents.telegram.testSent') || 'Test alert message sent successfully! Check Telegram.'),
+      });
+    } catch (e) {
+      setTgTestResult({
+        status: 'error',
+        message: e.response?.data?.message || (t('aiAgents.telegram.testFailed') || 'Failed to send test alert. Check Bot Token & Chat ID.'),
+      });
+    } finally {
+      setTgTesting(false);
+    }
+  };
 
   // ── Facebook state ────────────────────────────────────────────────────────
   const [fbConfig, setFbConfig] = useState({
@@ -399,11 +513,11 @@ export default function AiAgentsPage() {
   // ── Multi-Platform Catalog ────────────────────────────────────────────────
   const platforms = [
     { id: 'facebook', name: t('aiAgents.tabs.facebook') || 'Facebook Messenger', icon: <SciFiFacebookIcon size={18} color="var(--accent-purple)" />, status: t('aiAgents.statusActive') || 'ACTIVE', isLive: true, color: 'var(--accent-purple)' },
+    { id: 'telegram', name: t('aiAgents.tabs.telegram') || 'Telegram Bot & Agent', icon: <SciFiTelegramIcon size={18} color="#229ED9" />, status: t('aiAgents.statusActive') || 'ACTIVE', isLive: true, color: '#229ED9' },
     { id: 'zalo', name: t('aiAgents.tabs.zalo') || 'Zalo AI Agent', icon: <SciFiZaloIcon size={18} color="#0068FF" />, status: t('aiAgents.statusComingSoon') || 'COMING SOON', isLive: false, color: '#0068FF' },
     { id: 'gmail', name: t('aiAgents.tabs.gmail') || 'Gmail AI Assistant', icon: <SciFiGmailIcon size={18} color="#EA4335" />, status: t('aiAgents.statusComingSoon') || 'COMING SOON', isLive: false, color: '#EA4335' },
     { id: 'tiktok', name: t('aiAgents.tabs.tiktok') || 'TikTok Social Agent', icon: <SciFiTikTokIcon size={18} color="#00F2FE" />, status: t('aiAgents.statusComingSoon') || 'COMING SOON', isLive: false, color: '#00F2FE' },
     { id: 'youtube', name: t('aiAgents.tabs.youtube') || 'YouTube Comment Agent', icon: <SciFiYouTubeIcon size={18} color="#FF0033" />, status: t('aiAgents.statusComingSoon') || 'COMING SOON', isLive: false, color: '#FF0033' },
-    { id: 'telegram', name: t('aiAgents.tabs.telegram') || 'Telegram Community Bot', icon: <SciFiTelegramIcon size={18} color="#229ED9" />, status: t('aiAgents.statusComingSoon') || 'COMING SOON', isLive: false, color: '#229ED9' },
     { id: 'instagram', name: t('aiAgents.tabs.instagram') || 'Instagram Direct Agent', icon: <SciFiInstagramIcon size={18} color="#E1306C" />, status: t('aiAgents.statusComingSoon') || 'COMING SOON', isLive: false, color: '#E1306C' },
     { id: 'whatsapp', name: t('aiAgents.tabs.whatsapp') || 'WhatsApp Business AI', icon: <SciFiWhatsAppIcon size={18} color="#25D366" />, status: t('aiAgents.statusComingSoon') || 'COMING SOON', isLive: false, color: '#25D366' },
   ];
@@ -555,7 +669,7 @@ export default function AiAgentsPage() {
               <button
                 key={`${p.id}-${idx}`}
                 type="button"
-                onClick={() => setActivePlatform(p.id)}
+                onClick={() => handleSelectPlatform(p.id)}
                 style={{
                   display: 'flex', alignItems: 'center', gap: '10px',
                   padding: '10px 18px',
@@ -1015,36 +1129,320 @@ export default function AiAgentsPage() {
         </div>
       )}
 
-      {/* ── Tab Content: TELEGRAM COMMUNITY BOT ──────────────────────────────── */}
+      {/* ── Tab Content: TELEGRAM BOT & SYSTEM AGENT ──────────────────────── */}
       {activePlatform === 'telegram' && (
         <div style={{
           background: 'rgba(5, 10, 20, 0.85)',
-          border: '1px solid rgba(34, 158, 217, 0.3)',
-          boxShadow: '0 0 20px rgba(34, 158, 217, 0.12)',
+          border: '1px solid rgba(34, 158, 217, 0.35)',
+          boxShadow: '0 0 25px rgba(34, 158, 217, 0.15)',
           borderRadius: '4px',
           padding: '24px',
         }}>
           <SectionHeader
-            icon={<SciFiTelegramIcon size={20} color="#229ED9" />}
-            title={t('aiAgents.telegram.title') || "TELEGRAM COMMUNITY & CHANNEL AGENT"}
-            subtitle={t('aiAgents.telegram.subtitle') || "Automated group administration, keyword responses, and channel broadcasting"}
-            badge={<SciFiPulseBadge label={t('aiAgents.statusInDevelopment') || "IN DEVELOPMENT"} color="#229ED9" />}
+            icon={<SciFiTelegramIcon size={22} color="#229ED9" />}
+            title={t('aiAgents.telegram.title') || "TELEGRAM COMMUNITY & SYSTEM AGENT"}
+            subtitle={t('aiAgents.telegram.subtitle') || "Real-time AI Assistant, bidirectional server management & intelligent threshold alerts"}
+            badge={
+              <SciFiPulseBadge
+                label={tgConfig.enabled ? (t('aiAgents.telegram.statusAlerts') || "ALERTS ACTIVE") : (tgConfig._configured ? (t('aiAgents.telegram.statusLive') || "BOT ONLINE") : (t('aiAgents.telegram.notConfigured') || "NOT CONFIGURED"))}
+                color="#229ED9"
+              />
+            }
           />
 
-          <div style={{ padding: '30px 20px', textAlign: 'center', color: 'var(--text-secondary)' }}>
-            <div style={{ width: '50px', height: '50px', margin: '0 auto 16px', borderRadius: '50%', background: 'rgba(34, 158, 217, 0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #229ED9' }}>
-              <SciFiTelegramIcon size={28} color="#229ED9" />
+          {/* Telegram Telemetry Stats Grid */}
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+            gap: '12px',
+            marginBottom: '24px',
+          }}>
+            <div style={{ padding: '12px 14px', background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(34, 158, 217, 0.2)', borderRadius: '3px' }}>
+              <div style={{ fontSize: '0.65rem', color: '#229ED9', fontFamily: 'Share Tech Mono', letterSpacing: '1px' }}>
+                {t('aiAgents.telegram.overviewBotStatus') || 'BOT SERVICE'}
+              </div>
+              <div style={{ fontSize: '0.92rem', color: tgConfig._configured ? 'var(--accent-green)' : 'var(--accent-pink)', fontFamily: 'Share Tech Mono', fontWeight: 'bold', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: tgConfig._configured ? 'var(--accent-green)' : 'var(--accent-pink)', boxShadow: `0 0 8px ${tgConfig._configured ? 'var(--accent-green)' : 'var(--accent-pink)'}` }} />
+                {tgConfig._configured ? 'ONLINE (Long-Polling)' : 'NOT CONFIGURED'}
+              </div>
             </div>
-            <h3 style={{ color: '#fff', fontFamily: 'Share Tech Mono', letterSpacing: '2px', marginBottom: '8px' }}>
-              {t('aiAgents.telegram.cardTitle') || 'TELEGRAM COMMUNITY GATEWAY'}
-            </h3>
-            <p style={{ maxWidth: '600px', margin: '0 auto 20px', fontSize: '0.82rem', lineHeight: '1.6' }}>
-              {t('aiAgents.telegram.desc') || 'Telegram Bot API & MTProto automation: AI Agent auto-moderates group discussions, answers members\' queries in real-time, and schedules announcements.'}
-            </p>
-            <div style={{ display: 'inline-flex', gap: '8px', padding: '6px 14px', background: 'rgba(34, 158, 217, 0.08)', border: '1px solid rgba(34, 158, 217, 0.3)', borderRadius: '3px', fontSize: '0.75rem', fontFamily: 'Share Tech Mono', color: '#229ED9' }}>
-              {t('aiAgents.telegram.statusBadge') || 'STATUS: BOT PIPELINE CONNECTED'}
+
+            <div style={{ padding: '12px 14px', background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(34, 158, 217, 0.2)', borderRadius: '3px' }}>
+              <div style={{ fontSize: '0.65rem', color: '#229ED9', fontFamily: 'Share Tech Mono', letterSpacing: '1px' }}>
+                {t('aiAgents.telegram.overviewAuthChat') || 'AUTHORIZED CHAT'}
+              </div>
+              <div style={{ fontSize: '0.92rem', color: tgConfig._configured ? 'var(--accent-cyan)' : 'var(--accent-pink)', fontFamily: 'Share Tech Mono', fontWeight: 'bold', marginTop: '4px' }}>
+                {tgConfig._configured ? (t('settings.telegram.configured') || 'SET (from .env)') : (t('settings.telegram.notConfigured') || 'NOT SET')}
+              </div>
+            </div>
+
+            <div style={{ padding: '12px 14px', background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(34, 158, 217, 0.2)', borderRadius: '3px' }}>
+              <div style={{ fontSize: '0.65rem', color: '#229ED9', fontFamily: 'Share Tech Mono', letterSpacing: '1px' }}>
+                {t('aiAgents.telegram.overviewAiEngine') || 'AI ASSISTANT'}
+              </div>
+              <div style={{ fontSize: '0.92rem', color: 'var(--accent-purple)', fontFamily: 'Share Tech Mono', fontWeight: 'bold', marginTop: '4px' }}>
+                Tiểu Bảo Bảo (9Router)
+              </div>
+            </div>
+
+            <div style={{ padding: '12px 14px', background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(34, 158, 217, 0.2)', borderRadius: '3px' }}>
+              <div style={{ fontSize: '0.65rem', color: '#229ED9', fontFamily: 'Share Tech Mono', letterSpacing: '1px' }}>
+                {t('aiAgents.telegram.overviewAlertEngine') || 'ALERT ENGINE'}
+              </div>
+              <div style={{ fontSize: '0.92rem', color: tgConfig.enabled ? 'var(--accent-yellow)' : 'var(--text-secondary)', fontFamily: 'Share Tech Mono', fontWeight: 'bold', marginTop: '4px' }}>
+                {tgConfig.enabled ? 'ACTIVE (Real-time)' : 'STANDBY'}
+              </div>
             </div>
           </div>
+
+          {tgLoading ? (
+            <div style={{ padding: '30px', textAlign: 'center', color: 'var(--text-secondary)', fontFamily: 'Share Tech Mono', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+              <SciFiChronoSpinnerIcon size={18} color="#229ED9" />
+              <span>{t('settings.telegram.loading') || 'Loading Telegram configuration...'}</span>
+            </div>
+          ) : (
+            <>
+              {/* Bot Token Env Row */}
+              <SettingRow
+                label={t('settings.telegram.botToken') || "Bot Token"}
+                desc={t('settings.telegram.botTokenDesc') || "Managed via TELEGRAM_BOT_TOKEN in .env — restart container to update"}
+              >
+                <span style={{
+                  fontFamily: 'Share Tech Mono',
+                  fontSize: '0.78rem',
+                  letterSpacing: '1px',
+                  color: tgConfig._configured ? 'var(--accent-green)' : 'var(--accent-pink)',
+                  textShadow: '0 0 8px currentColor',
+                }}>
+                  {tgConfig._configured ? (t('settings.telegram.configured') || '✓ SET (from .env)') : (t('settings.telegram.notConfigured') || '✗ NOT CONFIGURED')}
+                </span>
+              </SettingRow>
+
+              {/* Chat ID Env Row */}
+              <SettingRow
+                label={t('settings.telegram.chatId') || "Chat ID"}
+                desc={t('settings.telegram.chatIdDesc') || "Managed via TELEGRAM_CHAT_ID in .env — restart container to update"}
+              >
+                <span style={{
+                  fontFamily: 'Share Tech Mono',
+                  fontSize: '0.78rem',
+                  letterSpacing: '1px',
+                  color: tgConfig._configured ? 'var(--accent-green)' : 'var(--accent-pink)',
+                  textShadow: '0 0 8px currentColor',
+                }}>
+                  {tgConfig._configured ? (t('settings.telegram.configured') || '✓ SET (from .env)') : (t('settings.telegram.notConfigured') || '✗ NOT CONFIGURED')}
+                </span>
+              </SettingRow>
+
+              {/* Enable Alerts Toggle */}
+              <SettingRow
+                label={t('settings.telegram.enableAlerts') || "Enable Alerts"}
+                desc={t('settings.telegram.enableAlertsDesc') || "Bot will send automatic alerts when thresholds are exceeded"}
+              >
+                <Toggle id="tg-alerts-enabled" value={tgConfig.enabled} onChange={v => updateTg('enabled', v)} />
+              </SettingRow>
+
+              {/* CPU Alert Threshold */}
+              <SettingRow
+                label={t('settings.telegram.cpuThreshold') || "CPU Alert Threshold"}
+                desc={t('settings.telegram.cpuThresholdDesc') || "Alert when CPU exceeds this value (Telegram-specific)"}
+              >
+                <ThresholdSlider
+                  id="tg-cpu"
+                  value={tgConfig.cpuThreshold}
+                  onChange={v => updateTg('cpuThreshold', v)}
+                  color="var(--accent-cyan)"
+                />
+              </SettingRow>
+
+              {/* RAM Alert Threshold */}
+              <SettingRow
+                label={t('settings.telegram.ramThreshold') || "RAM Alert Threshold"}
+                desc={t('settings.telegram.ramThresholdDesc') || "Alert when RAM exceeds this value (Telegram-specific)"}
+              >
+                <ThresholdSlider
+                  id="tg-ram"
+                  value={tgConfig.ramThreshold}
+                  onChange={v => updateTg('ramThreshold', v)}
+                  color="var(--accent-purple)"
+                />
+              </SettingRow>
+
+              {/* Disk Alert Threshold */}
+              <SettingRow
+                label={t('settings.telegram.diskThreshold') || "Disk Alert Threshold"}
+                desc={t('settings.telegram.diskThresholdDesc') || "Alert when any disk partition exceeds this value"}
+              >
+                <ThresholdSlider
+                  id="tg-disk"
+                  value={tgConfig.diskThreshold}
+                  onChange={v => updateTg('diskThreshold', v)}
+                  color="var(--accent-yellow)"
+                />
+              </SettingRow>
+
+              {/* Alert Cooldown */}
+              <SettingRow
+                label={t('settings.telegram.cooldown') || "Alert Cooldown"}
+                desc={t('settings.telegram.cooldownDesc') || "Minimum time between two consecutive alerts of the same type"}
+              >
+                <select
+                  value={tgConfig.cooldownMinutes}
+                  onChange={e => updateTg('cooldownMinutes', Number(e.target.value))}
+                  style={{
+                    background: 'rgba(0,0,0,0.6)',
+                    border: '1px solid rgba(34, 158, 217, 0.4)',
+                    color: '#229ED9',
+                    padding: '6px 12px',
+                    fontSize: '0.8rem',
+                    fontFamily: 'Share Tech Mono',
+                    cursor: 'pointer',
+                    borderRadius: '2px',
+                  }}
+                >
+                  <option value={5}>5 minutes</option>
+                  <option value={15}>15 minutes</option>
+                  <option value={30}>30 minutes</option>
+                  <option value={60}>60 minutes</option>
+                </select>
+              </SettingRow>
+
+              {/* Action Buttons Bar */}
+              <div style={{ display: 'flex', gap: '12px', marginTop: '24px', alignItems: 'center', flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  onClick={handleSaveTelegram}
+                  style={{
+                    background: tgSaved ? 'rgba(0,255,102,0.15)' : 'rgba(34, 158, 217, 0.15)',
+                    border: `1px solid ${tgSaved ? 'var(--accent-green)' : '#229ED9'}`,
+                    color: tgSaved ? 'var(--accent-green)' : '#229ED9',
+                    padding: '8px 22px',
+                    fontFamily: 'Share Tech Mono',
+                    fontSize: '0.8rem',
+                    cursor: 'pointer',
+                    letterSpacing: '1px',
+                    borderRadius: '3px',
+                    transition: 'all 0.2s ease',
+                    boxShadow: tgSaved ? '0 0 10px rgba(0,255,102,0.3)' : '0 0 10px rgba(34, 158, 217, 0.2)',
+                  }}
+                >
+                  {tgSaved ? (t('settings.telegram.saved') || '✓ SAVED') : (t('settings.telegram.save') || 'SAVE TELEGRAM')}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleTestTelegram}
+                  disabled={tgTesting}
+                  style={{
+                    background: 'rgba(255,165,0,0.1)',
+                    border: '1px solid rgba(255,165,0,0.5)',
+                    color: 'rgba(255,165,0,1)',
+                    padding: '8px 22px',
+                    fontFamily: 'Share Tech Mono',
+                    fontSize: '0.8rem',
+                    cursor: tgTesting ? 'not-allowed' : 'pointer',
+                    letterSpacing: '1px',
+                    opacity: tgTesting ? 0.6 : 1,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    borderRadius: '3px',
+                  }}
+                >
+                  {tgTesting ? (
+                    <>
+                      <SciFiChronoSpinnerIcon size={14} color="rgba(255,165,0,1)" />
+                      <span>{t('settings.telegram.sending') || 'SENDING...'}</span>
+                    </>
+                  ) : (
+                    <>
+                      <SciFiTelegramIcon size={14} color="rgba(255,165,0,1)" />
+                      <span>{t('settings.telegram.sendTest') || 'SEND TEST ALERT'}</span>
+                    </>
+                  )}
+                </button>
+
+                {tgTestResult && (
+                  <span style={{
+                    fontSize: '0.78rem',
+                    fontFamily: 'Share Tech Mono',
+                    color: tgTestResult.status === 'success' ? 'var(--accent-green)' : 'var(--accent-pink)',
+                    textShadow: '0 0 8px currentColor',
+                  }}>
+                    {tgTestResult.status === 'success' ? '✓' : '✗'} {tgTestResult.message}
+                  </span>
+                )}
+              </div>
+
+              {/* Supported Bot Commands & AI Capabilities HUD */}
+              <div style={{
+                marginTop: '28px',
+                padding: '16px 20px',
+                background: 'rgba(0, 0, 0, 0.35)',
+                border: '1px solid rgba(34, 158, 217, 0.2)',
+                borderRadius: '4px',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
+                  <SciFiTerminalPromptIcon size={16} color="#229ED9" />
+                  <span style={{ fontSize: '0.82rem', fontFamily: 'Share Tech Mono', color: '#229ED9', letterSpacing: '1px', fontWeight: 'bold' }}>
+                    {t('aiAgents.telegram.botCommandsTitle') || 'SUPPORTED BOT COMMANDS & AI CAPABILITIES'}
+                  </span>
+                </div>
+
+                <div style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+                  gap: '10px',
+                  fontSize: '0.74rem',
+                  fontFamily: 'Share Tech Mono',
+                }}>
+                  <div style={{ padding: '8px 12px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '2px' }}>
+                    <strong style={{ color: 'var(--accent-cyan)' }}>/status</strong> — Comprehensive system & container telemetry
+                  </div>
+                  <div style={{ padding: '8px 12px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '2px' }}>
+                    <strong style={{ color: 'var(--accent-cyan)' }}>/cpu</strong> — Real-time CPU load, cores & top processes
+                  </div>
+                  <div style={{ padding: '8px 12px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '2px' }}>
+                    <strong style={{ color: 'var(--accent-cyan)' }}>/ram</strong> — Memory & Swap utilization breakdown
+                  </div>
+                  <div style={{ padding: '8px 12px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '2px' }}>
+                    <strong style={{ color: 'var(--accent-cyan)' }}>/disk</strong> — Disk partition health & remaining storage
+                  </div>
+                  <div style={{ padding: '8px 12px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '2px' }}>
+                    <strong style={{ color: 'var(--accent-purple)' }}>/fb</strong> — Facebook AI Agent status & recent chat triage
+                  </div>
+                  <div style={{ padding: '8px 12px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '2px' }}>
+                    <strong style={{ color: 'var(--accent-yellow)' }}>/report</strong> — Instant full health audit & metric report
+                  </div>
+                  <div style={{ padding: '8px 12px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '2px' }}>
+                    <strong style={{ color: 'var(--accent-green)' }}>/clean</strong> — Clear temporary system memory cache & logs
+                  </div>
+                  <div style={{ padding: '8px 12px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '2px' }}>
+                    <strong style={{ color: 'var(--text-primary)' }}>/help</strong> — Interactive command cheat-sheet & guide
+                  </div>
+                </div>
+
+                {/* Natural Language AI Assistant Hint */}
+                <div style={{
+                  marginTop: '14px',
+                  padding: '10px 14px',
+                  background: 'rgba(34, 158, 217, 0.08)',
+                  border: '1px solid rgba(34, 158, 217, 0.25)',
+                  borderRadius: '3px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '10px',
+                  fontSize: '0.74rem',
+                  color: 'var(--text-primary)',
+                }}>
+                  <SciFiBotIcon size={16} color="#229ED9" />
+                  <span>
+                    {t('aiAgents.telegram.naturalLanguageHint') || "💬 You can also chat directly in natural language with AI Agent 'Tiểu Bảo Bảo' on Telegram anytime to check servers, take screenshots, manage Facebook AI, or schedule appointments."}
+                  </span>
+                </div>
+              </div>
+            </>
+          )}
         </div>
       )}
 

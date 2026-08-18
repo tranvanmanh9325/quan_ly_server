@@ -6,7 +6,7 @@ import {
   SciFiTikTokIcon, SciFiYouTubeIcon, SciFiTelegramIcon, SciFiInstagramIcon,
   SciFiWhatsAppIcon, SciFiPulseBadge, SciFiBrowserLaunchIcon,
   SciFiChronoSpinnerIcon, SciFiCheckCircleIcon, SciFiCloseIcon,
-  SciFiQuantumIcon
+  SciFiQuantumIcon, SciFiEnergyBoltIcon, SciFiChevronLeftIcon, SciFiChevronRightIcon
 } from '../components/SciFiIcons';
 import { useTranslation } from '../i18n/index.jsx';
 
@@ -477,7 +477,10 @@ export default function AiAgentsPage() {
               transition: 'all 0.2s ease',
             }}
           >
-            <span>⚡ {t('aiAgents.autoScroll') || 'AUTO-SCROLL'}: <strong>{isAutoScroll ? 'ON' : 'OFF'}</strong></span>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+              <SciFiEnergyBoltIcon size={13} color={isAutoScroll ? 'var(--accent-cyan)' : 'var(--text-secondary)'} />
+              <span>{t('aiAgents.autoScroll') || 'AUTO-SCROLL'}: <strong>{isAutoScroll ? 'ON' : 'OFF'}</strong></span>
+            </span>
             {isAutoScroll && isHovered && (
               <span style={{ color: 'var(--accent-pink)', fontSize: '0.62rem', marginLeft: '4px' }}>
                 ({t('aiAgents.autoScrollPaused') || 'HOVER PAUSED'})
@@ -496,14 +499,15 @@ export default function AiAgentsPage() {
               background: 'rgba(5, 10, 20, 0.8)',
               border: '1px solid rgba(0, 243, 255, 0.25)',
               color: 'var(--accent-cyan)',
-              width: '24px', height: '22px',
-              borderRadius: '2px',
+              width: '26px', height: '24px',
+              borderRadius: '3px',
               cursor: 'pointer',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontSize: '0.75rem',
+              boxShadow: '0 0 6px rgba(0, 243, 255, 0.15)',
+              transition: 'all 0.15s ease',
             }}
           >
-            ◀
+            <SciFiChevronLeftIcon size={13} color="var(--accent-cyan)" />
           </button>
           <button
             type="button"
@@ -513,14 +517,15 @@ export default function AiAgentsPage() {
               background: 'rgba(5, 10, 20, 0.8)',
               border: '1px solid rgba(0, 243, 255, 0.25)',
               color: 'var(--accent-cyan)',
-              width: '24px', height: '22px',
-              borderRadius: '2px',
+              width: '26px', height: '24px',
+              borderRadius: '3px',
               cursor: 'pointer',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontSize: '0.75rem',
+              boxShadow: '0 0 6px rgba(0, 243, 255, 0.15)',
+              transition: 'all 0.15s ease',
             }}
           >
-            ▶
+            <SciFiChevronRightIcon size={13} color="var(--accent-cyan)" />
           </button>
         </div>
       </div>
@@ -618,8 +623,9 @@ export default function AiAgentsPage() {
           />
 
           {fbLoading ? (
-            <div style={{ padding: '30px', textAlign: 'center', color: 'var(--text-secondary)', fontFamily: 'Share Tech Mono' }}>
-              ⚡ {t('aiAgents.facebook.loading') || 'Loading Facebook AI Agent config...'}
+            <div style={{ padding: '30px', textAlign: 'center', color: 'var(--text-secondary)', fontFamily: 'Share Tech Mono', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+              <SciFiEnergyBoltIcon size={16} color="var(--accent-cyan)" />
+              <span>{t('aiAgents.facebook.loading') || 'Loading Facebook AI Agent config...'}</span>
             </div>
           ) : (
             <>
@@ -755,8 +761,9 @@ export default function AiAgentsPage() {
                     {t('aiAgents.facebook.directLoginDesc') || 'Open Chromium GUI on server via noVNC to log in, enter 2FA, and unlock E2EE PIN.'}
                   </div>
                   {vncStatusMsg && (
-                    <div style={{ marginTop: '6px', color: 'var(--accent-cyan)', fontSize: '0.74rem', fontFamily: 'Share Tech Mono' }}>
-                      ⚡ {vncStatusMsg}
+                    <div style={{ marginTop: '6px', color: 'var(--accent-cyan)', fontSize: '0.74rem', fontFamily: 'Share Tech Mono', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <SciFiEnergyBoltIcon size={14} color="var(--accent-cyan)" />
+                      <span>{vncStatusMsg}</span>
                     </div>
                   )}
                 </div>

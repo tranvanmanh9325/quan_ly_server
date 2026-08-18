@@ -603,3 +603,46 @@ export const SciFiWhatsAppIcon = ({ size = 18, color = '#25D366' }) => (
     <path d="M16.5 14.5C16 15.2 14.5 15.5 13.5 15C11.5 14 9.5 12 8.5 10C8 9 8.3 7.5 9 7L10.5 8.5L9.5 10C10.2 11.5 11.5 12.8 13 13.5L14.5 12.5L16.5 14.5Z" fill={color} />
   </svg>
 );
+
+// 43. ENERGY BOLT — Ultra-sleek cyberpunk lightning bolt with neon pulse
+export const SciFiEnergyBoltIcon = ({ size = 14, color = 'var(--accent-cyan)' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
+    {/* Outer Energy Shell */}
+    <path
+      d="M13.5 1.5L4 12.5H11.5L9.5 22.5L20 10.5H12.5L14 1.5Z"
+      fill={color}
+      fillOpacity="0.25"
+      stroke={color}
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+    {/* Core Plasma Segment */}
+    <polygon
+      points="12.8,4.5 6.8,11.5 11.5,11.5 10.5,18.5 16.8,10.5 12.2,10.5"
+      fill={color}
+      fillOpacity="0.9"
+    />
+    {/* Spark Core */}
+    <circle cx="11.8" cy="11" r="1.3" fill="#ffffff" />
+    {/* Lateral Discharge Particles */}
+    <circle cx="3" cy="11" r="0.7" fill={color} fillOpacity="0.6" />
+    <circle cx="21" cy="12" r="0.7" fill={color} fillOpacity="0.6" />
+  </svg>
+);
+
+// 44. CHEVRON LEFT — Cyber HUD Left Navigation Chevron
+export const SciFiChevronLeftIcon = ({ size = 14, color = 'var(--accent-cyan)' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
+    <path d="M15 18L9 12L15 6" stroke={color} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+    <line x1="5" y1="7" x2="5" y2="17" stroke={color} strokeWidth="1.6" strokeLinecap="round" strokeOpacity="0.5" />
+  </svg>
+);
+
+// 45. CHEVRON RIGHT — Cyber HUD Right Navigation Chevron
+export const SciFiChevronRightIcon = ({ size = 14, color = 'var(--accent-cyan)' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
+    <path d="M9 6L15 12L9 18" stroke={color} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+    <line x1="19" y1="7" x2="19" y2="17" stroke={color} strokeWidth="1.6" strokeLinecap="round" strokeOpacity="0.5" />
+  </svg>
+);

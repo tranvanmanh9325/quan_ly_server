@@ -466,21 +466,22 @@ class AgentMemoryService:
 
     async def _search_for_solution(self, query: str) -> str:
         """
-        Searches DuckDuckGo via subprocess to avoid the primp/asyncio thread-safety issue.
+        Searches DuckDuckGo via subprocess + Jina/Bing fallback.
 
-        Root cause (diagnosed via testing):
+        Root cause of executor failure (diagnosed):
           - ddgs v9 uses 'primp' HTTP client which is NOT thread-safe
-          - run_in_executor() fails with 'No results found' even when sync call works
-          - Running in a separate subprocess completely isolates the HTTP stack
+          - run_in_executor() returns 'No results' even when sync call works
+          - subprocess isolates the HTTP stack completely
 
         Strategy:
-        1. Primary: asyncio.create_subprocess_exec(python -c "ddgs search") — clean isolation
-           - 3 retries with 2s backoff on rate-limit
-        2. Fallback: Jina Reader (r.jina.ai/URL) — LLM-ready Markdown, no API key
-        3. Returns empty string on total failure (graceful degradation)
+        1. Primary: asyncio.create_subprocess_exec(python -c ddgs) — 3 retries, 3s delay
+        2. Fallback A: Jina Reader on first result URL (if DDGS got URLs)
+        3. Fallback B: Jina Reader wrapping a Bing search URL (when DDGS returns nothing)
+           — covers queries that Bing backend blocks for a specific subprocess call
         """
-        import asyncio
+        import asyncio, urllib.parse
 
+        # Script runs in its own process — completely isolated primp/HTTP stack
         _SEARCH_SCRIPT = (
             "import sys, json; from ddgs import DDGS\n"
             "q = sys.argv[1]\n"
@@ -500,21 +501,21 @@ class AgentMemoryService:
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.DEVNULL,
                 )
-                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=20.0)
+                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=22.0)
                 data = json.loads(stdout.decode().strip())
                 if isinstance(data, list):
                     results = data
                     if results:
-                        break  # Success
-                    # Empty list = no results, try again after delay
+                        break  # Success — exit retry loop
+                    # Empty list: Bing blocked this query, retry with delay
                     if attempt < max_retries - 1:
-                        await asyncio.sleep(2.0)  # 2s between retries avoids rate-limit
+                        await asyncio.sleep(3.0)
                 elif isinstance(data, dict) and "error" in data:
                     err_str = data["error"].lower()
-                    if "ratelimit" in err_str and attempt < max_retries - 1:
-                        delay = 2.0 * (attempt + 1)  # 2s → 4s → 6s
+                    if ("ratelimit" in err_str or "no results" in err_str) and attempt < max_retries - 1:
+                        delay = 3.0 * (attempt + 1)  # 3s → 6s → 9s
                         logger.warning(
-                            "[MemoryService] DDGS rate-limited (attempt %d/%d). Retrying in %.1fs...",
+                            "[MemoryService] DDGS no results (attempt %d/%d). Retrying in %.1fs...",
                             attempt + 1, max_retries, delay,
                         )
                         await asyncio.sleep(delay)
@@ -524,8 +525,9 @@ class AgentMemoryService:
             except (asyncio.TimeoutError, Exception) as err:
                 logger.warning("[MemoryService] DDGS subprocess failed: %s", err)
                 if attempt < max_retries - 1:
-                    await asyncio.sleep(2.0)
+                    await asyncio.sleep(3.0)
 
+        # Format and return DDGS results
         if results:
             parts = []
             for r in results:
@@ -537,27 +539,45 @@ class AgentMemoryService:
             if parts:
                 return "\n\n".join(parts)
 
-        # Fallback: Jina Reader on the first result URL
-        # Jina converts any URL to clean LLM-ready Markdown — no API key needed
+        if not self._http:
+            return ""
+
+        # Fallback A: Jina Reader on first DDGS result URL (deep content)
         first_url = results[0].get("href", "") if results else ""
-        if first_url and self._http:
+        if first_url:
             try:
-                jina_url = f"https://r.jina.ai/{first_url}"
                 resp = await self._http.get(
-                    jina_url,
+                    f"https://r.jina.ai/{first_url}",
                     headers={"Accept": "text/markdown", "User-Agent": "TieuBaoBao-Agent/1.0"},
-                    timeout=12.0,
-                    follow_redirects=True,
+                    timeout=12.0, follow_redirects=True,
                 )
                 if resp.status_code == 200:
                     content = resp.text.strip()[:1500]
                     if len(content) > 50:
-                        logger.info("[MemoryService] 📖 Jina Reader fallback succeeded for: %s", first_url)
-                        return f"📖 *Nội dung từ web (Jina Reader):*\n\n{content}"
-            except Exception as jina_err:
-                logger.warning("[MemoryService] Jina Reader fallback failed: %s", jina_err)
+                        logger.info("[MemoryService] Jina A (URL) succeeded: %s", first_url)
+                        return f"📖 *Web content:*\n\n{content}"
+            except Exception as e:
+                logger.warning("[MemoryService] Jina A failed: %s", e)
+
+        # Fallback B: Jina Reader wrapping a Bing search URL
+        # This catches queries that DDGS/Bing blocks but Jina can still fetch
+        try:
+            bing_url = "https://www.bing.com/search?q=" + urllib.parse.quote_plus(query)
+            resp = await self._http.get(
+                f"https://r.jina.ai/{bing_url}",
+                headers={"Accept": "text/markdown", "User-Agent": "TieuBaoBao-Agent/1.0"},
+                timeout=15.0, follow_redirects=True,
+            )
+            if resp.status_code == 200:
+                content = resp.text.strip()[:2000]
+                if len(content) > 100:
+                    logger.info("[MemoryService] Jina B (Bing) succeeded for query: %s", query)
+                    return f"📖 *Web content (Bing via Jina):*\n\n{content}"
+        except Exception as e:
+            logger.warning("[MemoryService] Jina B (Bing) failed: %s", e)
 
         return ""
+
 
     async def _extract_and_save_lesson(
         self,

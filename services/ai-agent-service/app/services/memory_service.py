@@ -365,32 +365,20 @@ class AgentMemoryService:
 
         cleaned = self._preprocess_error_text(error_context)
 
-        # Production-grade few-shot prompt (Research-backed, 2025 standard)
-        # Returns JSON: {"query": "...", "intent": "..."} for reliability
-        system_prompt = (
-            "You are a technical search specialist for AI agent self-correction.\n"
-            "Transform error/correction context into a precise web search query.\n"
-            "Rules: REMOVE timestamps, file paths, UUIDs. KEEP error class names, "
-            "library names, HTTP status codes, tool names.\n"
-            'Output ONLY valid JSON: {"query": "max 10 words", '
-            '"intent": "error_fix|best_practice|how_to|factual_check"}'
-        )
-
-        few_shot_examples = (
-            'Input: "Sai rồi, không tìm thấy người này trên Facebook"\n'
-            'Output: {"query": "Facebook profile search Vietnamese name order", "intent": "best_practice"}\n\n'
-            'Input: "Tool facebook_view_profile failed: not found after 2 retries"\n'
-            'Output: {"query": "Facebook profile URL format find person Vietnam", "intent": "error_fix"}\n\n'
-            'Input: "Nhầm rồi, không phải Nguyễn Văn A mà là Trần Văn B nhắn tin"\n'
-            'Output: {"query": "Vietnamese Messenger identify sender thread URL", "intent": "factual_check"}\n\n'
-            'Input: "docker ps command returns empty, container not listed"\n'
-            'Output: {"query": "docker ps shows empty running container not visible fix", "intent": "error_fix"}\n\n'
-        )
-
-        user_prompt = (
-            f"{few_shot_examples}"
-            f'Input: "{cleaned[:400]} | wrong_response: {(original_response or "")[:150]}"\n'
-            f'Output:'
+        # Note: system+user format causes empty output with some OpenRouter models
+        # → Use single user message with all context embedded (tested, works reliably)
+        prompt = (
+            "Convert the following AI agent error/correction into a concise Google search query.\n"
+            "Rules: English only, max 8 words, output ONLY the search query text, no quotes.\n\n"
+            "Examples:\n"
+            "Error: 'Sai roi, khong tim thay nguoi ten Tran Van Manh tren Facebook'\n"
+            "Query: Facebook profile search Vietnamese name order\n\n"
+            "Error: 'facebook_view_profile failed: not found after 2 retries'\n"
+            "Query: Facebook profile URL format find person Vietnam\n\n"
+            "Error: 'docker ps shows empty, container not listed'\n"
+            "Query: docker ps shows empty running container not visible fix\n\n"
+            f"Error: '{cleaned[:350]} | wrong_response: {(original_response or '')[:120]}'\n"
+            "Query:"
         )
 
         try:
@@ -399,13 +387,9 @@ class AgentMemoryService:
                 headers={"Authorization": f"Bearer {groq_keys[0]}", "Content-Type": "application/json"},
                 json={
                     "model": settings.GROQ_MODEL,
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt},
-                    ],
+                    "messages": [{"role": "user", "content": prompt}],
                     "temperature": 0.1,
-                    "max_tokens": 60,
-                    # No response_format — OpenRouter models don't all support json_object mode
+                    "max_tokens": 30,
                 },
                 timeout=15.0,
             )
@@ -413,14 +397,16 @@ class AgentMemoryService:
                 logger.warning("[MemoryService] _generate_search_query API returned %d", resp.status_code)
                 return ""
             raw = resp.json()["choices"][0]["message"]["content"].strip()
-            # Try parsing as JSON first (few-shot prompt guides model to output JSON)
-            try:
-                parsed = json.loads(raw)
-                query = parsed.get("query", "").strip().strip("\"'")
-            except json.JSONDecodeError:
-                # Fallback: extract query from raw text (model may output plain string)
-                # Strip surrounding quotes and any "Output:" prefix
-                query = re.sub(r'^(output:|query:)\s*', '', raw, flags=re.IGNORECASE).strip().strip("\"'{}")
+            if not raw:
+                return ""
+            # Strip surrounding quotes, JSON artifacts, "Output:" prefix
+            query = re.sub(r'^(output:|query:)\s*', '', raw, flags=re.IGNORECASE).strip().strip("\"'{}[]")
+            # If LLM returned JSON anyway, try to extract query field
+            if query.startswith("{"):
+                try:
+                    query = json.loads(query).get("query", "").strip().strip("\"'")
+                except Exception:
+                    pass
             return query[:100] if len(query) > 5 else ""
         except Exception as e:
             logger.warning("[MemoryService] _generate_search_query error: %s", e)

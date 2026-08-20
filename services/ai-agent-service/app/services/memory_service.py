@@ -396,10 +396,27 @@ class AgentMemoryService:
             if resp.status_code != 200:
                 logger.warning("[MemoryService] _generate_search_query API returned %d", resp.status_code)
                 return ""
-            raw = resp.json()["choices"][0]["message"]["content"].strip()
+            msg = resp.json()["choices"][0]["message"]
+            raw = (msg.get("content") or "").strip()
+
+            # All models on this Groq account are reasoning models — they put output in
+            # the 'reasoning' field while keeping 'content' empty. Extract the query from
+            # the reasoning text by finding the last "Query:" line.
+            if not raw:
+                reasoning = (msg.get("reasoning") or "").strip()
+                if reasoning:
+                    # Find the last "Query: <text>" line in the reasoning chain
+                    match = re.search(r'(?:query|search query)[:\s]+([^\n"\'{}]{5,80})', reasoning, re.IGNORECASE)
+                    if match:
+                        raw = match.group(1).strip()
+                    else:
+                        # Fallback: take the last meaningful line of reasoning as the query
+                        lines = [l.strip() for l in reasoning.split('\n') if len(l.strip()) > 5]
+                        raw = lines[-1] if lines else ""
+
             if not raw:
                 return ""
-            # Strip surrounding quotes, JSON artifacts, "Output:" prefix
+            # Strip surrounding quotes, JSON artifacts, "Output:"/"Query:" prefix
             query = re.sub(r'^(output:|query:)\s*', '', raw, flags=re.IGNORECASE).strip().strip("\"'{}[]")
             # If LLM returned JSON anyway, try to extract query field
             if query.startswith("{"):

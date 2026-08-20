@@ -14,6 +14,7 @@ from app.services.tiktok_service import TikTokService
 from app.services.appointment_service import AppointmentService
 from app.services.ai_agent import AiAgentService
 from app.services.browser_agent import BrowserAgentService
+from app.services.memory_service import AgentMemoryService
 from app.services.telegram_bot import TelegramBot
 from app.routers import health, facebook, tiktok, openai_gateway
 
@@ -143,6 +144,15 @@ async def lifespan(app: FastAPI):
     ai_agent.set_telegram_bot(telegram_bot)
     fb_service.set_telegram_bot(telegram_bot)
     tiktok_service.set_telegram_bot(telegram_bot)
+
+    # Initialize AgentMemoryService (self-improving brain)
+    memory_service = AgentMemoryService()
+    memory_service.set_http_client(llm_router._http_client)
+    await memory_service.ensure_tables()
+    ai_agent.set_memory_service(memory_service)
+    telegram_bot.set_memory_service(memory_service)
+    logger.info("[MemoryService] Self-learning memory engine initialized ✓")
+
 
     # 3. Attach to app state for dependency injection in routers
     app.state.llm_router = llm_router

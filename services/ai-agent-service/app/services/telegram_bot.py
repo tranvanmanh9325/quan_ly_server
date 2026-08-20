@@ -16,6 +16,7 @@ class TelegramBot:
         self.ai_agent = ai_agent
         self.ssh_client = ssh_client
         self.appointment_service: Optional[Any] = None
+        self.memory_service: Optional[Any] = None  # AgentMemoryService — injected post-construction
         self.token = settings.TELEGRAM_BOT_TOKEN
         self.chat_id = settings.TELEGRAM_CHAT_ID
         self.polling_enabled = settings.TELEGRAM_POLLING_ENABLED
@@ -27,6 +28,11 @@ class TelegramBot:
 
     def set_appointment_service(self, appointment_service: Any) -> None:
         self.appointment_service = appointment_service
+
+    def set_memory_service(self, memory_service: Any) -> None:
+        """Inject memory service for /lessons and /memory_stats commands."""
+        self.memory_service = memory_service
+
 
     @property
     def api_url(self) -> str:
@@ -310,16 +316,20 @@ class TelegramBot:
 
         if raw_cmd in ["/start", "/help"]:
             msg = (
-                "🤖 *Tiểu Bảo Bảo — Trợ lý Giám Sát Máy Chủ & Lịch Hẹn*\n\n"
-                "📌 *Các lệnh nhanh:*\n"
+                "🤖 *Tiểu Bảo Bảo — Trợ lý AI Tự Hành & Tự Học*\n\n"
+                "📌 *Lệnh quản trị máy chủ:*\n"
                 "• /status — Tổng quan trạng thái server\n"
                 "• /cpu — Mức sử dụng CPU\n"
                 "• /ram — Dung lượng RAM & Swap\n"
                 "• /disk — Dung lượng ổ cứng\n"
-                "• /lich (hoặc /schedule) — Xem danh sách các cuộc hẹn sắp tới\n"
-                "• /reply <tên/id> <nội dung> — Trả lời tin nhắn Facebook\n"
+                "• /lich — Xem danh sách lịch hẹn sắp tới\n"
                 "• /ai — Xóa bộ nhớ ngữ cảnh hội thoại\n\n"
-                "💬 *Hoặc bạn có thể chat tự nhiên bằng tiếng Việt!*"
+                "🧠 *Lệnh quản lý trí nhớ tự học:*\n"
+                "• /lessons — Xem bài học đã tích lũy\n"
+                "• /lesson\\_add \\<nội dung\\> — Thêm bài học thủ công\n"
+                "• /lesson\\_delete \\<id\\> — Xóa một bài học\n"
+                "• /memory\\_stats — Thống kê trí nhớ\n\n"
+                "💬 *Hoặc chat tự nhiên bằng tiếng Việt!*"
             )
             await self.send_message(chat_id, msg)
 
@@ -365,10 +375,92 @@ class TelegramBot:
             self.ai_agent.clear_history(chat_id)
             await self.send_message(chat_id, "🧹 Đã xóa lịch sử hội thoại AI. Bạn có thể bắt đầu phiên hỏi mới.")
 
+        # ── Memory / Self-Learning Commands ───────────────────────────────────
+
+        elif raw_cmd == "/lessons":
+            if not self.memory_service:
+                await self.send_message(chat_id, "⚠️ Memory service chưa sẵn sàng.")
+                return
+            lessons = await self.memory_service.list_lessons_for_display(limit=10)
+            if not lessons:
+                await self.send_message(
+                    chat_id,
+                    "🧠 *BÀI HỌC TỰ TÍCH LŨY*\n\n"
+                    "_Chưa có bài học nào. Hãy chat và sửa lỗi cho em để em bắt đầu học nhé!_ 😊",
+                )
+                return
+            lines = ["🧠 *BÀI HỌC ĐÃ TÍCH LŨY* (Top 10)\n"]
+            for i, l in enumerate(lessons, 1):
+                etype = {"correction": "🔧 Sửa lỗi", "new_knowledge": "📖 Kiến thức", "manual": "✍️ Thủ công"}.get(
+                    l.get("event_type", ""), "📌"
+                )
+                conf = int(float(l.get("confidence", 0)) * 100)
+                lines.append(
+                    f"{i}️⃣ *[ID:{l['id']}]* {etype} — Tin cậy: `{conf}%` · Dùng: `{l['usage_count']}x`\n"
+                    f"   _{l['lesson_text']}_\n"
+                )
+            lines.append("\n💡 Dùng `/lesson_delete <id>` để xóa bài học sai.")
+            await self.send_message(chat_id, "\n".join(lines))
+
+        elif raw_cmd == "/lesson_delete":
+            if not self.memory_service:
+                await self.send_message(chat_id, "⚠️ Memory service chưa sẵn sàng.")
+                return
+            if not args.strip().isdigit():
+                await self.send_message(chat_id, "❌ Cú pháp: `/lesson_delete <id>`\nVí dụ: `/lesson_delete 3`")
+                return
+            lesson_id = int(args.strip())
+            deleted = await self.memory_service.delete_lesson(lesson_id)
+            if deleted:
+                await self.send_message(chat_id, f"✅ Đã xóa bài học ID `{lesson_id}` thành công!")
+            else:
+                await self.send_message(chat_id, f"❌ Không tìm thấy bài học ID `{lesson_id}`.")
+
+        elif raw_cmd == "/lesson_add":
+            if not self.memory_service:
+                await self.send_message(chat_id, "⚠️ Memory service chưa sẵn sàng.")
+                return
+            lesson_text = args.strip()
+            if not lesson_text or len(lesson_text) < 10:
+                await self.send_message(
+                    chat_id,
+                    "❌ Cú pháp: `/lesson_add <nội dung bài học>`\n"
+                    "Ví dụ: `/lesson_add Khi tìm tên người Việt, thử cả hai thứ tự Họ Tên và Tên Họ.`",
+                )
+                return
+            lesson_id = await self.memory_service.add_lesson_manually(lesson_text)
+            if lesson_id:
+                await self.send_message(
+                    chat_id,
+                    f"✅ *Đã thêm bài học thủ công (ID: `{lesson_id}`)*\n\n_{lesson_text}_\n\n"
+                    f"🧠 Bài học này sẽ được em áp dụng từ lần chat tiếp theo!"
+                )
+            else:
+                await self.send_message(chat_id, "❌ Có lỗi khi lưu bài học. Vui lòng thử lại.")
+
+        elif raw_cmd == "/memory_stats":
+            if not self.memory_service:
+                await self.send_message(chat_id, "⚠️ Memory service chưa sẵn sàng.")
+                return
+            stats = await self.memory_service.get_memory_stats()
+            msg = (
+                "🧠 *THỐNG KÊ TRÍ NHỚ TỰ HỌC CỦA TIỂU BẢO BẢO*\n\n"
+                f"📚 *Episodic Memory (Lịch sử sự kiện):*\n"
+                f"   • 🔧 Lần bị sửa lỗi: `{stats.get('total_corrections', 0)}`\n"
+                f"   • 📖 Kiến thức mới học được: `{stats.get('total_new_knowledge', 0)}`\n"
+                f"   • 📋 Tổng sự kiện ghi nhận: `{stats.get('total_memories', 0)}`\n\n"
+                f"💡 *Procedural Memory (Bài học đã rút ra):*\n"
+                f"   • ✅ Đang hoạt động: `{stats.get('active_lessons', 0)}` bài học\n"
+                f"   • 🗄️ Đã lưu trữ: `{stats.get('archived_lessons', 0)}` bài học\n"
+                f"   • 🔢 Tổng lần bài học được áp dụng: `{stats.get('total_lesson_usages', 0)}`"
+            )
+            await self.send_message(chat_id, msg)
+
         else:
             # Route unrecognized slash command to AI Agent
             reply = await self.ai_agent.chat(chat_id, command)
             await self.send_message(chat_id, reply)
+
 
     async def _process_update(self, update: Dict[str, Any]) -> None:
         update_id = update.get("update_id")

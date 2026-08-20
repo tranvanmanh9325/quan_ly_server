@@ -34,7 +34,9 @@ class AiAgentService:
         self.telegram_bot: Any = None
         self.browser_agent: Any = None
         self.appointment_service: Any = None
+        self.memory_service: Any = None  # AgentMemoryService — persistent self-learning memory
         self._history_map: Dict[str, List[Dict[str, Any]]] = {}
+        self._cached_lessons: str = ""  # Refreshed at the start of each chat() call
 
     def set_fb_service(self, fb_service: Any) -> None:
         self.fb_service = fb_service
@@ -47,6 +49,10 @@ class AiAgentService:
 
     def set_appointment_service(self, appointment_service: Any) -> None:
         self.appointment_service = appointment_service
+
+    def set_memory_service(self, memory_service: Any) -> None:
+        """Inject the AgentMemoryService for self-improving capabilities."""
+        self.memory_service = memory_service
 
     def is_configured(self) -> bool:
         return self.llm_router.has_active_providers
@@ -192,7 +198,13 @@ Hệ thống hiện ghi nhận *1 nhóm*:
 
 3️⃣ 👑 *Trần Văn Mạnh* — _Quản trị viên · Người tạo nhóm_
 ```
-"""
+{self._format_lessons_block()}"""
+
+    def _format_lessons_block(self) -> str:
+        """Returns the self-learned lessons block for injection into system prompt."""
+        if not self._cached_lessons:
+            return ""
+        return f"\n\n━━━ 8. KINH NGHIỆM TỰ HỌC (BÀI HỌC TỪ CÁC LẦN SỬA LỖI TRƯỚC) ━━━\n⚡ ĐÂY LÀ NHỮNG QUY TẮC RÚT RA TỪ LỊCH SỬ THỰC TẾ — PHẢI ƯU TIÊN TUÂN THỦ:\n{self._cached_lessons}"
 
     # ──────────────────────────────────────────────────────────────────────────
     # Tool Registry
@@ -1349,7 +1361,36 @@ Hệ thống hiện ghi nhận *1 nhóm*:
         if not self.is_configured():
             return "AI chưa được cấu hình. Vui lòng thêm ít nhất 1 GROQ_API_KEY hoặc OPENROUTER_API_KEY vào file .env."
 
+        # ── Refresh procedural memory (lessons) into system prompt cache ──────
+        # Runs once per chat() call. Gracefully skips if memory_service is not wired.
+        if self.memory_service:
+            try:
+                self._cached_lessons = await self.memory_service.get_active_lessons(limit=8)
+            except Exception as _mem_err:
+                logger.warning("[AiAgent] Failed to refresh lessons cache: %s", _mem_err)
+
         history = self._history_map.setdefault(chat_id, [])
+
+        # ── Correction detection: fire-and-forget lesson extraction ───────────
+        # When the user signals the bot made a mistake, record the event and
+        # asynchronously distill a lesson via LLM — never blocks the reply path.
+        if self.memory_service and history:
+            from app.services.memory_service import AgentMemoryService
+            if AgentMemoryService.is_correction(user_message):
+                # Find the last assistant turn to use as the "wrong response"
+                last_ai_reply = next(
+                    (m["content"] for m in reversed(history) if m.get("role") == "assistant"),
+                    None,
+                )
+                if last_ai_reply:
+                    asyncio.create_task(
+                        self.memory_service.record_correction(
+                            user_input=user_message,
+                            original_response=str(last_ai_reply)[:1000],
+                            context_turns=list(history),
+                        )
+                    )
+                    logger.info("[AiAgent] 🧠 Correction detected — lesson extraction scheduled.")
 
         if self._is_greeting(user_message):
             greeting = (
@@ -1360,12 +1401,14 @@ Hệ thống hiện ghi nhận *1 nhóm*:
                 "• 👤 Tự động xem profile Facebook của bất kỳ ai\n"
                 "• 🔍 Tìm kiếm thông tin trên Google\n"
                 "• 🌐 Duyệt và chụp ảnh bất kỳ trang web nào\n"
-                "• 📩 Đọc và gửi tin nhắn Facebook Messenger\n\n"
+                "• 📩 Đọc và gửi tin nhắn Facebook Messenger\n"
+                "• 🧠 Tự học từ các lần sai — ngày càng thông minh hơn!\n\n"
                 "Anh cần em hỗ trợ tác vụ nào ạ?"
             )
             history.append({"role": "user", "content": user_message})
             history.append({"role": "assistant", "content": greeting})
             self._trim_history(history)
+
             return greeting
 
         history.append({"role": "user", "content": user_message})

@@ -384,7 +384,9 @@ class AgentMemoryService:
                     "model": settings.GROQ_MODEL,
                     "messages": [{"role": "user", "content": prompt}],
                     "temperature": 0.1,
-                    "max_tokens": 30,
+                    # Reasoning models use tokens to think before concluding.
+                    # 30 was too low — reasoning chain gets cut off before reaching the answer.
+                    "max_tokens": 512,
                 },
                 timeout=15.0,
             )

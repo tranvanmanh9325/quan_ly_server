@@ -466,45 +466,65 @@ class AgentMemoryService:
 
     async def _search_for_solution(self, query: str) -> str:
         """
-        Searches DuckDuckGo with retry + exponential backoff.
+        Searches DuckDuckGo via subprocess to avoid the primp/asyncio thread-safety issue.
+
+        Root cause (diagnosed via testing):
+          - ddgs v9 uses 'primp' HTTP client which is NOT thread-safe
+          - run_in_executor() fails with 'No results found' even when sync call works
+          - Running in a separate subprocess completely isolates the HTTP stack
 
         Strategy:
-        1. Primary: DDGS.text() run in thread executor (v8.x no longer has AsyncDDGS)
-           - 3 retries with 1s/2s/4s exponential backoff on rate-limit
-        2. Fallback: Jina Reader (r.jina.ai) — LLM-ready Markdown, no API key
+        1. Primary: asyncio.create_subprocess_exec(python -c "ddgs search") — clean isolation
+           - 3 retries with 2s backoff on rate-limit
+        2. Fallback: Jina Reader (r.jina.ai/URL) — LLM-ready Markdown, no API key
         3. Returns empty string on total failure (graceful degradation)
-
-        Note: DDG Instant Answer API dropped — research confirmed it returns empty
-        AbstractText for all technical queries (only works for Wikipedia entities).
         """
         import asyncio
 
-        def _sync_search(q: str) -> list:
-            """Runs DDGS sync search — must be called in a thread executor."""
-            from ddgs import DDGS
-            with DDGS() as ddgs:
-                return ddgs.text(q, max_results=4, timelimit="y", backend="auto") or []
+        _SEARCH_SCRIPT = (
+            "import sys, json; from ddgs import DDGS\n"
+            "q = sys.argv[1]\n"
+            "try:\n"
+            "    r = DDGS().text(q, max_results=4, timelimit='y') or []\n"
+            "    print(json.dumps(r))\n"
+            "except Exception as e:\n"
+            "    print(json.dumps({'error': str(e)}))\n"
+        )
 
-        # Primary: run sync DDGS in thread executor + retry on rate-limit
         results: list = []
         max_retries = 3
-        loop = asyncio.get_event_loop()
         for attempt in range(max_retries):
             try:
-                results = await loop.run_in_executor(None, _sync_search, query)
-                break  # Success — exit retry loop
-            except Exception as ddgs_err:
-                err_str = str(ddgs_err).lower()
-                if "ratelimit" in err_str and attempt < max_retries - 1:
-                    delay = 1.0 * (2 ** attempt)  # 1s → 2s → 4s
-                    logger.warning(
-                        "[MemoryService] DDGS rate-limited (attempt %d/%d). Retrying in %.1fs...",
-                        attempt + 1, max_retries, delay,
-                    )
-                    await asyncio.sleep(delay)
-                else:
-                    logger.warning("[MemoryService] DDGS search failed: %s", ddgs_err)
-                    break
+                proc = await asyncio.create_subprocess_exec(
+                    "python", "-c", _SEARCH_SCRIPT, query,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.DEVNULL,
+                )
+                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=20.0)
+                data = json.loads(stdout.decode().strip())
+                if isinstance(data, list):
+                    results = data
+                    if results:
+                        break  # Success
+                    # Empty list = no results, try again after delay
+                    if attempt < max_retries - 1:
+                        await asyncio.sleep(2.0)  # 2s between retries avoids rate-limit
+                elif isinstance(data, dict) and "error" in data:
+                    err_str = data["error"].lower()
+                    if "ratelimit" in err_str and attempt < max_retries - 1:
+                        delay = 2.0 * (attempt + 1)  # 2s → 4s → 6s
+                        logger.warning(
+                            "[MemoryService] DDGS rate-limited (attempt %d/%d). Retrying in %.1fs...",
+                            attempt + 1, max_retries, delay,
+                        )
+                        await asyncio.sleep(delay)
+                    else:
+                        logger.warning("[MemoryService] DDGS subprocess error: %s", data["error"])
+                        break
+            except (asyncio.TimeoutError, Exception) as err:
+                logger.warning("[MemoryService] DDGS subprocess failed: %s", err)
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(2.0)
 
         if results:
             parts = []
@@ -538,7 +558,6 @@ class AgentMemoryService:
                 logger.warning("[MemoryService] Jina Reader fallback failed: %s", jina_err)
 
         return ""
-
 
     async def _extract_and_save_lesson(
         self,

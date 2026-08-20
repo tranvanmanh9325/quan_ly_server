@@ -365,20 +365,15 @@ class AgentMemoryService:
 
         cleaned = self._preprocess_error_text(error_context)
 
-        # Note: system+user format causes empty output with some OpenRouter models
-        # → Use single user message with all context embedded (tested, works reliably)
+        # Ultra-short prompt works better with reasoning models — fewer tokens = less noise in reasoning chain
         prompt = (
-            "Convert the following AI agent error/correction into a concise Google search query.\n"
-            "Rules: English only, max 8 words, output ONLY the search query text, no quotes.\n\n"
+            "Given the AI error below, output a Google search query (English, max 8 words).\n\n"
             "Examples:\n"
-            "Error: 'Sai roi, khong tim thay nguoi ten Tran Van Manh tren Facebook'\n"
-            "Query: Facebook profile search Vietnamese name order\n\n"
-            "Error: 'facebook_view_profile failed: not found after 2 retries'\n"
-            "Query: Facebook profile URL format find person Vietnam\n\n"
-            "Error: 'docker ps shows empty, container not listed'\n"
-            "Query: docker ps shows empty running container not visible fix\n\n"
-            f"Error: '{cleaned[:350]} | wrong_response: {(original_response or '')[:120]}'\n"
-            "Query:"
+            "- 'khong tim thay Tran Van Manh tren Facebook' → Facebook find Vietnamese person profile\n"
+            "- 'facebook_view_profile failed not found' → Facebook profile URL search find person\n"
+            "- 'docker ps empty container not listed' → docker ps not showing container fix\n\n"
+            f"Error: {cleaned[:250]}\n"
+            "Search query:"
         )
 
         try:
@@ -401,18 +396,30 @@ class AgentMemoryService:
 
             # All models on this Groq account are reasoning models — they put output in
             # the 'reasoning' field while keeping 'content' empty. Extract the query from
-            # the reasoning text by finding the last "Query:" line.
+            # the reasoning text by finding the search query conclusion.
             if not raw:
                 reasoning = (msg.get("reasoning") or "").strip()
                 if reasoning:
-                    # Find the last "Query: <text>" line in the reasoning chain
-                    match = re.search(r'(?:query|search query)[:\s]+([^\n"\'{}]{5,80})', reasoning, re.IGNORECASE)
-                    if match:
-                        raw = match.group(1).strip()
+                    # Priority 1: find explicit "→ <query>" pattern from examples format
+                    arrow_match = re.search(r'→\s*([A-Za-z][^\n"\'{}←→]{5,70})', reasoning)
+                    if arrow_match:
+                        raw = arrow_match.group(1).strip()
                     else:
-                        # Fallback: take the last meaningful line of reasoning as the query
-                        lines = [l.strip() for l in reasoning.split('\n') if len(l.strip()) > 5]
-                        raw = lines[-1] if lines else ""
+                        # Priority 2: find "search query: <text>" or "query: <text>"
+                        q_match = re.search(
+                            r'(?:search query|the query)[:\s]+([A-Za-z][^\n"\'{}]{5,70})',
+                            reasoning, re.IGNORECASE
+                        )
+                        if q_match:
+                            raw = q_match.group(1).strip()
+                        else:
+                            # Priority 3: short English-looking lines near end of reasoning (< 60 chars)
+                            lines = [l.strip() for l in reasoning.split('\n') if l.strip()]
+                            for line in reversed(lines[-10:]):
+                                # Accept short lines that look like search queries (mostly English words)
+                                if 5 < len(line) < 70 and not any(x in line.lower() for x in ['we need', 'the user', 'i need', 'i should', 'let me', 'convert']):
+                                    raw = line
+                                    break
 
             if not raw:
                 return ""

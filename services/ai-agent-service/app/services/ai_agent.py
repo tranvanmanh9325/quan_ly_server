@@ -1411,14 +1411,44 @@ Hệ thống hiện ghi nhận *1 nhóm*:
 
             return greeting
 
+        # ── C3.3 New Knowledge Detection ──────────────────────────────────────
+        # If the bot previously admitted it "doesn't know" and the user now
+        # provides an answer, record that fact as new_knowledge (fire-and-forget).
+        _UNKNOWING_PHRASES = [
+            "em không biết", "em chưa biết", "em không có thông tin",
+            "chưa có thông tin", "ngoài khả năng", "em không rõ",
+            "em không nắm được", "chưa có dữ liệu", "em chưa có dữ liệu",
+        ]
+        if self.memory_service and history:
+            from app.services.memory_service import AgentMemoryService
+            last_ai = next(
+                (m.get("content", "") or "" for m in reversed(history) if m.get("role") == "assistant"),
+                "",
+            )
+            is_bot_unknowing = any(p in last_ai.lower() for p in _UNKNOWING_PHRASES)
+            # Only trigger if it is NOT already flagged as a correction (avoid double-recording)
+            if is_bot_unknowing and not AgentMemoryService.is_correction(user_message):
+                asyncio.create_task(
+                    self.memory_service.record_new_knowledge(
+                        topic=last_ai[:100],
+                        fact=user_message[:500],
+                        source_message=user_message,
+                    )
+                )
+                logger.info("[AiAgent] 📖 New knowledge detected — recording async.")
+
         history.append({"role": "user", "content": user_message})
         # Tools that should only be called once per conversation turn
         executed_once_tools: set = set()
         # Deferred photos: only the LAST screenshot from multi-step browsing is sent.
         # Each entry is (caption: str, img_path: str). Cleared/replaced on each new screenshot.
         pending_photos: list = []
+        # C3.4 Reflexion: track consecutive tool failures to trigger lesson extraction
+        _consecutive_tool_failures: int = 0
+        _reflexion_triggered: bool = False  # Prevent spamming lesson extraction per turn
 
         for iteration in range(MAX_AGENT_ITERATIONS):
+
             messages = [{"role": "system", "content": self._build_system_prompt()}]
             messages.extend(list(history))
 
@@ -1493,6 +1523,56 @@ Hệ thống hiện ghi nhận *1 nhóm*:
                     if fn_name not in _NON_COMPRESS_TOOLS and isinstance(tool_result, str) and len(tool_result) > 100:
                         tool_result = self.llm_router.rtk.compress(tool_result, max_chars=2000, max_lines=30)
 
+                    # ── C3.4 Reflexion: detect tool failure and annotate for self-correction ──
+                    # Failure signals: explicit error prefixes or common failure phrases.
+                    _FAILURE_SIGNALS = (
+                        "lỗi:", "lỗi khi", "error:", "error khi", "unknown tool",
+                        "không tìm thấy", "không tồn tại", "thất bại", "failed",
+                        "chưa được khởi tạo", "not found",
+                    )
+                    _is_tool_failure = isinstance(tool_result, str) and any(
+                        tool_result.lower().startswith(s) or f" {s}" in tool_result.lower()
+                        for s in _FAILURE_SIGNALS
+                    )
+
+                    if _is_tool_failure and fn_name not in self._DIRECT_RETURN_TOOLS:
+                        _consecutive_tool_failures += 1
+                        # Annotate tool result with a Reflexion prompt so the LLM
+                        # sees the failure context and self-corrects in the next iteration.
+                        reflexion_note = (
+                            "\n\n⚠️ [TỰ PHẢN BIỆN - REFLEXION]: Thao tác này THẤT BẠI. "
+                            "Em phải:\n"
+                            "1. Phân tích tại sao thất bại (sai tên? sai URL? sai tham số? chưa đăng nhập?)\n"
+                            "2. Thử chiến lược KHÁC — không được lặp lại chính xác thao tác vừa thất bại.\n"
+                            "3. Nếu vẫn không tìm được, hãy thành thật nói với anh Mạnh và hỏi thêm thông tin."
+                        )
+                        tool_result = tool_result + reflexion_note
+                        logger.info(
+                            "[AiAgent][iter=%d] 🔄 Reflexion triggered for tool '%s' (failures=%d)",
+                            iteration, fn_name, _consecutive_tool_failures,
+                        )
+
+                        # Schedule lesson extraction after ≥2 consecutive failures (fire-and-forget)
+                        if _consecutive_tool_failures >= 2 and not _reflexion_triggered and self.memory_service:
+                            _reflexion_triggered = True
+                            failure_context = (
+                                f"Tool '{fn_name}' thất bại {_consecutive_tool_failures} lần liên tiếp "
+                                f"với tham số {fn_args}. Kết quả: {tool_result[:300]}"
+                            )
+                            asyncio.create_task(
+                                self.memory_service.record_new_knowledge(
+                                    topic=f"Tool failure pattern: {fn_name}",
+                                    fact=failure_context,
+                                    source_message=user_message,
+                                )
+                            )
+                            logger.info(
+                                "[AiAgent] 🧠 Repeated tool failure — failure pattern recorded for learning."
+                            )
+                    else:
+                        # Successful tool call resets the failure streak
+                        _consecutive_tool_failures = 0
+
                     history.append({
                         "role": "tool",
                         "tool_call_id": call_id,
@@ -1511,6 +1591,7 @@ Hệ thống hiện ghi nhận *1 nhóm*:
                         executed_once_tools.add(fn_name)
 
                 continue  # Feed observation back into the next LLM call
+
 
             # ── Pseudo-XML tool call fallback (for models that don't support native function calling) ──
             pseudo_calls = self._extract_pseudo_tool_calls(raw_content)

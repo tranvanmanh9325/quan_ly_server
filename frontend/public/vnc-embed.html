@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Server VNC</title>
+  <title>Server VNC Console</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     html, body {
@@ -11,6 +11,8 @@
       height: 100%;
       overflow: hidden;
       background: #000;
+      user-select: none;
+      -webkit-user-select: none;
     }
 
     /*
@@ -47,17 +49,23 @@
       top: 50%; left: 50%;
       transform: translate(-50%, -50%);
       color: #00f3ff;
-      font-family: 'Share Tech Mono', monospace;
+      font-family: 'Share Tech Mono', 'Courier New', monospace;
       font-size: 14px;
       text-align: center;
       pointer-events: none;
       z-index: 100;
-      text-shadow: 0 0 10px #00f3ff;
+      text-shadow: 0 0 10px rgba(0, 243, 255, 0.6);
+      background: rgba(0, 0, 0, 0.75);
+      padding: 10px 20px;
+      border: 1px solid rgba(0, 243, 255, 0.3);
+      border-radius: 4px;
+      backdrop-filter: blur(4px);
+      letter-spacing: 1px;
     }
   </style>
 </head>
 <body>
-  <div id="screen"></div>
+  <div id="screen" tabindex="0"></div>
   <div id="status">⟳ Đang kết nối VNC Server...</div>
 
   <script type="module">
@@ -67,10 +75,11 @@
     const status = document.getElementById('status');
 
     const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl   = `${wsProto}//${window.location.host}/fb-vnc/`;
+    const wsUrl   = `${wsProto}//${window.location.host}/fb-vnc/websockify`;
 
     let rfb = null;
     let reconnectTimer = null;
+    let isConnecting = false;
 
     /*
      * scaleViewport=true tells noVNC to:
@@ -83,13 +92,29 @@
      */
     function triggerScale() {
       if (!rfb) return;
-      // Toggle off→on forces noVNC to re-read container size and resize canvas
-      rfb.scaleViewport = false;
-      rfb.scaleViewport = true;
+      try {
+        // Toggle off→on forces noVNC to re-read container size and resize canvas
+        rfb.scaleViewport = false;
+        rfb.scaleViewport = true;
+      } catch (e) {
+        console.debug('[VNC] triggerScale debug:', e);
+      }
     }
 
     function initVNC() {
       clearTimeout(reconnectTimer);
+      if (rfb) {
+        try {
+          rfb.disconnect();
+        } catch (e) {}
+        rfb = null;
+      }
+      
+      // Clean up previous canvas elements to avoid ghost elements
+      screen.innerHTML = '';
+      status.style.display = 'block';
+      status.textContent = '⟳ Đang kết nối VNC Server...';
+
       try {
         rfb = new RFB(screen, wsUrl);
         rfb.viewOnly         = false;
@@ -102,6 +127,8 @@
 
         rfb.addEventListener('connect', () => {
           status.style.display = 'none';
+          // Auto-focus the screen element so keyboard events are captured
+          screen.focus();
           // Fire multiple times: container layout may still be settling
           requestAnimationFrame(triggerScale);
           setTimeout(triggerScale, 150);
@@ -111,30 +138,50 @@
 
         rfb.addEventListener('disconnect', (e) => {
           rfb = null;
-          if (e.detail.clean) {
+          status.style.display = 'block';
+          if (e.detail && e.detail.clean) {
             status.textContent = '✓ Đã ngắt kết nối VNC';
           } else {
             status.textContent = '⟳ Mất kết nối — đang thử lại...';
             reconnectTimer = setTimeout(initVNC, 2000);
           }
-          status.style.display = 'block';
         });
 
         rfb.addEventListener('credentialsrequired', () => {
           rfb.sendCredentials({ password: '' });
         });
 
+        rfb.addEventListener('securityfailure', (e) => {
+          status.style.display = 'block';
+          status.textContent = `✕ Lỗi bảo mật VNC: ${e.detail?.reason || 'Authentication failed'}`;
+        });
+
       } catch (err) {
-        status.textContent = `✕ Lỗi VNC: ${err.message}`;
+        status.style.display = 'block';
+        status.textContent = `✕ Lỗi khởi tạo VNC: ${err.message}`;
         console.error('[VNC] Init error:', err);
       }
     }
+
+    // Auto focus screen on click
+    screen.addEventListener('mousedown', () => {
+      screen.focus();
+    });
 
     // Re-trigger scale whenever the container is resized (modal open/resize events)
     const ro = new ResizeObserver(() => triggerScale());
     ro.observe(screen);
 
+    // Clean disconnect on page unload
+    window.addEventListener('beforeunload', () => {
+      clearTimeout(reconnectTimer);
+      if (rfb) {
+        try { rfb.disconnect(); } catch (e) {}
+      }
+    });
+
     initVNC();
   </script>
 </body>
 </html>
+

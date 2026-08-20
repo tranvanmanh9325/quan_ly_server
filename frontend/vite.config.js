@@ -17,6 +17,11 @@ export default defineConfig({
         changeOrigin: true,
         ws: true,
         rewrite: (path) => path.replace(/^\/fb-vnc/, ''),
+      },
+      '/websockify': {
+        target: 'http://localhost:6080',
+        changeOrigin: true,
+        ws: true,
       }
     }
   },

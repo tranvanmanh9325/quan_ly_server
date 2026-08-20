@@ -457,7 +457,7 @@ export default function AiAgentsPage() {
             const probe = await axios.get(`${apiPrefix}/vnc-ready`);
             if (probe.data.ready) {
               clearInterval(checkReady);
-              setVncUrl('/fb-vnc/vnc_lite.html?autoconnect=true&resize=scale');
+              setVncUrl(`/vnc-embed.html?t=${Date.now()}`);
               setShowVncModal(true);
               setVncIsLaunching(false);
               setVncStatusMsg('');

@@ -469,8 +469,7 @@ class AgentMemoryService:
 
         def _sync_search(q: str) -> list:
             """Runs DDGS sync search — must be called in a thread executor."""
-            from duckduckgo_search import DDGS
-            from duckduckgo_search.exceptions import RatelimitException
+            from ddgs import DDGS
             with DDGS() as ddgs:
                 return ddgs.text(q, max_results=4, timelimit="y", backend="auto") or []
 

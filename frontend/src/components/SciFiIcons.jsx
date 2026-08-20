@@ -646,3 +646,100 @@ export const SciFiChevronRightIcon = ({ size = 14, color = 'var(--accent-cyan)' 
     <line x1="19" y1="7" x2="19" y2="17" stroke={color} strokeWidth="1.6" strokeLinecap="round" strokeOpacity="0.5" />
   </svg>
 );
+
+// 46. STREAK FLAME — Cyberpunk plasma flame with inner core layers and energy tendrils
+// Designed for TikTok "Daily Streak" feature — evokes burning energy, persistence, chain reaction
+export const SciFiFlameStreakIcon = ({ size = 18, color = '#FE2C55' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
+    {/* Outer flame silhouette — asymmetric for organic feel */}
+    <path
+      d="M12 2C12 2 8 6.5 8 10.5C8 11.8 8.4 13 9.2 13.9C9.1 13.3 9.1 12.5 9.5 11.9C10.3 10.7 11 10 11 10C11 10 10.8 13 12.5 14.5C13 14 13.4 13.2 13.4 12.4C14.2 13.4 14.5 14.8 14.2 16C15.3 15.1 16 13.6 16 12C16 9 14 7 14 7C14 9 13 10 13 10C13 10 16 7 12 2Z"
+      fill={color} fillOpacity="0.9"
+    />
+    {/* Inner hot core — brighter, smaller flame */}
+    <path
+      d="M12 8C12 8 10.5 10.5 10.5 12.5C10.5 13.8 11.1 14.9 12 15.5C12.9 14.9 13.5 13.8 13.5 12.5C13.5 10.5 12 8 12 8Z"
+      fill={color} fillOpacity="0.4"
+    />
+    {/* Flame tip — sharp peak */}
+    <path d="M12 2L11.2 4.5L12 6L12.8 4.5L12 2Z" fill={color} fillOpacity="0.6" />
+    {/* Base glow embers — small sparks at bottom */}
+    <circle cx="10" cy="17" r="0.8" fill={color} fillOpacity="0.7" />
+    <circle cx="14" cy="17" r="0.6" fill={color} fillOpacity="0.5" />
+    <circle cx="12" cy="18" r="1" fill={color} fillOpacity="0.8" />
+    {/* Energy tendril left */}
+    <path d="M9.5 11C9 10.2 8.5 9 8.8 7.5" stroke={color} strokeWidth="0.7" strokeOpacity="0.4" strokeLinecap="round" />
+    {/* Energy tendril right */}
+    <path d="M14.5 9C15 8 15.2 6.8 14.8 5.5" stroke={color} strokeWidth="0.7" strokeOpacity="0.3" strokeLinecap="round" />
+    {/* Bottom base line — grounding the flame */}
+    <line x1="9" y1="19" x2="15" y2="19" stroke={color} strokeWidth="1.2" strokeLinecap="round" strokeOpacity="0.5" />
+    <line x1="10.5" y1="20.5" x2="13.5" y2="20.5" stroke={color} strokeWidth="0.8" strokeLinecap="round" strokeOpacity="0.3" />
+  </svg>
+);
+
+// 47. VIDEO CLIP — Cyberpunk film strip with scan lines and a neon play triangle
+// Used for "Video Xu Hướng / Clip Ngắn" button in Streak Dispatch Content selector
+export const SciFiVideoClipIcon = ({ size = 14, color = '#FE2C55' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
+    {/* Main film frame body */}
+    <rect x="2" y="4" width="20" height="16" rx="1.5" stroke={color} strokeWidth="1.4" fill={color} fillOpacity="0.07" />
+    {/* Film sprocket holes — left strip */}
+    <rect x="3" y="6" width="2.5" height="2.5" rx="0.4" fill={color} fillOpacity="0.6" />
+    <rect x="3" y="10.75" width="2.5" height="2.5" rx="0.4" fill={color} fillOpacity="0.6" />
+    <rect x="3" y="15.5" width="2.5" height="2.5" rx="0.4" fill={color} fillOpacity="0.6" />
+    {/* Film sprocket holes — right strip */}
+    <rect x="18.5" y="6" width="2.5" height="2.5" rx="0.4" fill={color} fillOpacity="0.6" />
+    <rect x="18.5" y="10.75" width="2.5" height="2.5" rx="0.4" fill={color} fillOpacity="0.6" />
+    <rect x="18.5" y="15.5" width="2.5" height="2.5" rx="0.4" fill={color} fillOpacity="0.6" />
+    {/* Center divider lines creating frame sections */}
+    <line x1="7" y1="4" x2="7" y2="20" stroke={color} strokeWidth="0.8" strokeOpacity="0.35" />
+    <line x1="17" y1="4" x2="17" y2="20" stroke={color} strokeWidth="0.8" strokeOpacity="0.35" />
+    {/* Play triangle — neon filled, centered in the frame area */}
+    <path d="M10 9.5L10 14.5L15 12L10 9.5Z" fill={color} fillOpacity="0.9" />
+    {/* Scan line overlay — gives holographic/cyber feel */}
+    <line x1="7" y1="12" x2="17" y2="12" stroke={color} strokeWidth="0.5" strokeOpacity="0.25" />
+  </svg>
+);
+
+// 48. MESSAGE STREAK — Cyber speech bubble with a chain-link connector and pulse dot
+// Used for "Tin Nhắn Giữ Chuỗi" button — communicates both messaging and chain/streak concept
+export const SciFiMessageStreakIcon = ({ size = 14, color = '#00F2FE' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
+    {/* Main bubble body with flat bottom-left corner (cyberpunk style) */}
+    <path
+      d="M3 5C3 3.9 3.9 3 5 3H19C20.1 3 21 3.9 21 5V14C21 15.1 20.1 16 19 16H8L3 20V5Z"
+      stroke={color} strokeWidth="1.4" fill={color} fillOpacity="0.07" strokeLinejoin="round"
+    />
+    {/* Message content lines inside bubble */}
+    <line x1="6" y1="7.5" x2="18" y2="7.5" stroke={color} strokeWidth="1" strokeOpacity="0.5" strokeLinecap="round" />
+    <line x1="6" y1="11" x2="14" y2="11" stroke={color} strokeWidth="1" strokeOpacity="0.5" strokeLinecap="round" />
+    {/* Chain link symbol — right side, indicates streak/chain concept */}
+    <circle cx="20" cy="19" r="1.5" stroke={color} strokeWidth="1.2" fill="none" strokeOpacity="0.7" />
+    <circle cx="17" cy="22" r="1.5" stroke={color} strokeWidth="1.2" fill="none" strokeOpacity="0.5" />
+    <line x1="19" y1="20" x2="18" y2="21" stroke={color} strokeWidth="1" strokeOpacity="0.6" />
+    {/* Active pulse dot — top-right corner of bubble */}
+    <circle cx="18.5" cy="4.5" r="1.5" fill={color} fillOpacity="0.9" />
+    <circle cx="18.5" cy="4.5" r="2.8" stroke={color} strokeWidth="0.6" strokeOpacity="0.35" />
+  </svg>
+);
+
+// 49. ADD FRIEND — Cyberpunk user silhouette with a quantum "+" node extending outward
+// Used for "THÊM BẠN BÈ" button in the Streak Friends list manager
+export const SciFiAddFriendIcon = ({ size = 13, color = '#FE2C55' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
+    {/* User head circle */}
+    <circle cx="9" cy="7" r="4" stroke={color} strokeWidth="1.4" fill={color} fillOpacity="0.1" />
+    {/* User body / shoulder arc */}
+    <path d="M2 21C2 17.1 5.1 14 9 14C11 14 12.8 14.8 14.1 16.1" stroke={color} strokeWidth="1.4" strokeLinecap="round" fill="none" />
+    {/* HUD bracket around head — cyber targeting effect */}
+    <path d="M6 3.5L5 3L4 3.5" stroke={color} strokeWidth="0.8" strokeOpacity="0.5" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M12 3.5L13 3L14 3.5" stroke={color} strokeWidth="0.8" strokeOpacity="0.5" strokeLinecap="round" strokeLinejoin="round" />
+    {/* Plus node — quantum add symbol, positioned top-right */}
+    <circle cx="19" cy="17" r="4" stroke={color} strokeWidth="1.2" fill={color} fillOpacity="0.08" />
+    <line x1="19" y1="14.5" x2="19" y2="19.5" stroke={color} strokeWidth="1.6" strokeLinecap="round" />
+    <line x1="16.5" y1="17" x2="21.5" y2="17" stroke={color} strokeWidth="1.6" strokeLinecap="round" />
+    {/* Corner tick marks on the + node circle */}
+    <line x1="15.8" y1="14.5" x2="16.5" y2="14.5" stroke={color} strokeWidth="0.8" strokeOpacity="0.5" />
+    <line x1="15.8" y1="14.5" x2="15.8" y2="15.2" stroke={color} strokeWidth="0.8" strokeOpacity="0.5" />
+  </svg>
+);

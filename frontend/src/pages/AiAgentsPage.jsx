@@ -8,7 +8,8 @@ import {
   SciFiWhatsAppIcon, SciFiPulseBadge, SciFiBrowserLaunchIcon,
   SciFiChronoSpinnerIcon, SciFiCheckCircleIcon, SciFiCloseIcon,
   SciFiQuantumIcon, SciFiEnergyBoltIcon, SciFiChevronLeftIcon, SciFiChevronRightIcon,
-  SciFiTerminalPromptIcon, SciFiInfoIcon
+  SciFiTerminalPromptIcon, SciFiInfoIcon,
+  SciFiFlameStreakIcon, SciFiVideoClipIcon, SciFiMessageStreakIcon, SciFiAddFriendIcon,
 } from '../components/SciFiIcons';
 import { useTranslation } from '../i18n/index.jsx';
 
@@ -1550,7 +1551,7 @@ export default function AiAgentsPage() {
                     display: 'flex', alignItems: 'center', gap: '8px',
                     color: '#FE2C55', fontFamily: 'Share Tech Mono', fontSize: '0.86rem', fontWeight: 'bold', letterSpacing: '1px'
                   }}>
-                    <span style={{ fontSize: '1.1rem' }}>🔥</span>
+                    <SciFiFlameStreakIcon size={18} color="#FE2C55" />
                     <span>{t('aiAgents.tiktok.sectionStreakTitle') || '2. DAILY AUTO STREAK KEEPER (TỰ ĐỘNG GỬI VIDEO GIỮ CHUỖI)'}</span>
                   </div>
                   <SciFiPulseBadge label={ttConfig.streakEnabled ? "STREAKS SAVER ACTIVE" : "STREAKS OFF"} color="#FE2C55" />
@@ -1602,9 +1603,11 @@ export default function AiAgentsPage() {
                         fontSize: '0.74rem',
                         cursor: 'pointer',
                         borderRadius: '2px',
+                        display: 'flex', alignItems: 'center', gap: '6px',
                       }}
                     >
-                      🎬 Video Xu Hướng / Clip Ngắn
+                      <SciFiVideoClipIcon size={14} color={ttConfig.streakSendType === 'video' ? '#FE2C55' : 'var(--text-secondary)'} />
+                      Video Xu Hướng / Clip Ngắn
                     </button>
                     <button
                       type="button"
@@ -1618,9 +1621,11 @@ export default function AiAgentsPage() {
                         fontSize: '0.74rem',
                         cursor: 'pointer',
                         borderRadius: '2px',
+                        display: 'flex', alignItems: 'center', gap: '6px',
                       }}
                     >
-                      💬 Tin Nhắn Giữ Chuỗi (Kèm 🔥)
+                      <SciFiMessageStreakIcon size={14} color={ttConfig.streakSendType === 'message' ? '#00F2FE' : 'var(--text-secondary)'} />
+                      Tin Nhắn Giữ Chuỗi (Kèm <SciFiFlameStreakIcon size={12} color={ttConfig.streakSendType === 'message' ? '#00F2FE' : 'var(--text-secondary)'} />)
                     </button>
                   </div>
                 </SettingRow>
@@ -1699,9 +1704,11 @@ export default function AiAgentsPage() {
                         fontWeight: 'bold',
                         cursor: 'pointer',
                         borderRadius: '2px',
+                        display: 'flex', alignItems: 'center', gap: '6px',
                       }}
                     >
-                      + THÊM BẠN BÈ
+                      <SciFiAddFriendIcon size={13} color="#FE2C55" />
+                      THÊM BẠN BÈ
                     </button>
                   </div>
 

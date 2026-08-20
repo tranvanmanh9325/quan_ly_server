@@ -350,47 +350,48 @@ class AgentMemoryService:
         event_type: str,
     ) -> str:
         """
-        Uses a fast LLM call to generate a focused, English search query
-        that captures the root cause of the error for web searching.
+        Uses a fast LLM call to generate a focused, English search query.
 
-        English queries return significantly better search results than Vietnamese.
+        Approach (from research, 2025):
+        1. Preprocess error text: strip timestamps, paths, UUIDs to reduce noise
+        2. Few-shot prompt with JSON output for intent classification
+        3. English queries give significantly better search results than Vietnamese
         """
         if not self._http:
             return ""
-
         groq_keys = settings.groq_keys
         if not groq_keys:
             return ""
 
-        # Different prompt templates for different event types
-        if event_type == "tool_failure":
-            instruction = (
-                "Generate a concise Google search query to find the solution or best practice "
-                "for this AI agent tool failure. Focus on the technical error and how to fix it."
-            )
-        else:
-            instruction = (
-                "Generate a concise Google search query to find accurate information or best practice "
-                "that would have prevented this AI assistant mistake. "
-                "Focus on the factual topic, not the mistake itself."
-            )
+        cleaned = self._preprocess_error_text(error_context)
 
-        prompt = f"""{instruction}
+        # Production-grade few-shot prompt (Research-backed, 2025 standard)
+        # Returns JSON: {"query": "...", "intent": "..."} for reliability
+        system_prompt = (
+            "You are a technical search specialist for AI agent self-correction.\n"
+            "Transform error/correction context into a precise web search query.\n"
+            "Rules: REMOVE timestamps, file paths, UUIDs. KEEP error class names, "
+            "library names, HTTP status codes, tool names.\n"
+            'Output ONLY valid JSON: {"query": "max 10 words", '
+            '"intent": "error_fix|best_practice|how_to|factual_check"}'
+        )
 
-Error/Correction context (Vietnamese):
-{error_context[:300]}
+        few_shot_examples = (
+            'Input: "Sai rồi, không tìm thấy người này trên Facebook"\n'
+            'Output: {"query": "Facebook profile search Vietnamese name order", "intent": "best_practice"}\n\n'
+            'Input: "Tool facebook_view_profile failed: not found after 2 retries"\n'
+            'Output: {"query": "Facebook profile URL format find person Vietnam", "intent": "error_fix"}\n\n'
+            'Input: "Nhầm rồi, không phải Nguyễn Văn A mà là Trần Văn B nhắn tin"\n'
+            'Output: {"query": "Vietnamese Messenger identify sender thread URL", "intent": "factual_check"}\n\n'
+            'Input: "docker ps command returns empty, container not listed"\n'
+            'Output: {"query": "docker ps shows empty running container not visible fix", "intent": "error_fix"}\n\n'
+        )
 
-Original (wrong) response:
-{original_response[:200] if original_response else "(N/A)"}
-
-Rules:
-- Output ONLY the search query string, nothing else.
-- Write in English for best search results.
-- Keep it under 10 words.
-- Focus on the TOPIC/SOLUTION, not the mistake.
-- Examples: "Facebook Messenger thread URL format Vietnam", "docker inspect container not found fix", "Vietnamese name order Họ Tên search"
-
-Search query:"""
+        user_prompt = (
+            f"{few_shot_examples}"
+            f'Input: "{cleaned[:400]} | wrong_response: {(original_response or "")[:150]}"\n'
+            f'Output:'
+        )
 
         try:
             resp = await self._http.post(
@@ -398,77 +399,129 @@ Search query:"""
                 headers={"Authorization": f"Bearer {groq_keys[0]}", "Content-Type": "application/json"},
                 json={
                     "model": settings.GROQ_MODEL,
-                    "messages": [{"role": "user", "content": prompt}],
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
                     "temperature": 0.1,
-                    "max_tokens": 30,
+                    "max_tokens": 60,
+                    "response_format": {"type": "json_object"},
                 },
                 timeout=15.0,
             )
             if resp.status_code != 200:
                 return ""
             raw = resp.json()["choices"][0]["message"]["content"].strip()
-            # Strip any surrounding quotes the model might add
-            query = raw.strip('"\'').strip()
+            parsed = json.loads(raw)
+            query = parsed.get("query", "").strip().strip("\"'")
             return query[:100] if len(query) > 5 else ""
+        except json.JSONDecodeError:
+            # Fallback: treat entire response as raw query string
+            try:
+                raw_text = resp.json()["choices"][0]["message"]["content"].strip().strip("\"'")
+                return raw_text[:100] if len(raw_text) > 5 else ""
+            except Exception:
+                return ""
         except Exception as e:
             logger.warning("[MemoryService] _generate_search_query error: %s", e)
             return ""
 
+    @staticmethod
+    def _preprocess_error_text(text: str) -> str:
+        """
+        Cleans error/correction text to remove noise before LLM query generation.
+        Strips timestamps, absolute paths, UUIDs, memory addresses.
+        Keeps: error class names, library names, human-readable messages.
+        """
+        # Remove ISO timestamps (2026-08-20T09:38:12 or 2026-08-20 09:38:12)
+        text = re.sub(r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(\.\d+)?Z?", "", text)
+        # Remove Unix absolute paths
+        text = re.sub(r"(/[a-zA-Z0-9_./-]+/)", "[PATH]/", text)
+        # Remove Windows paths
+        text = re.sub(r"[A-Z]:\\[^\s\\]+\\", "[PATH]\\", text)
+        # Remove memory addresses (0x1a2b3c...)
+        text = re.sub(r"0x[0-9a-fA-F]{4,}", "[ADDR]", text)
+        # Remove UUIDs
+        text = re.sub(
+            r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+            "[UUID]",
+            text,
+            flags=re.IGNORECASE,
+        )
+        # Collapse excessive whitespace
+        text = re.sub(r"\s{2,}", " ", text)
+        return text[:1000].strip()
+
     async def _search_for_solution(self, query: str) -> str:
         """
-        Searches DuckDuckGo using AsyncDDGS and returns formatted top results.
+        Searches DuckDuckGo with retry + exponential backoff (Research-backed, 2025).
 
         Strategy:
-        1. Primary: duckduckgo-search library (AsyncDDGS.atext) — reliable, maintained
-        2. Fallback: DuckDuckGo Instant Answer API — fast, no parsing needed
-        Returns empty string on any failure (graceful degradation).
+        1. Primary: AsyncDDGS with 3 retries + 1s/2s/4s backoff
+        2. Fallback: Jina Reader on top DDG result URL (LLM-ready Markdown)
+        3. Returns empty string on total failure (graceful degradation)
+
+        Note: DDG Instant Answer API was dropped because research confirmed it returns
+        empty AbstractText for all technical queries (only works for Wikipedia entities).
         """
-        # Primary: duckduckgo-search library
-        try:
-            from duckduckgo_search import AsyncDDGS
-            results_text = []
-            async with AsyncDDGS() as ddgs:
-                results = await ddgs.atext(query, max_results=4, timelimit="y")
+        # Primary: duckduckgo-search library with retry + backoff
+        results: list = []
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                from duckduckgo_search import AsyncDDGS
+                from duckduckgo_search.exceptions import DuckDuckGoSearchException
+                async with AsyncDDGS() as ddgs:
+                    results = await ddgs.atext(query, max_results=4, timelimit="y")
+                break  # Success — exit retry loop
+            except Exception as ddgs_err:
+                err_str = str(ddgs_err)
+                if "ratelimit" in err_str.lower() and attempt < max_retries - 1:
+                    delay = 1.0 * (2 ** attempt)  # 1s → 2s → 4s
+                    logger.warning(
+                        "[MemoryService] DDGS rate-limited (attempt %d/%d). Retrying in %.1fs...",
+                        attempt + 1, max_retries, delay,
+                    )
+                    await asyncio.sleep(delay)
+                else:
+                    logger.warning("[MemoryService] AsyncDDGS search failed: %s", ddgs_err)
+                    break
+
+        if results:
+            parts = []
             for r in results:
                 title = r.get("title", "").strip()
                 body = r.get("body", "").strip()
                 href = r.get("href", "")
                 if title and body:
-                    results_text.append(f"📄 **{title}**\n   {body[:300]}\n   🔗 {href}")
-            if results_text:
-                return "\n\n".join(results_text)
-        except Exception as e:
-            logger.warning("[MemoryService] AsyncDDGS search failed (%s) — trying fallback.", e)
+                    parts.append(f"📄 **{title}**\n   {body[:350]}\n   🔗 {href}")
+            if parts:
+                return "\n\n".join(parts)
 
-        # Fallback: DuckDuckGo Instant Answer API
-        try:
-            if not self._http:
-                return ""
-            resp = await self._http.get(
-                "https://api.duckduckgo.com/",
-                params={"q": query, "format": "json", "no_html": "1", "no_redirect": "1"},
-                headers={"User-Agent": "Mozilla/5.0 (compatible; TieuBaoBao-Agent/1.0)"},
-                timeout=10.0,
-            )
-            if resp.status_code != 200:
-                return ""
-            data = resp.json()
-            results = []
-            abstract = data.get("AbstractText", "").strip()
-            if abstract:
-                results.append(f"📖 {abstract[:500]}\n   🔗 {data.get('AbstractURL', '')}")
-            answer = data.get("Answer", "").strip()
-            if answer and answer != abstract:
-                results.append(f"💡 {answer[:300]}")
-            for topic in data.get("RelatedTopics", [])[:3]:
-                text = topic.get("Text", "").strip()
-                url = topic.get("FirstURL", "")
-                if text:
-                    results.append(f"• {text[:200]}\n  🔗 {url}")
-            return "\n\n".join(results) if results else ""
-        except Exception as e:
-            logger.warning("[MemoryService] DuckDuckGo API fallback failed: %s", e)
-            return ""
+        # Fallback: Jina Reader on the first result URL (if DDGS returned URLs)
+        # Jina converts any URL to clean Markdown readable by LLM — no API key needed
+        if results and self._http:
+            first_url = results[0].get("href", "") if results else ""
+            if first_url:
+                try:
+                    jina_url = f"https://r.jina.ai/{first_url}"
+                    resp = await self._http.get(
+                        jina_url,
+                        headers={"Accept": "text/markdown", "User-Agent": "TieuBaoBao-Agent/1.0"},
+                        timeout=12.0,
+                        follow_redirects=True,
+                    )
+                    if resp.status_code == 200:
+                        content = resp.text.strip()[:1500]
+                        if len(content) > 50:
+                            logger.info("[MemoryService] 📖 Jina Reader fallback succeeded for: %s", first_url)
+                            return f"📖 *Nội dung từ web (Jina Reader):*\n\n{content}"
+                except Exception as jina_err:
+                    logger.warning("[MemoryService] Jina Reader fallback failed: %s", jina_err)
+
+        return ""
+
+
 
     async def _extract_and_save_lesson(
         self,

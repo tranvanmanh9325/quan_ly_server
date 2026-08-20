@@ -454,29 +454,37 @@ class AgentMemoryService:
 
     async def _search_for_solution(self, query: str) -> str:
         """
-        Searches DuckDuckGo with retry + exponential backoff (Research-backed, 2025).
+        Searches DuckDuckGo with retry + exponential backoff.
 
         Strategy:
-        1. Primary: AsyncDDGS with 3 retries + 1s/2s/4s backoff
-        2. Fallback: Jina Reader on top DDG result URL (LLM-ready Markdown)
+        1. Primary: DDGS.text() run in thread executor (v8.x no longer has AsyncDDGS)
+           - 3 retries with 1s/2s/4s exponential backoff on rate-limit
+        2. Fallback: Jina Reader (r.jina.ai) — LLM-ready Markdown, no API key
         3. Returns empty string on total failure (graceful degradation)
 
-        Note: DDG Instant Answer API was dropped because research confirmed it returns
-        empty AbstractText for all technical queries (only works for Wikipedia entities).
+        Note: DDG Instant Answer API dropped — research confirmed it returns empty
+        AbstractText for all technical queries (only works for Wikipedia entities).
         """
-        # Primary: duckduckgo-search library with retry + backoff
+        import asyncio
+
+        def _sync_search(q: str) -> list:
+            """Runs DDGS sync search — must be called in a thread executor."""
+            from duckduckgo_search import DDGS
+            from duckduckgo_search.exceptions import RatelimitException
+            with DDGS() as ddgs:
+                return ddgs.text(q, max_results=4, timelimit="y", backend="auto") or []
+
+        # Primary: run sync DDGS in thread executor + retry on rate-limit
         results: list = []
         max_retries = 3
+        loop = asyncio.get_event_loop()
         for attempt in range(max_retries):
             try:
-                from duckduckgo_search import AsyncDDGS
-                from duckduckgo_search.exceptions import DuckDuckGoSearchException
-                async with AsyncDDGS() as ddgs:
-                    results = await ddgs.atext(query, max_results=4, timelimit="y")
+                results = await loop.run_in_executor(None, _sync_search, query)
                 break  # Success — exit retry loop
             except Exception as ddgs_err:
-                err_str = str(ddgs_err)
-                if "ratelimit" in err_str.lower() and attempt < max_retries - 1:
+                err_str = str(ddgs_err).lower()
+                if "ratelimit" in err_str and attempt < max_retries - 1:
                     delay = 1.0 * (2 ** attempt)  # 1s → 2s → 4s
                     logger.warning(
                         "[MemoryService] DDGS rate-limited (attempt %d/%d). Retrying in %.1fs...",
@@ -484,7 +492,7 @@ class AgentMemoryService:
                     )
                     await asyncio.sleep(delay)
                 else:
-                    logger.warning("[MemoryService] AsyncDDGS search failed: %s", ddgs_err)
+                    logger.warning("[MemoryService] DDGS search failed: %s", ddgs_err)
                     break
 
         if results:
@@ -498,29 +506,27 @@ class AgentMemoryService:
             if parts:
                 return "\n\n".join(parts)
 
-        # Fallback: Jina Reader on the first result URL (if DDGS returned URLs)
-        # Jina converts any URL to clean Markdown readable by LLM — no API key needed
-        if results and self._http:
-            first_url = results[0].get("href", "") if results else ""
-            if first_url:
-                try:
-                    jina_url = f"https://r.jina.ai/{first_url}"
-                    resp = await self._http.get(
-                        jina_url,
-                        headers={"Accept": "text/markdown", "User-Agent": "TieuBaoBao-Agent/1.0"},
-                        timeout=12.0,
-                        follow_redirects=True,
-                    )
-                    if resp.status_code == 200:
-                        content = resp.text.strip()[:1500]
-                        if len(content) > 50:
-                            logger.info("[MemoryService] 📖 Jina Reader fallback succeeded for: %s", first_url)
-                            return f"📖 *Nội dung từ web (Jina Reader):*\n\n{content}"
-                except Exception as jina_err:
-                    logger.warning("[MemoryService] Jina Reader fallback failed: %s", jina_err)
+        # Fallback: Jina Reader on the first result URL
+        # Jina converts any URL to clean LLM-ready Markdown — no API key needed
+        first_url = results[0].get("href", "") if results else ""
+        if first_url and self._http:
+            try:
+                jina_url = f"https://r.jina.ai/{first_url}"
+                resp = await self._http.get(
+                    jina_url,
+                    headers={"Accept": "text/markdown", "User-Agent": "TieuBaoBao-Agent/1.0"},
+                    timeout=12.0,
+                    follow_redirects=True,
+                )
+                if resp.status_code == 200:
+                    content = resp.text.strip()[:1500]
+                    if len(content) > 50:
+                        logger.info("[MemoryService] 📖 Jina Reader fallback succeeded for: %s", first_url)
+                        return f"📖 *Nội dung từ web (Jina Reader):*\n\n{content}"
+            except Exception as jina_err:
+                logger.warning("[MemoryService] Jina Reader fallback failed: %s", jina_err)
 
         return ""
-
 
 
     async def _extract_and_save_lesson(

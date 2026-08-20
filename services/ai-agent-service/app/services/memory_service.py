@@ -437,8 +437,8 @@ class AgentMemoryService:
         text = re.sub(r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(\.\d+)?Z?", "", text)
         # Remove Unix absolute paths
         text = re.sub(r"(/[a-zA-Z0-9_./-]+/)", "[PATH]/", text)
-        # Remove Windows paths
-        text = re.sub(r"[A-Z]:\\[^\s\\]+\\", "[PATH]\\", text)
+        # Remove Windows paths (use raw string for replacement to avoid bad escape)
+        text = re.sub(r"[A-Z]:\\[^\s\\]+\\", r"[PATH]\\", text)
         # Remove memory addresses (0x1a2b3c...)
         text = re.sub(r"0x[0-9a-fA-F]{4,}", "[ADDR]", text)
         # Remove UUIDs

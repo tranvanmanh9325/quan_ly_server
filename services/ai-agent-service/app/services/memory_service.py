@@ -405,23 +405,23 @@ class AgentMemoryService:
                     ],
                     "temperature": 0.1,
                     "max_tokens": 60,
-                    "response_format": {"type": "json_object"},
+                    # No response_format — OpenRouter models don't all support json_object mode
                 },
                 timeout=15.0,
             )
             if resp.status_code != 200:
+                logger.warning("[MemoryService] _generate_search_query API returned %d", resp.status_code)
                 return ""
             raw = resp.json()["choices"][0]["message"]["content"].strip()
-            parsed = json.loads(raw)
-            query = parsed.get("query", "").strip().strip("\"'")
-            return query[:100] if len(query) > 5 else ""
-        except json.JSONDecodeError:
-            # Fallback: treat entire response as raw query string
+            # Try parsing as JSON first (few-shot prompt guides model to output JSON)
             try:
-                raw_text = resp.json()["choices"][0]["message"]["content"].strip().strip("\"'")
-                return raw_text[:100] if len(raw_text) > 5 else ""
-            except Exception:
-                return ""
+                parsed = json.loads(raw)
+                query = parsed.get("query", "").strip().strip("\"'")
+            except json.JSONDecodeError:
+                # Fallback: extract query from raw text (model may output plain string)
+                # Strip surrounding quotes and any "Output:" prefix
+                query = re.sub(r'^(output:|query:)\s*', '', raw, flags=re.IGNORECASE).strip().strip("\"'{}")
+            return query[:100] if len(query) > 5 else ""
         except Exception as e:
             logger.warning("[MemoryService] _generate_search_query error: %s", e)
             return ""

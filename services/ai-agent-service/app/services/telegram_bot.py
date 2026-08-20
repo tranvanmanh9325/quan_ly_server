@@ -391,15 +391,25 @@ class TelegramBot:
                 return
             lines = ["🧠 *BÀI HỌC ĐÃ TÍCH LŨY* (Top 10)\n"]
             for i, l in enumerate(lessons, 1):
-                etype = {"correction": "🔧 Sửa lỗi", "new_knowledge": "📖 Kiến thức", "manual": "✍️ Thủ công"}.get(
-                    l.get("event_type", ""), "📌"
-                )
+                etype = {
+                    "correction": "🔧 Sửa lỗi",
+                    "new_knowledge": "📖 Kiến thức",
+                    "tool_failure": "🛠️ Tool Failure",
+                    "manual": "✍️ Thủ công",
+                }.get(l.get("event_type", ""), "📌")
                 conf = int(float(l.get("confidence", 0)) * 100)
+                grounded_tag = "🔍 _Web-Grounded_" if l.get("is_search_grounded") else "💭 _Introspection_"
+                search_q = f"\n   🔎 Query: `{l['search_query']}`" if l.get("search_query") else ""
                 lines.append(
-                    f"{i}️⃣ *[ID:{l['id']}]* {etype} — Tin cậy: `{conf}%` · Dùng: `{l['usage_count']}x`\n"
+                    f"{i}️⃣ *[ID:{l['id']}]* {etype} {grounded_tag}\n"
+                    f"   Tin cậy: `{conf}%` · Dùng: `{l['usage_count']}x`{search_q}\n"
                     f"   _{l['lesson_text']}_\n"
                 )
-            lines.append("\n💡 Dùng `/lesson_delete <id>` để xóa bài học sai.")
+            lines.append(
+                "\n🔍 = Xác thực qua tìm kiếm web (đáng tin cậy hơn)\n"
+                "💭 = Phân tích nội tâm (không có web grounding)\n"
+                "💡 Dùng `/lesson_delete <id>` để xóa bài học sai."
+            )
             await self.send_message(chat_id, "\n".join(lines))
 
         elif raw_cmd == "/lesson_delete":
@@ -444,15 +454,18 @@ class TelegramBot:
                 return
             stats = await self.memory_service.get_memory_stats()
             msg = (
-                "🧠 *THỐNG KÊ TRÍ NHỚ TỰ HỌC CỦA TIỂU BẢO BẢO*\n\n"
+                "🧠 *THỐNG KÊ TRÍ NHỚ TỰ HỌC — TIỂU BẢO BẢO*\n\n"
                 f"📚 *Episodic Memory (Lịch sử sự kiện):*\n"
                 f"   • 🔧 Lần bị sửa lỗi: `{stats.get('total_corrections', 0)}`\n"
-                f"   • 📖 Kiến thức mới học được: `{stats.get('total_new_knowledge', 0)}`\n"
+                f"   • 📖 Kiến thức mới học: `{stats.get('total_new_knowledge', 0)}`\n"
+                f"   • 🛠️ Tool failure đã gặp: `{stats.get('total_tool_failures', 0)}`\n"
                 f"   • 📋 Tổng sự kiện ghi nhận: `{stats.get('total_memories', 0)}`\n\n"
                 f"💡 *Procedural Memory (Bài học đã rút ra):*\n"
                 f"   • ✅ Đang hoạt động: `{stats.get('active_lessons', 0)}` bài học\n"
+                f"   • 🔍 Xác thực qua web search: `{stats.get('search_grounded_lessons', 0)}` bài học\n"
                 f"   • 🗄️ Đã lưu trữ: `{stats.get('archived_lessons', 0)}` bài học\n"
-                f"   • 🔢 Tổng lần bài học được áp dụng: `{stats.get('total_lesson_usages', 0)}`"
+                f"   • 🔢 Tổng lần áp dụng: `{stats.get('total_lesson_usages', 0)}`\n\n"
+                f"_🔍 Web-Grounded lessons = AI học có bằng chứng thực tế từ Google/DuckDuckGo_"
             )
             await self.send_message(chat_id, msg)
 

@@ -1,20 +1,27 @@
 """
-AgentMemoryService — Procedural & Episodic Memory Engine for Tiểu Bảo Bảo.
+AgentMemoryService — Search-Grounded Self-Healing Memory Engine for Tiểu Bảo Bảo.
 
 Architecture (3-tier):
   - Short-term  : Managed by AiAgentService._history_map (in-memory sliding window)
-  - Episodic    : agent_memories table — raw correction/event log
+  - Episodic    : agent_memories table — raw correction/event log with search evidence
   - Procedural  : agent_lessons table — distilled lessons injected into system prompt
 
-Self-improvement loop:
-  1. User corrects bot  →  record_correction()
-  2. LLM extracts lesson →  _extract_and_save_lesson()
-  3. Next chat turn      →  get_active_lessons() injected into _build_system_prompt()
+Self-improvement loop (Search-Grounded Reflexion, 2025 standard):
+  1. User corrects bot        →  record_correction()
+  2. LLM generates search query  →  _generate_search_query()
+  3. DuckDuckGo search           →  _search_for_solution()
+  4. LLM synthesizes grounded lesson  →  _extract_and_save_lesson(search_results)
+  5. Next chat turn            →  get_active_lessons() injected into system prompt
+
+Key principle (Bounded Self-Correction):
+  All lessons must be grounded in external search evidence, not just LLM introspection.
+  This prevents "confirmation bias" where the model reinforces its own wrong beliefs.
 """
 import asyncio
 import json
 import logging
-from datetime import datetime, timezone, timedelta
+import re
+from datetime import timezone, timedelta
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -34,6 +41,9 @@ CORRECTION_TRIGGERS = [
     "đó không phải", "bạn đã nhầm", "em nhầm rồi", "hiểu sai",
 ]
 
+# Max characters of search results to include in lesson extraction prompt
+_MAX_SEARCH_RESULTS_CHARS = 1200
+
 
 class AgentMemoryService:
     """Manages persistent memory (episodic + procedural) for the AI agent."""
@@ -44,7 +54,7 @@ class AgentMemoryService:
         self._http: Optional[httpx.AsyncClient] = None
 
     def set_http_client(self, client: httpx.AsyncClient) -> None:
-        """Inject the shared httpx client from LlmRouter to avoid creating extra connections."""
+        """Inject the shared httpx client from LlmRouter to avoid extra connections."""
         self._http = client
 
     # ──────────────────────────────────────────────────────────────────────────
@@ -68,8 +78,8 @@ class AgentMemoryService:
         context_turns: List[Dict[str, Any]],
     ) -> None:
         """
-        Records a correction event and asynchronously triggers LLM-based lesson extraction.
-        Fire-and-forget: never blocks the main chat response path.
+        Records a correction event then asynchronously triggers search-grounded
+        lesson extraction. Fire-and-forget — never blocks the chat response path.
         """
         context_snapshot = json.dumps(context_turns[-5:], ensure_ascii=False)
         memory_id = await self._insert_memory(
@@ -80,9 +90,15 @@ class AgentMemoryService:
             context_snapshot=context_snapshot,
         )
         if memory_id:
-            # Run lesson extraction in background — does not delay bot reply
+            # Run search + lesson extraction in background
             asyncio.create_task(
-                self._extract_and_save_lesson(memory_id, user_input, original_response, context_snapshot)
+                self._search_grounded_extraction(
+                    memory_id=memory_id,
+                    error_context=user_input,
+                    original_response=original_response,
+                    context_snapshot=context_snapshot,
+                    event_type="correction",
+                )
             )
 
     async def record_new_knowledge(
@@ -100,6 +116,42 @@ class AgentMemoryService:
             context_snapshot=json.dumps({"topic": topic, "fact": fact}, ensure_ascii=False),
         )
 
+    async def search_and_heal(
+        self,
+        error_context: str,
+        original_tool: str,
+        user_message: str,
+    ) -> None:
+        """
+        C3.4 Search-Grounded Healing for repeated tool failures.
+        Called when a tool fails ≥2 times in a row. Searches for the best
+        solution strategy and saves it as a searchable lesson.
+        Fire-and-forget.
+        """
+        context_snapshot = json.dumps({
+            "tool": original_tool,
+            "error": error_context[:500],
+            "user_message": user_message,
+        }, ensure_ascii=False)
+
+        memory_id = await self._insert_memory(
+            event_type="tool_failure",
+            user_input=user_message,
+            original_response=error_context[:500],
+            corrected_response=None,
+            context_snapshot=context_snapshot,
+        )
+        if memory_id:
+            asyncio.create_task(
+                self._search_grounded_extraction(
+                    memory_id=memory_id,
+                    error_context=error_context,
+                    original_response=f"Tool '{original_tool}' thất bại liên tiếp.",
+                    context_snapshot=context_snapshot,
+                    event_type="tool_failure",
+                )
+            )
+
     # ──────────────────────────────────────────────────────────────────────────
     # Public API: Lesson Management
     # ──────────────────────────────────────────────────────────────────────────
@@ -107,6 +159,7 @@ class AgentMemoryService:
     async def get_active_lessons(self, limit: int = 8) -> str:
         """
         Returns formatted lesson block for injection into the system prompt.
+        Search-grounded lessons are marked with 🔍 for higher credibility.
         Uses in-memory cache invalidated on every new lesson write.
         """
         if self._cache_dirty:
@@ -117,10 +170,11 @@ class AgentMemoryService:
 
         lines = ["📚 *KINH NGHIỆM TỰ HỌC CỦA EM (Bài học từ các lần sai trước):*"]
         for i, lesson in enumerate(self._lesson_cache[:limit], 1):
-            lines.append(f"{i}. [{lesson['event_type'].upper()}] {lesson['lesson_text']}")
-            # Track usage asynchronously
+            grounded_mark = "🔍" if lesson.get("is_search_grounded") else "💭"
+            lines.append(f"{i}. {grounded_mark} [{lesson['event_type'].upper()}] {lesson['lesson_text']}")
             asyncio.create_task(self._increment_usage(lesson["id"]))
 
+        lines.append("\n_(🔍 = Đã xác thực qua tìm kiếm web · 💭 = Từ phân tích nội tâm)_")
         return "\n".join(lines)
 
     async def list_lessons_for_display(self, limit: int = 10) -> List[Dict[str, Any]]:
@@ -131,7 +185,8 @@ class AgentMemoryService:
                     await cur.execute(
                         """
                         SELECT id, trigger_pattern, lesson_text, event_type,
-                               confidence, usage_count, is_active, created_at
+                               confidence, usage_count, is_active,
+                               is_search_grounded, search_query, created_at
                         FROM agent_lessons
                         WHERE is_active = TRUE
                         ORDER BY confidence DESC, usage_count DESC
@@ -176,6 +231,8 @@ class AgentMemoryService:
             lesson_text=lesson_text,
             event_type=event_type,
             confidence=confidence,
+            is_search_grounded=False,
+            search_query=None,
         )
         if lesson_id:
             self._cache_dirty = True
@@ -189,9 +246,10 @@ class AgentMemoryService:
                     await cur.execute(
                         """
                         SELECT
-                            COUNT(*) FILTER (WHERE event_type = 'correction')  AS corrections,
+                            COUNT(*) FILTER (WHERE event_type = 'correction')    AS corrections,
                             COUNT(*) FILTER (WHERE event_type = 'new_knowledge') AS new_knowledge,
-                            COUNT(*)                                             AS total_memories
+                            COUNT(*) FILTER (WHERE event_type = 'tool_failure')  AS tool_failures,
+                            COUNT(*)                                              AS total_memories
                         FROM agent_memories
                         """
                     )
@@ -200,9 +258,11 @@ class AgentMemoryService:
                     await cur.execute(
                         """
                         SELECT
-                            COUNT(*) FILTER (WHERE is_active = TRUE)  AS active_lessons,
-                            COUNT(*) FILTER (WHERE is_active = FALSE) AS archived_lessons,
-                            COALESCE(SUM(usage_count), 0)             AS total_lesson_usages
+                            COUNT(*) FILTER (WHERE is_active = TRUE)              AS active_lessons,
+                            COUNT(*) FILTER (WHERE is_active = FALSE)             AS archived_lessons,
+                            COUNT(*) FILTER (WHERE is_search_grounded = TRUE
+                                             AND is_active = TRUE)                AS grounded_lessons,
+                            COALESCE(SUM(usage_count), 0)                         AS total_lesson_usages
                         FROM agent_lessons
                         """
                     )
@@ -211,18 +271,204 @@ class AgentMemoryService:
             return {
                 "total_corrections": mem_row[0] if mem_row else 0,
                 "total_new_knowledge": mem_row[1] if mem_row else 0,
-                "total_memories": mem_row[2] if mem_row else 0,
+                "total_tool_failures": mem_row[2] if mem_row else 0,
+                "total_memories": mem_row[3] if mem_row else 0,
                 "active_lessons": les_row[0] if les_row else 0,
                 "archived_lessons": les_row[1] if les_row else 0,
-                "total_lesson_usages": les_row[2] if les_row else 0,
+                "search_grounded_lessons": les_row[2] if les_row else 0,
+                "total_lesson_usages": les_row[3] if les_row else 0,
             }
         except Exception as e:
             logger.error("[MemoryService] get_memory_stats error: %s", e)
             return {}
 
     # ──────────────────────────────────────────────────────────────────────────
-    # Private: LLM-powered Lesson Extraction
+    # Private: Search-Grounded Lesson Extraction Pipeline
     # ──────────────────────────────────────────────────────────────────────────
+
+    async def _search_grounded_extraction(
+        self,
+        memory_id: int,
+        error_context: str,
+        original_response: str,
+        context_snapshot: str,
+        event_type: str,
+    ) -> None:
+        """
+        Full pipeline: Generate query → Search DuckDuckGo → LLM extracts lesson.
+
+        This is the core of Bounded Self-Correction:
+        - LLM generates a targeted English search query from the error context
+        - DuckDuckGo provides external evidence (web results)
+        - LLM synthesizes a lesson grounded in real-world information
+        - Lesson is saved with is_search_grounded=True and higher confidence (0.85)
+
+        Runs in background, all exceptions are swallowed.
+        """
+        try:
+            # Step 1: Generate a focused search query via LLM
+            search_query = await self._generate_search_query(error_context, original_response, event_type)
+            logger.info("[MemoryService] 🔍 Search query generated: %s", search_query)
+
+            # Step 2: Search DuckDuckGo for external evidence
+            search_results = ""
+            is_search_grounded = False
+            if search_query:
+                search_results = await self._search_for_solution(search_query)
+                is_search_grounded = bool(search_results)
+                if search_results:
+                    logger.info(
+                        "[MemoryService] 🌐 Search returned %d chars of results for: %s",
+                        len(search_results), search_query,
+                    )
+                else:
+                    logger.info("[MemoryService] 🌐 Search returned no results — using LLM introspection only.")
+
+            # Step 3: Save search metadata to episodic memory
+            if search_query or search_results:
+                await self._update_memory_search_data(memory_id, search_query, search_results[:2000])
+
+            # Step 4: LLM synthesizes a lesson (grounded in search results if available)
+            await self._extract_and_save_lesson(
+                memory_id=memory_id,
+                user_correction=error_context,
+                original_response=original_response,
+                context_snapshot=context_snapshot,
+                search_results=search_results,
+                event_type=event_type,
+                is_search_grounded=is_search_grounded,
+                search_query=search_query,
+            )
+
+        except Exception as e:
+            logger.error("[MemoryService] _search_grounded_extraction error: %s", e, exc_info=True)
+
+    async def _generate_search_query(
+        self,
+        error_context: str,
+        original_response: str,
+        event_type: str,
+    ) -> str:
+        """
+        Uses a fast LLM call to generate a focused, English search query
+        that captures the root cause of the error for web searching.
+
+        English queries return significantly better search results than Vietnamese.
+        """
+        if not self._http:
+            return ""
+
+        groq_keys = settings.groq_keys
+        if not groq_keys:
+            return ""
+
+        # Different prompt templates for different event types
+        if event_type == "tool_failure":
+            instruction = (
+                "Generate a concise Google search query to find the solution or best practice "
+                "for this AI agent tool failure. Focus on the technical error and how to fix it."
+            )
+        else:
+            instruction = (
+                "Generate a concise Google search query to find accurate information or best practice "
+                "that would have prevented this AI assistant mistake. "
+                "Focus on the factual topic, not the mistake itself."
+            )
+
+        prompt = f"""{instruction}
+
+Error/Correction context (Vietnamese):
+{error_context[:300]}
+
+Original (wrong) response:
+{original_response[:200] if original_response else "(N/A)"}
+
+Rules:
+- Output ONLY the search query string, nothing else.
+- Write in English for best search results.
+- Keep it under 10 words.
+- Focus on the TOPIC/SOLUTION, not the mistake.
+- Examples: "Facebook Messenger thread URL format Vietnam", "docker inspect container not found fix", "Vietnamese name order Họ Tên search"
+
+Search query:"""
+
+        try:
+            resp = await self._http.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={"Authorization": f"Bearer {groq_keys[0]}", "Content-Type": "application/json"},
+                json={
+                    "model": settings.GROQ_MODEL,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.1,
+                    "max_tokens": 30,
+                },
+                timeout=15.0,
+            )
+            if resp.status_code != 200:
+                return ""
+            raw = resp.json()["choices"][0]["message"]["content"].strip()
+            # Strip any surrounding quotes the model might add
+            query = raw.strip('"\'').strip()
+            return query[:100] if len(query) > 5 else ""
+        except Exception as e:
+            logger.warning("[MemoryService] _generate_search_query error: %s", e)
+            return ""
+
+    async def _search_for_solution(self, query: str) -> str:
+        """
+        Searches DuckDuckGo using AsyncDDGS and returns formatted top results.
+
+        Strategy:
+        1. Primary: duckduckgo-search library (AsyncDDGS.atext) — reliable, maintained
+        2. Fallback: DuckDuckGo Instant Answer API — fast, no parsing needed
+        Returns empty string on any failure (graceful degradation).
+        """
+        # Primary: duckduckgo-search library
+        try:
+            from duckduckgo_search import AsyncDDGS
+            results_text = []
+            async with AsyncDDGS() as ddgs:
+                results = await ddgs.atext(query, max_results=4, timelimit="y")
+            for r in results:
+                title = r.get("title", "").strip()
+                body = r.get("body", "").strip()
+                href = r.get("href", "")
+                if title and body:
+                    results_text.append(f"📄 **{title}**\n   {body[:300]}\n   🔗 {href}")
+            if results_text:
+                return "\n\n".join(results_text)
+        except Exception as e:
+            logger.warning("[MemoryService] AsyncDDGS search failed (%s) — trying fallback.", e)
+
+        # Fallback: DuckDuckGo Instant Answer API
+        try:
+            if not self._http:
+                return ""
+            resp = await self._http.get(
+                "https://api.duckduckgo.com/",
+                params={"q": query, "format": "json", "no_html": "1", "no_redirect": "1"},
+                headers={"User-Agent": "Mozilla/5.0 (compatible; TieuBaoBao-Agent/1.0)"},
+                timeout=10.0,
+            )
+            if resp.status_code != 200:
+                return ""
+            data = resp.json()
+            results = []
+            abstract = data.get("AbstractText", "").strip()
+            if abstract:
+                results.append(f"📖 {abstract[:500]}\n   🔗 {data.get('AbstractURL', '')}")
+            answer = data.get("Answer", "").strip()
+            if answer and answer != abstract:
+                results.append(f"💡 {answer[:300]}")
+            for topic in data.get("RelatedTopics", [])[:3]:
+                text = topic.get("Text", "").strip()
+                url = topic.get("FirstURL", "")
+                if text:
+                    results.append(f"• {text[:200]}\n  🔗 {url}")
+            return "\n\n".join(results) if results else ""
+        except Exception as e:
+            logger.warning("[MemoryService] DuckDuckGo API fallback failed: %s", e)
+            return ""
 
     async def _extract_and_save_lesson(
         self,
@@ -230,92 +476,94 @@ class AgentMemoryService:
         user_correction: str,
         original_response: str,
         context_snapshot: str,
+        search_results: str,
+        event_type: str,
+        is_search_grounded: bool,
+        search_query: str,
     ) -> None:
         """
-        Uses the LLM to analyze a correction and distill a concise, actionable lesson.
-        This runs in background — any exception is logged and swallowed.
+        Uses LLM to synthesize a concise, actionable lesson.
+        When search_results are available, the lesson is grounded in external evidence
+        → higher confidence (0.85) and marked as is_search_grounded=True.
         """
         if not self._http:
-            logger.warning("[MemoryService] No HTTP client set — skipping lesson extraction.")
             return
 
-        prompt = f"""Bạn là một AI có khả năng tự phân tích lỗi và học hỏi.
+        groq_keys = settings.groq_keys
+        if not groq_keys:
+            return
 
-Phân tích tình huống sau và rút ra MỘT bài học ngắn gọn, cụ thể, actionable để không lặp lại lỗi này.
+        # Build search evidence block
+        search_block = ""
+        if search_results:
+            search_block = f"""
+--- KẾT QUẢ TÌM KIẾM WEB (Bằng chứng từ bên ngoài) ---
+Query đã tìm: "{search_query}"
+{search_results[:_MAX_SEARCH_RESULTS_CHARS]}
+--- HẾT KẾT QUẢ TÌM KIẾM ---
+"""
 
---- TIN NHẮN SỬA LỖI CỦA USER ---
-{user_correction}
+        prompt = f"""Bạn là AI có khả năng tự phân tích lỗi và học hỏi từ bằng chứng thực tế.
 
---- CÂU TRẢ LỜI SAI CỦA BOT ---
-{original_response[:500] if original_response else "(không có)"}
+Dựa trên tình huống lỗi và kết quả tìm kiếm web bên dưới, hãy rút ra MỘT bài học ngắn gọn, cụ thể, actionable.
 
---- NGỮ CẢNH (5 turns gần nhất) ---
-{context_snapshot[:800]}
+--- TÌNH HUỐNG LỖI ---
+Loại: {event_type}
+Tin nhắn sửa lỗi: {user_correction[:400]}
+Câu trả lời SAI của bot: {original_response[:300] if original_response else "(không có)"}
+Ngữ cảnh: {context_snapshot[:500]}
+{search_block}
+--- YÊU CẦU ---
+1. Bài học phải ngắn gọn (1-2 câu), dạng quy tắc hành động: "Khi X, hãy Y."
+2. {"Ưu tiên sử dụng thông tin từ kết quả tìm kiếm web để đảm bảo tính chính xác." if search_results else "Phân tích dựa trên ngữ cảnh hội thoại."}
+3. Cụ thể và áp dụng được ngay, không mơ hồ.
+4. Chỉ trả về NỘI DUNG BÀI HỌC bằng tiếng Việt.
 
-Yêu cầu:
-1. Bài học phải ngắn gọn (1-2 câu), viết ở dạng quy tắc hành động ("Khi X, hãy Y").
-2. Bài học phải đủ cụ thể để áp dụng được ngay, không mơ hồ.
-3. Chỉ trả về NỘI DUNG BÀI HỌC, không cần tiêu đề hay giải thích thêm.
-4. Trả lời bằng tiếng Việt.
-
-Ví dụ tốt: "Khi người dùng đề cập tên người Việt Nam, phải kiểm tra cả hai thứ tự Họ+Tên và Tên+Họ trước khi tìm kiếm."
-Ví dụ xấu: "Cần cẩn thận hơn." (quá mơ hồ)
+Ví dụ tốt: "Khi tìm người Việt Nam, luôn thử cả thứ tự Họ+Tên và Tên+Họ vì user có thể nhập theo cả hai chiều."
+Ví dụ xấu: "Cần cẩn thận hơn."
 
 Bài học:"""
 
         try:
-            groq_keys = settings.groq_keys
-            if not groq_keys:
-                return
-
-            # Use the first available key for this background task
-            api_key = groq_keys[0]
-            headers = {
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            }
-            payload = {
-                "model": settings.GROQ_MODEL,
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.3,
-                "max_tokens": 150,
-            }
-
             resp = await self._http.post(
                 "https://api.groq.com/openai/v1/chat/completions",
-                headers=headers,
-                json=payload,
+                headers={"Authorization": f"Bearer {groq_keys[0]}", "Content-Type": "application/json"},
+                json={
+                    "model": settings.GROQ_MODEL,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.2,
+                    "max_tokens": 180,
+                },
                 timeout=30.0,
             )
-
             if resp.status_code != 200:
                 logger.warning("[MemoryService] Lesson extraction API returned %d", resp.status_code)
                 return
 
-            data = resp.json()
-            lesson_text = data["choices"][0]["message"]["content"].strip()
-
+            lesson_text = resp.json()["choices"][0]["message"]["content"].strip()
             if not lesson_text or len(lesson_text) < 10:
                 return
 
-            # Determine trigger pattern (first 80 chars of user correction as key)
+            # Search-grounded lessons get a confidence boost (0.85 vs 0.70)
+            confidence = 0.85 if is_search_grounded else 0.70
             trigger_pattern = user_correction[:80].strip()
 
             lesson_id = await self._insert_lesson(
                 trigger_pattern=trigger_pattern,
                 lesson_text=lesson_text,
-                event_type="correction",
-                confidence=0.70,
+                event_type=event_type,
+                confidence=confidence,
+                is_search_grounded=is_search_grounded,
+                search_query=search_query if is_search_grounded else None,
             )
 
             if lesson_id:
-                # Link memory row to the new lesson
                 await self._link_memory_to_lesson(memory_id, lesson_id)
                 self._cache_dirty = True
+                grounded_tag = "🔍 [SEARCH-GROUNDED]" if is_search_grounded else "💭 [INTROSPECTION]"
                 logger.info(
-                    "[MemoryService] 🧠 New lesson extracted (id=%d): %s",
-                    lesson_id,
-                    lesson_text[:80],
+                    "[MemoryService] 🧠 %s Lesson saved (id=%d, confidence=%.2f): %s",
+                    grounded_tag, lesson_id, confidence, lesson_text[:100],
                 )
 
         except Exception as e:
@@ -352,23 +600,43 @@ Bài học:"""
             logger.error("[MemoryService] _insert_memory error: %s", e)
             return None
 
+    async def _update_memory_search_data(
+        self, memory_id: int, search_query: str, search_results: str
+    ) -> None:
+        """Saves the search query and results back to the episodic memory row."""
+        try:
+            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        "UPDATE agent_memories SET search_query = %s, search_results = %s WHERE id = %s",
+                        (search_query, search_results, memory_id),
+                    )
+                    await conn.commit()
+        except Exception as e:
+            logger.warning("[MemoryService] _update_memory_search_data error: %s", e)
+
     async def _insert_lesson(
         self,
         trigger_pattern: str,
         lesson_text: str,
         event_type: str,
         confidence: float,
+        is_search_grounded: bool,
+        search_query: Optional[str],
     ) -> Optional[int]:
         try:
             async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(
                         """
-                        INSERT INTO agent_lessons (trigger_pattern, lesson_text, event_type, confidence)
-                        VALUES (%s, %s, %s, %s)
+                        INSERT INTO agent_lessons
+                            (trigger_pattern, lesson_text, event_type, confidence,
+                             is_search_grounded, search_query)
+                        VALUES (%s, %s, %s, %s, %s, %s)
                         RETURNING id
                         """,
-                        (trigger_pattern, lesson_text, event_type, confidence),
+                        (trigger_pattern, lesson_text, event_type, confidence,
+                         is_search_grounded, search_query),
                     )
                     await conn.commit()
                     row = await cur.fetchone()
@@ -395,7 +663,8 @@ Bài học:"""
                 async with conn.cursor() as cur:
                     await cur.execute(
                         """
-                        SELECT id, lesson_text, event_type, confidence, usage_count
+                        SELECT id, lesson_text, event_type, confidence,
+                               usage_count, is_search_grounded
                         FROM agent_lessons
                         WHERE is_active = TRUE
                         ORDER BY confidence DESC, usage_count DESC
@@ -411,13 +680,14 @@ Bài học:"""
                             "event_type": r[2],
                             "confidence": float(r[3]),
                             "usage_count": r[4],
+                            "is_search_grounded": bool(r[5]),
                         }
                         for r in rows
                     ]
                     self._cache_dirty = False
         except Exception as e:
             logger.warning("[MemoryService] _refresh_lesson_cache error: %s", e)
-            self._cache_dirty = False  # Prevent infinite retry loop
+            self._cache_dirty = False
 
     async def _increment_usage(self, lesson_id: int) -> None:
         try:
@@ -432,7 +702,7 @@ Bài học:"""
             logger.warning("[MemoryService] _increment_usage error: %s", e)
 
     async def ensure_tables(self) -> None:
-        """Creates the memory tables if they do not exist yet (idempotent safety net)."""
+        """Creates/verifies memory tables (idempotent safety net for startup)."""
         try:
             async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
                 async with conn.cursor() as cur:

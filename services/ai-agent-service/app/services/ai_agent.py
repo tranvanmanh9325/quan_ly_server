@@ -1552,22 +1552,27 @@ Hệ thống hiện ghi nhận *1 nhóm*:
                             iteration, fn_name, _consecutive_tool_failures,
                         )
 
-                        # Schedule lesson extraction after ≥2 consecutive failures (fire-and-forget)
+                        # After ≥2 failures: trigger Search-Grounded healing (fire-and-forget)
+                        # This searches DuckDuckGo for the best solution and saves a grounded lesson.
                         if _consecutive_tool_failures >= 2 and not _reflexion_triggered and self.memory_service:
                             _reflexion_triggered = True
+                            # Build a rich error context for the search query generator
+                            raw_tool_error = tool_result.split("⚠️")[0].strip()  # Remove reflexion note
                             failure_context = (
-                                f"Tool '{fn_name}' thất bại {_consecutive_tool_failures} lần liên tiếp "
-                                f"với tham số {fn_args}. Kết quả: {tool_result[:300]}"
+                                f"Tool '{fn_name}' thất bại {_consecutive_tool_failures} lần liên tiếp. "
+                                f"Tham số: {json.dumps(fn_args, ensure_ascii=False)[:200]}. "
+                                f"Lỗi: {raw_tool_error[:300]}"
                             )
                             asyncio.create_task(
-                                self.memory_service.record_new_knowledge(
-                                    topic=f"Tool failure pattern: {fn_name}",
-                                    fact=failure_context,
-                                    source_message=user_message,
+                                self.memory_service.search_and_heal(
+                                    error_context=failure_context,
+                                    original_tool=fn_name,
+                                    user_message=user_message,
                                 )
                             )
                             logger.info(
-                                "[AiAgent] 🧠 Repeated tool failure — failure pattern recorded for learning."
+                                "[AiAgent] 🔍 Search-Grounded healing triggered for repeated '%s' failure.",
+                                fn_name,
                             )
                     else:
                         # Successful tool call resets the failure streak

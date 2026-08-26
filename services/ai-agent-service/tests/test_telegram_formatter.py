@@ -97,6 +97,32 @@ class TestTelegramFormatter(unittest.TestCase):
         self.assertIn("<b>250k</b>", formatted)
         self.assertIn("<i>50%</i>", formatted)
 
+    def test_inline_code_preservation_with_bold_and_italic(self):
+        text = "Lệnh `sudo apt update` *ĐÃ ĐƯỢC CHẠY* trên `kirito-server` lúc `06:00`."
+        formatted = TelegramFormatter.format_for_telegram(text)
+        self.assertIn("<code>sudo apt update</code>", formatted)
+        self.assertIn("<b>ĐÃ ĐƯỢC CHẠY</b>", formatted)
+        self.assertIn("<code>kirito-server</code>", formatted)
+        self.assertIn("<code>06:00</code>", formatted)
+
+    def test_vietnamese_spelling_and_typography_normalization(self):
+        text = (
+            "🎯 **KẾT QUẢ KIỂM TRA:**\n"
+            "Chạy lúc 06:00 h mỗi ngày trên `kirito\u2011server` (gồm apt update ).\n"
+            "✅ **KẾ THÚC:** Thành công."
+        )
+        formatted = TelegramFormatter.format_for_telegram(text)
+        # Should normalize 'KẾ THÚC' -> 'KẾT LUẬN'
+        self.assertIn("<b>KẾT LUẬN:</b>", formatted)
+        self.assertNotIn("KẾ THÚC", formatted)
+        # Should normalize '06:00 h' -> '06:00'
+        self.assertIn("06:00 mỗi ngày", formatted)
+        self.assertNotIn("06:00 h", formatted)
+        # Should normalize non-breaking hyphen to ASCII hyphen
+        self.assertIn("<code>kirito-server</code>", formatted)
+        # Should remove extra space before closing parenthesis
+        self.assertIn("(gồm apt update)", formatted)
+
 
 if __name__ == "__main__":
     unittest.main()

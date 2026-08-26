@@ -28,25 +28,35 @@ class TelegramFormatter:
     def format_for_telegram(cls, text: str) -> str:
         """
         Main entrypoint: Transforms raw LLM output into sanitized,
-        Telegram-compliant HTML with tables converted to cards.
+        Telegram-compliant HTML with tables converted to cards,
+        and typography/spelling slips automatically cleaned.
         """
         if not text or not isinstance(text, str):
             return ""
 
-        # Step 1: Normalize newlines
+        # Step 1: Normalize newlines and typography slips
         text = text.replace("\r\n", "\n").replace("\r", "\n")
+        
+        # Clean Unicode non-breaking hyphens and dashes to standard ASCII hyphen
+        text = text.replace("\u2011", "-").replace("\u2013", "-").replace("\u2014", "-")
+        
+        # Clean spelling slips and unwanted trailing spaces
+        text = re.sub(r"(\d{1,2}:\d{2})\s*h\b", r"\1", text)  # "06:00 h" -> "06:00"
+        text = re.sub(r"\bKẾ\s+THÚC\b", "KẾT LUẬN", text, flags=re.IGNORECASE)  # "KẾ THÚC" -> "KẾT LUẬN"
+        text = re.sub(r"\(\s+", "(", text)
+        text = re.sub(r"\s+\)", ")", text)
 
         # Step 2: Extract & protect preformatted code blocks
         code_blocks: List[str] = []
 
         def _preserve_code_block(match: re.Match) -> str:
-            lang = match.group(1) or ""
             code_content = match.group(2)
             # Escape HTML inside code block
             escaped_code = html.escape(code_content)
             idx = len(code_blocks)
             code_blocks.append(f"<pre><code>{escaped_code}</code></pre>")
-            return f"__TG_CODE_BLOCK_{idx}__"
+            # Safe token without underscores or asterisks
+            return f"TGTOKENCODEBLOCK{idx}END"
 
         # Regex matches ```optional_lang\ncode```
         text = re.sub(r"```([a-zA-Z0-9_\-#+]*)\n?(.*?)```", _preserve_code_block, text, flags=re.DOTALL)
@@ -59,7 +69,8 @@ class TelegramFormatter:
             escaped_code = html.escape(code_content)
             idx = len(inline_codes)
             inline_codes.append(f"<code>{escaped_code}</code>")
-            return f"__TG_INLINE_CODE_{idx}__"
+            # Safe token without underscores or asterisks
+            return f"TGTOKENINLINECODE{idx}END"
 
         text = re.sub(r"`([^`\n]+)`", _preserve_inline_code, text)
 
@@ -67,7 +78,6 @@ class TelegramFormatter:
         text = cls._convert_markdown_tables(text)
 
         # Step 5: Escape raw HTML chars in text (not in protected placeholders)
-        # This MUST happen before converting Markdown syntax into HTML tags!
         text = html.escape(text)
 
         # Step 6: Convert Markdown Headers (# Title, ## Title, ### Title)
@@ -81,7 +91,7 @@ class TelegramFormatter:
         text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text)
         text = re.sub(r"(?<!\w)\*([^\s*][^*]*?[^\s*])\*(?!\w)", r"<b>\1</b>", text)
 
-        # Convert _italic_
+        # Convert _italic_ (strict word boundaries)
         text = re.sub(r"(?<!\w)_([^\s_][^_]*?[^\s_])_(?!\w)", r"<i>\1</i>", text)
 
         # Convert ~~strikethrough~~
@@ -89,12 +99,12 @@ class TelegramFormatter:
 
         # Step 9: Restore protected inline code and code blocks
         for idx, block in enumerate(code_blocks):
-            text = text.replace(f"__TG_CODE_BLOCK_{idx}__", block)
+            text = text.replace(f"TGTOKENCODEBLOCK{idx}END", block)
 
         for idx, inline in enumerate(inline_codes):
-            text = text.replace(f"__TG_INLINE_CODE_{idx}__", inline)
+            text = text.replace(f"TGTOKENINLINECODE{idx}END", inline)
 
-        # Step 10: Clean up excessive blank lines
+        # Step 10: Clean up excessive blank lines and trailing spaces
         text = re.sub(r"\n{3,}", "\n\n", text).strip()
 
         return text
@@ -189,13 +199,13 @@ class TelegramFormatter:
             stripped = line.strip()
             if stripped.startswith("### "):
                 title = stripped[4:].strip()
-                res.append(f"\n🔹 **{title}**")
+                res.append(f"\n🔹 <b>{title}</b>")
             elif stripped.startswith("## "):
                 title = stripped[3:].strip()
-                res.append(f"\n📊 **{title}**")
+                res.append(f"\n📊 <b>{title}</b>")
             elif stripped.startswith("# "):
                 title = stripped[2:].strip()
-                res.append(f"\n🎯 **{title}**")
+                res.append(f"\n🎯 <b>{title}</b>")
             else:
                 res.append(line)
         return "\n".join(res)

@@ -1,54 +1,57 @@
 # Troubleshooting & Diagnostic Handbook
 
-Runbooks and diagnostic procedures for identifying and resolving common issues across the Mini Server Dashboard ecosystem.
+Runbooks, diagnostic procedures, and interactive decision trees for identifying and resolving common issues across the Mini Server Dashboard ecosystem.
 
 ---
 
-## 1. AI Agent & LLM Router Issues
+## 1. Troubleshooting Decision Tree
 
-### Symptom 1: Groq `HTTP 413 Payload Too Large`
-- **Root Cause:** In earlier versions, running multiple consecutive shell commands accumulated large log outputs in the turn context, exceeding Groq's request size limit.
-- **Resolution:** Upgraded with the **Active Turn Context Compactor (`_build_compact_messages_for_llm`)** in `ai_agent.py`. Tool outputs older than the 2 most recent steps are automatically condensed, keeping the payload under 3,500 characters (~900 tokens).
+```mermaid
+flowchart TD
+    ProblemStart(["⚠️ Incident / Issue Detected"]) --> Category{"Which subsystem is affected?"}
 
-### Symptom 2: AI answers server location incorrectly (e.g. TP.HCM instead of Hà Nội)
-- **Root Cause:** AI was querying dynamic ISP GeoIP databases (`ipinfo.io`) which assign ISP blocks to central BGP gateways rather than physical hardware addresses.
-- **Resolution:** Configured `SERVER_PHYSICAL_LOCATION="Định Công, Hoàng Mai, Hà Nội, Việt Nam"` in `.env` and `app/config.py`. The AI's System Prompt now embeds Ground Truth physical metadata and explains the difference between ISP GeoIP and on-premise hardware location.
+    Category -->|AI Agent / Groq| AIPath{"Error Type?"}
+    Category -->|Telegram Bot| TGPath{"Formatting / Polling?"}
+    Category -->|Facebook E2EE| FBPath{"Decryption / PIN?"}
+    Category -->|SSH / Telemetry| SSHPath{"Connection / Sudo?"}
 
-### Symptom 3: OpenRouter `reasoning_details` causes Groq `HTTP 400`
-- **Root Cause:** When switching from OpenRouter to Groq, leftover `reasoning_details` properties in message history caused Groq API validation failures.
-- **Resolution:** `LlmRouter.route_chat()` now sanitizes all message objects before constructing request payloads.
+    AIPath -->|HTTP 413 Payload Too Large| Fix413["Active Context Compactor will auto-condense tools.\nCheck _build_compact_messages_for_llm."]
+    AIPath -->|Wrong Server Location| FixLoc["Check SERVER_PHYSICAL_LOCATION in .env.\nGround Truth: Định Công, Hoàng Mai, Hà Nội."]
+    AIPath -->|HTTP 400 reasoning_details| Fix400["LlmRouter sanitizes message payloads before Groq call."]
 
----
+    TGPath -->|Markdown Tables Broken| FixTable["TelegramFormatter auto-converts tables to Card layouts."]
+    TGPath -->|Bot Not Responding| FixPolling["Check TELEGRAM_POLLING_ENABLED=true in .env.\nVerify token with curl api.telegram.org/bot<TOKEN>/getMe."]
 
-## 2. Telegram Bot Issues
+    FBPath -->|E2EE Chats Encrypted| FixPIN["Verify FB_PIN in .env or database.\nOpen http://<server-ip>:6080/vnc.html to inspect."]
+    FBPath -->|Absence Message Not Sent| FixAway["Check away_mode_enabled=true in facebook_config table."]
 
-### Symptom: Markdown tables or messages broken on Telegram
-- **Root Cause:** Telegram does not support native Markdown pipe tables (`|---|---|`).
-- **Resolution:** The `TelegramFormatter` engine automatically converts Markdown tables into formatted visual cards and converts Markdown to safe, balanced Telegram HTML.
-
----
-
-## 3. Facebook Messenger E2EE & noVNC Issues
-
-### Symptom: E2EE Encrypted messages not decrypting
-- **Check 1:** Ensure `FB_PIN` (or pin code in database) is correctly set to your 6-digit security PIN.
-- **Check 2:** Open `http://<server-ip>:6080/vnc.html` to visually check if Facebook is requesting 2FA or re-login.
+    SSHPath -->|Connection Timed Out| FixSSH["Verify SSH credentials & test: ssh -p 22 user@host.\nIf remote, verify Ngrok fallback tunnel."]
+    SSHPath -->|Permission Denied| FixSudo["Ensure SSH user has NOPASSWD sudo access in /etc/sudoers."]
+```
 
 ---
 
-## 4. SSH & Connectivity Issues
+## 2. Detailed Runbooks
 
-### Symptom: `SshException: Connection timed out`
-- **Check 1:** Verify SSH credentials (`SSH_HOST`, `SSH_PORT`, `SSH_USER`, `SSH_PASSWORD`) in `.env`.
-- **Check 2:** Test SSH manually:
-  ```bash
-  ssh -p 22 kirito@192.168.0.100
-  ```
-- **Check 3:** If using Ngrok fallback, verify that `SSH_FALLBACK_HOST` and `SSH_FALLBACK_PORT` are updated.
+### Runbook 1: Groq `HTTP 413 Payload Too Large`
+- **Root Cause:** Accumulation of verbose raw shell outputs in multi-step agent reasoning turns.
+- **Resolution:** The **Active Turn Context Compactor (`_build_compact_messages_for_llm`)** in `ai_agent.py` automatically retains full detail only for the 2 most recent tool outputs and collapses older outputs into 2-line summaries, capping turn payload under 3,500 characters (~900 tokens).
+
+### Runbook 2: Server Location Discrepancy (GeoIP vs. Physical Location)
+- **Root Cause:** Dynamic ISP IP blocks (`1.53.99.21`) route via central ISP BGP gateways which GeoIP services report as TP.HCM or Cầu Giấy.
+- **Resolution:** Configured `SERVER_PHYSICAL_LOCATION="Định Công, Hoàng Mai, Hà Nội, Việt Nam"` in `.env` and `app/config.py`. The AI Agent explicitly explains the difference between ISP BGP GeoIP and on-premise hardware coordinates.
+
+### Runbook 3: OpenRouter `reasoning_details` causing Groq `HTTP 400`
+- **Root Cause:** Provider-specific reasoning fields returned by OpenRouter models are rejected by Groq API validation.
+- **Resolution:** `LlmRouter.route_chat()` strips `reasoning_details` from message objects before constructing request payloads.
+
+### Runbook 4: Telegram Markdown Entity Parsing Recovery
+- **Root Cause:** Telegram API rejects unescaped raw HTML entities or unbalanced tags.
+- **Resolution:** `TelegramFormatter` auto-balances open tags (`_balance_html_tags`) and `TelegramBot._send_single_chunk` provides an automated fallback that strips tags and resends plain text if entity parsing fails.
 
 ---
 
-## 5. Running Diagnostics & Tests
+## 3. Diagnostic & Testing Commands
 
 ```bash
 # Run all unit tests inside container

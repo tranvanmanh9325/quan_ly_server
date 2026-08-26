@@ -18,32 +18,29 @@
 ## 📑 Table of Contents
 
 - [Overview](#-overview)
+- [System Topology & High-Level Architecture](#-system-topology--high-level-architecture)
 - [Screenshots / Demo](#-screenshots--demo)
-- [Key Features](#-key-features)
-  - [Autonomous AI Assistant ("Tiểu Bảo Bảo")](#1-autonomous-ai-assistant-tiểu-bảo-bảo)
-  - [System Overview Dashboard (`/`)](#2-system-overview-dashboard-)
-  - [3D Interactive Globe Map (`/map`)](#3-3d-interactive-globe-map-map)
-  - [Process Explorer (`/processes`)](#4-process-explorer-processes)
-  - [Services & Docker Runtime Center (`/services`)](#5-services--docker-runtime-center-services)
-  - [Container Management (`/containers`)](#6-container-management-containers)
-  - [Remote File Manager (`/files`)](#7-remote-file-manager-files)
-  - [Interactive Web SSH Terminal (`/terminal`)](#8-interactive-web-ssh-terminal-terminal)
-  - [Security & Network Inspector (`/security`)](#9-security--network-inspector-security)
-  - [Control Center & Preferences (`/settings`)](#10-control-center--preferences-settings)
-  - [Futuristic Sci-Fi HUD Interaction Layer](#11-futuristic-sci-fi-hud-interaction-layer)
-- [System Architecture](#-system-architecture)
+- [Key Features & Visual Workflows](#-key-features--visual-workflows)
+  - [1. Autonomous AI Assistant ("Tiểu Bảo Bảo")](#1-autonomous-ai-assistant-tiểu-bảo-bảo)
+  - [2. System Overview Dashboard (`/`)](#2-system-overview-dashboard-)
+  - [3. 3D Interactive Globe Map (`/map`)](#3-3d-interactive-globe-map-map)
+  - [4. Process Explorer (`/processes`)](#4-process-explorer-processes)
+  - [5. Services & Docker Runtime Center (`/services`)](#5-services--docker-runtime-center-services)
+  - [6. Container Management (`/containers`)](#6-container-management-containers)
+  - [7. Remote File Manager (`/files`)](#7-remote-file-manager-files)
+  - [8. Interactive Web SSH Terminal (`/terminal`)](#8-interactive-web-ssh-terminal-terminal)
+  - [9. Security & Network Inspector (`/security`)](#9-security--network-inspector-security)
+  - [10. Control Center & Preferences (`/settings`)](#10-control-center--preferences-settings)
+- [AI Agent & 9Router Cognitive Lifecycle](#-ai-agent--9router-cognitive-lifecycle)
 - [Microservices & Tech Stack](#-microservices--tech-stack)
 - [Project Directory Structure](#-project-directory-structure)
-- [API Reference](#-api-reference)
 - [Getting Started & Installation](#-getting-started--installation)
   - [Prerequisites](#prerequisites)
   - [1. Clone & Configure Environment](#1-clone--configure-environment)
-  - [2. Deploy with Docker Compose (Recommended)](#2-deploy-with-docker-compose-recommended)
+  - [2. Deploy with Docker Compose](#2-deploy-with-docker-compose-recommended)
   - [3. Local Development (Hot Reload)](#3-local-development-hot-reload)
   - [4. Running Unit Tests](#4-running-unit-tests)
 - [Documentation Index](#-documentation-index)
-- [Contributing](#-contributing)
-- [Security Policy](#-security-policy)
 - [License](#-license)
 
 ---
@@ -57,6 +54,61 @@
 1. **Zero Target Footprint (Agentless):** No daemon, agent, or extra process needs to be installed on target Linux servers. The backend connects via SSH (`JSch` / `AsyncSSH`) and collects real-time telemetry through standard Linux utilities (`top`, `free`, `df`, `sensors`, `ps`, `systemctl`, `docker`, `ss`, `journalctl`).
 2. **Autonomous Hybrid AI Agent ("Tiểu Bảo Bảo"):** Powered by a Multi-Provider LLM Pool (Groq + OpenRouter) that operates 24/7. It diagnoses server alerts, executes sysadmin tasks over SSH via tool calling, and bridges notifications/conversations through Telegram and Facebook Messenger End-to-End Encrypted (E2EE) chats.
 3. **Immersive Cyberpunk Sci-Fi HUD:** Replaces mundane flat dashboards with a dynamic, neon-lit HUD interface featuring SVG crosshair cursors, audio-synthesized tactile feedback, canvas shockwaves, and a 3D orthographic globe.
+
+---
+
+## 🏗 System Topology & High-Level Architecture
+
+```mermaid
+flowchart TD
+    subgraph ClientLayer["🖥️ Client & Messaging Interfaces"]
+        Browser["Web Browser (Cyberpunk HUD SPA) :5173"]
+        TelegramUser["Telegram App (Owner Chat)"]
+        FBUser["Facebook Messenger (Encrypted E2EE Chats)"]
+        TikTokUser["TikTok App (DMs & Streaks)"]
+    end
+
+    subgraph DockerBridge["🐳 Docker Network Bridge (dashboard-network)"]
+        Nginx["Nginx Reverse Proxy (:80 -> :5173)"]
+        
+        subgraph BackendServices["⚙️ Backend Microservices Ecosystem"]
+            AuthSvc["Auth Service\n(Spring Boot 4.1.0 / Java 21)\nPort: 8081\n[JWT / BCrypt / Sessions]"]
+            MetricsSvc["Metrics Service\n(Spring Boot 4.1.0 / Java 21)\nPort: 8082\n[JSch SSH Telemetry Pool]"]
+            FileSvc["File Service\n(Spring Boot 4.1.0 / Java 21)\nPort: 8083\n[JSch SFTP File Operations]"]
+            AgentSvc["AI Agent Service\n(FastAPI / Python 3.11)\nPort: 8084 & noVNC: 6080\n[9Router / ReAct / Playwright]"]
+        end
+
+        Database[("PostgreSQL 17 Alpine\nPort: 5432\n[Users, Configs, E2EE State, Memories, RTK Stats]")]
+    end
+
+    subgraph Infrastructure["🌐 External AI & Managed Infrastructure"]
+        GroqPool["Tier 1: Groq AI Key Pool\n(openai/gpt-oss-120b)"]
+        OpenRouterPool["Tier 2: OpenRouter Pool\n(nvidia/nemotron-3-super-120b)"]
+        TargetServer["🖥️ Target Linux Host (kirito-server)\n[Zero-Agent Target / Port 22 SSH]\nPhysical Location: Định Công, Hoàng Mai, Hà Nội"]
+    end
+
+    Browser -->|HTTP / WebSocket| Nginx
+    Nginx -->|/api/auth/*| AuthSvc
+    Nginx -->|/api/metrics/*| MetricsSvc
+    Nginx -->|/api/files/*| FileSvc
+    Nginx -->|/api/facebook/*, /api/tiktok/*, /v1/*| AgentSvc
+    Nginx -->|/fb-vnc/* WebSocket| AgentSvc
+
+    TelegramUser <-->|Long Polling / Outbound HTML Cards| AgentSvc
+    FBUser <-->|Playwright Headless Chromium + PIN Recovery| AgentSvc
+    TikTokUser <-->|Playwright Automated DMs & Streaks| AgentSvc
+
+    AuthSvc <--> Database
+    MetricsSvc <--> Database
+    AgentSvc <--> Database
+
+    MetricsSvc ==>|Persistent JSch SSH Tunnel| TargetServer
+    FileSvc ==>|JSch SFTP Channel| TargetServer
+    AgentSvc ==>|AsyncSSH Tool Execution| TargetServer
+
+    AgentSvc <-->|Round-Robin & RTK Compression| GroqPool
+    AgentSvc -.->|Zero-Downtime Auto Failover| OpenRouterPool
+```
 
 ---
 
@@ -84,138 +136,58 @@ Configure critical alert threshold sliders, global refresh speeds, Telegram/Face
 
 ---
 
-## 🚀 Key Features
+## 🚀 Key Features & Visual Workflows
 
 ### 1. Autonomous AI Assistant ("Tiểu Bảo Bảo")
 
-- **Pyramid Principle / BLUF Thinking Architecture:**
-  - **Bottom Line Up Front (BLUF):** The very first line always delivers a direct, decisive conclusion (Executive Summary).
-  - **Structured Verified Breakdown:** Organizes evidence into high-contrast Visual Cards (`📌`, `🕒`, `✅`, `🔍`).
-  - **Actionable Insights:** Provides clear, concise root-cause explanations and practical next steps.
-- **Telegram Native Formatter Engine (`TelegramFormatter`):**
-  - **Markdown Table-to-Card Transformer:** Converts raw Markdown pipe tables (`|---|---|`) into elegant, responsive cards for mobile and desktop screens.
-  - **HTML Sanitization & Tag Balancing:** Converts Markdown to safe Telegram HTML (`<b>`, `<i>`, `<code>`, `<pre><code>`, `<blockquote>`, `<s>`) while automatically balancing tags.
-  - **Vietnamese Typography & Spelling Auto-Normalizer:** Automatically fixes common LLM slips, normalizes timestamps (`06:00`), converts Unicode non-breaking hyphens, and filters stray multilingual tokens.
-- **Anti-Loop Circuit Breaker & Context Compactor:**
-  - **Active Turn Context Compactor:** Dynamically compacts older tool outputs in multi-step chains, capping payload under 3,500 characters (~900 tokens) and **eliminating Groq `HTTP 413 Payload Too Large` errors**.
-  - **Loop Detection & Synthesis Circuit Breaker:** Detects duplicate command calls and forces `tool_choice="none"` at iteration $\ge 4$ to guarantee a prompt, structured answer.
-  - **Graceful Final Synthesis Fallback:** Triggers a synthesis pass instead of failing with robotic error messages.
-- **Ground Truth Physical Location Metadata:**
-  - Explicitly configured on-premise physical location: **Định Công, Hoàng Mai, Hà Nội, Việt Nam** (FPT Telecom, LAN: `192.168.0.100`).
-  - Distinguishes physical hardware location from ISP BGP dynamic IP GeoIP routing.
-- **9Router Multi-Provider Key Pool Engine:**
-  - **Tier 1 (Groq Pool):** Round-robin rotation across multiple keys (`openai/gpt-oss-120b`, `llama-3.1-8b-instant`) with automatic 60s cooldown on 429 rate limits.
-  - **Tier 2 (OpenRouter Pool):** Automatic zero-downtime failover (`nvidia/nemotron-3-super-120b-a12b:free`).
-  - **Real-Time Token Compressor (RTK):** Compacts logs/JSON payloads before LLM ingestion, saving 40–85% token volume with PostgreSQL stats persistence.
-  - **OpenAI-Compatible Gateway:** Exposes `/v1/chat/completions` and `/v1/models` for external integrations.
-- **Facebook Messenger E2EE Automation:**
-  - Headless Chromium (Playwright) running in an isolated container with persistent session storage (`browser_data`).
-  - **Automated 6-Digit PIN Recovery:** Automatically unlocks E2EE security challenge screens to decrypt chats.
-  - **Absence Auto-Responder & Intelligent Unsend:** Sends absence notices when the owner is away, and automatically revokes/unsends ("Thu hồi với mọi người") the message once the owner replies.
-  - **noVNC Visual Console (Port 6080):** Embedded GUI stream for live browser inspection and manual intervention.
-- **TikTok Automation & Long-Term Memory:**
-  - **Daily Streak Keeper:** Automated check-ins and DM responses.
-  - **Self-Learning Brain (`AgentMemoryService`):** Long-term memory storage in PostgreSQL (`ai_chat_memories`, `ai_agent_lessons`, `ai_agent_preferences`, `ai_scheduled_tasks`).
+```mermaid
+flowchart LR
+    UserQuery["User Message (Telegram / Messenger)"] --> BLUF["Pyramid Principle (BLUF Engine)\nLine 1: Direct Executive Summary"]
+    BLUF --> ContextCompactor["Active Turn Context Compactor\nCaps payload < 3,500 chars (Anti-HTTP 413)"]
+    ContextCompactor --> Router["9Router Multi-Provider Key Pool\nGroq Pool -> Auto Failover -> OpenRouter"]
+    Router --> Tools{"Tool Calling Required?"}
+    Tools -- Yes --> SSHExec["AsyncSSH Tool Exec\n(Linux / Docker / Systemd)"]
+    SSHExec --> LoopBreaker{"Loop / Iteration >= 4?"}
+    LoopBreaker -- Yes --> Synthesize["Force tool_choice='none'\nGraceful Final Synthesis"]
+    LoopBreaker -- No --> ContextCompactor
+    Tools -- No --> Formatter["TelegramFormatter Engine\nTables -> Cards | Balanced HTML | Spelling Fix"]
+    Synthesize --> Formatter
+    Formatter --> Dispatch["Deliver High-Contrast Telegram Card Response"]
+```
 
-### 2. System Overview Dashboard (`/`)
-- **Live KPI Telemetry:** CPU utilization, RAM breakdown, disk partitions, Network TX/RX throughput, Load Average (1m / 5m / 15m).
-- **Hardware Health:** Multi-sensor CPU temperature readings, system voltages, fan speeds.
-- **CRITICAL ALERT Warning System:** Pulsing visual alerts and notification triggers on threshold breach.
-
-### 3. 3D Interactive Globe Map (`/map`)
-- **Orthographic 3D Globe:** Rendered using D3-geo and TopoJSON with smooth drag-to-rotate interaction.
-- **Server Geolocation:** Pinpoints server location with glowing neon pins and animated sonar pulse waves.
-
-### 4. Process Explorer (`/processes`)
-- Real-time Linux process table with dynamic sorting by CPU%, Memory MB, PID, and Command Name.
-- Quick filter tabs: `ALL`, `HIGH CPU (>20%)`, `HIGH MEM (>100MB)`.
-- Safe process termination modal with PID verification and instant CSV export.
-
-### 5. Services & Docker Runtime Center (`/services`)
-- **Systemd Service Manager:** Live status badges with 1-click Start / Stop / Restart actions.
-- **Systemd Timers:** Tracks scheduled maintenance jobs (`apt-daily.timer`, `apt-daily-upgrade.timer`).
-- **Installed Runtimes:** Auto-detects Docker, Node.js, Java, Python, Nginx, PostgreSQL, Redis, UFW.
-
-### 6. Container Management (`/containers`)
-- Complete Docker container overview with live container states and port mappings.
-- Container lifecycle controls: start, stop, restart, and inspect.
-- Real-time container log streaming modal (`docker logs --tail`).
-
-### 7. Remote File Manager (`/files`)
-- Full-featured SSH filesystem browser (navigate directories, inspect files, create, rename, delete items).
-- Built-in syntax-highlighted code and configuration file viewer.
-
-### 8. Interactive Web SSH Terminal (`/terminal`)
-- Browser-based terminal emulator (`root@server:~#`) with command history.
-- Quick command macro chips (`uname -a`, `df -h`, `docker ps`, `ss -tulpn`).
-- Server-side security sandbox preventing destructive commands (`rm -rf /`, `mkfs`, `reboot`).
-
-### 9. Security & Network Inspector (`/security`)
-- **Listening Ports:** Comprehensive TCP / UDP socket scan mapped to process names and PIDs (`ss -tulpn`).
-- **Active SSH Sessions:** Real-time user login monitoring via `who`.
-- **Colorized System Log Viewer:** Automatic severity parsing (`ERROR`/`DENIED` → Red, `WARN` → Yellow, `INFO` → Green).
-
-### 10. Control Center & Preferences (`/settings`)
-- Custom threshold sliders for CPU, Memory, and Disk alert triggers.
-- Per-session polling frequency adjustments and Sci-Fi visual toggles.
-- Telegram & Facebook AI integration controls.
+- **Pyramid Principle / BLUF Thinking Architecture:** Direct answer on line 1, verified card breakdown in the body, concise technical insights at the end.
+- **Telegram Native Formatter Engine (`TelegramFormatter`):** Converts Markdown tables into mobile-friendly bullet cards, auto-escapes HTML, balances tags, and normalizes Vietnamese typography.
+- **Anti-Loop Circuit Breaker & Context Compactor:** Dynamically compacts older tool outputs, keeping payload under 3,500 characters (~900 tokens) to eliminate Groq `HTTP 413 Payload Too Large` errors.
+- **Ground Truth Physical Location Metadata:** Configured on-premise location: **Định Công, Hoàng Mai, Hà Nội, Việt Nam** (FPT Telecom, LAN: `192.168.0.100`).
+- **Facebook Messenger E2EE Automation:** Playwright Chromium automation with automated 6-digit PIN decryption, absence auto-reply, and automatic message unsend when the owner replies.
+- **TikTok Automation & Long-Term Memory:** Automated daily streak keeper, proactive appointment reminders, and PostgreSQL-backed self-learning brain (`AgentMemoryService`).
 
 ---
 
-## 🏗 System Architecture
+## 🔄 End-to-End Operational Lifecycle
 
-```text
-┌───────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│                                       Docker Network (bridge)                                         │
-│                                                                                                       │
-│   ┌───────────────────────────────────────────────────────────────────────────────────────────────┐   │
-│   │                                       Frontend (Nginx)                                        │   │
-│   │                                         React 19 SPA                                          │   │
-│   │                                    Host Port: 5173 (Nginx :80)                                │   │
-│   └───────▲──────────────────────▲──────────────────────▲──────────────────────▲──────────────────┘   │
-│           │                      │                      │                      │                      │
-│           │ /api/auth/*          │ /api/metrics/*       │ /api/files/*         │ /api/facebook/*      │
-│           │ (JWT Login / Verify) │ (Telemetry / Stream) │ (SFTP File Ops)      │ /api/tiktok/*        │
-│           │                      │                      │                      │ /api/ai/* , /v1/*    │
-│           │                      │                      │                      │ /fb-vnc/* (WebSocket)│
-│           │ (REST Request/Reply) │ (REST Request/Reply) │ (REST Request/Reply) │ (Duplex Stream/REST) │
-│           ▼                      ▼                      ▼                      ▼                      │
-│   ┌──────────────┐       ┌──────────────┐       ┌──────────────┐       ┌──────────────────────────┐   │
-│   │ Auth Service │       │Metrics Service       │ File Service │       │     AI Agent Service     │   │
-│   │ Spring Boot  │       │ Spring Boot  │       │ Spring Boot  │       │      FastAPI (8084)      │   │
-│   │ (Port 8081)  │       │ (Port 8082)  │       │ (Port 8083)  │       │    noVNC GUI (Port 6080) │   │
-│   └───────▲──────┘       └───────▲──────┘       └───────▲──────┘       └───────▲──────────▲───────┘   │
-│           │                      │                      │                      │          │           │
-│           │ (User / Auth R/W)    │ (Configs / Logs R/W) │ (SFTP Navigation)    │ (State)  │           │
-│           ▼                      ▼                      │                      ▼          │           │
-│   ┌─────────────────────────────────────┐               │              ┌───────────────┐  │           │
-│   │            PostgreSQL 17            │               │              │ Playwright    │  │           │
-│   │        (Database Container)         │               │              │ Chromium Head │  │           │
-│   │     Port 5432/tcp (Bi-directional)  │               │              │ (E2EE Session)│  │           │
-│   └─────────────────────────────────────┘               │              └───────▲───────┘  │           │
-│                                                         │                      │          │           │
-└─────────────────────────────────────────────────────────┼──────────────────────┼──────────┼───────────┘
-         ▲                                                ▲                      │          ▲
-         │ (JSch SSH Persistent Session)                  │ (JSch SFTP Channel)  │          │ (AsyncSSH)
-         │ [Commands ──▶ / ◀── Metrics Telemetry]        │ [Read/Write Stream]  │          │ [SSH Tools]
-         ▼                                                ▼                      │          ▼
-  ┌───────────────────────────────────────────────────────────────────┐          │ ┌────────────────────┐
-  │                        Remote Linux Server                        │          │ │  LLM Key Pools     │
-  │                       (Managed Target Host)                       │          │ │ ────────────────── │
-  │    Standard Linux CLI: top, free, df, sensors, ps, systemctl,     │          │ │ 1. Groq API Pool   │
-  │    docker, ss, journalctl, ufw (Zero target agent footprint)      │          │ │ 2. OpenRouter Pool │
-  │                   Port 22/tcp (Full Duplex)                       │          │ └─────────▲──────────┘
-  └───────────────────────────────────────────────────────────────────┘          │           │
-                                                                                 │           │ (Prompt Context ──▶)
-                                                                                 │           │ (◀── Inference Stream)
-                                                                                 ▼           ▼
-                                      ┌─────────────────────────────────────────────────────────────────┐
-                                      │             External Messaging Integrations (2-Way)             │
-                                      │ ─────────────────────────────────────────────────────────────── │
-                                      │ • Telegram Bot API (Inbound Polling ◄──► Outbound AI Responses) │
-                                      │ • Facebook Messenger E2EE (Scan Inbox ◄──► Auto-Reply & Unsend) │
-                                      │ • TikTok Automation (DM Scan ◄──► Streak Keeper Auto-Reply)     │
-                                      └─────────────────────────────────────────────────────────────────┘
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Owner as 👤 Anh Mạnh (Owner)
+    participant TG as 📱 Telegram Bot
+    participant Agent as 🤖 AI Agent (Tiểu Bảo Bảo)
+    participant Router as 🔀 9Router & RTK
+    participant Server as 🖥️ kirito-server (Target Host)
+    participant DB as 🗄️ PostgreSQL 17
+
+    Owner->>TG: "sáng nay đã chạy lệnh sudo apt update chưa"
+    TG->>Agent: Inbound chat event
+    Agent->>Router: Compress prompt & route to active Groq key
+    Router-->>Agent: Returns Tool Call: run_command("systemctl list-timers apt-daily*")
+    Agent->>Server: AsyncSSH: systemctl list-timers apt-daily* --no-pager
+    Server-->>Agent: Raw stdout (Timer active, last run 06:00:12)
+    Agent->>Router: Compacted turn context + tool output
+    Router-->>Agent: Returns Final Answer (BLUF)
+    Agent->>Agent: TelegramFormatter: Transform to Card layout & clean Vietnamese typography
+    Agent->>DB: Save interaction & self-learning lessons
+    Agent-->>TG: 🎯 KẾT QUẢ KIỂM TRA: Lệnh sudo apt update ĐÃ ĐƯỢC CHẠY sáng nay (06:00 ICT)...
+    TG-->>Owner: High-contrast Card message delivered in <2.5s
 ```
 
 ---
@@ -364,12 +336,6 @@ cd frontend && npm test
 | **Production Deployment Guide** | [docs/deployment.md](./docs/deployment.md) |
 | **Security Hardening & Sandboxing** | [docs/security.md](./docs/security.md) |
 | **Troubleshooting & Diagnostics** | [docs/troubleshooting.md](./docs/troubleshooting.md) |
-
----
-
-## 🛡 Security Policy
-
-Please review [SECURITY.md](./SECURITY.md) for vulnerability disclosure procedures and security guarantees.
 
 ---
 

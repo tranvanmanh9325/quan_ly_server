@@ -4,69 +4,188 @@ Complete guide to the PostgreSQL 17 relational schema, JWT authentication lifecy
 
 ---
 
-## 1. Database Overview
+## 1. PostgreSQL 17 Entity-Relationship Diagram (Full ERD)
 
-The system utilizes **PostgreSQL 17 Alpine** (container `dashboard_db`) running on internal port `5432`.
+```mermaid
+erDiagram
+    users ||--o{ user_refresh_tokens : "has many"
+    users ||--o{ ai_agent_preferences : "configures"
+    
+    users {
+        bigint id PK
+        varchar username UK
+        varchar password_hash
+        varchar role
+        timestamp created_at
+        timestamp updated_at
+    }
 
-### Schema Map
+    user_refresh_tokens {
+        bigint id PK
+        bigint user_id FK
+        varchar token UK
+        timestamp expires_at
+        timestamp created_at
+    }
 
-```text
-PostgreSQL (quan_ly_server)
-├── users                        # Dashboard administrative user accounts
-├── user_refresh_tokens          # Active JWT refresh tokens
-├── telegram_configs             # Telegram bot credentials & notification thresholds
-├── facebook_config              # Facebook E2EE automation settings & PIN
-├── facebook_known_threads       # Tracked Messenger conversations & unsend state
-├── facebook_messages            # Cached conversation history
-├── facebook_appointments        # Appointments extracted from Messenger chats
-├── tiktok_config                # TikTok DM & streak keeper settings
-├── tiktok_streaks               # Tracked TikTok streaks & interaction logs
-├── rtk_stats                    # 9Router Real-Time Token Compressor statistics
-├── ai_chat_memories             # Long-term AI conversational memories
-├── ai_agent_lessons             # Self-learned rules & corrections
-├── ai_agent_preferences         # User preferences learned by AI
-└── ai_scheduled_tasks           # AI background tasks and reminders
+    telegram_configs {
+        bigint id PK
+        varchar bot_token
+        varchar chat_id
+        boolean notifications_enabled
+        int cpu_threshold
+        int ram_threshold
+        int disk_threshold
+        timestamp updated_at
+    }
+
+    facebook_config {
+        bigint id PK
+        boolean enabled
+        text auto_reply_text
+        int scan_interval_minutes
+        boolean away_mode_enabled
+        varchar pin_code
+        timestamp updated_at
+    }
+
+    facebook_known_threads ||--o{ facebook_messages : "contains"
+    facebook_known_threads ||--o{ facebook_appointments : "schedules"
+
+    facebook_known_threads {
+        varchar thread_id PK
+        varchar thread_name
+        timestamp last_interaction
+        text auto_reply_text
+        boolean auto_reply_unsent
+        boolean is_e2ee
+        boolean is_group
+    }
+
+    facebook_messages {
+        bigint id PK
+        varchar thread_id FK
+        varchar sender_name
+        text message_text
+        boolean is_auto
+        timestamp sent_at
+    }
+
+    facebook_appointments {
+        bigint id PK
+        varchar thread_id FK
+        varchar person_name
+        timestamp appointment_time
+        text description
+        varchar status
+        boolean reminded_1h
+        timestamp created_at
+    }
+
+    tiktok_config {
+        bigint id PK
+        boolean enabled
+        boolean streak_enabled
+        text auto_reply_text
+        int scan_interval_minutes
+        timestamp updated_at
+    }
+
+    tiktok_streaks {
+        varchar user_id PK
+        varchar username
+        int streak_count
+        timestamp last_sent_time
+        timestamp last_received_time
+        varchar status
+    }
+
+    rtk_stats {
+        bigint id PK
+        bigint total_compressions
+        bigint chars_saved
+        bigint estimated_tokens_saved
+        timestamp updated_at
+    }
+
+    ai_chat_memories {
+        bigint id PK
+        varchar chat_id
+        varchar key
+        text value
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    ai_agent_lessons {
+        bigint id PK
+        varchar category
+        text lesson
+        text context
+        float confidence
+        timestamp created_at
+    }
+
+    ai_agent_preferences {
+        bigint id PK
+        bigint user_id FK
+        varchar preference_key
+        text preference_value
+        timestamp updated_at
+    }
+
+    ai_scheduled_tasks {
+        bigint id PK
+        varchar task_type
+        jsonb payload
+        timestamp run_at
+        varchar status
+    }
 ```
 
 ---
 
-## 2. Table Specifications
+## 2. JWT Authentication & Refresh Token Rotation Sequence
 
-### User & Authentication
-- `users (id, username, password_hash, role, created_at, updated_at)`
-- `user_refresh_tokens (id, user_id, token, expires_at, created_at)`
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Client as 🌐 Frontend Client
+    participant Auth as ☕ Auth Service (:8081)
+    participant DB as 🗄️ PostgreSQL 17
+    participant API as ⚙️ Protected Microservices
 
-### Facebook & TikTok Automation
-- `facebook_config (id, enabled, auto_reply_text, scan_interval_minutes, away_mode_enabled, pin_code, updated_at)`
-- `facebook_known_threads (thread_id, thread_name, last_interaction, auto_reply_text, auto_reply_unsent, is_e2ee, is_group)`
-- `facebook_appointments (id, thread_id, person_name, appointment_time, description, status, reminded_1h)`
-- `tiktok_config (id, enabled, streak_enabled, auto_reply_text, scan_interval_minutes, updated_at)`
-- `tiktok_streaks (user_id, username, streak_count, last_sent_time, last_received_time, status)`
+    Note over Client,Auth: 1. User Login (BCrypt Cost 12)
+    Client->>Auth: POST /api/auth/login { "username", "password" }
+    Auth->>DB: Query user by username
+    DB-->>Auth: User record (password_hash)
+    Auth->>Auth: BCrypt.checkpw(password, hash)
+    Auth->>DB: Store new refresh token in user_refresh_tokens
+    Auth-->>Client: Return { accessToken (15m), refreshToken (7d) }
 
-### 9Router & AI Memory
-- `rtk_stats (id, total_compressions, chars_saved, estimated_tokens_saved, updated_at)`
-- `ai_chat_memories (id, chat_id, key, value, created_at, updated_at)`
-- `ai_agent_lessons (id, category, lesson, context, confidence, created_at)`
-- `ai_agent_preferences (id, user_id, preference_key, preference_value, updated_at)`
-- `ai_scheduled_tasks (id, task_type, payload, run_at, status)`
+    Note over Client,API: 2. Authenticated Resource Access
+    Client->>API: GET /api/metrics/cpu (Header: Bearer accessToken)
+    API->>API: Verify JWT signature with JWT_SECRET
+    API-->>Client: Return telemetry data
+
+    Note over Client,Auth: 3. Token Refresh (When accessToken expires)
+    Client->>Auth: POST /api/auth/refresh { "refreshToken" }
+    Auth->>DB: Query user_refresh_tokens where token = ... and expires_at > now
+    DB-->>Auth: Token valid
+    Auth->>DB: Rotate (delete old refreshToken, create new one)
+    Auth-->>Client: Return new { accessToken, refreshToken }
+
+    Note over Client,Auth: 4. User Logout
+    Client->>Auth: POST /api/auth/logout (Bearer accessToken)
+    Auth->>DB: Delete active refresh tokens for user
+    Auth-->>Client: HTTP 200 OK (Logged out)
+```
 
 ---
 
-## 3. JWT Authentication Lifecycle
+## 3. Security & Hash Standards
 
-```text
-Client                          auth-service                       Protected Services
-  │                                  │                                     │
-  ├── 1. POST /api/auth/login ──────▶│                                     │
-  │      {"username", "password"}    │ (BCrypt check cost 12)              │
-  │                                  │ (Generate Access + Refresh Tokens)  │
-  │◀── 2. Return Tokens ─────────────┤                                     │
-  │      {accessToken, refreshToken} │                                     │
-  │                                                                        │
-  ├── 3. GET /api/metrics/cpu (Bearer accessToken) ───────────────────────▶│
-  │                                                                        │ (Verify JWT Secret)
-  │◀── 4. Telemetry Response ──────────────────────────────────────────────┤
-```
-
-- **Access Token:** Short-lived (15 minutes), signed with HS256 / HS384.
-- **Refresh Token:** Long-lived (7 days), stored in `user_refresh_tokens`.
+- **Password Hashing:** BCrypt with Cost factor 12.
+- **JWT Signing:** HMAC-SHA256 (HS256) / HS384 with $\ge 32$-character high-entropy secret.
+- **Access Token Expiration:** 15 minutes.
+- **Refresh Token Expiration:** 7 days (with single-use token rotation).

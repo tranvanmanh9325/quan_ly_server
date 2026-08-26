@@ -1,20 +1,31 @@
-# API Reference
+# API Reference & Gateway Architecture
 
-Complete reference for all REST and Gateway endpoints exposed by the 4 backend microservices.
-
-**Base URLs:**
-- **Metrics Service:** `http://<host>:8082/api/metrics`
-- **Auth Service:** `http://<host>:8081/api/auth`
-- **File Service:** `http://<host>:8083/api/files`
-- **AI Agent Service:** `http://<host>:8084` (`/api/facebook/*`, `/api/tiktok/*`, `/v1/*`, `/health`, `/fb-vnc/*`)
-
-**Protocol:** HTTP/1.1  
-**Authentication:** JWT Bearer Token (issued by Auth Service)  
-**Response format:** `application/json`
+Complete reference for all REST and Gateway endpoints exposed by the backend microservices ecosystem.
 
 ---
 
-## 1. Metrics Service Endpoints (`/api/metrics/*`)
+## 1. API Gateway Routing Map
+
+```mermaid
+flowchart LR
+    Client["Client / Browser / Telegram / External Integrations"] --> Nginx["Nginx Reverse Proxy (:80 / :5173)"]
+    
+    subgraph RoutingRules["Path Routing Specifications"]
+        Nginx -->|/api/metrics/*| MetricsSvc["Metrics Service (:8082)\n• /cpu, /ram, /disk, /network\n• /loadavg, /temperature, /sysinfo\n• /services, /containers, /ports\n• /processes, /execute, /sudo/*"]
+        
+        Nginx -->|/api/auth/*| AuthSvc["Auth Service (:8081)\n• /login, /verify\n• /refresh, /logout"]
+        
+        Nginx -->|/api/files/*| FileSvc["File Service (:8083)\n• /list, /read\n• /create, /delete, /rename"]
+        
+        Nginx -->|/api/facebook/*\n/api/tiktok/*\n/v1/*\n/health| AgentSvc["AI Agent & 9Router (:8084)\n• /v1/chat/completions\n• /v1/models\n• /api/facebook/*, /api/tiktok/*\n• /health"]
+        
+        Nginx -->|/fb-vnc/* WebSocket| VNCBridge["noVNC Live GUI (:6080)\n• /vnc.html"]
+    end
+```
+
+---
+
+## 2. Metrics Service Endpoints (`/api/metrics/*`)
 
 | Endpoint | Method | Description | Shell Command |
 | --- | --- | --- | --- |
@@ -35,7 +46,7 @@ Complete reference for all REST and Gateway endpoints exposed by the 4 backend m
 
 ---
 
-## 2. Auth Service Endpoints (`/api/auth/*`)
+## 3. Auth Service Endpoints (`/api/auth/*`)
 
 | Endpoint | Method | Description | Payload / Params |
 | --- | --- | --- | --- |
@@ -46,7 +57,7 @@ Complete reference for all REST and Gateway endpoints exposed by the 4 backend m
 
 ---
 
-## 3. File Service Endpoints (`/api/files/*`)
+## 4. File Service Endpoints (`/api/files/*`)
 
 | Endpoint | Method | Description | Query / Payload |
 | --- | --- | --- | --- |
@@ -58,7 +69,7 @@ Complete reference for all REST and Gateway endpoints exposed by the 4 backend m
 
 ---
 
-## 4. AI Agent & 9Router Gateway Endpoints
+## 5. AI Agent & 9Router Gateway Endpoints
 
 ### OpenAI-Compatible Gateway (`/v1/*`)
 
@@ -86,7 +97,7 @@ Complete reference for all REST and Gateway endpoints exposed by the 4 backend m
 | `/api/tiktok/streak` | `POST` | Trigger manual TikTok streak keeper cycle |
 | `/api/tiktok/streaks` | `GET` | List active TikTok streaks and interaction logs |
 
-### Health & Live Telemetry
+### Health & Telemetry
 
 | Endpoint | Method | Description |
 | --- | --- | --- |

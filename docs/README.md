@@ -33,7 +33,7 @@ Welcome to the technical documentation for **Mini Server Dashboard — Sci-Fi Cy
 
 Mini Server Dashboard is a self-hosted, real-time Linux server monitoring, management, and autonomous AI operational ecosystem. It connects to target Linux servers over SSH with **zero target agent footprint** and renders live telemetry through a futuristic Cyberpunk HUD interface while deploying an autonomous AI assistant ("Tiểu Bảo Bảo") across Telegram and Facebook Messenger E2EE.
 
-### Core Ecosystem Components:
+### Core Ecosystem Components
 
 1. **Metrics Service (`metrics-service`):** Spring Boot 4.1.0 (Java 21) on Port `8082` — JSch SSH persistent telemetry tunnel, sudo command executor, and hardware health engine.
 2. **Auth Service (`auth-service`):** Spring Boot 4.1.0 (Java 21) on Port `8081` — User credentials, BCrypt password hashing, and JWT token issuance/verification.

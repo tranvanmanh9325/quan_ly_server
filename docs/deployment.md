@@ -4,23 +4,86 @@ A complete reference for deploying, configuring, and hardening the Mini Server D
 
 ---
 
-## 1. Production Docker Compose Topology
+## 1. Production Deployment Topology & Port Mapping
 
-The production architecture consists of 6 interconnected containers on the `dashboard-network` bridge:
+```mermaid
+flowchart TD
+    subgraph PublicIngress["Public / LAN Ingress"]
+        HostBrowser["Web Browser\nhttp://<server-ip>:5173"]
+        HostVNC["noVNC Live GUI\nhttp://<server-ip>:6080/vnc.html"]
+    end
 
-```yaml
-services:
-  db:               # PostgreSQL 17 Alpine (Port 5432)
-  auth-service:     # Spring Boot 4.1.0 (Port 8081)
-  metrics-service:  # Spring Boot 4.1.0 (Port 8082)
-  file-service:     # Spring Boot 4.1.0 (Port 8083)
-  ai-agent-service: # FastAPI Python 3.11 (Port 8084, noVNC 6080)
-  frontend:         # React 19 + Nginx (Port 5173:80)
+    subgraph HostPorts["Host Port Bindings"]
+        Port5173["Port 5173:80 (Nginx)"]
+        Port6080["Port 6080:6080 (noVNC)"]
+        Port8081["Port 8081:8081 (Auth)"]
+        Port8082["Port 8082:8082 (Metrics)"]
+        Port8083["Port 8083:8083 (Files)"]
+        Port8084["Port 8084:8084 (AI Agent)"]
+    end
+
+    HostBrowser --> Port5173
+    HostVNC --> Port6080
+
+    subgraph DockerBridgeMesh["Docker Bridge: dashboard-network"]
+        NginxContainer["dashboard_frontend"]
+        AuthContainer["dashboard_auth_service"]
+        MetricsContainer["dashboard_metrics_service"]
+        FileContainer["dashboard_file_service"]
+        AgentContainer["dashboard_ai_agent"]
+        DBContainer["dashboard_db (Internal :5432 - Not exposed to host)"]
+    end
+
+    Port5173 --> NginxContainer
+    Port6080 --> AgentContainer
+    Port8081 --> AuthContainer
+    Port8082 --> MetricsContainer
+    Port8083 --> FileContainer
+    Port8084 --> AgentContainer
+
+    NginxContainer --> AuthContainer
+    NginxContainer --> MetricsContainer
+    NginxContainer --> FileContainer
+    NginxContainer --> AgentContainer
+
+    AuthContainer --> DBContainer
+    MetricsContainer --> DBContainer
+    AgentContainer --> DBContainer
+
+    subgraph TargetZone["Target Infrastructure"]
+        TargetHost["kirito-server (:22 SSH)\nPhysical Location: Định Công, Hoàng Mai, Hà Nội"]
+    end
+
+    MetricsContainer ==>|JSch SSH| TargetHost
+    FileContainer ==>|JSch SFTP| TargetHost
+    AgentContainer ==>|AsyncSSH| TargetHost
 ```
 
 ---
 
-## 2. Complete Environment Variables Reference
+## 2. CI/CD Self-Hosted Runner Workflow
+
+```mermaid
+flowchart LR
+    DevPush["Developer Workstation\n`git push origin main`"] --> GHAction["GitHub Repository\nTrigger Actions Workflow"]
+    
+    subgraph SelfHostedRunner["Production Host (kirito-server)"]
+        Runner["Self-Hosted Runner Daemon"] --> GitSync["git pull origin main"]
+        GitSync --> HotDeploy{"Service Changed?"}
+        
+        HotDeploy -->|Python AI Agent| PythonHotCopy["docker cp app/. dashboard_ai_agent:/app/app/\ndocker restart dashboard_ai_agent\n(Zero Build Downtime: <3s)"]
+        HotDeploy -->|Java / Frontend| DockerRebuild["docker compose up -d --build\n(Multi-stage build & cache)"]
+        
+        PythonHotCopy --> HealthVerify["Actuator /health Check (200 OK)"]
+        DockerRebuild --> HealthVerify
+    end
+
+    GHAction --> Runner
+```
+
+---
+
+## 3. Complete Environment Variables Reference
 
 Create or update `.env` in the root directory:
 
@@ -57,7 +120,7 @@ OPENROUTER_MODEL=nvidia/nemotron-3-super-120b-a12b:free
 
 ---
 
-## 3. Production Deployment Commands
+## 4. Production Deployment Commands
 
 ```bash
 # 1. Pull latest code from repository
@@ -75,7 +138,7 @@ docker compose logs -f ai-agent-service
 
 ---
 
-## 4. Resource Allocation & Limits
+## 5. Resource Allocation & Limits
 
 | Container | CPU Limit | RAM Reservation | RAM Limit |
 | --- | --- | --- | --- |

@@ -6,43 +6,57 @@ A comprehensive guide to scheduled tasks, background scanning loops, proactive r
 
 ## 1. Background Schedulers Architecture
 
-The `ai-agent-service` maintains dedicated asynchronous background loops managed by FastAPI lifespan events:
+```mermaid
+flowchart TD
+    FastAPILifespan["FastAPI Lifespan Startup Event"] --> SpawnSchedulers["Spawn Async Background Tasks"]
 
-```text
-FastAPI Lifespan Startup
-    │
-    ├── 1. Telegram Poller Loop (Long polling Telegram API)
-    ├── 2. Facebook Scanner Loop (Periodic inbox scan & absence reply)
-    ├── 3. TikTok Scanner & Streak Keeper Loop (Periodic DM check & daily streak send)
-    ├── 4. Appointment Reminder Loop (1-hour proactive dispatch)
-    └── 5. RTK Stats Persistence Loop (Persists compression stats to DB every 30s)
+    subgraph AsyncBackgroundWorkers["🔄 Async Background Worker Loops"]
+        Loop1["1. Telegram Bot Poller\n• Long-polling Telegram API updates\n• Instant message delivery"]
+        Loop2["2. Facebook Scanner Loop (3 min)\n• Playwright E2EE PIN unlock\n• Absence auto-reply & Unsend engine"]
+        Loop3["3. TikTok Scanner Loop (3 min)\n• Automated DM scanner\n• Daily streak keeper routine"]
+        Loop4["4. Appointment Reminder Loop (60s)\n• Scans facebook_appointments\n• Proactive 1h Telegram dispatch"]
+        Loop5["5. RTK Stats Persistence Loop (30s)\n• Flushes pending token compression deltas\n• Updates rtk_stats in PostgreSQL"]
+    end
+
+    SpawnSchedulers --> Loop1
+    SpawnSchedulers --> Loop2
+    SpawnSchedulers --> Loop3
+    SpawnSchedulers --> Loop4
+    SpawnSchedulers --> Loop5
+
+    subgraph TargetHostTimers["🐧 Remote Target Host Systemd Timers"]
+        T1["apt-daily.timer (06:00 ICT)\nPackage index update (apt update)"]
+        T2["apt-daily-upgrade.timer (06:00 ICT)\nSecurity package upgrade (apt upgrade)"]
+    end
 ```
 
 ---
 
-## 2. Scheduler Details
+## 2. Mutex Lock Guard: Live noVNC Session vs. Background Scanner
 
-### 1. Facebook Messenger Scan Loop (`facebook_periodic_scan_loop`)
-- **Interval:** Configurable from database (default: 3 minutes).
-- **VNC Concurrency Guard:** Pauses automatic scan cycles when an active live noVNC session is detected to prevent browser lock contention.
-- **Operations:** Scans unread chats, handles 6-digit E2EE PIN unlock, sends absence auto-replies, and executes automated message unsend when human owner replies.
+To prevent Playwright profile corruption and browser lock contention when the user opens the visual noVNC console, a dedicated **Concurrency Guard** is enforced:
 
-### 2. TikTok Streak Keeper Loop (`tiktok_periodic_scan_loop`)
-- **Interval:** Configurable from database (default: 3 minutes).
-- **Streak Maintenance:** Checks daily streak deadlines and sends automated interaction messages.
-
-### 3. Proactive Appointment Reminder Loop (`appointment_reminder_loop`)
-- **Interval:** Runs every 60 seconds.
-- **Proactive Notification:** Queries upcoming appointments from `facebook_appointments` and dispatches a high-priority Telegram alert exactly 1 hour before scheduled time.
-
-### 4. RTK Stats Persistence Loop (`rtk_stats_persist_loop`)
-- **Interval:** Runs every 30 seconds.
-- **Delta Persistence:** Saves token compression counters to table `rtk_stats` only when deltas exist.
+```mermaid
+flowchart TD
+    StartScan["Scheduled Scan Cycle Triggered (Facebook / TikTok)"] --> CheckVNC{"vnc_manager.is_running()?"}
+    
+    CheckVNC -- "Yes (User is active in noVNC)" --> LogSkip["Log: 'Live VNC session active; skipping scheduled scan cycle'\nDelay 20s & check again"]
+    LogSkip --> EndCycle(["Wait for next interval"])
+    
+    CheckVNC -- "No (Browser available)" --> AcquireBrowser["Acquire Playwright Browser Context"]
+    AcquireBrowser --> RunAutomation["Execute Inbox Scan / PIN Unlock / Streak Checks"]
+    RunAutomation --> ReleaseBrowser["Release Browser Session & Update Database"]
+    ReleaseBrowser --> EndCycle
+```
 
 ---
 
-## 3. Remote Server Maintenance Timers
+## 3. Scheduler Specifications & Timing
 
-The system monitors and respects standard Linux Systemd Timers on the target machine:
-- `apt-daily.timer`: Scheduled daily at 06:00 (ICT) for package index updates (`apt update`).
-- `apt-daily-upgrade.timer`: Scheduled daily at 06:00 (ICT) for package security upgrades (`apt upgrade`).
+| Scheduler Name | Execution Cadence | Primary Responsibilities | Target Database Tables |
+| --- | --- | --- | --- |
+| `telegram_task` | Continuous (Long Polling) | Inbound AI commands, sysadmin execution, alert delivery | `telegram_configs` |
+| `fb_scan_task` | Every 3–15 min (Configurable) | E2EE PIN unlock, absence replies, auto-unsend on human reply | `facebook_config`, `facebook_known_threads` |
+| `tiktok_scan_task` | Every 3–15 min (Configurable) | DM auto-reply, daily streak deadline keeper | `tiktok_config`, `tiktok_streaks` |
+| `reminder_task` | Every 60 seconds | 1-hour proactive appointment alerts via Telegram | `facebook_appointments` |
+| `rtk_persist_task` | Every 30 seconds | Persisting token compression savings to database | `rtk_stats` |

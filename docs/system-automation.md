@@ -1,4 +1,4 @@
-# System Automation & Background Schedulers
+﻿# System Automation & Background Schedulers
 
 A comprehensive guide to scheduled tasks, background scanning loops, proactive reminders, and autonomous maintenance routines in the Mini Server Dashboard.
 
@@ -39,10 +39,10 @@ To prevent Playwright profile corruption and browser lock contention when the us
 ```mermaid
 flowchart TD
     StartScan["Scheduled Scan Cycle Triggered (Facebook / TikTok)"] --> CheckVNC{"vnc_manager.is_running()?"}
-    
+
     CheckVNC -- "Yes (User is active in noVNC)" --> LogSkip["Log: 'Live VNC session active; skipping scheduled scan cycle'\nDelay 20s & check again"]
     LogSkip --> EndCycle(["Wait for next interval"])
-    
+
     CheckVNC -- "No (Browser available)" --> AcquireBrowser["Acquire Playwright Browser Context"]
     AcquireBrowser --> RunAutomation["Execute Inbox Scan / PIN Unlock / Streak Checks"]
     RunAutomation --> ReleaseBrowser["Release Browser Session & Update Database"]

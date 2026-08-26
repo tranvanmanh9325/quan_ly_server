@@ -1,4 +1,4 @@
-# Production Deployment & Hardening Guide
+﻿# Production Deployment & Hardening Guide
 
 A complete reference for deploying, configuring, and hardening the Mini Server Dashboard ecosystem.
 
@@ -66,14 +66,14 @@ flowchart TD
 ```mermaid
 flowchart LR
     DevPush["Developer Workstation\n`git push origin main`"] --> GHAction["GitHub Repository\nTrigger Actions Workflow"]
-    
+
     subgraph SelfHostedRunner["Production Host (kirito-server)"]
         Runner["Self-Hosted Runner Daemon"] --> GitSync["git pull origin main"]
         GitSync --> HotDeploy{"Service Changed?"}
-        
+
         HotDeploy -->|Python AI Agent| PythonHotCopy["docker cp app/. dashboard_ai_agent:/app/app/\ndocker restart dashboard_ai_agent\n(Zero Build Downtime: <3s)"]
         HotDeploy -->|Java / Frontend| DockerRebuild["docker compose up -d --build\n(Multi-stage build & cache)"]
-        
+
         PythonHotCopy --> HealthVerify["Actuator /health Check (200 OK)"]
         DockerRebuild --> HealthVerify
     end

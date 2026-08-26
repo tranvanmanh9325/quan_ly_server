@@ -1,4 +1,4 @@
-# Backend Internals
+﻿# Backend Internals
 
 An in-depth architectural look at the backend microservices architecture: **Spring Boot 4.1.0** (Java 21) services and the **FastAPI** (Python 3.11) AI Agent & 9Router service.
 
@@ -10,7 +10,7 @@ An in-depth architectural look at the backend microservices architecture: **Spri
 flowchart TD
     subgraph SpringBootLayer["☕ Java 21 / Spring Boot 4.1.0 Ecosystem"]
         direction TB
-        
+
         subgraph MetricsServiceMod["metrics-service (:8082)"]
             M_Ctrl["MetricsController\nREST Endpoints"]
             M_Ssh["SshService\nJSch Session Pool & Exec Channels"]
@@ -35,7 +35,7 @@ flowchart TD
 
     subgraph FastAPILayer["🐍 Python 3.11 / FastAPI AI Agent Ecosystem (:8084)"]
         direction TB
-        
+
         subgraph AgentRouters["FastAPI Routers"]
             R_Health["health.py"]
             R_FB["facebook.py"]
@@ -79,7 +79,7 @@ flowchart TD
         Task3["Thread 3: Alert Threshold Dispatcher"]
         Task4["Thread 4: Sudo Service Action Queue"]
         Task5["Thread 5: Health Check & Actuator"]
-        
+
         SchedulerPool --> Task1
         SchedulerPool --> Task2
         SchedulerPool --> Task3
@@ -94,7 +94,7 @@ flowchart TD
         Loop3["Task 3: TikTok Streak Keeper (3 min)"]
         Loop4["Task 4: Appointment 1h Reminder (60s)"]
         Loop5["Task 5: RTK Stats Persistence (30s)"]
-        
+
         EventLoop --> Loop1
         EventLoop --> Loop2
         EventLoop --> Loop3
@@ -108,14 +108,17 @@ flowchart TD
 ## 3. Spring Boot Microservices Internals
 
 ### JSch SSH Session Pool (`SshService`)
+
 - Manages a persistent SSH session over the application lifetime.
 - Commands execute via lightweight `ChannelExec` instances (<10 ms setup).
 - Automatic reconnection with exponential backoff (`250ms`, `500ms`, `1000ms`).
 
 ### Actuator & Health Monitoring
+
 - All Spring Boot services implement Spring Boot Actuator on `/actuator/health` used by Docker Compose health checks.
 
 ### Memory & Garbage Collection Tuning
+
 - Configured with optimized JVM flags:
   `-XX:+UseG1GC -XX:MaxRAMPercentage=60.0 -XX:+ExitOnOutOfMemoryError`
 
@@ -124,6 +127,7 @@ flowchart TD
 ## 4. AI Agent & 9Router Service Internals
 
 ### Autonomous ReAct Agent ("Tiểu Bảo Bảo")
+
 - **Pyramid Principle / BLUF Thinking Engine:** Answers lead with a direct conclusion on line 1.
 - **Telegram Native Formatter (`TelegramFormatter`):** Converts Markdown tables into mobile-friendly cards, auto-escapes HTML, balances tags, and normalizes Vietnamese typography.
 - **Active Turn Context Compactor (`_build_compact_messages_for_llm`):** Dynamically compacts older tool outputs to ensure total payload stays under 3,500 chars, eliminating Groq `HTTP 413 Payload Too Large` errors.
@@ -131,6 +135,7 @@ flowchart TD
 - **Ground Truth Physical Location:** Configured at **Định Công, Hoàng Mai, Hà Nội, Việt Nam**, distinguishing physical hardware location from ISP BGP dynamic GeoIP routing.
 
 ### 9Router Engine & RTK
+
 - **Multi-Key Pool Rotation:** Round-robin balancing across Groq and OpenRouter keys with automatic 60s cooldown on 429 rate limits.
 - **Real-Time Token Compressor (RTK):** Achieves 40–85% reduction in prompt token volume with background persistence to PostgreSQL (`rtk_stats`).
 - **OpenAI-Compatible Gateway:** Fully compliant `/v1/chat/completions` endpoint for external client tooling.

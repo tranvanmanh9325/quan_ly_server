@@ -21,17 +21,7 @@
 - [System Topology & High-Level Architecture](#-system-topology--high-level-architecture)
 - [Screenshots / Demo](#-screenshots--demo)
 - [Key Features & Visual Workflows](#-key-features--visual-workflows)
-  - [1. Autonomous AI Assistant ("Tiểu Bảo Bảo")](#1-autonomous-ai-assistant-tiểu-bảo-bảo)
-  - [2. System Overview Dashboard (`/`)](#2-system-overview-dashboard-)
-  - [3. 3D Interactive Globe Map (`/map`)](#3-3d-interactive-globe-map-map)
-  - [4. Process Explorer (`/processes`)](#4-process-explorer-processes)
-  - [5. Services & Docker Runtime Center (`/services`)](#5-services--docker-runtime-center-services)
-  - [6. Container Management (`/containers`)](#6-container-management-containers)
-  - [7. Remote File Manager (`/files`)](#7-remote-file-manager-files)
-  - [8. Interactive Web SSH Terminal (`/terminal`)](#8-interactive-web-ssh-terminal-terminal)
-  - [9. Security & Network Inspector (`/security`)](#9-security--network-inspector-security)
-  - [10. Control Center & Preferences (`/settings`)](#10-control-center--preferences-settings)
-- [AI Agent & 9Router Cognitive Lifecycle](#-ai-agent--9router-cognitive-lifecycle)
+- [End-to-End Operational Lifecycle](#-end-to-end-operational-lifecycle)
 - [Microservices & Tech Stack](#-microservices--tech-stack)
 - [Project Directory Structure](#-project-directory-structure)
 - [Getting Started & Installation](#-getting-started--installation)
@@ -70,7 +60,7 @@ flowchart TD
 
     subgraph DockerBridge["🐳 Docker Network Bridge (dashboard-network)"]
         Nginx["Nginx Reverse Proxy (:80 -> :5173)"]
-        
+
         subgraph BackendServices["⚙️ Backend Microservices Ecosystem"]
             AuthSvc["Auth Service\n(Spring Boot 4.1.0 / Java 21)\nPort: 8081\n[JWT / BCrypt / Sessions]"]
             MetricsSvc["Metrics Service\n(Spring Boot 4.1.0 / Java 21)\nPort: 8082\n[JSch SSH Telemetry Pool]"]
@@ -115,23 +105,33 @@ flowchart TD
 ## 📸 Screenshots / Demo
 
 ### 1. System Overview Dashboard (`/`)
+
 Real-time KPI metric cards, CPU & RAM donut gauges, multi-core temperature sensors, disk partition usage, and fan HUD.
+
 ![Dashboard Overview](./docs/assets/dashboard-overview.png)
 
 ### 2. Process Explorer (`/processes`)
+
 Live Linux process monitor with column sorting, CPU/Memory threshold filters, process termination modal, and 1-click CSV export.
+
 ![Process Explorer](./docs/assets/dashboard-processes.png)
 
 ### 3. Services & Docker Runtime Center (`/services`)
+
 Start/stop/restart systemd units, inspect Docker containers, view live streaming container logs, and monitor scheduled system timers.
+
 ![Services & Docker](./docs/assets/dashboard-services.png)
 
 ### 4. Interactive Web SSH Terminal Console (`/terminal`)
+
 Embedded web terminal with command history, security sandbox, and 1-click Quick Command Macro Chips.
+
 ![Terminal Console](./docs/assets/dashboard-terminal.png)
 
 ### 5. Control Center & Settings (`/settings`)
+
 Configure critical alert threshold sliders, global refresh speeds, Telegram/Facebook AI agent preferences, and Sci-Fi visual effects.
+
 ![Settings](./docs/assets/dashboard-settings.png)
 
 ---
@@ -266,6 +266,7 @@ nano .env
 ```
 
 Key environment settings:
+
 ```dotenv
 SSH_HOST=192.168.0.100
 SSH_PORT=22
@@ -295,6 +296,7 @@ docker compose ps
 ```
 
 Once running, access the dashboard at:
+
 - **Web Dashboard:** `http://<server-ip>:5173`
 - **noVNC Visual Console:** `http://<server-ip>:6080/vnc.html`
 

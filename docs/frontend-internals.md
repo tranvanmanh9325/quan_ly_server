@@ -1,4 +1,4 @@
-# Frontend Internals & UI Architecture
+﻿# Frontend Internals & UI Architecture
 
 A technical reference for the React 19 frontend: state management, polling architecture, Sci-Fi HUD interaction layer, Web Audio API sound synthesis, and the parser utility layer.
 
@@ -33,7 +33,7 @@ flowchart TD
         P_Disk["parseDisks() -> Partition Array"]
         P_Net["parseNetwork() -> RX/TX Speeds"]
         P_Proc["parseProcesses() -> Filtered Table"]
-        
+
         RawSSH --> P_CPU
         RawSSH --> P_RAM
         RawSSH --> P_Disk
@@ -66,11 +66,11 @@ flowchart TD
 ```mermaid
 flowchart LR
     UserClick["User Click / Button Hover / Alert Trigger"] --> EventRouter{"Event Type"}
-    
+
     EventRouter -->|Tactile Click / Laser| WebAudio["Web Audio API Synthesizer\naudioFx.js (Zero Audio Assets)"]
     EventRouter -->|Visual Burst| CanvasShockwave["HTML5 Canvas Layer\nSpaceInteractionLayer.jsx"]
     EventRouter -->|Cursor Track| SVGCrosshair["Dual-Ring Rotating Crosshair\nSVG HUD Cursor"]
-    
+
     subgraph AudioPipeline["Audio Synthesizer Graph"]
         AudioCtx["AudioContext"] --> OscNode["OscillatorNode (Frequency Ramp)"]
         OscNode --> GainNode["GainNode (Exponential Decay)"]

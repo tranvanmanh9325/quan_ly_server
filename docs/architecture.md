@@ -1,4 +1,4 @@
-# Architecture & System Design
+﻿# Architecture & System Design
 
 A detailed walkthrough of how the Mini Server Dashboard is structured, how data flows through the system, and the rationale behind key design decisions.
 
@@ -21,21 +21,21 @@ flowchart TD
 
     subgraph ServiceMesh["Docker Bridge Network (dashboard-network)"]
         direction TB
-        
+
         AuthService["Auth Service\n(Spring Boot 4.1.0 / Java 21)\nPort: 8081\n• JWT Token Issuance\n• BCrypt Credentials\n• Session Interceptor"]
-        
+
         MetricsService["Metrics Service\n(Spring Boot 4.1.0 / Java 21)\nPort: 8082\n• JSch SSH Session Pool\n• Linux Telemetry\n• Sudo Actions Engine"]
-        
+
         FileService["File Service\n(Spring Boot 4.1.0 / Java 21)\nPort: 8083\n• JSch SFTP Client\n• Directory Navigation\n• File Read / Write Ops"]
-        
+
         AgentService["AI Agent Service\n(FastAPI / Python 3.11)\nPort: 8084 & noVNC: 6080\n• 9Router Key Pool & RTK\n• BLUF Reasoning Engine\n• Playwright Chromium\n• AgentMemoryService"]
-        
+
         PostgresDB[("PostgreSQL 17 Alpine\nPort: 5432\n• users & refresh tokens\n• telegram_configs\n• facebook_known_threads\n• tiktok_streaks\n• ai_chat_memories\n• rtk_stats")]
     end
 
     subgraph TargetHostZone["Target Infrastructure"]
         TargetServer["Remote Linux Server (kirito-server)\nPort 22 SSH (Agentless Target)\nPhysical Location: Định Công, Hoàng Mai, Hà Nội\n• top, free, df, sensors, ps, systemctl, docker"]
-        
+
         GroqCloud["Tier 1: Groq AI Cloud\n(openai/gpt-oss-120b)"]
         OpenRouterCloud["Tier 2: OpenRouter Cloud\n(nvidia/nemotron-3-super-120b)"]
     end
@@ -81,7 +81,7 @@ sequenceDiagram
     UI->>Nginx: Promise.all([ GET /api/metrics/cpu, GET /api/metrics/ram, ... ])
     Nginx->>Metrics: Proxy pass with Bearer JWT
     Metrics->>Metrics: Validate JWT signature & claims
-    
+
     Metrics->>JSch: getOrCreateSession()
     alt Session Connected & Valid
         JSch->>Host: Open ChannelExec("top -b -n 1 | grep 'Cpu(s)'")
@@ -107,7 +107,7 @@ stateDiagram-v2
     [*] --> Uninitialized
 
     Uninitialized --> Connecting: First API Request / Startup
-    
+
     state Connecting {
         [*] --> TCPHandshake
         TCPHandshake --> KeyExchange
@@ -117,7 +117,7 @@ stateDiagram-v2
 
     Connecting --> Connected: Success (<800ms)
     Connecting --> RetryBackoff: Failure / Network Glitch
-    
+
     RetryBackoff --> Connecting: Delay (250ms -> 500ms -> 1000ms)
     RetryBackoff --> ErrorState: Exceeded 3 Retries
 

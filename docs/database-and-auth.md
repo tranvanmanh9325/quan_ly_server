@@ -1,4 +1,4 @@
-# Database & Authentication
+﻿# Database & Authentication
 
 Complete guide to the PostgreSQL 17 relational schema, JWT authentication lifecycle, BCrypt credential security, and state persistence.
 
@@ -10,7 +10,7 @@ Complete guide to the PostgreSQL 17 relational schema, JWT authentication lifecy
 erDiagram
     users ||--o{ user_refresh_tokens : "has many"
     users ||--o{ ai_agent_preferences : "configures"
-    
+
     users {
         bigint id PK
         varchar username UK

@@ -9,16 +9,12 @@ Complete reference for all REST and Gateway endpoints exposed by the backend mic
 ```mermaid
 flowchart LR
     Client["Client / Browser / Telegram / External Integrations"] --> Nginx["Nginx Reverse Proxy (:80 / :5173)"]
-    
+
     subgraph RoutingRules["Path Routing Specifications"]
         Nginx -->|/api/metrics/*| MetricsSvc["Metrics Service (:8082)\n• /cpu, /ram, /disk, /network\n• /loadavg, /temperature, /sysinfo\n• /services, /containers, /ports\n• /processes, /execute, /sudo/*"]
-        
         Nginx -->|/api/auth/*| AuthSvc["Auth Service (:8081)\n• /login, /verify\n• /refresh, /logout"]
-        
         Nginx -->|/api/files/*| FileSvc["File Service (:8083)\n• /list, /read\n• /create, /delete, /rename"]
-        
         Nginx -->|/api/facebook/*\n/api/tiktok/*\n/v1/*\n/health| AgentSvc["AI Agent & 9Router (:8084)\n• /v1/chat/completions\n• /v1/models\n• /api/facebook/*, /api/tiktok/*\n• /health"]
-        
         Nginx -->|/fb-vnc/* WebSocket| VNCBridge["noVNC Live GUI (:6080)\n• /vnc.html"]
     end
 ```

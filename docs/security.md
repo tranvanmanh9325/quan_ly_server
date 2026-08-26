@@ -1,4 +1,4 @@
-# Security Hardening & Threat Model
+﻿# Security Hardening & Threat Model
 
 A comprehensive overview of security policies, threat modeling, sandboxing, and credential protection across the Mini Server Dashboard ecosystem.
 
@@ -37,10 +37,10 @@ flowchart TD
 ```mermaid
 flowchart LR
     UserInput["Raw Command Input\n(Terminal / AI Agent Tool Call)"] --> Filter1["1. Blacklist Pattern Matcher\nCheck against destructive regex tokens"]
-    
+
     Filter1 --> Match{"Contains Blacklisted Commands?"}
     Match -- "Yes (e.g. rm -rf, :(){ :|:& };:)" --> Block["Block Execution\nReturn 'COMMAND_REJECTED_BY_SECURITY_POLICY'"]
-    
+
     Match -- "No" --> Filter2["2. Timeout Wrapper\nInject 'timeout 15s <cmd>'"]
     Filter2 --> Filter3["3. Execution & Stderr Capture\nStream stdout & log security audits"]
     Filter3 --> Success["Deliver Safe Command Output"]

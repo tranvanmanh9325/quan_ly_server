@@ -40,9 +40,12 @@ class TelegramFormatter:
         # Clean Unicode non-breaking hyphens and dashes to standard ASCII hyphen
         text = text.replace("\u2011", "-").replace("\u2013", "-").replace("\u2014", "-")
         
-        # Clean spelling slips and unwanted trailing spaces
+        # Clean spelling slips, leaked foreign tokens and unwanted trailing spaces
         text = re.sub(r"(\d{1,2}:\d{2})\s*h\b", r"\1", text)  # "06:00 h" -> "06:00"
         text = re.sub(r"\bKẾ\s+THÚC\b", "KẾT LUẬN", text, flags=re.IGNORECASE)  # "KẾ THÚC" -> "KẾT LUẬN"
+        text = re.sub(r"\beindeutig\b", "rõ ràng", text, flags=re.IGNORECASE)
+        text = re.sub(r"ước\s*lượng\s*rough", "ước lượng", text, flags=re.IGNORECASE)
+        text = re.sub(r"điểm xuất[\s\u25a0\u25a1\[\]]+của", "điểm xuất của", text)
         text = re.sub(r"\(\s+", "(", text)
         text = re.sub(r"\s+\)", ")", text)
 

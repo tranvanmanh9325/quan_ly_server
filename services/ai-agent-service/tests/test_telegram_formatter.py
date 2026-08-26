@@ -124,5 +124,14 @@ class TestTelegramFormatter(unittest.TestCase):
         self.assertIn("(gồm apt update)", formatted)
 
 
+    def test_multilingual_slip_sanitization(self):
+        text = "Vị trí chưa được xác định eindeutig, chỉ là ước lượngrough theo điểm xuất khẩu của ISP."
+        formatted = TelegramFormatter.format_for_telegram(text)
+        self.assertNotIn("eindeutig", formatted)
+        self.assertIn("rõ ràng", formatted)
+        self.assertNotIn("ước lượngrough", formatted)
+        self.assertIn("ước lượng", formatted)
+
+
 if __name__ == "__main__":
     unittest.main()

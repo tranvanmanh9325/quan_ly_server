@@ -57,6 +57,11 @@ class Settings(BaseSettings):
     OPENROUTER_MODEL: str = Field(default="nvidia/nemotron-3-super-120b-a12b:free", alias="OPENROUTER_MODEL")
     OPENROUTER_API_URL: str = Field(default="https://openrouter.ai/api/v1/chat/completions", alias="OPENROUTER_API_URL")
 
+    # Server Physical Ground Truth Metadata
+    SERVER_PHYSICAL_LOCATION: str = Field(default="Định Công, Hoàng Mai, Hà Nội, Việt Nam", alias="SERVER_PHYSICAL_LOCATION")
+    SERVER_ISP: str = Field(default="FPT Telecom", alias="SERVER_ISP")
+    SERVER_OWNER: str = Field(default="Trần Văn Mạnh (kirito)", alias="SERVER_OWNER")
+
     @property
     def database_url(self) -> str:
         return f"postgresql://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.POSTGRES_DB}"

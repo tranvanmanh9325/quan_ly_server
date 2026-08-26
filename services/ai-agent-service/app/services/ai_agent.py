@@ -113,7 +113,22 @@ Bạn là "Tiểu Bảo Bảo" — Trợ lý AI Tự Hành cấp cao (Senior Aut
 4. KHI BỊ SỬA LỖI ("Sai rồi", "Nhầm rồi", "Không phải"):
    - Lập tức nhận lỗi chân thành, phân tích nguyên nhân nhầm lẫn và tìm kiếm lại đúng yêu cầu.
 
-━━━ 4. HƯỚNG DẪN CÔNG CỤ (TOOL CALLING) ━━━
+━━━ 4. CẨM NANG TRA CỨU LINUX & DEVOPS CHÍNH XÁC (DEV-OPS CHEATSHEET) ━━━
+🐧 LỊCH CHẠY & TRẠNG THÁI `apt update` / `apt upgrade`:
+- ⚠️ QUAN TRỌNG: `/var/log/apt/history.log` chỉ ghi nhận khi cài/gỡ gói (`install`/`remove`), KHÔNG ghi nhận lịch tải index của `apt update`!
+- Để kiểm tra `apt update` đã chạy sáng nay hay chưa:
+  1. Kiểm tra Systemd Timers: `systemctl list-timers apt-daily* --no-pager`
+  2. Kiểm tra log thực thi hôm nay: `journalctl -u apt-daily.service -u apt-daily-upgrade.service --since "today" -n 20 --no-pager`
+  3. Kiểm tra file timestamp cập nhật thành công: `stat -c %y /var/lib/apt/periodic/update-success-stamp` hoặc `ls -l /var/lib/apt/lists/ | head -n 5`
+  4. Chỉ cần chạy 1 trong các lệnh trên là có đủ dữ liệu kết luận, KHÔNG cần đọc thêm file log khác.
+
+🐳 TRẠNG THÁI CONTAINER & HỆ THỐNG:
+- Docker: `docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"`
+- Logs container: `docker logs --tail 25 <tên_container>`
+- CPU/RAM/Disk: `free -h`, `df -h /`, `uptime`, `top -b -n 1 | head -n 10`
+- Luôn thêm cờ `--no-pager` hoặc `head`/`tail` để lệnh kết thúc ngay lập tức.
+
+━━━ 5. HƯỚNG DẪN CÔNG CỤ (TOOL CALLING) ━━━
 🖥️ QUẢN TRỊ MÁY CHỦ:
 - `run_command`: Thực thi lệnh bash trên `kirito-server` qua SSH (CPU, RAM, Disk, Docker, Network, systemctl, journalctl).
 
@@ -130,7 +145,7 @@ Bạn là "Tiểu Bảo Bảo" — Trợ lý AI Tự Hành cấp cao (Senior Aut
 - `messenger_list_groups`: Liệt kê tất cả các nhóm Messenger đã biết.
 - `messenger_get_group_members`: Tra cứu danh sách thành viên chi tiết của một nhóm cụ thể.
 
-━━━ 5. MẪU TRẢ LỜI CHUẨN MỰC (FEW-SHOT EXEMPLARS) ━━━
+━━━ 6. MẪU TRẢ LỜI CHUẨN MỰC (FEW-SHOT EXEMPLARS) ━━━
 
 📌 MẪU 1: KIỂM TRA LỊCH CHẠY TỰ ĐỘNG / SYSTEMD / CRON
 ```text
@@ -198,7 +213,7 @@ Hệ thống hiện ghi nhận *1 nhóm*:
         """Returns the self-learned lessons block for injection into system prompt."""
         if not self._cached_lessons:
             return ""
-        return f"\n\n━━━ 6. KINH NGHIỆM TỰ HỌC (BÀI HỌC TỪ CÁC LẦN SỬA LỖI TRƯỚC) ━━━\n⚡ ĐÂY LÀ NHỮNG QUY TẮC RÚT RA TỪ LỊCH SỬ THỰC TẾ — PHẢI ƯU TIÊN TUÂN THỦ:\n{self._cached_lessons}"
+        return f"\n\n━━━ 7. KINH NGHIỆM TỰ HỌC (BÀI HỌC TỪ CÁC LẦN SỬA LỖI TRƯỚC) ━━━\n⚡ ĐÂY LÀ NHỮNG QUY TẮC RÚT RA TỪ LỊCH SỬ THỰC TẾ — PHẢI ƯU TIÊN TUÂN THỦ:\n{self._cached_lessons}"
 
     # ──────────────────────────────────────────────────────────────────────────
     # Tool Registry
@@ -1434,6 +1449,8 @@ Hệ thống hiện ghi nhận *1 nhóm*:
         history.append({"role": "user", "content": user_message})
         # Tools that should only be called once per conversation turn
         executed_once_tools: set = set()
+        # Track executed shell commands to detect and break identical execution loops
+        executed_commands: set = set()
         # Deferred photos: only the LAST screenshot from multi-step browsing is sent.
         # Each entry is (caption: str, img_path: str). Cleared/replaced on each new screenshot.
         pending_photos: list = []
@@ -1442,31 +1459,22 @@ Hệ thống hiện ghi nhận *1 nhóm*:
         _reflexion_triggered: bool = False  # Prevent spamming lesson extraction per turn
 
         for iteration in range(MAX_AGENT_ITERATIONS):
+            # Enforce synthesis mode when loop reaches 4 iterations or when 3 commands were already run
+            force_synthesis = iteration >= 4 or len(executed_commands) >= 3
 
-            messages = [{"role": "system", "content": self._build_system_prompt()}]
-            messages.extend(list(history))
+            messages = self._build_compact_messages_for_llm(
+                history=history,
+                iteration=iteration,
+                force_synthesis=force_synthesis,
+            )
 
             tools_available = self._build_tools(excluded_tools=executed_once_tools)
-
-            # Apply RTK compression to messages (tool results, long user/assistant turns)
-            # before passing to the LLM. System prompt is intentionally exempt.
-            rtk_messages = []
-            for m in messages:
-                if m.get("role") == "system":
-                    rtk_messages.append(m)
-                    continue
-                content = m.get("content")
-                if isinstance(content, str) and len(content) > 150:
-                    m_copy = dict(m)
-                    m_copy["content"] = self.llm_router.rtk.compress(content, max_chars=2500, max_lines=35)
-                    rtk_messages.append(m_copy)
-                else:
-                    rtk_messages.append(m)
+            tool_choice = "none" if (force_synthesis or not tools_available) else "auto"
 
             llm_result = await self.llm_router.complete(
-                messages=rtk_messages,
-                tools=tools_available if tools_available else None,
-                tool_choice="auto" if tools_available else "none",
+                messages=messages,
+                tools=tools_available if (tools_available and tool_choice != "none") else None,
+                tool_choice=tool_choice,
                 temperature=0.1,
                 max_tokens=1536,
             )
@@ -1479,7 +1487,11 @@ Hệ thống hiện ghi nhận *1 nhóm*:
             assistant_msg = choice.get("message", {})
             finish_reason = choice.get("finish_reason", "stop")
             raw_content = assistant_msg.get("content") or ""
-            has_tool_calls = finish_reason == "tool_calls" and bool(assistant_msg.get("tool_calls"))
+            has_tool_calls = (
+                tool_choice != "none"
+                and finish_reason == "tool_calls"
+                and bool(assistant_msg.get("tool_calls"))
+            )
 
             if has_tool_calls:
                 history.append(assistant_msg)
@@ -1499,26 +1511,39 @@ Hệ thống hiện ghi nhận *1 nhóm*:
                     except Exception:
                         fn_args = {}
 
-                    logger.info("[AiAgent][iter=%d] Executing tool: %s(%s)", iteration, fn_name, fn_args)
-                    tool_result = await self._execute_tool(
-                        fn_name, fn_args, chat_id=chat_id, pending_photos=pending_photos
-                    )
+                    # ── Loop Detection for run_command ──
+                    if fn_name == "run_command":
+                        cmd_str = fn_args.get("command", "").strip()
+                        if cmd_str and cmd_str in executed_commands:
+                            logger.warning("[AiAgent][iter=%d] 🛑 Loop detected for duplicate command: '%s'", iteration, cmd_str)
+                            tool_result = (
+                                f"[Lệnh '{cmd_str}' đã được thực thi trước đó. "
+                                "Vui lòng KHÔNG gọi lại lệnh này nữa, hãy dùng các dữ liệu đã thu thập ở trên "
+                                "để trả lời trực tiếp cho anh Mạnh.]"
+                            )
+                        else:
+                            if cmd_str:
+                                executed_commands.add(cmd_str)
+                            logger.info("[AiAgent][iter=%d] Executing tool: %s(%s)", iteration, fn_name, fn_args)
+                            tool_result = await self._execute_tool(
+                                fn_name, fn_args, chat_id=chat_id, pending_photos=pending_photos
+                            )
+                    else:
+                        logger.info("[AiAgent][iter=%d] Executing tool: %s(%s)", iteration, fn_name, fn_args)
+                        tool_result = await self._execute_tool(
+                            fn_name, fn_args, chat_id=chat_id, pending_photos=pending_photos
+                        )
 
                     # Apply RTK compression to tool results before inserting into history.
-                    # This is the primary source of token savings — large SSH/browser outputs
-                    # can easily be 5-10x longer than the model needs to understand the result.
-                    # Tools that return structured markdown (facebook_view_profile, etc.) are
-                    # intentionally excluded to avoid mangling user-facing text.
                     _NON_COMPRESS_TOOLS = {
                         "facebook_view_profile", "facebook_send_reply",
                         "facebook_capture_screenshot", "server_capture_screenshot",
                         "browser_take_screenshot",
                     }
                     if fn_name not in _NON_COMPRESS_TOOLS and isinstance(tool_result, str) and len(tool_result) > 100:
-                        tool_result = self.llm_router.rtk.compress(tool_result, max_chars=2000, max_lines=30)
+                        tool_result = self.llm_router.rtk.compress(tool_result, max_chars=1500, max_lines=25)
 
                     # ── C3.4 Reflexion: detect tool failure and annotate for self-correction ──
-                    # Failure signals: explicit error prefixes or common failure phrases.
                     _FAILURE_SIGNALS = (
                         "lỗi:", "lỗi khi", "error:", "error khi", "unknown tool",
                         "không tìm thấy", "không tồn tại", "thất bại", "failed",
@@ -1531,14 +1556,12 @@ Hệ thống hiện ghi nhận *1 nhóm*:
 
                     if _is_tool_failure and fn_name not in self._DIRECT_RETURN_TOOLS:
                         _consecutive_tool_failures += 1
-                        # Annotate tool result with a Reflexion prompt so the LLM
-                        # sees the failure context and self-corrects in the next iteration.
                         reflexion_note = (
                             "\n\n⚠️ [TỰ PHẢN BIỆN - REFLEXION]: Thao tác này THẤT BẠI. "
                             "Em phải:\n"
-                            "1. Phân tích tại sao thất bại (sai tên? sai URL? sai tham số? chưa đăng nhập?)\n"
+                            "1. Phân tích tại sao thất bại (sai tên? sai URL? sai tham số?)\n"
                             "2. Thử chiến lược KHÁC — không được lặp lại chính xác thao tác vừa thất bại.\n"
-                            "3. Nếu vẫn không tìm được, hãy thành thật nói với anh Mạnh và hỏi thêm thông tin."
+                            "3. Nếu cần, hãy tổng hợp những gì đã biết để trả lời anh Mạnh."
                         )
                         tool_result = tool_result + reflexion_note
                         logger.info(
@@ -1546,12 +1569,9 @@ Hệ thống hiện ghi nhận *1 nhóm*:
                             iteration, fn_name, _consecutive_tool_failures,
                         )
 
-                        # After ≥2 failures: trigger Search-Grounded healing (fire-and-forget)
-                        # This searches DuckDuckGo for the best solution and saves a grounded lesson.
                         if _consecutive_tool_failures >= 2 and not _reflexion_triggered and self.memory_service:
                             _reflexion_triggered = True
-                            # Build a rich error context for the search query generator
-                            raw_tool_error = tool_result.split("⚠️")[0].strip()  # Remove reflexion note
+                            raw_tool_error = tool_result.split("⚠️")[0].strip()
                             failure_context = (
                                 f"Tool '{fn_name}' thất bại {_consecutive_tool_failures} lần liên tiếp. "
                                 f"Tham số: {json.dumps(fn_args, ensure_ascii=False)[:200]}. "
@@ -1564,12 +1584,7 @@ Hệ thống hiện ghi nhận *1 nhóm*:
                                     user_message=user_message,
                                 )
                             )
-                            logger.info(
-                                "[AiAgent] 🔍 Search-Grounded healing triggered for repeated '%s' failure.",
-                                fn_name,
-                            )
                     else:
-                        # Successful tool call resets the failure streak
                         _consecutive_tool_failures = 0
 
                     history.append({
@@ -1591,9 +1606,8 @@ Hệ thống hiện ghi nhận *1 nhóm*:
 
                 continue  # Feed observation back into the next LLM call
 
-
             # ── Pseudo-XML tool call fallback (for models that don't support native function calling) ──
-            pseudo_calls = self._extract_pseudo_tool_calls(raw_content)
+            pseudo_calls = self._extract_pseudo_tool_calls(raw_content) if tool_choice != "none" else []
             if pseudo_calls:
                 assistant_msg["tool_calls"] = [
                     {
@@ -1620,7 +1634,7 @@ Hệ thống hiện ghi nhận *1 nhóm*:
                         "browser_take_screenshot",
                     }
                     if fn_name not in _NON_COMPRESS_TOOLS and isinstance(tool_result, str) and len(tool_result) > 100:
-                        tool_result = self.llm_router.rtk.compress(tool_result, max_chars=2000, max_lines=30)
+                        tool_result = self.llm_router.rtk.compress(tool_result, max_chars=1500, max_lines=25)
 
                     history.append({
                         "role": "tool",
@@ -1630,15 +1644,102 @@ Hệ thống hiện ghi nhận *1 nhóm*:
                 continue
 
             # ── Final answer — flush the last deferred screenshot (if any) ──
-            final = raw_content.strip() or "Xin lỗi, tôi không thể xử lý yêu cầu này lúc này."
-            await self._flush_pending_photos(pending_photos, chat_id)
-            history.append(assistant_msg)
-            self._trim_history(history)
-            return final
+            final = raw_content.strip()
+            if final:
+                await self._flush_pending_photos(pending_photos, chat_id)
+                history.append(assistant_msg)
+                self._trim_history(history)
+                return final
+
+        # ── Graceful Synthesis Fallback (If max iterations reached) ──
+        logger.warning("[AiAgent] Max iterations (%d) reached. Performing graceful final synthesis...", MAX_AGENT_ITERATIONS)
+        fallback_messages = self._build_compact_messages_for_llm(
+            history=history,
+            iteration=MAX_AGENT_ITERATIONS,
+            force_synthesis=True,
+        )
+        fallback_result = await self.llm_router.complete(
+            messages=fallback_messages,
+            tools=None,
+            tool_choice="none",
+            temperature=0.2,
+            max_tokens=1536,
+        )
+        if fallback_result and fallback_result.get("choices"):
+            final_content = fallback_result["choices"][0].get("message", {}).get("content", "").strip()
+            if final_content:
+                await self._flush_pending_photos(pending_photos, chat_id)
+                history.append({"role": "assistant", "content": final_content})
+                self._trim_history(history)
+                return final_content
 
         await self._flush_pending_photos(pending_photos, chat_id)
         self._trim_history(history)
-        return "AI đã thực hiện nhiều bước nhưng chưa hoàn thành yêu cầu. Vui lòng thử lại hoặc chia nhỏ yêu cầu."
+        return "Dạ em đã kiểm tra hệ thống nhưng chưa đủ dữ liệu để kết luận dứt khoát. Anh Mạnh có thể nói rõ hơn để em kiểm tra thêm nhé!"
+
+    def _build_compact_messages_for_llm(
+        self,
+        history: List[Dict[str, Any]],
+        iteration: int,
+        force_synthesis: bool = False
+    ) -> List[Dict[str, Any]]:
+        """
+        Builds a compacted message payload for LLM completion.
+        - Keeps system prompt.
+        - Compacts older tool outputs in history so total character payload never triggers HTTP 413.
+        - If iteration >= 3 or force_synthesis, appends a concise synthesis directive.
+        """
+        system_content = self._build_system_prompt()
+        messages = [{"role": "system", "content": system_content}]
+
+        # Count total tool messages in history to identify recent vs older tool results
+        tool_indices = [i for i, m in enumerate(history) if m.get("role") == "tool"]
+        num_tools = len(tool_indices)
+
+        for i, m in enumerate(history):
+            role = m.get("role")
+            if role == "system":
+                continue
+
+            content = m.get("content")
+            if role == "tool" and isinstance(content, str):
+                tool_pos = tool_indices.index(i)
+                # If this is older than the last 2 tool outputs: heavily compress down to 3 lines
+                if tool_pos < num_tools - 2:
+                    lines = [ln.strip() for ln in content.split("\n") if ln.strip()]
+                    summary = lines[:2] + (["... (các dòng trước đã được tóm tắt) ..."] if len(lines) > 3 else []) + lines[-1:]
+                    compact_content = "\n".join(summary)
+                    m_copy = dict(m)
+                    m_copy["content"] = compact_content[:300]
+                    messages.append(m_copy)
+                else:
+                    # Recent tool output: keep up to 1200 chars
+                    m_copy = dict(m)
+                    m_copy["content"] = self.llm_router.rtk.compress(content, max_chars=1200, max_lines=20)
+                    messages.append(m_copy)
+            elif role in ("user", "assistant") and isinstance(content, str):
+                if len(content) > 1000:
+                    m_copy = dict(m)
+                    m_copy["content"] = content[:1000] + "..."
+                    messages.append(m_copy)
+                else:
+                    messages.append(m)
+            else:
+                messages.append(m)
+
+        # Inject stagnation / synthesis directive if loop is progressing
+        if force_synthesis or iteration >= 3:
+            messages.append({
+                "role": "system",
+                "content": (
+                    "⚡ [HỆ THỐNG YÊU CẦU]: Đã thu thập đủ thông tin từ các công cụ trên. "
+                    "Hãy DỪNG gọi thêm tool và TỔNG HỢP câu trả lời cuối cùng trực diện cho anh Mạnh "
+                    "theo nguyên tắc BLUF (Dòng 1: Kết luận dứt khoát -> Dòng 2: Chi tiết thẻ -> Dòng 3: Giải thích/khuyến nghị). "
+                    "Tuyệt đối KHÔNG trả về câu báo lỗi máy móc."
+                )
+            })
+
+        return messages
 
     # ──────────────────────────────────────────────────────────────────────────
     # Utility

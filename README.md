@@ -55,7 +55,7 @@
 ### Core Philosophy
 
 1. **Zero Target Footprint (Agentless):** No daemon, agent, or extra process needs to be installed on target Linux servers. The backend connects via SSH (`JSch` / `AsyncSSH`) and collects real-time telemetry through standard Linux utilities (`top`, `free`, `df`, `sensors`, `ps`, `systemctl`, `docker`, `ss`, `journalctl`).
-2. **Autonomous Hybrid AI Agent:** Features **"Tiểu Bảo Bảo"**, an intelligent assistant powered by a Multi-Provider LLM Pool (Groq + OpenRouter) that operates 24/7. It diagnoses server alerts, executes sysadmin tasks over SSH via tool calling, and bridges notifications/conversations through Telegram and Facebook Messenger End-to-End Encrypted (E2EE) chats.
+2. **Autonomous Hybrid AI Agent ("Tiểu Bảo Bảo"):** Powered by a Multi-Provider LLM Pool (Groq + OpenRouter) that operates 24/7. It diagnoses server alerts, executes sysadmin tasks over SSH via tool calling, and bridges notifications/conversations through Telegram and Facebook Messenger End-to-End Encrypted (E2EE) chats.
 3. **Immersive Cyberpunk Sci-Fi HUD:** Replaces mundane flat dashboards with a dynamic, neon-lit HUD interface featuring SVG crosshair cursors, audio-synthesized tactile feedback, canvas shockwaves, and a 3D orthographic globe.
 
 ---
@@ -63,27 +63,22 @@
 ## 📸 Screenshots / Demo
 
 ### 1. System Overview Dashboard (`/`)
-
 Real-time KPI metric cards, CPU & RAM donut gauges, multi-core temperature sensors, disk partition usage, and fan HUD.
 ![Dashboard Overview](./docs/assets/dashboard-overview.png)
 
 ### 2. Process Explorer (`/processes`)
-
 Live Linux process monitor with column sorting, CPU/Memory threshold filters, process termination modal, and 1-click CSV export.
 ![Process Explorer](./docs/assets/dashboard-processes.png)
 
 ### 3. Services & Docker Runtime Center (`/services`)
-
 Start/stop/restart systemd units, inspect Docker containers, view live streaming container logs, and monitor scheduled system timers.
 ![Services & Docker](./docs/assets/dashboard-services.png)
 
 ### 4. Interactive Web SSH Terminal Console (`/terminal`)
-
 Embedded web terminal with command history, security sandbox, and 1-click Quick Command Macro Chips.
 ![Terminal Console](./docs/assets/dashboard-terminal.png)
 
 ### 5. Control Center & Settings (`/settings`)
-
 Configure critical alert threshold sliders, global refresh speeds, Telegram/Facebook AI agent preferences, and Sci-Fi visual effects.
 ![Settings](./docs/assets/dashboard-settings.png)
 
@@ -93,81 +88,77 @@ Configure critical alert threshold sliders, global refresh speeds, Telegram/Face
 
 ### 1. Autonomous AI Assistant ("Tiểu Bảo Bảo")
 
-- **Multi-Provider LLM Key Pool:**
-  - **Groq AI Pool (`openai/gpt-oss-120b` / `llama-3.1-8b-instant`):** 9router-style round-robin rotation with 60-second smart cooldown on 429 rate limits.
-  - **OpenRouter AI Pool (`nvidia/nemotron-3-super-120b-a12b:free` / custom models):** Automatic Tier-2 failover when primary pool experiences outages or quota exhaustion.
-- **Telegram Bot Automation:**
-  - Natural language server diagnostics, health reports, and system administration.
-  - Autonomous SSH tool calling (`run_command`, `sudo_command`, `docker_manage`, `get_system_metrics`).
-  - Rolling context window with prompt compression to prevent token explosion.
+- **Pyramid Principle / BLUF Thinking Architecture:**
+  - **Bottom Line Up Front (BLUF):** The very first line always delivers a direct, decisive conclusion (Executive Summary).
+  - **Structured Verified Breakdown:** Organizes evidence into high-contrast Visual Cards (`📌`, `🕒`, `✅`, `🔍`).
+  - **Actionable Insights:** Provides clear, concise root-cause explanations and practical next steps.
+- **Telegram Native Formatter Engine (`TelegramFormatter`):**
+  - **Markdown Table-to-Card Transformer:** Converts raw Markdown pipe tables (`|---|---|`) into elegant, responsive cards for mobile and desktop screens.
+  - **HTML Sanitization & Tag Balancing:** Converts Markdown to safe Telegram HTML (`<b>`, `<i>`, `<code>`, `<pre><code>`, `<blockquote>`, `<s>`) while automatically balancing tags.
+  - **Vietnamese Typography & Spelling Auto-Normalizer:** Automatically fixes common LLM slips, normalizes timestamps (`06:00`), converts Unicode non-breaking hyphens, and filters stray multilingual tokens.
+- **Anti-Loop Circuit Breaker & Context Compactor:**
+  - **Active Turn Context Compactor:** Dynamically compacts older tool outputs in multi-step chains, capping payload under 3,500 characters (~900 tokens) and **eliminating Groq `HTTP 413 Payload Too Large` errors**.
+  - **Loop Detection & Synthesis Circuit Breaker:** Detects duplicate command calls and forces `tool_choice="none"` at iteration $\ge 4$ to guarantee a prompt, structured answer.
+  - **Graceful Final Synthesis Fallback:** Triggers a synthesis pass instead of failing with robotic error messages.
+- **Ground Truth Physical Location Metadata:**
+  - Explicitly configured on-premise physical location: **Định Công, Hoàng Mai, Hà Nội, Việt Nam** (FPT Telecom, LAN: `192.168.0.100`).
+  - Distinguishes physical hardware location from ISP BGP dynamic IP GeoIP routing.
+- **9Router Multi-Provider Key Pool Engine:**
+  - **Tier 1 (Groq Pool):** Round-robin rotation across multiple keys (`openai/gpt-oss-120b`, `llama-3.1-8b-instant`) with automatic 60s cooldown on 429 rate limits.
+  - **Tier 2 (OpenRouter Pool):** Automatic zero-downtime failover (`nvidia/nemotron-3-super-120b-a12b:free`).
+  - **Real-Time Token Compressor (RTK):** Compacts logs/JSON payloads before LLM ingestion, saving 40–85% token volume with PostgreSQL stats persistence.
+  - **OpenAI-Compatible Gateway:** Exposes `/v1/chat/completions` and `/v1/models` for external integrations.
 - **Facebook Messenger E2EE Automation:**
-  - Headless Chromium (Playwright) running in an isolated container with persistent session storage.
-  - **Automated E2EE PIN Recovery:** Seamlessly unlocks 6-digit E2EE PIN screens to decrypt secure conversations.
-  - **Away Message & Intelligent Unsend Engine:** Sends friendly absence notifications when the owner is offline, and automatically revokes/unsends ("Thu hồi với mọi người") the absence message the moment the owner replies directly on Facebook or via Telegram.
-  - **noVNC Visual Console (Port 6080):** Built-in browser GUI stream allowing visual intervention and debugging whenever required.
+  - Headless Chromium (Playwright) running in an isolated container with persistent session storage (`browser_data`).
+  - **Automated 6-Digit PIN Recovery:** Automatically unlocks E2EE security challenge screens to decrypt chats.
+  - **Absence Auto-Responder & Intelligent Unsend:** Sends absence notices when the owner is away, and automatically revokes/unsends ("Thu hồi với mọi người") the message once the owner replies.
+  - **noVNC Visual Console (Port 6080):** Embedded GUI stream for live browser inspection and manual intervention.
+- **TikTok Automation & Long-Term Memory:**
+  - **Daily Streak Keeper:** Automated check-ins and DM responses.
+  - **Self-Learning Brain (`AgentMemoryService`):** Long-term memory storage in PostgreSQL (`ai_chat_memories`, `ai_agent_lessons`, `ai_agent_preferences`, `ai_scheduled_tasks`).
 
 ### 2. System Overview Dashboard (`/`)
-
-- **Live KPI Telemetry:** CPU utilization, RAM usage breakdown, Partition disk meters, Network TX/RX throughput, Load Average (1m / 5m / 15m).
-- **Hardware Health:** Multi-sensor CPU temperature readings, system voltages, and fan speeds.
-- **CRITICAL ALERT Warning System:** Pulsing visual alerts and notification triggers when user-defined thresholds are exceeded.
-- **Adaptive Polling Engine:** Dynamically throttles polling frequencies when network latency or server load rises.
+- **Live KPI Telemetry:** CPU utilization, RAM breakdown, disk partitions, Network TX/RX throughput, Load Average (1m / 5m / 15m).
+- **Hardware Health:** Multi-sensor CPU temperature readings, system voltages, fan speeds.
+- **CRITICAL ALERT Warning System:** Pulsing visual alerts and notification triggers on threshold breach.
 
 ### 3. 3D Interactive Globe Map (`/map`)
-
 - **Orthographic 3D Globe:** Rendered using D3-geo and TopoJSON with smooth drag-to-rotate interaction.
 - **Server Geolocation:** Pinpoints server location with glowing neon pins and animated sonar pulse waves.
-- **Active Node Tracker:** Visualizes incoming SSH tunnel connections and client IP metadata.
 
 ### 4. Process Explorer (`/processes`)
-
 - Real-time Linux process table with dynamic sorting by CPU%, Memory MB, PID, and Command Name.
 - Quick filter tabs: `ALL`, `HIGH CPU (>20%)`, `HIGH MEM (>100MB)`.
-- Safe process termination modal with PID verification.
-- Instant CSV export for audit and analysis.
+- Safe process termination modal with PID verification and instant CSV export.
 
 ### 5. Services & Docker Runtime Center (`/services`)
-
 - **Systemd Service Manager:** Live status badges with 1-click Start / Stop / Restart actions.
-- **Systemd Timers:** Tracks scheduled maintenance jobs (such as `apt-daily.timer` and `apt-daily-upgrade.timer`).
-- **Installed Runtimes:** Auto-detects active runtimes (Docker, Node.js, Java, Python) and daemons (Nginx, PostgreSQL, Redis, UFW).
+- **Systemd Timers:** Tracks scheduled maintenance jobs (`apt-daily.timer`, `apt-daily-upgrade.timer`).
+- **Installed Runtimes:** Auto-detects Docker, Node.js, Java, Python, Nginx, PostgreSQL, Redis, UFW.
 
 ### 6. Container Management (`/containers`)
-
 - Complete Docker container overview with live container states and port mappings.
 - Container lifecycle controls: start, stop, restart, and inspect.
 - Real-time container log streaming modal (`docker logs --tail`).
 
 ### 7. Remote File Manager (`/files`)
-
-- Full-featured SSH filesystem browser (navigate directories, inspect files, create, rename, and delete items).
+- Full-featured SSH filesystem browser (navigate directories, inspect files, create, rename, delete items).
 - Built-in syntax-highlighted code and configuration file viewer.
 
 ### 8. Interactive Web SSH Terminal (`/terminal`)
-
-- Browser-based terminal emulator (`root@server:~#`).
-- Command history navigation (Up / Down arrows).
-- Quick command macro chips for frequent diagnostics (`uname -a`, `df -h`, `docker ps`, `ss -tulpn`).
+- Browser-based terminal emulator (`root@server:~#`) with command history.
+- Quick command macro chips (`uname -a`, `df -h`, `docker ps`, `ss -tulpn`).
 - Server-side security sandbox preventing destructive commands (`rm -rf /`, `mkfs`, `reboot`).
 
 ### 9. Security & Network Inspector (`/security`)
-
-- **Listening Ports:** Comprehensive TCP / UDP socket scan mapped to respective process names and PIDs (`ss -tulpn`).
-- **Active SSH Sessions:** Real-time user login monitoring via `who` and session tracking.
-- **Colorized System Log Viewer:** Automatic severity parsing (`ERROR`/`DENIED` → Neon Red/Pink, `WARN` → Neon Yellow, `INFO` → Neon Green).
+- **Listening Ports:** Comprehensive TCP / UDP socket scan mapped to process names and PIDs (`ss -tulpn`).
+- **Active SSH Sessions:** Real-time user login monitoring via `who`.
+- **Colorized System Log Viewer:** Automatic severity parsing (`ERROR`/`DENIED` → Red, `WARN` → Yellow, `INFO` → Green).
 
 ### 10. Control Center & Preferences (`/settings`)
-
 - Custom threshold sliders for CPU, Memory, and Disk alert triggers.
-- Per-session polling frequency adjustments.
-- Sci-Fi visual toggles: Custom cursor, audio effects, scanline filters, grid overlays.
+- Per-session polling frequency adjustments and Sci-Fi visual toggles.
 - Telegram & Facebook AI integration controls.
-
-### 11. Futuristic Sci-Fi HUD Interaction Layer
-
-- **Dual-Ring Animated Crosshair Cursor:** Custom SVG HUD cursor replacing standard system pointers.
-- **Tactile Canvas Shockwaves:** Interactive particle bursts and energy ripples on click.
-- **Web Audio API Synthesizer:** Real-time laser chirps and sub-bass audio feedback without external audio assets.
 
 ---
 
@@ -184,7 +175,8 @@ Configure critical alert threshold sliders, global refresh speeds, Telegram/Face
 │   └───────▲──────────────────────▲──────────────────────▲──────────────────────▲──────────────────┘   │
 │           │                      │                      │                      │                      │
 │           │ /api/auth/*          │ /api/metrics/*       │ /api/files/*         │ /api/facebook/*      │
-│           │ (JWT Login / Verify) │ (Telemetry / Stream) │ (SFTP File Ops)      │ /api/ai/* , /v1/*    │
+│           │ (JWT Login / Verify) │ (Telemetry / Stream) │ (SFTP File Ops)      │ /api/tiktok/*        │
+│           │                      │                      │                      │ /api/ai/* , /v1/*    │
 │           │                      │                      │                      │ /fb-vnc/* (WebSocket)│
 │           │ (REST Request/Reply) │ (REST Request/Reply) │ (REST Request/Reply) │ (Duplex Stream/REST) │
 │           ▼                      ▼                      ▼                      ▼                      │
@@ -222,6 +214,7 @@ Configure critical alert threshold sliders, global refresh speeds, Telegram/Face
                                       │ ─────────────────────────────────────────────────────────────── │
                                       │ • Telegram Bot API (Inbound Polling ◄──► Outbound AI Responses) │
                                       │ • Facebook Messenger E2EE (Scan Inbox ◄──► Auto-Reply & Unsend) │
+                                      │ • TikTok Automation (DM Scan ◄──► Streak Keeper Auto-Reply)     │
                                       └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -248,244 +241,138 @@ Configure critical alert threshold sliders, global refresh speeds, Telegram/Face
 quan_ly_server/
 ├── .agents/                              # AI Agent workflows & operational guides
 ├── .env.example                          # Safe environment configuration template
-├── .gitignore                            # Git ignore rules
-├── docker-compose.yml                    # Full-stack container orchestration specification
-├── LICENSE                               # MIT License
-├── README.md                             # Main documentation
-├── SECURITY.md                           # Security policy & reporting guidelines
-│
-├── db/                                   # Database Initialization & Config
-│   ├── migrations/                       # PostgreSQL schema definitions & seeds
-│   └── postgresql.conf                   # Optimized PostgreSQL configuration
-│
-├── docs/                                 # 11 In-Depth Technical Architecture Guides
-│   ├── README.md                         # Documentation navigation hub
-│   ├── architecture.md                   # Microservices architecture & network design
-│   ├── api-reference.md                  # Comprehensive REST API specifications
-│   ├── frontend-internals.md             # React state, routing & parser internals
-│   ├── backend-internals.md              # Spring Boot architecture & JSch SSH service
-│   ├── telegram-ai-agent.md              # AI Agent design, tool calling & key pools
-│   ├── database-and-auth.md              # Auth service, JWT token lifecycle & DB schema
-│   ├── system-automation.md              # Automation policies & systemd timers
-│   ├── deployment.md                     # Production deployment & CI/CD workflows
-│   ├── security.md                       # Threat model, sandboxing & security policies
-│   └── troubleshooting.md                # Diagnostic handbook & recovery procedures
-│
-├── services/                             # Backend Microservices
-│   ├── auth-service/                     # [Spring Boot] Authentication & JWT tokens (Port 8081)
-│   ├── metrics-service/                  # [Spring Boot] Telemetry & SSH metrics engine (Port 8082)
-│   ├── file-service/                     # [Spring Boot] Remote SFTP filesystem operations (Port 8083)
-│   └── ai-agent-service/                 # [FastAPI] AI Agent & Playwright Facebook E2EE (Port 8084 & 6080)
-│
-└── frontend/                             # [React 19 + Vite 8] Cyberpunk Sci-Fi UI
-    ├── src/
-    │   ├── components/                   # SciFiIcons, SpaceInteractionLayer, Modals
-    │   ├── pages/                        # Overview, Processes, Services, Terminal, Map, etc.
-    │   └── utils/                        # Telemetry parsers, audio synthesis, API clients
-    ├── nginx.conf                        # Reverse proxy rules (/api/* routing)
-    └── Dockerfile                        # Multi-stage production build container
+├── docker-compose.yml                    # Multi-container orchestration specification
+├── docs/                                 # Complete technical documentation suite
+│   ├── README.md                         # Documentation index
+│   ├── architecture.md                   # System topology & communication patterns
+│   ├── api-reference.md                  # REST API & Gateway specifications
+│   ├── backend-internals.md              # Spring Boot & FastAPI architectural details
+│   ├── database-and-auth.md              # PostgreSQL 17 schema & JWT auth lifecycle
+│   ├── deployment.md                     # Production deployment & hardening guide
+│   ├── frontend-internals.md             # React 19, D3 Globe & Sci-Fi HUD engine
+│   ├── security.md                       # Security model, sandboxing & credential policies
+│   ├── system-automation.md              # Background schedulers, scanners & timers
+│   ├── telegram-ai-agent.md              # Autonomous AI Agent, 9Router & E2EE guide
+│   └── troubleshooting.md                # Diagnostic runbooks & recovery handbook
+├── frontend/                             # React 19 + Vite 8 SPA
+│   ├── src/pages/                        # Dashboard, Processes, Services, Containers, Files, etc.
+│   ├── src/components/                   # SciFi HUD components, SciFiIcons, Terminal, etc.
+│   └── nginx.conf                        # Nginx reverse proxy configuration
+├── services/
+│   ├── auth-service/                     # Spring Boot JWT authentication microservice
+│   ├── metrics-service/                  # Spring Boot JSch telemetry microservice
+│   ├── file-service/                     # Spring Boot SFTP file operations microservice
+│   └── ai-agent-service/                 # FastAPI Python AI Agent & 9Router service
+│       ├── app/core/                     # LLM Router (RTK), Telegram Formatter, SSH client
+│       ├── app/routers/                  # Health, Facebook, TikTok, OpenAI Gateway
+│       └── app/services/                 # AiAgent, TelegramBot, FacebookService, TikTokService, Memory
+└── db/                                   # Database migration scripts & PostgreSQL config
 ```
 
 ---
 
-## 🔌 API Reference
-
-### 1. Telemetry & Metrics (`metrics-service` :8082)
-
-| Endpoint | Method | Description |
-| --- | --- | --- |
-| `/api/metrics/system` | `GET` | Hostname, OS, kernel, uptime |
-| `/api/metrics/cpu` | `GET` | Overall CPU utilization percentage |
-| `/api/metrics/ram` | `GET` | Memory breakdown (total, used, free, buffers/cache) |
-| `/api/metrics/disk` | `GET` | Filesystem partition usage via `df -h` |
-| `/api/metrics/disk-io` | `GET` | Read/write throughput via `/proc/diskstats` |
-| `/api/metrics/network` | `GET` | Interface TX/RX deltas via `/proc/net/dev` |
-| `/api/metrics/temperature` | `GET` | Multi-core thermal sensor readings |
-| `/api/metrics/voltage` | `GET` | System voltage sensor readings |
-| `/api/metrics/fan` | `GET` | Fan RPM readings and control status |
-| `/api/metrics/load-average` | `GET` | 1, 5, and 15-minute load averages |
-| `/api/metrics/processes` | `GET` | Process table via `ps -eo` |
-| `/api/metrics/services` | `GET` | Systemd unit statuses |
-| `/api/metrics/docker` | `GET` | Docker container list with health and port mapping |
-| `/api/metrics/ports` | `GET` | Listening TCP/UDP sockets via `ss -tulpn` |
-| `/api/metrics/connections` | `GET` | Active SSH sessions and network sockets |
-| `/api/metrics/logs` | `GET` | Recent color-parsed system logs |
-| `/api/metrics/services/control` | `POST` | Control systemd unit (`service`, `action`) |
-| `/api/metrics/docker/control` | `POST` | Control Docker container (`containerId`, `action`) |
-| `/api/metrics/kill-process` | `POST` | Terminate process by PID (`pid`) |
-| `/api/metrics/execute-command` | `POST` | Execute safe allowlisted shell command in terminal |
-
-### 2. Authentication (`auth-service` :8081)
-
-| Endpoint | Method | Description |
-| --- | --- | --- |
-| `/api/auth/login` | `POST` | Authenticate with username & password, returns JWT token |
-| `/api/auth/verify` | `GET` | Validate existing JWT token integrity |
-
-### 3. File Operations (`file-service` :8083)
-
-| Endpoint | Method | Description |
-| --- | --- | --- |
-| `/api/files/list` | `GET` | List files and directories in a given path |
-| `/api/files/content` | `GET` | Read and view file contents |
-| `/api/files/action` | `POST` | Create, rename, or delete files/folders |
-
-### 4. AI Agent & Facebook Automation (`ai-agent-service` :8084)
-
-| Endpoint | Method | Description |
-| --- | --- | --- |
-| `/health` | `GET` | Healthcheck endpoint for AI Agent container |
-| `/api/facebook/trigger` | `POST` | Manually trigger a Facebook message scan cycle |
-| `/api/facebook/status` | `GET` | Retrieve Facebook E2EE bot and scanner status |
-| `/api/facebook/send-reply` | `POST` | Relay a reply to a Facebook thread from Telegram |
-| `/api/facebook/test-ai-chat` | `POST` | Test natural language AI assistant response directly |
-
----
-
-## ⚡ Getting Started & Installation
+## 🚀 Getting Started & Installation
 
 ### Prerequisites
 
-- **Docker & Docker Compose V2** (Docker 24.0+ recommended)
-- A target Linux server with SSH enabled (LAN or public IP)
+- **Docker & Docker Compose V2** (Installed on production host)
+- **Target Linux Server** with SSH access (OpenSSH server enabled)
+- Optional: **Groq API Key** / **OpenRouter API Key** (for AI Agent features)
+- Optional: **Telegram Bot Token** (for Telegram Bot automation)
 
 ### 1. Clone & Configure Environment
 
 ```bash
 git clone https://github.com/tranvanmanh9325/quan_ly_server.git
 cd quan_ly_server
+
+# Copy environment template
 cp .env.example .env
+
+# Edit environment variables
+nano .env
 ```
 
-Edit `.env` with your actual credentials:
-
+Key environment settings:
 ```dotenv
-# ==========================================
-# SSH Target Server Credentials
-# ==========================================
 SSH_HOST=192.168.0.100
 SSH_PORT=22
 SSH_USER=kirito
-SSH_PASSWORD=your_secure_ssh_password
+SSH_PASSWORD=your_ssh_password
 
-# ==========================================
-# Database Configuration (PostgreSQL 17)
-# ==========================================
-POSTGRES_PASSWORD=your_postgres_password
+# Ground truth physical server metadata
+SERVER_PHYSICAL_LOCATION="Định Công, Hoàng Mai, Hà Nội, Việt Nam"
+SERVER_ISP="FPT Telecom"
+SERVER_OWNER="Trần Văn Mạnh (kirito)"
 
-# ==========================================
-# Auth Service Credentials & JWT Secret
-# ==========================================
-APP_AUTH_USERNAME=admin
-APP_AUTH_PASSWORD=your_dashboard_password
-JWT_SECRET=your_super_secret_jwt_key_at_least_32_characters_long
-JWT_EXPIRATION_HOURS=24
-
-# ==========================================
-# Groq Multi-Key Pool (Primary LLM Engine)
-# ==========================================
-GROQ_API_KEY=gsk_primary_key_here
-GROQ_API_KEY_2=gsk_second_key_here
-GROQ_MODEL=openai/gpt-oss-120b
-
-# ==========================================
-# OpenRouter Multi-Key Pool (Tier-2 Fallback)
-# ==========================================
-OPENROUTER_API_KEY=sk-or-v1-primary_key_here
-OPENROUTER_API_KEY_2=sk-or-v1-second_key_here
-OPENROUTER_MODEL=nvidia/nemotron-3-super-120b-a12b:free
+# Telegram & AI Agent Key Pool
+TELEGRAM_BOT_TOKEN=your_telegram_bot_token
+TELEGRAM_CHAT_ID=your_chat_id
+GROQ_API_KEY=gsk_your_groq_key
+OPENROUTER_API_KEY=sk-or-v1-your_openrouter_key
 ```
 
 ### 2. Deploy with Docker Compose (Recommended)
 
 ```bash
-# Build and run the entire ecosystem in the background
+# Build and start all 6 containers in detached mode
 docker compose up -d --build
 
-# Verify container health
+# Check status of all microservices
 docker compose ps
-
-# Stream logs
-docker compose logs -f
 ```
 
-- **Web Dashboard:** Access at **`http://localhost:5173`** (or your server IP)
-- **noVNC Visual Console (Facebook E2EE):** Access at **`http://localhost:6080/vnc.html`**
+Once running, access the dashboard at:
+- **Web Dashboard:** `http://<server-ip>:5173`
+- **noVNC Visual Console:** `http://<server-ip>:6080/vnc.html`
 
 ### 3. Local Development (Hot Reload)
 
-#### Frontend (React 19 + Vite)
-
 ```bash
-cd frontend
-npm install --legacy-peer-deps
-npm run dev
-# Running on http://localhost:5173 (proxies /api/* to backend services)
-```
+# Frontend (Vite hot-reload)
+cd frontend && npm install && npm run dev
 
-#### AI Agent Service (Python 3.11)
-
-```bash
+# AI Agent Service (Python FastAPI)
 cd services/ai-agent-service
-python -m venv venv
-source venv/bin/activate # or venv\Scripts\activate on Windows
 pip install -r requirements.txt
-playwright install chromium
 uvicorn app.main:app --host 0.0.0.0 --port 8084 --reload
 ```
 
 ### 4. Running Unit Tests
 
 ```bash
-# Frontend Unit Tests (Vitest)
-cd frontend
-npm test
+# Run AI Agent & Telegram Formatter unit tests inside container
+docker exec dashboard_ai_agent python -m unittest discover -v -s /app/tests
+
+# Run frontend tests
+cd frontend && npm test
 ```
 
 ---
 
 ## 📚 Documentation Index
 
-For deep-dive technical specifications, consult our **11 comprehensive technical guides** in the [`docs/`](./docs) directory:
-
-| Guide | Description |
+| Topic | Document |
 | --- | --- |
-| 📖 [Architecture Guide](./docs/architecture.md) | Complete microservices topology, communication protocols, and resource allocation. |
-| 🔌 [API Reference](./docs/api-reference.md) | Full endpoint contracts, request/response JSON schemas, and error codes. |
-| ⚛️ [Frontend Internals](./docs/frontend-internals.md) | React 19 architecture, real-time parser layers, and Sci-Fi HUD canvas engine. |
-| ☕ [Backend Internals](./docs/backend-internals.md) | Spring Boot 4.1.0 microservices, JSch SSH session pooling, and fault tolerance. |
-| 🤖 [AI Agent Internals](./docs/telegram-ai-agent.md) | Multi-provider key pools, tool execution, and Facebook Messenger E2EE automation. |
-| 🗄 [Database & Security](./docs/database-and-auth.md) | PostgreSQL 17 schema, JWT authentication flow, and credential encryption. |
-| ⏱ [System Automation](./docs/system-automation.md) | Daily system maintenance timers, memory optimization, and auto-cleanup jobs. |
-| 🚢 [Deployment Guide](./docs/deployment.md) | Production Docker Compose hardening, network isolation, and CI/CD pipelines. |
-| 🛡 [Security Hardening](./docs/security.md) | Threat modeling, terminal command sandboxing, and security trade-offs. |
-| 🔧 [Troubleshooting Handbook](./docs/troubleshooting.md) | Common runtime issues, SSH connection recovery, and diagnostic procedures. |
-| 📋 [Docs Index](./docs/README.md) | Overview and navigation map for all documentation files. |
+| **System Architecture** | [docs/architecture.md](./docs/architecture.md) |
+| **Complete API Reference** | [docs/api-reference.md](./docs/api-reference.md) |
+| **AI Agent & 9Router Ecosystem** | [docs/telegram-ai-agent.md](./docs/telegram-ai-agent.md) |
+| **Backend Microservices Internals** | [docs/backend-internals.md](./docs/backend-internals.md) |
+| **Database & JWT Authentication** | [docs/database-and-auth.md](./docs/database-and-auth.md) |
+| **Frontend & HUD Engine** | [docs/frontend-internals.md](./docs/frontend-internals.md) |
+| **System Automation & Schedulers** | [docs/system-automation.md](./docs/system-automation.md) |
+| **Production Deployment Guide** | [docs/deployment.md](./docs/deployment.md) |
+| **Security Hardening & Sandboxing** | [docs/security.md](./docs/security.md) |
+| **Troubleshooting & Diagnostics** | [docs/troubleshooting.md](./docs/troubleshooting.md) |
 
 ---
 
-## 🤝 Contributing
+## 🛡 Security Policy
 
-Contributions are welcome! Please follow these steps:
-
-1. **Fork** the repository.
-2. Create a dedicated feature branch (`git checkout -b feat/your-feature-name`).
-3. Commit your changes following [Conventional Commits](https://www.conventionalcommits.org/) (`git commit -m "feat: add gpu telemetry card"`).
-4. Push to your branch (`git push origin feat/your-feature-name`).
-5. Open a **Pull Request** against `main`.
-
----
-
-## 🔒 Security Policy
-
-Please review [`SECURITY.md`](./SECURITY.md) for vulnerability reporting guidelines and our security policy. **Never commit sensitive `.env` files or API keys.**
+Please review [SECURITY.md](./SECURITY.md) for vulnerability disclosure procedures and security guarantees.
 
 ---
 
 ## 📄 License
 
-This project is licensed under the **MIT License** — see the [`LICENSE`](./LICENSE) file for details.
-
-```text
-Copyright (c) 2026 Tran Van Manh
-```
+Distributed under the **MIT License**. See [LICENSE](./LICENSE) for details.

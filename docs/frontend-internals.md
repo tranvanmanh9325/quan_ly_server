@@ -40,6 +40,8 @@ frontend/src/
 │   ├── MapPage.jsx                ← 3D Interactive Orthographic Globe & active SSH node tracer
 │   ├── SecurityPage.jsx           ← Listening ports (ss), active sessions (who), colorized logs
 │   ├── FilesPage.jsx              ← Remote SFTP file browser & syntax-highlighted viewer
+│   ├── FacebookPage.jsx           ← Facebook E2EE threads, appointment manager & embedded noVNC viewer
+│   ├── TikTokPage.jsx             ← TikTok streak keeper, automated DM logs & configuration
 │   └── SettingsPage.jsx           ← Alert threshold sliders, polling speed & AI bot controls
 └── utils/
     ├── parsers.js                 ← Pure functions: raw SSH text → typed JavaScript objects

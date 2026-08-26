@@ -1,210 +1,40 @@
-# Security Guide
+# Security Hardening & Threat Model
 
-A thorough review of the security posture of Mini Server Dashboard, covering authentication, terminal sandboxing, E2EE security, and hardening recommendations.
-
----
-
-## Security Architecture & Defenses
-
-### 1. JWT Authentication Layer (`auth-service`)
-- **Single-Origin Gateway:** All incoming API traffic is routed through Nginx reverse proxy.
-- **JWT Protection:** Sensitive endpoints require a valid `Bearer <token>` issued by `auth-service` using HMAC-SHA256 with strong secrets (`>= 32 chars`).
-- **BCrypt Password Hashing:** User passwords stored in PostgreSQL are hashed using standard BCrypt salts.
-
-### 2. Terminal Command Sandbox
-- **Blocked Destructive Commands:** The backend strictly filters commands to block destructive operations (`rm -rf /`, `mkfs`, `dd`, `shutdown`, `reboot`).
-- **Read-Only Inspection Tools:** AI Agent tool execution enforces non-destructive shell execution.
+A comprehensive overview of security policies, threat modeling, sandboxing, and credential protection.
 
 ---
 
-### 2. `StrictHostKeyChecking=no`
+## 1. Security Architecture & Threat Model
 
-**Location:** `SshService.java` → `config.put("StrictHostKeyChecking", "no")`
-
-**Risk:** Disables SSH host key verification. A man-in-the-middle attacker on the network path between the backend container and the target server could intercept credentials.
-
-**Accepted because:** Ngrok TCP tunnels assign a new host key on every reconnect. Strict checking would break the connection each time the Ngrok tunnel restarts.
-
-**Mitigation for stable production environments:**
-Remove the `StrictHostKeyChecking=no` setting and add the known host fingerprint:
-
-```java
-// In SshService.getOrCreateSession()
-JSch jsch = new JSch();
-jsch.setKnownHosts("/path/to/known_hosts");  // or use addHostKey()
-Session session = jsch.getSession(user, host, port);
-// Remove: config.put("StrictHostKeyChecking", "no");
+```text
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                            Security Boundaries                              │
+│                                                                             │
+│   [Internet] ──▶ Nginx Reverse Proxy (Port 5173 / 80)                       │
+│                       │ (JWT Bearer Token Required)                         │
+│                       ▼                                                     │
+│   [Internal Docker Bridge Network]                                          │
+│   • Microservices communicate over private Docker bridge                    │
+│   • Database port 5432 is not exposed externally                            │
+│   • AI Agent Service isolates Chromium in Xvfb display                      │
+│                       │                                                     │
+│                       ▼ (Encrypted JSch / AsyncSSH)                         │
+│   [Target Remote Linux Host] (Zero Agent Footprint)                         │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-### 3. Password-Based SSH Authentication
+## 2. Key Security Protections
 
-**Risk:** SSH passwords are stored in plain text in `backend/.env` and injected as environment variables. Passwords are susceptible to brute-force attacks if the SSH port is exposed.
-
-**Accepted because:** Password auth is the quickest setup for a personal dashboard where the SSH target is already on a private network.
-
-**Recommended production alternative — SSH key-pair authentication:**
-
-```java
-// In SshService.getOrCreateSession()
-JSch jsch = new JSch();
-jsch.addIdentity("/path/to/private_key");  // no passphrase, or add passphrase as second arg
-Session session = jsch.getSession(user, host, port);
-// Remove: session.setPassword(password);
-```
-
-Store the private key path (not the key content itself) in the `.env` file and add it to `.gitignore`.
-
----
-
-### 4. CORS Wildcard vs. Explicit Headers
-
-**Location:** `CorsConfig.java`
-
-The config uses an explicit `allowedHeaders` list (`Content-Type`, `Accept`, `Authorization`, `X-Requested-With`) instead of the `allowedHeaders("*")` wildcard.
-
-**Why:** When combined with `allowCredentials(true)`, the CORS specification does not permit a wildcard header list. Browsers reflect all request headers when `*` is used, which violates the spec and can be rejected.
-
-This is already correctly implemented and requires no further action.
-
----
-
-## `.env` File Security
-
-The `backend/.env` file holds SSH credentials. It is the most sensitive file in the project.
-
-### Prevention Checklist
-
-- [ ] `.env` is listed in `backend/.gitignore` ✅ (already done)
-- [ ] `.env` is **never** committed to the repository
-
-### Verify: Confirm `.env` Was Never Committed
-
-```bash
-git log --all --full-history -- backend/.env
-```
-
-If this command produces any output, the file was committed at some point. See the remediation steps below.
-
-### Remediation: If `.env` Was Accidentally Committed
-
-1. **Immediately rotate your SSH credentials** on the target server — treat the old credentials as compromised.
-2. Remove the file from Git history:
-
-   ```bash
-   pip install git-filter-repo
-   git filter-repo --path backend/.env --invert-paths
-   ```
-
-3. Force-push the cleaned history:
-
-   ```bash
-   git push origin --force --all
-   git push origin --force --tags
-   ```
-
-4. Ask all collaborators to re-clone the repository (their local copies still contain the old history).
-
----
-
-## Network Exposure
-
-### Port Exposure Summary
-
-| Port | Service | Default Exposure | Recommendation |
-| --- | --- | --- | --- |
-| `5173` | Nginx (Dashboard UI) | Host-level | Bind to `127.0.0.1` or firewall if not serving externally |
-| `8082` | Metrics Service | Internal Bridge / Host | **Do not expose publicly** without API gateway authentication |
-| `8081` | Auth Service | Internal Bridge / Host | Handles login and token generation; keep behind SSL reverse proxy |
-| `8083` | File Service | Internal Bridge / Host | **Do not expose publicly** |
-| `5432` | PostgreSQL DB | Internal Bridge | Internal container access only; do not map to host |
-
----
-
-## Secret Key Security (Telegram & Groq AI)
-
-The `.env` file contains sensitive third-party API keys and SSH credentials:
-
-- `TELEGRAM_BOT_TOKEN` & `TELEGRAM_CHAT_ID`: Controls bot notifications and administrative commands.
-- `GROQ_API_KEY`: Authorizes LLM function calling requests to Groq Cloud.
-- `SSH_HOST`, `SSH_PORT`, `SSH_USER`, `SSH_PASSWORD`, `SSH_FALLBACK_HOST`, `SSH_FALLBACK_PORT`: Grants primary LAN and Ngrok remote shell access.
-- `JWT_SECRET` & `APP_AUTH_PASSWORD`: Authenticates single-user sessions and signs API JWT Bearer tokens.
-
-**Security Requirements:**
-
-1. Never commit `.env` or hardcode tokens in Java source code.
-2. Restrict Telegram bot access by validating `chatId` against `TELEGRAM_CHAT_ID` before processing AI commands.
-
----
-
-## Actuator Hardening
-
-Spring Boot Actuator is included for the `/actuator/health` Docker healthcheck. Only the `health` endpoint is exposed and it reveals no implementation details:
-
-```properties
-management.endpoints.web.exposure.include=health
-management.endpoint.health.show-details=never
-```
-
-This means `/actuator/beans`, `/actuator/env`, `/actuator/info`, and all other Actuator endpoints are not accessible. This is the correct configuration.
-
----
-
-## Docker Security
-
-### Container Isolation
-
-Both containers run on an isolated `dashboard-network` bridge network. They can communicate with each other by container name (`backend`) but are not exposed to other containers or the host network by default.
-
-### Privilege Reduction
-
-Consider running the Spring Boot JVM as a non-root user in the container. Add to the backend `Dockerfile`:
-
-```dockerfile
-FROM eclipse-temurin:21-jre-alpine
-RUN addgroup -S appgroup && adduser -S appuser -G appgroup
-WORKDIR /app
-RUN apk add --no-cache wget
-COPY --from=builder /app/target/dashboard-0.0.1-SNAPSHOT.jar app.jar
-USER appuser         # <-- drop root privileges
-EXPOSE 8080
-ENTRYPOINT ["java", "-jar", "app.jar"]
-```
-
-### Image Updates
-
-Dependabot is configured to open weekly PRs for Docker base image updates. Keeping these images current is important for security patches in:
-
-- `maven:3.9.6-eclipse-temurin-21` (build stage)
-- `eclipse-temurin:21-jre-alpine` (runtime)
-- `node:20-alpine` (frontend build)
-- `nginx:alpine` (frontend runtime)
-
----
-
-## Secrets Management — Future Hardening
-
-For a more hardened production setup, consider migrating from file-based secrets to:
-
-| Option | Complexity | Notes |
-| --- | --- | --- |
-| Docker secrets | Low | Native to Docker Swarm; less convenient with Compose standalone |
-| HashiCorp Vault | High | Enterprise-grade; adds a lot of infrastructure overhead |
-| Environment variables (injected by the CI runner) | Low | Already used via the self-hosted runner; keep `.env` off-disk |
-| SSH key-pair (no password) + key stored on server | Low | Best improvement with the least effort |
-
-The recommended quick win is switching to **SSH key-pair authentication** (see above) and storing only the key path in `.env`, not the key content.
-
----
-
-## Vulnerability Reporting
-
-Please do **not** open a public GitHub Issue for security vulnerabilities.
-
-Instead, use GitHub's private **Security Advisory** feature:
-**Repository → Security → Advisories → Report a vulnerability**
-
-Response SLA: 7 days acknowledgement, 30 days fix for confirmed vulnerabilities.
-
-For the full reporting policy, see [SECURITY.md](../SECURITY.md).
+1. **Terminal Command Sandboxing:**
+   - The Web SSH Terminal and AI Agent execution engines reject destructive commands (`rm -rf /`, `mkfs`, `dd`, `shutdown`, `reboot`).
+2. **JWT Authentication & Password Hashing:**
+   - Passwords hashed using BCrypt (work factor / cost: 12).
+   - JWT tokens signed with HS256 / HS384 using a $\ge 32$-character secret key.
+3. **Facebook E2EE Security & PIN Handling:**
+   - 6-digit E2EE PIN stored securely in environment / database, never exposed in logs.
+   - Persistent browser sessions stored in dedicated Docker volume `browser_data`.
+4. **9Router Multi-Key Pool Security:**
+   - API keys are masked in logs and status responses (`gsk_...XYZ`).
+   - Dynamic key discovery from environment prevents hardcoding secrets.

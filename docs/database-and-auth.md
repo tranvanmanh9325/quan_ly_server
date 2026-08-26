@@ -1,110 +1,72 @@
-# Database & Authentication Architecture
+# Database & Authentication
 
-A deep-dive technical reference into authentication mechanisms, JWT security, microservice boundaries, and PostgreSQL database schema.
+Complete guide to the PostgreSQL 17 relational schema, JWT authentication lifecycle, BCrypt credential security, and state persistence.
 
 ---
 
-## 🌟 Overview
+## 1. Database Overview
 
-The Mini Server Dashboard platform isolates authentication and file management concerns into dedicated Spring Boot microservices backed by a central PostgreSQL database.
+The system utilizes **PostgreSQL 17 Alpine** (container `dashboard_db`) running on internal port `5432`.
+
+### Schema Map
 
 ```text
-┌────────────────────────┐         JWT Token           ┌────────────────────────┐
-│     Client Browser     │ ───────────────────────────▶│      Auth Service      │
-│  (React 19 Dashboard)  │                             │  Port 8081 / JPA ORM   │
-│                        │◀─────────────────────────── │                        │
-└───────────┬────────────┘         Signed JWT          └───────────┬────────────┘
-            │                                                      │
-            │ Bearer Token                                         │ Reads/Writes
-            ▼                                                      ▼
-┌────────────────────────┐                             ┌────────────────────────┐
-│ Metrics / File / AI    │                             │     PostgreSQL DB      │
-│     Microservices      │ ◄─────────────────────────► │  Port 5432 / Table DB  │
-└────────────────────────┘                             └────────────────────────┘
+PostgreSQL (quan_ly_server)
+├── users                        # Dashboard administrative user accounts
+├── user_refresh_tokens          # Active JWT refresh tokens
+├── telegram_configs             # Telegram bot credentials & notification thresholds
+├── facebook_config              # Facebook E2EE automation settings & PIN
+├── facebook_known_threads       # Tracked Messenger conversations & unsend state
+├── facebook_messages            # Cached conversation history
+├── facebook_appointments        # Appointments extracted from Messenger chats
+├── tiktok_config                # TikTok DM & streak keeper settings
+├── tiktok_streaks               # Tracked TikTok streaks & interaction logs
+├── rtk_stats                    # 9Router Real-Time Token Compressor statistics
+├── ai_chat_memories             # Long-term AI conversational memories
+├── ai_agent_lessons             # Self-learned rules & corrections
+├── ai_agent_preferences         # User preferences learned by AI
+└── ai_scheduled_tasks           # AI background tasks and reminders
 ```
 
 ---
 
-## 1. Auth Service (`auth-service`) — Port 8081
+## 2. Table Specifications
 
-### Authentication Flow
+### User & Authentication
+- `users (id, username, password_hash, role, created_at, updated_at)`
+- `user_refresh_tokens (id, user_id, token, expires_at, created_at)`
 
-1. **User Login (`POST /api/auth/login`):** Client submits username and password.
-2. **Password Verification:** Passwords are verified against `users` table records using BCrypt hashing (`BCryptPasswordEncoder`).
-3. **JWT Generation:** Upon successful authentication, `auth-service` signs and returns a compact JSON Web Token (JWT) containing user claims, role (`ROLE_ADMIN` / `ROLE_USER`), and expiration timestamp (24 hours default).
-4. **Token Verification (`GET /api/auth/verify`):** Validates existing JWT tokens.
+### Facebook & TikTok Automation
+- `facebook_config (id, enabled, auto_reply_text, scan_interval_minutes, away_mode_enabled, pin_code, updated_at)`
+- `facebook_known_threads (thread_id, thread_name, last_interaction, auto_reply_text, auto_reply_unsent, is_e2ee, is_group)`
+- `facebook_appointments (id, thread_id, person_name, appointment_time, description, status, reminded_1h)`
+- `tiktok_config (id, enabled, streak_enabled, auto_reply_text, scan_interval_minutes, updated_at)`
+- `tiktok_streaks (user_id, username, streak_count, last_sent_time, last_received_time, status)`
 
-### Key Dependencies
-
-- `io.jsonwebtoken:jjwt-api:0.12.6`
-- `io.jsonwebtoken:jjwt-impl:0.12.6`
-- `io.jsonwebtoken:jjwt-jackson:0.12.6`
-- `org.springframework.security:spring-security-crypto`
-
----
-
-## 2. Central Database Schema (PostgreSQL 17)
-
-The central database container (`dashboard_db`) runs PostgreSQL 17 Alpine on port `5432`.
-
-### Core Tables
-
-#### `users`
-Stores user credentials and role authorizations.
-
-| Column | Type | Constraints | Description |
-| --- | --- | --- | --- |
-| `id` | `BIGSERIAL` | PRIMARY KEY | Unique user identifier |
-| `username` | `VARCHAR(50)` | UNIQUE, NOT NULL | Login username |
-| `password` | `VARCHAR(255)` | NOT NULL | BCrypt hashed password string |
-| `role` | `VARCHAR(20)` | NOT NULL | Authorization role (`ROLE_ADMIN`, `ROLE_USER`) |
-| `created_at` | `TIMESTAMP` | DEFAULT NOW() | Account creation timestamp |
-
-#### `telegram_config`
-Dynamic runtime configuration for the Telegram AI bot.
-
-| Column | Type | Constraints | Description |
-| --- | --- | --- | --- |
-| `id` | `SERIAL` | PRIMARY KEY | Configuration record ID |
-| `bot_token` | `TEXT` | NOT NULL | Telegram Bot API token |
-| `chat_id` | `TEXT` | NOT NULL | Target Telegram channel/chat ID |
-| `enabled` | `BOOLEAN` | DEFAULT TRUE | Master switch for bot polling |
-| `updated_at` | `TIMESTAMP` | DEFAULT NOW() | Last configuration modification |
-
-#### `processed_telegram_updates`
-Tracks processed Telegram update IDs to prevent duplicate command execution.
-
-| Column | Type | Constraints | Description |
-| --- | --- | --- | --- |
-| `update_id` | `BIGINT` | PRIMARY KEY | Unique Telegram Update ID |
-| `processed_at` | `TIMESTAMP` | DEFAULT NOW() | Processing timestamp |
-
-#### `facebook_config`
-Configuration parameters for the Playwright Facebook E2EE automation worker.
-
-| Column | Type | Constraints | Description |
-| --- | --- | --- | --- |
-| `id` | `SERIAL` | PRIMARY KEY | Configuration identifier |
-| `pin` | `VARCHAR(10)` | NULLABLE | 6-digit E2EE decryption PIN |
-| `away_message` | `TEXT` | NULLABLE | Custom auto-reply message text |
-| `enabled` | `BOOLEAN` | DEFAULT TRUE | Enable/disable Facebook scanner |
-| `updated_at` | `TIMESTAMP` | DEFAULT NOW() | Last update timestamp |
-
-#### `facebook_known_threads`
-Maintains persistent state for Facebook conversation threads across container restarts.
-
-| Column | Type | Constraints | Description |
-| --- | --- | --- | --- |
-| `thread_id` | `VARCHAR(100)` | PRIMARY KEY | Facebook user/thread identifier |
-| `sender_name` | `VARCHAR(255)` | NULLABLE | Friend or sender display name |
-| `last_message_hash` | `VARCHAR(64)` | NULLABLE | MD5/SHA256 hash of latest seen message |
-| `auto_reply_sent` | `BOOLEAN` | DEFAULT FALSE | Whether an away message was dispatched |
-| `auto_reply_text` | `TEXT` | NULLABLE | Exact text of the auto-reply for revocation |
-| `auto_reply_unsent`| `BOOLEAN` | DEFAULT FALSE | Flag indicating if message has been revoked |
-| `last_seen_at` | `TIMESTAMP` | DEFAULT NOW() | Last scan timestamp |
+### 9Router & AI Memory
+- `rtk_stats (id, total_compressions, chars_saved, estimated_tokens_saved, updated_at)`
+- `ai_chat_memories (id, chat_id, key, value, created_at, updated_at)`
+- `ai_agent_lessons (id, category, lesson, context, confidence, created_at)`
+- `ai_agent_preferences (id, user_id, preference_key, preference_value, updated_at)`
+- `ai_scheduled_tasks (id, task_type, payload, run_at, status)`
 
 ---
 
-## 3. Cross-Origin Resource Sharing (CORS)
+## 3. JWT Authentication Lifecycle
 
-Local development origins (`http://localhost:5173`, `http://127.0.0.1:5173`) are whitelisted across all microservices (`CorsConfig.java`). In production, Nginx proxies all requests under unified subpaths (`/api/auth/*`, `/api/metrics/*`, `/api/files/*`, `/api/facebook/*`, `/api/ai/*`, `/fb-vnc/*`), enforcing single-origin security.
+```text
+Client                          auth-service                       Protected Services
+  │                                  │                                     │
+  ├── 1. POST /api/auth/login ──────▶│                                     │
+  │      {"username", "password"}    │ (BCrypt check cost 12)              │
+  │                                  │ (Generate Access + Refresh Tokens)  │
+  │◀── 2. Return Tokens ─────────────┤                                     │
+  │      {accessToken, refreshToken} │                                     │
+  │                                                                        │
+  ├── 3. GET /api/metrics/cpu (Bearer accessToken) ───────────────────────▶│
+  │                                                                        │ (Verify JWT Secret)
+  │◀── 4. Telemetry Response ──────────────────────────────────────────────┤
+```
+
+- **Access Token:** Short-lived (15 minutes), signed with HS256 / HS384.
+- **Refresh Token:** Long-lived (7 days), stored in `user_refresh_tokens`.

@@ -1,116 +1,48 @@
-# System Automation & Maintenance
+# System Automation & Background Schedulers
 
-A technical guide to automated OS patching, daily APT timers, automated cleanup policies, and Docker health-check self-healing.
+A comprehensive guide to scheduled tasks, background scanning loops, proactive reminders, and autonomous maintenance routines in the Mini Server Dashboard.
 
 ---
 
-## Overview
+## 1. Background Schedulers Architecture
 
-The target Linux server is configured with automated systemd background timers and APT cleanup rules to guarantee zero-touch security updates, kernel maintenance, and storage hygiene.
+The `ai-agent-service` maintains dedicated asynchronous background loops managed by FastAPI lifespan events:
 
 ```text
-┌────────────────────────────────────────────────────────────┐
-│                  Linux Systemd Timers                      │
-│                                                            │
-│   06:00 AM ───▶ apt-daily.timer (apt update)               │
-│                      │                                     │
-│   06:30 AM ───▶ apt-daily-upgrade.timer (apt upgrade -y)   │
-│                      │                                     │
-│                      ▼                                     │
-│   Post-Upgrade ──▶ /etc/apt/apt.conf.d/99auto-cleanup      │
-│                    (autoremove & autoclean)                │
-└────────────────────────────────────────────────────────────┘
+FastAPI Lifespan Startup
+    │
+    ├── 1. Telegram Poller Loop (Long polling Telegram API)
+    ├── 2. Facebook Scanner Loop (Periodic inbox scan & absence reply)
+    ├── 3. TikTok Scanner & Streak Keeper Loop (Periodic DM check & daily streak send)
+    ├── 4. Appointment Reminder Loop (1-hour proactive dispatch)
+    └── 5. RTK Stats Persistence Loop (Persists compression stats to DB every 30s)
 ```
 
 ---
 
-## 1. Daily APT Systemd Timers
+## 2. Scheduler Details
 
-Ubuntu systemd timers control automatic package list updating and package upgrades.
+### 1. Facebook Messenger Scan Loop (`facebook_periodic_scan_loop`)
+- **Interval:** Configurable from database (default: 3 minutes).
+- **VNC Concurrency Guard:** Pauses automatic scan cycles when an active live noVNC session is detected to prevent browser lock contention.
+- **Operations:** Scans unread chats, handles 6-digit E2EE PIN unlock, sends absence auto-replies, and executes automated message unsend when human owner replies.
 
-### Configured Timers
+### 2. TikTok Streak Keeper Loop (`tiktok_periodic_scan_loop`)
+- **Interval:** Configurable from database (default: 3 minutes).
+- **Streak Maintenance:** Checks daily streak deadlines and sends automated interaction messages.
 
-| Timer Unit | Execution Schedule | Action Performed |
-| --- | --- | --- |
-| `apt-daily.timer` | Daily at **06:00:00 AM** | Runs `apt update` to fetch latest security package lists |
-| `apt-daily-upgrade.timer` | Daily at **06:30:00 AM** | Runs `apt upgrade -y` to apply non-phased package patches |
+### 3. Proactive Appointment Reminder Loop (`appointment_reminder_loop`)
+- **Interval:** Runs every 60 seconds.
+- **Proactive Notification:** Queries upcoming appointments from `facebook_appointments` and dispatches a high-priority Telegram alert exactly 1 hour before scheduled time.
 
-### Systemd Timer Override Files
-
-Location on remote server:
-
-- `/etc/systemd/system/apt-daily.timer.d/override.conf`
-- `/etc/systemd/system/apt-daily-upgrade.timer.d/override.conf`
-
-```ini
-[Timer]
-OnCalendar=
-OnCalendar=*-*-* 06:00:00
-RandomizedDelaySec=0
-```
+### 4. RTK Stats Persistence Loop (`rtk_stats_persist_loop`)
+- **Interval:** Runs every 30 seconds.
+- **Delta Persistence:** Saves token compression counters to table `rtk_stats` only when deltas exist.
 
 ---
 
-## 2. Automated Storage Cleanup Policy
+## 3. Remote Server Maintenance Timers
 
-To prevent `/var` or root disk partitions from filling up with old `.deb` archives and orphan kernel dependencies, an explicit APT auto-cleanup policy is configured at `/etc/apt/apt.conf.d/99auto-cleanup`:
-
-```apt
-APT::Periodic::AutocleanInterval "1";
-Unattended-Upgrade::Remove-Unused-Dependencies "true";
-Unattended-Upgrade::Remove-New-Unused-Dependencies "true";
-```
-
----
-
-## 3. AI Agent Background Automation (`ai-agent-service`)
-
-### 1. Periodic Inbox Scanner
-- Runs as an asynchronous background worker in FastAPI.
-- Scans active Facebook conversation threads every 60 seconds.
-- Automatically decrypts and verifies new incoming messages.
-
-### 2. Auto-Unsend Garbage Collection
-- Automatically checks `facebook_known_threads` for pending unsend flags.
-- If the owner has responded, it triggers the automated headless Playwright unsend routine without user intervention.
-
-### 3. Chromium Headless Memory Hygiene
-- Persistent IndexedDB storage ensures session survival without unbounded disk growth.
-- Old screenshot debug artifacts in `/app/browser_data` are automatically pruned to prevent container volume bloat.
-Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
-```
-
-### What This Accomplishes
-
-- **`AutocleanInterval "1"`:** Automatically runs `apt-get autoclean` after upgrades, clearing cached `.deb` files for uninstalled packages.
-- **`Remove-Unused-Dependencies "true"`:** Automatically runs `apt-get autoremove`, stripping unneeded dependency packages.
-- **`Remove-Unused-Kernel-Packages "true"`:** Purges old Linux kernel headers and images, freeing up `/boot` partition space.
-
----
-
-## 3. Verifying System Automation Status
-
-### Check Timer Schedules
-
-```bash
-sudo systemctl status apt-daily.timer apt-daily-upgrade.timer
-```
-
-### Inspect Last Execution Timestamps
-
-```bash
-# Check last successful apt update timestamp
-stat /var/lib/apt/periodic/update-success-stamp
-
-# Check recent apt upgrade history
-grep -E 'Start-Date|Commandline' /var/log/apt/history.log | tail -n 20
-```
-
----
-
-## 4. Understanding Phased Updates (Ubuntu)
-
-When running `apt upgrade` or asking the Telegram AI Agent for update status, you may see:
-> *Not upgrading yet due to phasing: systemd, udev, cloud-init...*
-
-**Reason:** Ubuntu uses **Phased Rollouts** for core system packages (`systemd`, `udev`, `grub2`). Updates are gradually deployed to percentages of servers over several days (e.g. 10% ➔ 50% ➔ 100%) to mitigate catastrophic bugs. `apt` automatically upgrades these packages once Canonical completes full rollout verification.
+The system monitors and respects standard Linux Systemd Timers on the target machine:
+- `apt-daily.timer`: Scheduled daily at 06:00 (ICT) for package index updates (`apt update`).
+- `apt-daily-upgrade.timer`: Scheduled daily at 06:00 (ICT) for package security upgrades (`apt upgrade`).

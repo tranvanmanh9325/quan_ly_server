@@ -6,6 +6,7 @@ import psycopg
 
 from app.config import settings
 from app.core.ssh_client import SshClient
+from app.core.telegram_formatter import TelegramFormatter
 from app.services.ai_agent import AiAgentService
 
 logger = logging.getLogger(__name__)
@@ -33,7 +34,6 @@ class TelegramBot:
         """Inject memory service for /lessons and /memory_stats commands."""
         self.memory_service = memory_service
 
-
     @property
     def api_url(self) -> str:
         return f"https://api.telegram.org/bot{self.token}"
@@ -43,8 +43,12 @@ class TelegramBot:
         chat_id: str,
         text: str,
         reply_markup: Optional[Dict[str, Any]] = None,
-        parse_mode: str = "Markdown"
+        parse_mode: str = "HTML"
     ) -> bool:
+        """
+        Sends formatted message to Telegram, automatically converting Markdown
+        tables to Cards, sanitizing HTML, and chunking messages > 4000 chars.
+        """
         res = await self.send_message_with_result(chat_id, text, reply_markup=reply_markup, parse_mode=parse_mode)
         return bool(res)
 
@@ -53,15 +57,37 @@ class TelegramBot:
         chat_id: str,
         text: str,
         reply_markup: Optional[Dict[str, Any]] = None,
-        parse_mode: str = "Markdown"
+        parse_mode: str = "HTML"
     ) -> Optional[Dict[str, Any]]:
         if not self.token or not text:
             return None
+
+        # Convert text to Telegram HTML if parse_mode is HTML
+        formatted = TelegramFormatter.format_for_telegram(text) if parse_mode == "HTML" else text
+        chunks = TelegramFormatter.split_message(formatted)
+
+        last_result: Optional[Dict[str, Any]] = None
+        for idx, chunk in enumerate(chunks):
+            # Only attach keyboard markup to the final chunk
+            markup = reply_markup if idx == len(chunks) - 1 else None
+            res = await self._send_single_chunk(chat_id, chunk, reply_markup=markup, parse_mode=parse_mode)
+            if res:
+                last_result = res
+
+        return last_result
+
+    async def _send_single_chunk(
+        self,
+        chat_id: str,
+        text_chunk: str,
+        reply_markup: Optional[Dict[str, Any]] = None,
+        parse_mode: str = "HTML"
+    ) -> Optional[Dict[str, Any]]:
         try:
             url = f"{self.api_url}/sendMessage"
             payload: Dict[str, Any] = {
                 "chat_id": chat_id,
-                "text": text,
+                "text": text_chunk,
                 "parse_mode": parse_mode,
                 "disable_web_page_preview": True,
                 "link_preview_options": {"is_disabled": True},
@@ -74,15 +100,21 @@ class TelegramBot:
                 data = res.json()
                 return data.get("result")
 
-            # Fallback without parse_mode if Markdown entity formatting failed
-            if "can't parse entities" in res.text.lower():
+            # Fallback: if HTML parsing still fails (rare edge case), strip HTML tags and send plain text
+            err_text = res.text.lower()
+            if "can't parse entities" in err_text or "bad request" in err_text:
+                logger.warning("[TelegramBot] Entity parsing issue (%s). Retrying without parse_mode...", res.text[:120])
                 payload.pop("parse_mode", None)
+                # Strip internal tags for plain text fallback
+                import re
+                plain_text = re.sub(r"</?[a-zA-Z0-9]+.*?>", "", text_chunk)
+                payload["text"] = plain_text
                 res2 = await self._http_client.post(url, json=payload)
                 if res2.status_code == 200:
                     data2 = res2.json()
                     return data2.get("result")
         except Exception as e:
-            logger.error("[TelegramBot] Failed sending message: %s", e)
+            logger.error("[TelegramBot] Failed sending message chunk: %s", e)
         return None
 
     async def edit_message_text(
@@ -91,16 +123,17 @@ class TelegramBot:
         message_id: int,
         text: str,
         reply_markup: Optional[Dict[str, Any]] = None,
-        parse_mode: str = "Markdown"
+        parse_mode: str = "HTML"
     ) -> bool:
         if not self.token or not text:
             return False
         try:
+            formatted = TelegramFormatter.format_for_telegram(text) if parse_mode == "HTML" else text
             url = f"{self.api_url}/editMessageText"
             payload: Dict[str, Any] = {
                 "chat_id": chat_id,
                 "message_id": message_id,
-                "text": text,
+                "text": formatted,
                 "parse_mode": parse_mode,
                 "disable_web_page_preview": True,
             }
@@ -112,6 +145,8 @@ class TelegramBot:
                 return True
             if "can't parse entities" in res.text.lower():
                 payload.pop("parse_mode", None)
+                import re
+                payload["text"] = re.sub(r"</?[a-zA-Z0-9]+.*?>", "", formatted)
                 res2 = await self._http_client.post(url, json=payload)
                 return res2.status_code == 200
         except Exception as e:
@@ -326,9 +361,9 @@ class TelegramBot:
                 "• /ai — Xóa bộ nhớ ngữ cảnh hội thoại\n\n"
                 "🧠 *Lệnh quản lý trí nhớ tự học:*\n"
                 "• /lessons — Xem bài học đã tích lũy\n"
-                "• /lesson\\_add \\<nội dung\\> — Thêm bài học thủ công\n"
-                "• /lesson\\_delete \\<id\\> — Xóa một bài học\n"
-                "• /memory\\_stats — Thống kê trí nhớ\n\n"
+                "• /lesson_add <nội dung> — Thêm bài học thủ công\n"
+                "• /lesson_delete <id> — Xóa một bài học\n"
+                "• /memory_stats — Thống kê trí nhớ\n\n"
                 "💬 *Hoặc chat tự nhiên bằng tiếng Việt!*"
             )
             await self.send_message(chat_id, msg)

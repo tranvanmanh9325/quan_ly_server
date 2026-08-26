@@ -46,6 +46,8 @@ class TelegramFormatter:
         text = re.sub(r"\beindeutig\b", "rõ ràng", text, flags=re.IGNORECASE)
         text = re.sub(r"ước\s*lượng\s*rough", "ước lượng", text, flags=re.IGNORECASE)
         text = re.sub(r"điểm xuất[\s\u25a0\u25a1\[\]]+của", "điểm xuất của", text)
+        text = re.sub(r"疑虑", "thắc mắc", text)
+        text = re.sub(r"[\u4e00-\u9fff]+", "", text)
         text = re.sub(r"\(\s+", "(", text)
         text = re.sub(r"\s+\)", ")", text)
 

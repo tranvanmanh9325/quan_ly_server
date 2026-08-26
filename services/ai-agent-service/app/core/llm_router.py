@@ -374,11 +374,18 @@ class LlmRouter:
                     "Authorization": f"Bearer {key_entry.api_key}",
                     "Content-Type": "application/json",
                 }
-                headers.update(provider.extra_headers)
+                # Sanitize messages (strip provider-specific fields like reasoning_details)
+                clean_messages = []
+                for m in messages:
+                    if isinstance(m, dict):
+                        m_copy = {k: v for k, v in m.items() if k not in ("reasoning_details",)}
+                        clean_messages.append(m_copy)
+                    else:
+                        clean_messages.append(m)
 
                 payload: Dict[str, Any] = {
                     "model": model_to_use,
-                    "messages": messages,
+                    "messages": clean_messages,
                     "temperature": temperature,
                     "max_tokens": max_tokens,
                 }

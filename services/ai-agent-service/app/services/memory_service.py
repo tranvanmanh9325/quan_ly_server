@@ -865,22 +865,43 @@ Bài học:"""
         search_query: Optional[str],
     ) -> tuple[Optional[int], bool]:
         """
-        Memory Reconsolidation gate (v3.0):
-        - If a similar lesson already exists (Jaccard ≥ 0.68) → UPDATE it (reconsolidate).
-          The new lesson strengthens and refines the existing memory (LTP-like boost).
-        - If no similar lesson → INSERT new lesson (normal plasticity).
+        Memory Reconsolidation gate (v3.0) with LTP/LTD Validation Gate (Kairos NeurIPS 2025):
+
+        1. If similar lesson found (Jaccard ≥ 0.68):
+           - CONTRADICTING (negation words present) → LTD: decay old lesson confidence,
+             then INSERT new lesson (old belief revised by new evidence).
+           - REINFORCING (same direction) → LTP: boost old lesson confidence (reconsolidate).
+        2. If no similar lesson → INSERT new lesson (normal Hebbian potentiation).
 
         Returns (lesson_id, was_reconsolidated).
         """
         existing = await self.find_similar_lesson(lesson_text, threshold=0.68)
 
         if existing:
-            # Reconsolidate: merge evidence, boost confidence (bounded at 0.92)
-            # Favor the newer, more specific phrasing
+            is_contradiction = self._is_contradicting(existing["lesson_text"], lesson_text)
+
+            if is_contradiction:
+                # LTD (Long-Term Depression): new evidence opposes old belief
+                # Decay old lesson confidence by 15% — does not delete, just weakens
+                ltd_conf = max(existing["confidence"] - 0.15, 0.10)
+                await self._update_lesson_content(existing["id"], existing["lesson_text"], ltd_conf)
+                logger.info(
+                    "[MemoryService] ⚡ LTD signal: lesson #%d contradicted "
+                    "(conf %.2f → %.2f). Inserting updated belief.",
+                    existing["id"], existing["confidence"], ltd_conf,
+                )
+                # Insert new (corrected) lesson as the dominant belief
+                lesson_id = await self._insert_lesson(
+                    trigger_pattern, lesson_text, event_type,
+                    confidence, is_search_grounded, search_query,
+                )
+                return lesson_id, False  # Not reconsolidated — old belief revised
+
+            # LTP (Long-Term Potentiation): same direction → reconsolidate + boost
             new_conf = min(max(existing["confidence"], confidence) + 0.05, 0.92)
             await self._update_lesson_content(existing["id"], lesson_text, new_conf)
             logger.info(
-                "[MemoryService] 🔄 Reconsolidation: updated lesson #%d "
+                "[MemoryService] 🔄 LTP Reconsolidation: updated lesson #%d "
                 "(sim≥0.68, new_conf=%.2f): %s",
                 existing["id"], new_conf, lesson_text[:80],
             )
@@ -892,6 +913,28 @@ Bài học:"""
             confidence, is_search_grounded, search_query,
         )
         return lesson_id, False
+
+    _NEGATION_WORDS = frozenset({
+        "không", "chớ", "đừng", "chưa", "chẳng", "nên tránh", "sai", "nhầm",
+        "never", "not", "no", "avoid", "wrong", "incorrect", "instead", "rather",
+    })
+
+    def _is_contradicting(self, old_text: str, new_text: str) -> bool:
+        """
+        LTD gate: detect if new lesson fundamentally contradicts the old one.
+        Heuristic: new lesson contains negation words + shares topic keywords with old lesson.
+        This is intentionally conservative to avoid false LTD on unrelated lessons.
+        """
+        new_words = set(re.sub(r'[^\w\s]', '', new_text.lower()).split())
+        old_words = set(re.sub(r'[^\w\s]', '', old_text.lower()).split())
+
+        # Must share topic keywords (overlap > 0.2 to be on-topic)
+        union = new_words | old_words
+        if not union or len(new_words & old_words) / len(union) < 0.2:
+            return False
+
+        # New lesson must contain negation signals to be contradicting
+        return bool(new_words & self._NEGATION_WORDS)
 
     async def _insert_lesson(
         self,

@@ -2180,7 +2180,25 @@ Dạ container `dashboard_ai_agent` đang bị lỗi OOM (Out of Memory) — RAM
                     "• 🟡 Nếu dữ liệu chỉ một phần → Nói rõ: 'Em thấy X, nhưng cần xác minh thêm Y...'\n"
                     "• 🔴 Nếu KHÔNG có dữ liệu tool → KHÔNG suy đoán. Nói thẳng: "
                     "'Em chưa chạy lệnh kiểm tra X. Muốn em kiểm tra ngay không anh Mạnh?' "
-                    "TUYỆT ĐỐI KHÔNG bịa số liệu."
+                    "TUYỆT ĐỐI KHÔNG bịa số liệu.\n\n"
+                    # Phase 5: Predictive Pre-Act (Friston Predictive Coding 2025)
+                    "🔮 [PREDICTIVE PRE-ACT — Phân tích dự đoán vs thực tế]:\n"
+                    "Trước khi viết kết luận, hãy tự hỏi: 'Kết quả tool có khớp với điều em dự đoán không?'\n"
+                    "• Nếu có điểm BẤT NGỜ (unexpected): **nêu rõ điểm đó trước tiên** — đây là thông tin quan trọng nhất.\n"
+                    "• Nếu tất cả đúng như dự đoán: xác nhận ngắn gọn và không cần giải thích dài.\n"
+                    "Nguyên tắc: Não người học nhiều nhất từ SURPRISE (sai lệch dự đoán), không phải từ confirmation."
+                )
+            })
+
+        # P5: Inject pre-tool prediction prompt on iteration 0 (before first tool call)
+        elif iteration == 0 and not force_synthesis:
+            messages.append({
+                "role": "system",
+                "content": (
+                    "🔮 [PREDICTIVE PRE-ACT]: Trước khi gọi bất kỳ tool nào, "
+                    "hãy nêu ngắn gọn (1 dòng) em DỰ ĐOÁN kết quả sẽ là gì. "
+                    "Ví dụ: 'Em dự đoán disk đang ở khoảng 70-80%.' "
+                    "Sau khi có data từ tool, hãy so sánh và highlight điểm bất ngờ (nếu có)."
                 )
             })
 

@@ -99,6 +99,7 @@ class AiAgentService:
         self._cached_episodes: str = ""  # Episodic memory — refreshed each chat() call
         self._cached_pending: str = ""   # Prospective memory — refreshed each chat() call
         self._cached_schemas: str = ""   # Schema memory (v4.0) — refreshed each chat() call
+        self._cached_causal_hints: str = ""  # STDP causal hints (v4.0) — refreshed each chat() call
 
     def set_fb_service(self, fb_service: Any) -> None:
         self.fb_service = fb_service
@@ -1818,8 +1819,10 @@ Dạ container `dashboard_ai_agent` đang bị lỗi OOM (Out of Memory) — RAM
                 self._cached_episodes = await self.memory_service.get_recent_episodes(limit=4, days_back=30)
                 # Prospective memory: pending tasks to remind user about
                 self._cached_pending = await self.memory_service.get_pending_tasks_prompt()
-                # Schema memory: recurring patterns (P10 v4.0) — injected separately via _format_lessons_block
+                # P10 (v4.0) Schema memory: recurring SOPs — injected at highest priority
                 self._cached_schemas = await self.memory_service.get_active_schemas_prompt()
+                # P6 (v4.0) STDP causal hints: optimal tool sequencing from experience
+                self._cached_causal_hints = await self.memory_service.get_all_causal_hints_prompt()
             except Exception as _mem_err:
                 logger.warning("[AiAgent] Failed to refresh memory caches: %s", _mem_err)
 
@@ -1963,7 +1966,21 @@ Dạ container `dashboard_ai_agent` đang bị lỗi OOM (Out of Memory) — RAM
                 force_synthesis=force_synthesis,
             )
 
-            tools_available = self._build_tools(excluded_tools=executed_once_tools)
+            # P9 (v4.0) Dendritic SLM Routing: intent-based tool set restriction
+            # Narrows available tools based on detected intent to reduce irrelevant calls.
+            # Conservative gate: only excludes clearly orthogonal tools per intent.
+            _intent_excluded: set = set()
+            if _intent == "learning":
+                # Explanation/learning: skip screenshot tools, focus on text/memory
+                _intent_excluded = {"server_capture_screenshot", "facebook_capture_screenshot"}
+            elif _intent == "query":
+                # DB/data queries: skip screenshot + server tools
+                _intent_excluded = {"server_capture_screenshot", "facebook_capture_screenshot"}
+            # Note: diagnostic/action/general keep full tool access (run_command needed for all)
+
+            tools_available = self._build_tools(
+                excluded_tools=executed_once_tools | _intent_excluded
+            )
             tool_choice = "none" if (force_synthesis or not tools_available) else "auto"
 
             llm_result = await self.llm_router.complete(
@@ -2090,6 +2107,29 @@ Dạ container `dashboard_ai_agent` đang bị lỗi OOM (Out of Memory) — RAM
 
                     # P3 (Dopamine RPE): track all tool outputs for post-task salience scoring
                     _all_tool_results.append(str(tool_result)[:400])
+
+                    # P6 (v4.0) STDP + P8 EFE: record tool outcome for causal learning
+                    if self.memory_service:
+                        # Detect success/failure from tool output heuristically
+                        _result_str = str(tool_result).lower()
+                        _tool_ok = not any(
+                            kw in _result_str for kw in
+                            ("error", "fail", "exception", "traceback", "errno", "not found", "permission denied")
+                        )
+                        # P8 EFE: per-tool success rate (fire-and-forget)
+                        asyncio.create_task(
+                            self.memory_service.record_tool_outcome(fn_name, _tool_ok)
+                        )
+                        # P6 STDP: (prev_tool → current_tool) causal chain
+                        if _prev_tool_name:
+                            asyncio.create_task(
+                                self.memory_service.record_causal_transition(
+                                    _prev_tool_name, fn_name, _tool_ok
+                                )
+                            )
+                        _prev_tool_name = fn_name
+                        if not _tool_ok:
+                            _turn_success = False
 
                     # Terminal tools — flush pending photos then return immediately
                     if fn_name in self._DIRECT_RETURN_TOOLS:

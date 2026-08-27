@@ -156,26 +156,64 @@ class AgentMemoryService:
     # Public API: Lesson Management
     # ──────────────────────────────────────────────────────────────────────────
 
-    async def get_active_lessons(self, limit: int = 8) -> str:
+    async def get_active_lessons(self, limit: int = 8, query: Optional[str] = None) -> str:
         """
         Returns formatted lesson block for injection into the system prompt.
         Search-grounded lessons are marked with 🔍 for higher credibility.
         Uses in-memory cache invalidated on every new lesson write.
+
+        P7 (v4.0) Global Workspace Theory: if `query` is provided, lessons are ranked
+        by relevance to the query (Jaccard similarity) and only top-K are broadcast.
+        This mirrors the GWT winner-selection process (Dehaene 2011).
         """
         if self._cache_dirty:
-            await self._refresh_lesson_cache(limit)
+            await self._refresh_lesson_cache(limit=max(limit * 3, 30))  # Load more, rank, trim
 
         if not self._lesson_cache:
             return ""
 
+        # GWT Broadcast: rank by relevance if query provided, else use default order
+        if query:
+            ranked_lessons = self._rank_lessons_by_relevance(self._lesson_cache, query, top_k=limit)
+        else:
+            ranked_lessons = self._lesson_cache[:limit]
+
         lines = ["📚 *KINH NGHIỆM TỰ HỌC CỦA EM (Bài học từ các lần sai trước):*"]
-        for i, lesson in enumerate(self._lesson_cache[:limit], 1):
+        for i, lesson in enumerate(ranked_lessons, 1):
             grounded_mark = "🔍" if lesson.get("is_search_grounded") else "💭"
             lines.append(f"{i}. {grounded_mark} [{lesson['event_type'].upper()}] {lesson['lesson_text']}")
             asyncio.create_task(self._increment_usage(lesson["id"]))
 
         lines.append("\n_(🔍 = Đã xác thực qua tìm kiếm web · 💭 = Từ phân tích nội tâm)_")
         return "\n".join(lines)
+
+    def _rank_lessons_by_relevance(
+        self, lessons: List[Dict[str, Any]], query: str, top_k: int = 7
+    ) -> List[Dict[str, Any]]:
+        """
+        Phase 7 (v4.0) — Global Workspace Theory Broadcast Ranking.
+
+        Scores all lessons by Jaccard similarity against the user query.
+        Only the top-K 'winning' lessons are broadcast into the global workspace
+        (system prompt), mirroring how the brain's GWT selects the most salient
+        information to broadcast to the entire cortex.
+
+        Tie-breaking by confidence score (higher confidence wins when relevance is equal).
+        """
+        query_words = set(re.sub(r'[^\w\s]', '', query.lower()).split())
+        if not query_words:
+            return lessons[:top_k]
+
+        scored: List[tuple] = []
+        for lesson in lessons:
+            lesson_words = set(re.sub(r'[^\w\s]', '', lesson["lesson_text"].lower()).split())
+            union = query_words | lesson_words
+            sim = len(query_words & lesson_words) / len(union) if union else 0.0
+            scored.append((sim, lesson["confidence"], lesson))
+
+        # Sort: highest relevance first, then highest confidence as tiebreaker
+        scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
+        return [lesson for _, _, lesson in scored[:top_k]]
 
     async def list_lessons_for_display(self, limit: int = 10) -> List[Dict[str, Any]]:
         """Returns raw lesson list for Telegram /lessons command display."""
@@ -1356,3 +1394,195 @@ Bài học:"""
         except Exception as e:
             logger.warning("[MemoryService] should_send_proactive_alert error: %s", e)
             return False
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Phase 6 (v4.0): STDP Causal Workflow
+    # Learns optimal tool call sequencing from temporal experience.
+    # ──────────────────────────────────────────────────────────────────────────
+
+    async def record_causal_transition(
+        self, tool_a: str, tool_b: str, success: bool
+    ) -> None:
+        """
+        STDP Causal Chain Recorder (v4.0).
+        LTP: success → increment success_count. LTD: failure → increment fail_count.
+        Laplace-smoothed weight: w = (S+1)/(S+F+2).
+        """
+        if not tool_a or not tool_b or tool_a == tool_b:
+            return
+        try:
+            col = "success_count" if success else "fail_count"
+            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        f"""INSERT INTO agent_causal_chains (tool_a, tool_b, {col}, last_seen_at)
+                            VALUES (%s, %s, 1, NOW())
+                            ON CONFLICT (tool_a, tool_b) DO UPDATE
+                                SET {col}        = agent_causal_chains.{col} + 1,
+                                    last_seen_at = NOW()""",
+                        (tool_a, tool_b),
+                    )
+                    await conn.commit()
+        except Exception as e:
+            logger.debug("[MemoryService] record_causal_transition: %s", e)
+
+    async def get_all_causal_hints_prompt(self, min_weight: float = 0.6) -> str:
+        """Returns high-confidence causal chains for system prompt injection (Section 11)."""
+        try:
+            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        """SELECT tool_a, tool_b,
+                                  ROUND((success_count+1.0)/(success_count+fail_count+2.0),2) AS w,
+                                  success_count+fail_count AS n
+                           FROM agent_causal_chains
+                           WHERE tool_a != tool_b AND (success_count+fail_count) >= 5
+                           ORDER BY w DESC LIMIT 8"""
+                    )
+                    rows = await cur.fetchall()
+            if not rows:
+                return ""
+            lines = [
+                f"  - `{a}` -> `{b}` ({int(float(w)*100)}% success, n={n})"
+                for a, b, w, n in rows
+                if float(w) >= min_weight
+            ]
+            return "\n".join(lines) if lines else ""
+        except Exception as e:
+            logger.debug("[MemoryService] get_all_causal_hints_prompt: %s", e)
+            return ""
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Phase 8 (v4.0): Active Inference EFE — Per-Tool Success Rate Tracking
+    # UCB-inspired: EFE surrogate = success_rate + exploration_bonus
+    # ──────────────────────────────────────────────────────────────────────────
+
+    async def record_tool_outcome(self, tool_name: str, success: bool) -> None:
+        """Records per-tool outcome using self-loop in agent_causal_chains (tool_a==tool_b)."""
+        if not tool_name:
+            return
+        try:
+            col = "success_count" if success else "fail_count"
+            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        f"""INSERT INTO agent_causal_chains (tool_a, tool_b, {col}, last_seen_at)
+                            VALUES (%s, %s, 1, NOW())
+                            ON CONFLICT (tool_a, tool_b) DO UPDATE
+                                SET {col}        = agent_causal_chains.{col} + 1,
+                                    last_seen_at = NOW()""",
+                        (tool_name, tool_name),
+                    )
+                    await conn.commit()
+        except Exception as e:
+            logger.debug("[MemoryService] record_tool_outcome: %s", e)
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Phase 10 (v4.0): Schema Memory Engine (Bartlett Schema Theory 1932)
+    # Weekly LLM job: group successful episodes → extract recurring SOPs → agent_schemas
+    # ──────────────────────────────────────────────────────────────────────────
+
+    async def get_active_schemas_prompt(self) -> str:
+        """Returns top-3 active schemas formatted for system prompt Section 7 injection."""
+        try:
+            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        """SELECT schema_name, pattern_text, occurrence_count
+                           FROM agent_schemas
+                           WHERE is_active = TRUE
+                           ORDER BY occurrence_count DESC, confidence DESC
+                           LIMIT 3"""
+                    )
+                    rows = await cur.fetchall()
+            if not rows:
+                return ""
+            lines = [f"  - **{name}** (x{count}): {pattern}" for name, pattern, count in rows]
+            return "\n".join(lines)
+        except Exception as e:
+            # Table may not exist yet — fail silently until migration runs
+            logger.debug("[MemoryService] get_active_schemas_prompt: %s", e)
+            return ""
+
+    async def run_schema_extraction(self) -> int:
+        """
+        Weekly schema extraction (Bartlett 1932 Schema Theory):
+        Reads top successful episodes → LLM extracts recurring SOPs → upsert agent_schemas.
+        Returns number of schemas created/updated.
+        """
+        if not self._http or not settings.groq_keys:
+            return 0
+        try:
+            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        """SELECT event_summary, salience_score
+                           FROM agent_episodes
+                           WHERE event_type = 'task_completion'
+                             AND severity IN ('high', 'medium')
+                             AND created_at > NOW() - INTERVAL '90 days'
+                           ORDER BY salience_score DESC, created_at DESC
+                           LIMIT 30"""
+                    )
+                    rows = await cur.fetchall()
+
+            if len(rows) < 5:
+                logger.info("[Schema] Not enough episodes (%d < 5)", len(rows))
+                return 0
+
+            episodes_text = "\n".join(f"- {r[0][:120]} (salience:{r[1]})" for r in rows)
+            prompt = (
+                "Phan tich cac task sau va rut ra toi da 3 quy trinh chuan (SOP) lap lai nhieu nhat.\n"
+                "Tra ve JSON array duy nhat (khong giai thich): "
+                '[{"name": "Ten ngan", "pattern": "Mo ta 1-2 cau"}]\n'
+                f"Episodes:\n{episodes_text[:2000]}"
+            )
+
+            resp = await self._http.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={"Authorization": f"Bearer {settings.groq_keys[0]}",
+                         "Content-Type": "application/json"},
+                json={"model": settings.GROQ_MODEL,
+                      "messages": [{"role": "user", "content": prompt}],
+                      "temperature": 0.15, "max_tokens": 400},
+                timeout=30.0,
+            )
+            if resp.status_code != 200:
+                logger.warning("[Schema] API returned %d", resp.status_code)
+                return 0
+
+            raw = resp.json()["choices"][0]["message"]["content"].strip()
+            json_match = re.search(r'\[.*?\]', raw, re.DOTALL)
+            if not json_match:
+                return 0
+
+            import json as _json
+            schemas = _json.loads(json_match.group())
+            count = 0
+
+            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+                async with conn.cursor() as cur:
+                    for s in schemas:
+                        name = str(s.get("name", ""))[:200].strip()
+                        pattern = str(s.get("pattern", ""))[:1000].strip()
+                        if not name or not pattern:
+                            continue
+                        await cur.execute(
+                            """INSERT INTO agent_schemas
+                                   (schema_name, pattern_text, occurrence_count, is_active)
+                               VALUES (%s, %s, 1, TRUE)
+                               ON CONFLICT (schema_name) DO UPDATE
+                                   SET pattern_text     = EXCLUDED.pattern_text,
+                                       occurrence_count = agent_schemas.occurrence_count + 1,
+                                       last_updated_at  = NOW()""",
+                            (name, pattern),
+                        )
+                        count += 1
+                    await conn.commit()
+
+            logger.info("[Schema] Extracted %d schemas from %d episodes.", count, len(rows))
+            return count
+
+        except Exception as e:
+            logger.error("[Schema] run_schema_extraction error: %s", e)
+            return 0

@@ -47,6 +47,35 @@ _SIMPLE_PATTERN = re.compile(
     re.IGNORECASE | re.UNICODE
 )
 
+# ── Phase 9 (v4.0): Dendritic SLM Routing ────────────────────────────────────
+# Pre-LLM intent classifier: routes to specialized context/tool-sets
+# Mirrors dendritic pre-computation before neuron body (SLM routing 2024).
+_INTENT_DIAGNOSTIC = re.compile(
+    r'\b(tại sao|lỗi gì|check|kiểm tra|xem|status|log|journalctl|dmesg|'
+    r'health|trạng thái|bao nhiêu|mấy|còn|hết|đang chạy|running|ps)\b',
+    re.IGNORECASE | re.UNICODE
+)
+_INTENT_ACTION = re.compile(
+    r'\b(tạo|khởi động|restart|start|stop|kill|deploy|cài|install|'
+    r'update|upgrade|chạy lệnh|run|execute|xóa docker|prune|clean)\b',
+    re.IGNORECASE | re.UNICODE
+)
+_INTENT_LEARNING = re.compile(
+    r'\b(nhớ|lưu|ghi nhớ|bài học|học|remind|remember|remember_for_later|'
+    r'giải thích|explain|tại sao lại|how does|hướng dẫn)\b',
+    re.IGNORECASE | re.UNICODE
+)
+_INTENT_QUERY = re.compile(
+    r'\b(hỏi|query|tìm|search|liệt kê|danh sách|list|database|db|'
+    r'bảng|table|select|count|thống kê|báo cáo|report)\b',
+    re.IGNORECASE | re.UNICODE
+)
+
+# ── Phase 7 (v4.0): Global Workspace Theory Broadcast Size ───────────────────
+# Only top-K most relevant lessons are broadcast into the agent's "global workspace"
+# (injected into system prompt). Mimics Dehaene's 70-item global workspace limit.
+_GWT_TOP_K_LESSONS = 7
+
 
 class AiAgentService:
     def __init__(
@@ -69,6 +98,7 @@ class AiAgentService:
         self._cached_lessons: str = ""   # Semantic memory — refreshed each chat() call
         self._cached_episodes: str = ""  # Episodic memory — refreshed each chat() call
         self._cached_pending: str = ""   # Prospective memory — refreshed each chat() call
+        self._cached_schemas: str = ""   # Schema memory (v4.0) — refreshed each chat() call
 
     def set_fb_service(self, fb_service: Any) -> None:
         self.fb_service = fb_service
@@ -125,6 +155,33 @@ class AiAgentService:
 
         # Default to complex when uncertain (Dunning-Kruger inverse: err on the side of depth)
         return "complex"
+
+    def _detect_intent(self, msg: str) -> str:
+        """
+        Phase 9 (v4.0) — Dendritic SLM Routing.
+
+        Pre-LLM intent classification that runs BEFORE the main LLM call.
+        Mimics dendritic computation: cheap pre-processing before the neuron body fires.
+
+        Determines the query's PRIMARY PURPOSE to:
+        - Restrict tool sets (diagnostic intent → read-only tools)
+        - Adjust system prompt emphasis
+        - Allow EFE tool scoring to pick appropriate candidates
+
+        Returns: 'diagnostic' | 'action' | 'learning' | 'query' | 'general'
+        """
+        msg_lower = msg.lower()
+        # Priority: action > learning > diagnostic > query > general
+        # (action has highest safety implication, detect first)
+        if _INTENT_ACTION.search(msg_lower):
+            return "action"
+        if _INTENT_LEARNING.search(msg_lower):
+            return "learning"
+        if _INTENT_DIAGNOSTIC.search(msg_lower):
+            return "diagnostic"
+        if _INTENT_QUERY.search(msg_lower):
+            return "query"
+        return "general"
 
     def _smart_chunk_tool_output(self, raw: str, is_recent: bool) -> str:
         """
@@ -470,13 +527,24 @@ Dạ container `dashboard_ai_agent` đang bị lỗi OOM (Out of Memory) — RAM
     def _format_lessons_block(self) -> str:
         """
         Returns combined memory injection for system prompt:
-        - Section 8: Semantic memory (self-learned lessons)
-        - Section 9: Episodic memory (recent specific events)
+        - Section 7:  Schema memory (v4.0) — recurring patterns, highest priority
+        - Section 8:  Semantic memory (GWT top-K relevant lessons)
+        - Section 9:  Episodic memory (recent specific events)
         - Section 10: Prospective memory (pending tasks)
+        - Section 11: STDP Causal hints (v4.0) — optimal tool call sequences
         """
         sections: List[str] = []
 
-        # Section 8: Semantic Memory (procedural lessons)
+        # Section 7: Schema Memory (v4.0) — highest priority, injected BEFORE lessons
+        # Schemas are recurring patterns extracted from many episodes (Bartlett 1932)
+        if self._cached_schemas:
+            sections.append(
+                f"\n\n━━━ 7. QUY TRÌNH CHUẨN (SCHEMA MEMORY — ƯU TIÊN CAO NHẤT) ━━━\n"
+                f"🧬 Đây là các mô hình hành động lặp lại đã được đúc kết từ kinh nghiệm thực tế:\n"
+                f"{self._cached_schemas}"
+            )
+
+        # Section 8: Semantic Memory (procedural lessons) — GWT top-K broadcast
         if self._cached_lessons:
             sections.append(
                 f"\n\n━━━ 8. KINH NGHIỆM TỰ HỌC (BÀI HỌC TỪ CÁC LẦN SỬA LỖI TRƯỚC) ━━━\n"
@@ -498,6 +566,14 @@ Dạ container `dashboard_ai_agent` đang bị lỗi OOM (Out of Memory) — RAM
                 f"\n\n━━━ 10. VIỆC ĐANG CHỜ XỬ LÝ (PROSPECTIVE MEMORY) ━━━\n"
                 f"📋 Nhắc nhở anh Mạnh về các việc còn dang dở:\n"
                 f"{self._cached_pending}"
+            )
+
+        # Section 11: STDP Causal Hints (v4.0) — tool sequencing learned from experience
+        if hasattr(self, "_cached_causal_hints") and self._cached_causal_hints:
+            sections.append(
+                f"\n\n━━━ 11. GỢI Ý THỨ TỰ TOOL TỐI ƯU (STDP CAUSAL MEMORY) ━━━\n"
+                f"🔗 Dựa trên lịch sử, các chuỗi tool call sau có tỷ lệ thành công cao:\n"
+                f"{self._cached_causal_hints}"
             )
 
         return "".join(sections)
@@ -1733,12 +1809,17 @@ Dạ container `dashboard_ai_agent` đang bị lỗi OOM (Out of Memory) — RAM
         # CoALA architecture: Semantic (lessons) + Episodic (events) + Prospective (tasks)
         if self.memory_service:
             try:
-                # Semantic memory: self-learned rules from past corrections
-                self._cached_lessons = await self.memory_service.get_active_lessons(limit=8)
+                # P7 (v4.0) GWT: pass user_message as query → rank lessons by relevance
+                # Only top-_GWT_TOP_K_LESSONS most relevant lessons are broadcast
+                self._cached_lessons = await self.memory_service.get_active_lessons(
+                    limit=_GWT_TOP_K_LESSONS, query=user_message
+                )
                 # Episodic memory: specific past events (hippocampal recall, last 30 days)
                 self._cached_episodes = await self.memory_service.get_recent_episodes(limit=4, days_back=30)
                 # Prospective memory: pending tasks to remind user about
                 self._cached_pending = await self.memory_service.get_pending_tasks_prompt()
+                # Schema memory: recurring patterns (P10 v4.0) — injected separately via _format_lessons_block
+                self._cached_schemas = await self.memory_service.get_active_schemas_prompt()
             except Exception as _mem_err:
                 logger.warning("[AiAgent] Failed to refresh memory caches: %s", _mem_err)
 
@@ -1828,11 +1909,21 @@ Dạ container `dashboard_ai_agent` đang bị lỗi OOM (Out of Memory) — RAM
         # P5 (Predictive Pre-Act): LLM's prediction before task (injected on first tool call)
         _pre_task_prediction: str = ""
 
+        # ── v4.0: Advanced Neuroscience Variables ────────────────────────────
+        # P6 (STDP): track ordered tool sequence (pre_tool, post_tool) per turn
+        _prev_tool_name: str = ""
+        _turn_success: bool = True  # assume success until a tool fails
+        # P9 (Dendritic): intent classification informs tool routing
+        _intent = self._detect_intent(user_message)
+
         # ── Phase 1: Dual Process Gating ─────────────────────────────────────
         # Classify query complexity ONCE before entering the loop.
         # Like the brain routing to System 1 (fast) vs System 2 (slow, deliberate).
         _complexity = self._classify_complexity(user_message)
-        logger.info("[AiAgent] 🧠 Complexity: %s | query: %.60s", _complexity, user_message)
+        logger.info(
+            "[AiAgent] 🧠 Complexity: %s | Intent: %s | query: %.50s",
+            _complexity, _intent, user_message
+        )
 
         # Critical gate: dangerous commands require explicit confirmation
         if _complexity == "critical":

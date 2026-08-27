@@ -156,6 +156,40 @@ async def nightly_consolidation_loop(memory_service):
             await asyncio.sleep(3600)  # Retry in 1 hour on failure
 
 
+async def weekly_schema_extraction_loop(memory_service):
+    """
+    Phase 10 (v4.0): Schema Memory Engine — weekly at 04:00 ICT Sunday.
+
+    Bartlett Schema Theory: extracts recurring SOP patterns from successful episodes
+    via LLM abstraction. Schemas are injected at highest priority in system prompt.
+    """
+    import datetime as _dt
+    logger.info("[Schema] 🧬 Weekly schema extraction loop started.")
+    while True:
+        try:
+            # Calculate seconds until next Sunday 04:00 ICT
+            now_utc = _dt.datetime.now(_dt.timezone.utc)
+            now_ict = now_utc + _dt.timedelta(hours=7)
+            # days_until_sunday: 0=Monday … 6=Sunday, target weekday=6
+            days_until = (6 - now_ict.weekday()) % 7
+            if days_until == 0 and now_ict.hour >= 4:
+                days_until = 7  # Already past Sunday 04:00 → next week
+            target = (now_ict + _dt.timedelta(days=days_until)).replace(
+                hour=4, minute=0, second=0, microsecond=0
+            )
+            wait_secs = (target - now_ict).total_seconds()
+            logger.info("[Schema] 💤 Next extraction in %.0f seconds (Sun 04:00 ICT).", wait_secs)
+            await asyncio.sleep(wait_secs)
+            count = await memory_service.run_schema_extraction()
+            logger.info("[Schema] ✅ Extracted %d schemas.", count)
+        except asyncio.CancelledError:
+            logger.info("[Schema] Schema extraction loop cancelled.")
+            break
+        except Exception as e:
+            logger.error("[Schema] Unexpected error: %s", e)
+            await asyncio.sleep(3600)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting up AI Agent & 9Router Service (Python)...")
@@ -220,6 +254,7 @@ async def lifespan(app: FastAPI):
     rtk_persist_task     = asyncio.create_task(rtk_stats_persist_loop(llm_router))
     proactive_task       = asyncio.create_task(proactive_scan_loop(proactive_service))
     consolidation_task   = asyncio.create_task(nightly_consolidation_loop(memory_service))
+    schema_task          = asyncio.create_task(weekly_schema_extraction_loop(memory_service))
 
     yield
 
@@ -233,10 +268,11 @@ async def lifespan(app: FastAPI):
     rtk_persist_task.cancel()
     proactive_task.cancel()
     consolidation_task.cancel()
+    schema_task.cancel()
     try:
         await asyncio.gather(
             telegram_task, fb_scan_task, tiktok_scan_task, reminder_task,
-            rtk_persist_task, proactive_task, consolidation_task,
+            rtk_persist_task, proactive_task, consolidation_task, schema_task,
             return_exceptions=True,
         )
     except Exception:

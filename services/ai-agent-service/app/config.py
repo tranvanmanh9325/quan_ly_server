@@ -54,7 +54,10 @@ class Settings(BaseSettings):
     OPENROUTER_API_KEY_3: str = Field(default="", alias="OPENROUTER_API_KEY_3")
     OPENROUTER_API_KEY_4: str = Field(default="", alias="OPENROUTER_API_KEY_4")
     OPENROUTER_API_KEY_5: str = Field(default="", alias="OPENROUTER_API_KEY_5")
-    OPENROUTER_MODEL: str = Field(default="nvidia/nemotron-3-super-120b-a12b:free", alias="OPENROUTER_MODEL")
+    # Primary free model: nemotron-3-ultra-550b (strongest free model, 550B params, 1M ctx, verified live 27/08/2026)
+    OPENROUTER_MODEL: str = Field(default="nvidia/nemotron-3-ultra-550b-a55b:free", alias="OPENROUTER_MODEL")
+    # Fallback free model: nemotron-3-super-120b (verified live, activated when ultra is rate-limited)
+    OPENROUTER_MODEL_FALLBACK: str = Field(default="nvidia/nemotron-3-super-120b-a12b:free", alias="OPENROUTER_MODEL_FALLBACK")
     OPENROUTER_API_URL: str = Field(default="https://openrouter.ai/api/v1/chat/completions", alias="OPENROUTER_API_URL")
 
     # Server Physical Ground Truth Metadata

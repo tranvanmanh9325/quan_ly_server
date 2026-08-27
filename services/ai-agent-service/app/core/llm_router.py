@@ -322,24 +322,105 @@ class LlmRouter:
                 api_keys=groq_keys,
             )
 
-        # 2. Tier 2: OpenRouter Multi-Key Pool (mirrors Groq pool)
+        or_extra = {
+            "HTTP-Referer": "https://dashboard.kirito.server",
+            "X-Title": "Server Dashboard AI (9Router)",
+        }
         openrouter_keys = settings.openrouter_keys
         if openrouter_keys:
+            # 2. Tier 2A: OpenRouter Primary — nemotron-3-ultra-550b:free (550B, 1M ctx)
             self.providers["openrouter"] = Provider(
                 name="openrouter",
                 tier=2,
                 base_url=settings.OPENROUTER_API_URL,
                 default_model=settings.OPENROUTER_MODEL,
                 api_keys=openrouter_keys,
-                extra_headers={
-                    "HTTP-Referer": "https://dashboard.kirito.server",
-                    "X-Title": "Server Dashboard AI (9Router)",
-                },
+                extra_headers=or_extra,
             )
+            # 3. Tier 2B: OpenRouter Fallback — nemotron-3-super-120b:free (120B, 262K ctx)
+            # Activated automatically when Tier 2A is rate-limited or fails
+            fallback_model = getattr(settings, "OPENROUTER_MODEL_FALLBACK", "nvidia/nemotron-3-super-120b-a12b:free")
+            if fallback_model and fallback_model != settings.OPENROUTER_MODEL:
+                self.providers["openrouter_fallback"] = Provider(
+                    name="openrouter_fallback",
+                    tier=3,
+                    base_url=settings.OPENROUTER_API_URL,
+                    default_model=fallback_model,
+                    api_keys=openrouter_keys,
+                    extra_headers=or_extra,
+                )
 
     @property
     def has_active_providers(self) -> bool:
         return any(p.has_keys for p in self.providers.values())
+
+    # ─── CoT Leakage Filter ───────────────────────────────────────────────────
+
+    # Patterns that indicate a model is leaking its internal reasoning process.
+    # Identified from live testing of nemotron-3.5-lightning and similar models
+    # that expose their "thinking process" verbatim before the actual answer.
+    _COT_LEAK_PATTERNS = re.compile(
+        r"^(?:"
+        r"Here's?\s+(?:a\s+)?(?:my\s+)?thinking\s+process[:.]?\s*\n"
+        r"|Okay,\s+let(?:'s|'s)\s+tackle\s+this\s+"
+        r"|Let\s+me\s+(?:think|work)\s+through\s+this\s+"
+        r"|Let\s+me\s+(?:first\s+)?analyze\s+"
+        r"|First,\s+I\s+need\s+to\s+recall\s+"
+        r"|I\s+need\s+to\s+recall\s+"
+        r"|Let\s+me\s+break\s+(?:this|it)\s+down\s+"
+        r"|Thinking\s+through\s+this\s*[:.]?\s*\n"
+        r"|Step-by-step\s+(?:analysis|reasoning)\s*[:.]?\s*\n"
+        r")",
+        re.IGNORECASE,
+    )
+    # Numbered reasoning block: "1. Analyze... 2. Identify... 3. Formulate..."
+    _COT_NUMBERED_BLOCK = re.compile(
+        r"^(?:\d+\.\s+\*\*(?:Analyze|Identify|Formulate|Plan|Consider)\b.*\n){2,}",
+        re.MULTILINE,
+    )
+
+    def _strip_cot_leakage(self, content: str) -> str:
+        """Remove leaked chain-of-thought preambles from model responses.
+
+        Some models (e.g. nemotron-3.5-lightning with reasoning mode) output their
+        internal deliberation verbatim before the actual answer. This filter strips
+        those preambles to produce clean, user-facing responses.
+        """
+        if not content:
+            return content
+
+        # Pattern 1: Explicit thinking-process header followed by numbered steps,
+        # then a separator (---) before the actual answer.
+        # E.g.: "Here's a thinking process:\n1. Analyze...\n2. ...\n---\nActual answer"
+        sep_match = re.search(r"\n(?:---+|={3,})\n", content)
+        if sep_match and self._COT_LEAK_PATTERNS.search(content[:sep_match.start() + 10]):
+            stripped = content[sep_match.end():].strip()
+            if stripped:
+                logger.debug("[9Router] CoT leakage stripped (%d chars removed)", sep_match.end())
+                return stripped
+
+        # Pattern 2: Block starts directly with reasoning header — find first real paragraph
+        if self._COT_LEAK_PATTERNS.search(content[:200]):
+            # Look for a blank-line-separated paragraph that isn't part of the reasoning
+            paragraphs = re.split(r"\n\n+", content)
+            real_paragraphs = []
+            in_cot = True
+            for para in paragraphs:
+                if in_cot:
+                    # Stop skipping when we hit a paragraph that looks like a real answer
+                    # (contains Vietnamese, starts with a bullet/numbered point that isn't meta-analysis)
+                    is_vi_answer = bool(re.search(r"[àáảãạăắằẳẵặâấầẩẫậèéẻẽẹêếềểễệìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữựỳýỷỹỵđ]", para))
+                    is_cot_para = bool(self._COT_NUMBERED_BLOCK.search(para)) or bool(self._COT_LEAK_PATTERNS.search(para[:100]))
+                    if is_vi_answer and not is_cot_para:
+                        in_cot = False
+                if not in_cot:
+                    real_paragraphs.append(para)
+            if real_paragraphs and len("\n\n".join(real_paragraphs)) > 30:
+                stripped = "\n\n".join(real_paragraphs).strip()
+                logger.debug("[9Router] CoT preamble stripped (%d paragraphs removed)", len(paragraphs) - len(real_paragraphs))
+                return stripped
+
+        return content
 
     async def complete(
         self,
@@ -414,21 +495,30 @@ class LlmRouter:
                         data = resp.json()
                         choice = data["choices"][0]
                         logger.info(
-                            "[9Router] Routed -> [%s / Key #%d] in %.2fs (Finish: %s)",
+                            "[9Router] Routed -> [%s / Key #%d / %s] in %.2fs (Finish: %s)",
                             provider.name,
                             key_entry.key_id,
+                            model_to_use,
                             latency,
                             choice.get("finish_reason"),
                         )
+                        # Strip leaked chain-of-thought from models that expose internal reasoning
+                        # (e.g. nemotron-3.5-lightning outputs "Here's a thinking process: ..." verbatim)
+                        if choice.get("message") and choice["message"].get("content"):
+                            choice["message"]["content"] = self._strip_cot_leakage(
+                                choice["message"]["content"]
+                            )
                         # Inject 9Router metadata
                         data["_9router"] = {
                             "provider": provider.name,
                             "tier": provider.tier,
+                            "model": model_to_use,
                             "key_id": key_entry.key_id,
                             "latency_sec": round(latency, 3),
                             "tokens_saved_estimate": self.rtk.estimated_tokens_saved,
                         }
                         return data
+
 
                     # Handle Groq 400 with failed_generation (Resilient tool parser)
                     if resp.status_code == 400 and "failed_generation" in resp.text:

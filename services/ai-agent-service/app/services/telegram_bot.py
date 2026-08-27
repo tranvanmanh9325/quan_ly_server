@@ -504,6 +504,29 @@ class TelegramBot:
             )
             await self.send_message(chat_id, msg)
 
+        elif raw_cmd == "/tasks":
+            # Phase 5A: Prospective Memory — list pending tasks
+            if not self.memory_service:
+                await self.send_message(chat_id, "⚠️ Memory service chưa sẵn sàng.")
+                return
+            tasks = await self.memory_service.list_pending_tasks()
+            if not tasks:
+                await self.send_message(
+                    chat_id,
+                    "📋 *Danh sách việc đang chờ:*\n\n✅ Hiện không có việc nào đang chờ xử lý!"
+                )
+                return
+            lines = ["📋 *DANH SÁCH VIỆC ĐANG CHỜ (Prospective Memory):*\n"]
+            for t in tasks:
+                from datetime import datetime as _dt
+                ts = t["created_at"].strftime("%d/%m %H:%M") if t.get("created_at") else "?"
+                lines.append(
+                    f"• <b>#{t['id']}</b> [{ts}] {t['task_summary']}\n"
+                    f"  _Nhắc sau mỗi {t['remind_turns']} lượt, đã qua {t['turns_elapsed']} lượt_"
+                )
+            lines.append("\n💡 Gõ <code>xong việc #ID</code> để đánh dấu hoàn thành")
+            await self.send_message(chat_id, "\n".join(lines))
+
         else:
             # Route unrecognized slash command to AI Agent
             reply = await self.ai_agent.chat(chat_id, command)

@@ -16,6 +16,7 @@ from app.services.ai_agent import AiAgentService
 from app.services.browser_agent import BrowserAgentService
 from app.services.memory_service import AgentMemoryService
 from app.services.telegram_bot import TelegramBot
+from app.services.proactive_service import ProactiveIntelligenceService
 from app.routers import health, facebook, tiktok, openai_gateway
 
 logging.basicConfig(
@@ -118,6 +119,11 @@ async def rtk_stats_persist_loop(llm_router: LlmRouter):
             logger.error("[RTK-Persist] Unexpected error in persist loop: %s", e)
 
 
+async def proactive_scan_loop(proactive_service: ProactiveIntelligenceService):
+    """Phase 5B: Curiosity-Driven server health scan — SRE always on duty."""
+    await proactive_service.start()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting up AI Agent & 9Router Service (Python)...")
@@ -153,6 +159,15 @@ async def lifespan(app: FastAPI):
     telegram_bot.set_memory_service(memory_service)
     logger.info("[MemoryService] Self-learning memory engine initialized ✓")
 
+    # Initialize Phase 5B: Proactive Intelligence (Curiosity-Driven Health Scanner)
+    proactive_service = ProactiveIntelligenceService(
+        ssh_client=ssh_client,
+        memory_service=memory_service,
+        telegram_bot=telegram_bot,
+        scan_interval=getattr(settings, "PROACTIVE_SCAN_INTERVAL_SECONDS", 21600),
+    )
+    logger.info("[Proactive] Curiosity-Driven Health Scanner initialized ✓ (interval=%ds)",
+                getattr(settings, "PROACTIVE_SCAN_INTERVAL_SECONDS", 21600))
 
     # 3. Attach to app state for dependency injection in routers
     app.state.llm_router = llm_router
@@ -171,18 +186,25 @@ async def lifespan(app: FastAPI):
     tiktok_scan_task = asyncio.create_task(tiktok_periodic_scan_loop(tiktok_service))
     reminder_task = asyncio.create_task(appointment_reminder_loop(appointment_service, telegram_bot))
     rtk_persist_task = asyncio.create_task(rtk_stats_persist_loop(llm_router))
+    proactive_task = asyncio.create_task(proactive_scan_loop(proactive_service))
 
     yield
 
     logger.info("Shutting down AI Agent & 9Router Service...")
     telegram_bot.stop()
+    proactive_service.stop()
     telegram_task.cancel()
     fb_scan_task.cancel()
     tiktok_scan_task.cancel()
     reminder_task.cancel()
     rtk_persist_task.cancel()
+    proactive_task.cancel()
     try:
-        await asyncio.gather(telegram_task, fb_scan_task, tiktok_scan_task, reminder_task, rtk_persist_task, return_exceptions=True)
+        await asyncio.gather(
+            telegram_task, fb_scan_task, tiktok_scan_task, reminder_task,
+            rtk_persist_task, proactive_task,
+            return_exceptions=True,
+        )
     except Exception:
         pass
     # Persist any remaining RTK delta before shutdown

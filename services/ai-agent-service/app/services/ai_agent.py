@@ -66,7 +66,9 @@ class AiAgentService:
         self.appointment_service: Any = None
         self.memory_service: Any = None  # AgentMemoryService — persistent self-learning memory
         self._history_map: Dict[str, List[Dict[str, Any]]] = {}
-        self._cached_lessons: str = ""  # Refreshed at the start of each chat() call
+        self._cached_lessons: str = ""   # Semantic memory — refreshed each chat() call
+        self._cached_episodes: str = ""  # Episodic memory — refreshed each chat() call
+        self._cached_pending: str = ""   # Prospective memory — refreshed each chat() call
 
     def set_fb_service(self, fb_service: Any) -> None:
         self.fb_service = fb_service
@@ -413,11 +415,39 @@ Dạ container `dashboard_ai_agent` đang bị lỗi OOM (Out of Memory) — RAM
 {self._format_lessons_block()}"""
 
     def _format_lessons_block(self) -> str:
-        """Returns the self-learned lessons block for injection into system prompt."""
-        if not self._cached_lessons:
-            return ""
-        return f"\n\n━━━ 8. KINH NGHIỆM TỰ HỌC (BÀI HỌC TỪ CÁC LẦN SỬA LỖI TRƯỚC) ━━━\n⚡ ĐÂY LÀ NHỮNG QUY TẮC RÚT RA TỪ LỊCH SỬ THỰC TẾ — PHẢI ƯU TIÊN TUÂN THỦ:\n{self._cached_lessons}"
+        """
+        Returns combined memory injection for system prompt:
+        - Section 8: Semantic memory (self-learned lessons)
+        - Section 9: Episodic memory (recent specific events)
+        - Section 10: Prospective memory (pending tasks)
+        """
+        sections: List[str] = []
 
+        # Section 8: Semantic Memory (procedural lessons)
+        if self._cached_lessons:
+            sections.append(
+                f"\n\n━━━ 8. KINH NGHIỆM TỰ HỌC (BÀI HỌC TỪ CÁC LẦN SỬA LỖI TRƯỚC) ━━━\n"
+                f"⚡ ĐÂY LÀ NHỮNG QUY TẮC RÚT RA TỪ LỊCH SỬ THỰC TẾ — PHẢI ƯU TIÊN TUÂN THỦ:\n"
+                f"{self._cached_lessons}"
+            )
+
+        # Section 9: Episodic Memory (specific past events — hippocampal recall)
+        if self._cached_episodes:
+            sections.append(
+                f"\n\n━━━ 9. SỰ KIỆN ĐÃ XẢY RA GẦN ĐÂY (EPISODIC MEMORY) ━━━\n"
+                f"📌 Dùng để liên hệ với câu hỏi về lịch sử hệ thống:\n"
+                f"{self._cached_episodes}"
+            )
+
+        # Section 10: Prospective Memory (pending tasks to remind user about)
+        if self._cached_pending:
+            sections.append(
+                f"\n\n━━━ 10. VIỆC ĐANG CHỜ XỬ LÝ (PROSPECTIVE MEMORY) ━━━\n"
+                f"📋 Nhắc nhở anh Mạnh về các việc còn dang dở:\n"
+                f"{self._cached_pending}"
+            )
+
+        return "".join(sections)
 
     # ──────────────────────────────────────────────────────────────────────────
     # Tool Registry
@@ -855,13 +885,56 @@ Dạ container `dashboard_ai_agent` đang bị lỗi OOM (Out of Memory) — RAM
                 },
             },
             # ── Server Screenshot ──
-
             {
                 "type": "function",
                 "function": {
                     "name": "server_capture_screenshot",
                     "description": "Chụp toàn bộ màn hình desktop/server Linux và gửi qua Telegram.",
                     "parameters": {"type": "object", "properties": {}},
+                },
+            },
+            # ── Phase 5A: Prospective Memory ──
+            {
+                "type": "function",
+                "function": {
+                    "name": "remember_for_later",
+                    "description": (
+                        "Ghi nhớ một việc cần làm sau — Prospective Memory. "
+                        "Gọi khi user nói 'nhớ giúp tôi', 'để sau xem', 'remind me', 'kiểm tra lại sau', v.v. "
+                        "Việc này sẽ được nhắc lại trong các hội thoại tiếp theo."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "task": {
+                                "type": "string",
+                                "description": "Mô tả ngắn gọn việc cần nhớ (ví dụ: 'Kiểm tra SSL cert domain api.example.com').",
+                            },
+                            "remind_turns": {
+                                "type": "integer",
+                                "description": "Nhắc lại sau mỗi bao nhiêu lượt hội thoại (mặc định: 3).",
+                                "default": 3,
+                            },
+                        },
+                        "required": ["task"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "complete_task",
+                    "description": "Đánh dấu một việc đang chờ (pending task) là đã hoàn thành. Gọi khi user nói 'xong rồi', 'done', 'đã xử lý', kèm ID task.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "task_id": {
+                                "type": "integer",
+                                "description": "ID của task cần đánh dấu hoàn thành (lấy từ danh sách việc đang chờ).",
+                            }
+                        },
+                        "required": ["task_id"],
+                    },
                 },
             },
         ]
@@ -1157,6 +1230,34 @@ Dạ container `dashboard_ai_agent` đang bị lỗi OOM (Out of Memory) — RAM
                     )
                     return "🖥️ Đã chụp và gửi ảnh màn hình máy chủ qua Telegram!"
                 return "Đã thực hiện chụp màn hình máy chủ."
+
+            # ── Phase 5A: Prospective Memory Tools ──────────────────────────
+            if tool_name == "remember_for_later":
+                if not self.memory_service:
+                    return "Prospective memory chưa được khởi tạo."
+                task = tool_args.get("task", "").strip()
+                remind_turns = int(tool_args.get("remind_turns", 3))
+                if not task:
+                    return "Cần cung cấp nội dung việc cần nhớ."
+                task_id = await self.memory_service.add_pending_task(
+                    task_summary=task,
+                    created_by_msg=user_message[:500],
+                    remind_turns=remind_turns,
+                )
+                if task_id:
+                    return f"✅ Em đã ghi nhớ việc cần làm (#{task_id}): **{task}**\nEm sẽ nhắc lại anh Mạnh sau mỗi {remind_turns} lượt hội thoại."
+                return "Có lỗi khi ghi nhớ, anh Mạnh thử lại nhé."
+
+            if tool_name == "complete_task":
+                if not self.memory_service:
+                    return "Prospective memory chưa được khởi tạo."
+                task_id = int(tool_args.get("task_id", 0))
+                if not task_id:
+                    return "Cần cung cấp task_id cụ thể."
+                success = await self.memory_service.complete_pending_task(task_id)
+                if success:
+                    return f"✅ Đã đánh dấu hoàn thành việc #{task_id}. Em xóa khỏi danh sách nhắc nhở rồi ạ!"
+                return f"Không tìm thấy task #{task_id} hoặc task đã được đánh dấu trước đó."
 
             if tool_name == "browser_click":
                 if not self.browser_agent:
@@ -1574,13 +1675,19 @@ Dạ container `dashboard_ai_agent` đang bị lỗi OOM (Out of Memory) — RAM
         if not self.is_configured():
             return "AI chưa được cấu hình. Vui lòng thêm ít nhất 1 GROQ_API_KEY hoặc OPENROUTER_API_KEY vào file .env."
 
-        # ── Refresh procedural memory (lessons) into system prompt cache ──────
-        # Runs once per chat() call. Gracefully skips if memory_service is not wired.
+        # ── Refresh all 3 memory types into system prompt cache ──────────────
+        # Runs once per chat() call. Gracefully skips if memory_service not wired.
+        # CoALA architecture: Semantic (lessons) + Episodic (events) + Prospective (tasks)
         if self.memory_service:
             try:
+                # Semantic memory: self-learned rules from past corrections
                 self._cached_lessons = await self.memory_service.get_active_lessons(limit=8)
+                # Episodic memory: specific past events (hippocampal recall, last 30 days)
+                self._cached_episodes = await self.memory_service.get_recent_episodes(limit=4, days_back=30)
+                # Prospective memory: pending tasks to remind user about
+                self._cached_pending = await self.memory_service.get_pending_tasks_prompt()
             except Exception as _mem_err:
-                logger.warning("[AiAgent] Failed to refresh lessons cache: %s", _mem_err)
+                logger.warning("[AiAgent] Failed to refresh memory caches: %s", _mem_err)
 
         history = self._history_map.setdefault(chat_id, [])
 

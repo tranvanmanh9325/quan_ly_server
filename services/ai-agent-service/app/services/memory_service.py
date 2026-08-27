@@ -816,6 +816,331 @@ Bài học:"""
             async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
                 async with conn.cursor() as cur:
                     await cur.execute("SELECT 1 FROM agent_lessons LIMIT 1")
-            logger.info("[MemoryService] Tables verified ✓")
-        except Exception:
-            logger.warning("[MemoryService] Tables not found — Flyway migration may be pending.")
+                    await cur.execute("SELECT 1 FROM agent_episodes LIMIT 1")
+                    await cur.execute("SELECT 1 FROM agent_pending_tasks LIMIT 1")
+                    await cur.execute("SELECT 1 FROM agent_proactive_checks LIMIT 1")
+            logger.info("[MemoryService] All tables verified ✓ (lessons, episodes, pending_tasks, proactive_checks)")
+        except Exception as e:
+            logger.warning("[MemoryService] Some tables not found (%s) — Flyway migration may be pending.", e)
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Phase 4: Episodic Memory (Hippocampal model — CoALA 2024)
+    # Stores specific events tied to time+context, separate from semantic lessons.
+    # High-salience events (Amygdala tagging) are preserved permanently.
+    # ──────────────────────────────────────────────────────────────────────────
+
+    async def record_episode(
+        self,
+        event_summary: str,
+        event_type: str = "incident",
+        severity: str = "low",
+        salience_score: float = 0.5,
+        full_context: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        expires_days: Optional[int] = 30,
+    ) -> Optional[int]:
+        """
+        Records a specific episodic event (hippocampal memory).
+        High-salience events (>= 0.8) are kept permanently (expires_at = NULL).
+        Lower-salience events expire after expires_days.
+        """
+        # Amygdala rule: critical/high severity → permanent storage
+        if severity in ("critical", "high") or salience_score >= 0.8:
+            expires_at_sql = None
+        elif expires_days:
+            from datetime import datetime
+            expires_at_sql = datetime.now(VN_TZ) + timedelta(days=expires_days)
+        else:
+            expires_at_sql = None
+
+        try:
+            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        """
+                        INSERT INTO agent_episodes
+                            (event_summary, event_type, severity, salience_score,
+                             full_context, tags, expires_at)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        RETURNING id
+                        """,
+                        (event_summary, event_type, severity, salience_score,
+                         full_context, tags or [], expires_at_sql),
+                    )
+                    await conn.commit()
+                    row = await cur.fetchone()
+                    episode_id = row[0] if row else None
+                    if episode_id:
+                        logger.info(
+                            "[MemoryService] 🧠 Episode recorded: [%s/%s] salience=%.2f id=%d",
+                            severity, event_type, salience_score, episode_id
+                        )
+                    return episode_id
+        except Exception as e:
+            logger.error("[MemoryService] record_episode error: %s", e)
+            return None
+
+    async def get_recent_episodes(self, limit: int = 5, days_back: int = 30) -> str:
+        """
+        Returns formatted recent episodes for injection into context.
+        Only returns episodes from the last `days_back` days, highest salience first.
+        Called from AiAgentService._build_system_prompt() for episodic recall.
+        """
+        try:
+            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        """
+                        SELECT event_summary, event_type, severity, salience_score,
+                               occurred_at, tags
+                        FROM agent_episodes
+                        WHERE is_active = TRUE
+                          AND (expires_at IS NULL OR expires_at > NOW())
+                          AND occurred_at > NOW() - INTERVAL '%s days'
+                        ORDER BY salience_score DESC, occurred_at DESC
+                        LIMIT %s
+                        """,
+                        (days_back, limit),
+                    )
+                    rows = await cur.fetchall()
+        except Exception as e:
+            logger.warning("[MemoryService] get_recent_episodes error: %s", e)
+            return ""
+
+        if not rows:
+            return ""
+
+        severity_icon = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢"}
+        lines = ["🗓️ *SỰ KIỆN GẦN ĐÂY (Episodic Memory):*"]
+        for summary, etype, sev, salience, occurred_at, tags in rows:
+            icon = severity_icon.get(sev, "⚪")
+            ts = occurred_at.astimezone(VN_TZ).strftime("%d/%m %H:%M") if occurred_at else "?"
+            tag_str = f" [{', '.join(tags[:3])}]" if tags else ""
+            lines.append(f"  {icon} [{ts}] {summary}{tag_str}")
+        return "\n".join(lines)
+
+    async def expire_old_episodes(self) -> int:
+        """Soft-deletes episodes past their expiry date. Called during nightly consolidation."""
+        try:
+            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        """
+                        UPDATE agent_episodes
+                        SET is_active = FALSE
+                        WHERE is_active = TRUE
+                          AND expires_at IS NOT NULL
+                          AND expires_at < NOW()
+                        """,
+                    )
+                    await conn.commit()
+                    count = cur.rowcount
+                    if count:
+                        logger.info("[MemoryService] Synaptic pruning: expired %d old episodes.", count)
+                    return count
+        except Exception as e:
+            logger.warning("[MemoryService] expire_old_episodes error: %s", e)
+            return 0
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Phase 5A: Prospective Memory (Prefrontal Cortex model)
+    # Remembering to do things in the future — triggered by time or conversation turns.
+    # ──────────────────────────────────────────────────────────────────────────
+
+    async def add_pending_task(
+        self,
+        task_summary: str,
+        created_by_msg: str = "",
+        remind_turns: int = 3,
+    ) -> Optional[int]:
+        """
+        Records a pending task for future reminder (prospective memory).
+        The task gets injected into system prompt every `remind_turns` conversation turns.
+        """
+        try:
+            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        """
+                        INSERT INTO agent_pending_tasks
+                            (task_summary, created_by_msg, remind_turns)
+                        VALUES (%s, %s, %s)
+                        RETURNING id
+                        """,
+                        (task_summary, created_by_msg[:500], remind_turns),
+                    )
+                    await conn.commit()
+                    row = await cur.fetchone()
+                    task_id = row[0] if row else None
+                    if task_id:
+                        logger.info("[MemoryService] 📋 Pending task recorded: %s (id=%d)", task_summary[:60], task_id)
+                    return task_id
+        except Exception as e:
+            logger.error("[MemoryService] add_pending_task error: %s", e)
+            return None
+
+    async def complete_pending_task(self, task_id: int) -> bool:
+        """Marks a pending task as done."""
+        try:
+            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        """
+                        UPDATE agent_pending_tasks
+                        SET status = 'done', completed_at = NOW()
+                        WHERE id = %s AND status = 'pending'
+                        """,
+                        (task_id,),
+                    )
+                    await conn.commit()
+                    return cur.rowcount > 0
+        except Exception as e:
+            logger.warning("[MemoryService] complete_pending_task error: %s", e)
+            return False
+
+    async def get_pending_tasks_prompt(self) -> str:
+        """
+        Returns formatted pending tasks for injection into system prompt.
+        Increments turns_elapsed; auto-completes tasks older than 7 days with no action.
+        """
+        try:
+            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+                async with conn.cursor() as cur:
+                    # Auto-expire tasks older than 7 days
+                    await cur.execute(
+                        """
+                        UPDATE agent_pending_tasks
+                        SET status = 'cancelled'
+                        WHERE status = 'pending'
+                          AND created_at < NOW() - INTERVAL '7 days'
+                        """
+                    )
+                    # Increment turns_elapsed for all pending tasks
+                    await cur.execute(
+                        "UPDATE agent_pending_tasks SET turns_elapsed = turns_elapsed + 1 WHERE status = 'pending'"
+                    )
+                    # Fetch tasks due for reminder (turns_elapsed >= remind_turns)
+                    await cur.execute(
+                        """
+                        SELECT id, task_summary, created_at
+                        FROM agent_pending_tasks
+                        WHERE status = 'pending'
+                          AND turns_elapsed >= remind_turns
+                        ORDER BY created_at ASC
+                        LIMIT 5
+                        """
+                    )
+                    rows = await cur.fetchall()
+                    await conn.commit()
+        except Exception as e:
+            logger.warning("[MemoryService] get_pending_tasks_prompt error: %s", e)
+            return ""
+
+        if not rows:
+            return ""
+
+        lines = ["📋 *VIỆC CÒN ĐANG CHỜ (Prospective Memory):*"]
+        for task_id, summary, created_at in rows:
+            ts = created_at.astimezone(VN_TZ).strftime("%d/%m") if created_at else "?"
+            lines.append(f"  • [#{task_id} - {ts}] {summary}")
+        lines.append("_(Gõ 'xong việc #ID' để đánh dấu hoàn thành)_")
+        return "\n".join(lines)
+
+    async def list_pending_tasks(self) -> List[Dict[str, Any]]:
+        """Returns raw list of pending tasks for /tasks Telegram command."""
+        try:
+            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        """
+                        SELECT id, task_summary, status, remind_turns,
+                               turns_elapsed, created_at
+                        FROM agent_pending_tasks
+                        WHERE status = 'pending'
+                        ORDER BY created_at ASC
+                        LIMIT 20
+                        """
+                    )
+                    rows = await cur.fetchall()
+                    cols = [d[0] for d in cur.description]
+                    return [dict(zip(cols, r)) for r in rows]
+        except Exception as e:
+            logger.error("[MemoryService] list_pending_tasks error: %s", e)
+            return []
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Phase 5B: Proactive Intelligence — Curiosity-Driven Health Checks
+    # ──────────────────────────────────────────────────────────────────────────
+
+    async def upsert_proactive_check(
+        self,
+        check_key: str,
+        current_value: str,
+        send_alert: bool,
+    ) -> None:
+        """
+        Updates the last known value for a proactive check.
+        Sets last_alerted timestamp when an alert is sent (for cooldown logic).
+        """
+        try:
+            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+                async with conn.cursor() as cur:
+                    if send_alert:
+                        await cur.execute(
+                            """
+                            INSERT INTO agent_proactive_checks
+                                (check_key, last_value, last_alerted, alert_count, updated_at)
+                            VALUES (%s, %s, NOW(), 1, NOW())
+                            ON CONFLICT (check_key) DO UPDATE
+                              SET last_value   = EXCLUDED.last_value,
+                                  last_alerted = NOW(),
+                                  alert_count  = agent_proactive_checks.alert_count + 1,
+                                  updated_at   = NOW()
+                            """,
+                            (check_key, current_value),
+                        )
+                    else:
+                        await cur.execute(
+                            """
+                            INSERT INTO agent_proactive_checks
+                                (check_key, last_value, updated_at)
+                            VALUES (%s, %s, NOW())
+                            ON CONFLICT (check_key) DO UPDATE
+                              SET last_value = EXCLUDED.last_value,
+                                  updated_at = NOW()
+                            """,
+                            (check_key, current_value),
+                        )
+                    await conn.commit()
+        except Exception as e:
+            logger.warning("[MemoryService] upsert_proactive_check error: %s", e)
+
+    async def should_send_proactive_alert(
+        self,
+        check_key: str,
+        cooldown_hours: int = 6,
+    ) -> bool:
+        """
+        Returns True if enough time has passed since last alert for this check_key.
+        Prevents alert spam with configurable cooldown.
+        """
+        try:
+            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        """
+                        SELECT last_alerted FROM agent_proactive_checks
+                        WHERE check_key = %s
+                        """,
+                        (check_key,),
+                    )
+                    row = await cur.fetchone()
+                    if not row or row[0] is None:
+                        return True
+                    from datetime import datetime
+                    last = row[0]
+                    elapsed = datetime.now(VN_TZ) - last.astimezone(VN_TZ)
+                    return elapsed.total_seconds() >= cooldown_hours * 3600
+        except Exception as e:
+            logger.warning("[MemoryService] should_send_proactive_alert error: %s", e)
+            return False

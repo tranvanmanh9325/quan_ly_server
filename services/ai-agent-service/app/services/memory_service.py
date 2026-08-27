@@ -657,7 +657,9 @@ Bài học:"""
             confidence = 0.85 if is_search_grounded else 0.70
             trigger_pattern = user_correction[:80].strip()
 
-            lesson_id = await self._insert_lesson(
+            # Phase 2 (v3.0): Memory Reconsolidation gate
+            # Similar existing lesson → UPDATE (reconsolidate); new knowledge → INSERT
+            lesson_id, was_reconsolidated = await self.reconsolidate_or_insert(
                 trigger_pattern=trigger_pattern,
                 lesson_text=lesson_text,
                 event_type=event_type,
@@ -667,12 +669,14 @@ Bài học:"""
             )
 
             if lesson_id:
-                await self._link_memory_to_lesson(memory_id, lesson_id)
+                if not was_reconsolidated:
+                    await self._link_memory_to_lesson(memory_id, lesson_id)
                 self._cache_dirty = True
                 grounded_tag = "🔍 [SEARCH-GROUNDED]" if is_search_grounded else "💭 [INTROSPECTION]"
+                action_tag = "♻️ [RECONSOLIDATED]" if was_reconsolidated else "🆕 [NEW]"
                 logger.info(
-                    "[MemoryService] 🧠 %s Lesson saved (id=%d, confidence=%.2f): %s",
-                    grounded_tag, lesson_id, confidence, lesson_text[:100],
+                    "[MemoryService] 🧠 %s %s Lesson (id=%d, confidence=%.2f): %s",
+                    grounded_tag, action_tag, lesson_id, confidence, lesson_text[:100],
                 )
 
         except Exception as e:
@@ -723,6 +727,171 @@ Bài học:"""
                     await conn.commit()
         except Exception as e:
             logger.warning("[MemoryService] _update_memory_search_data error: %s", e)
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Phase 1 (v3.0): Ebbinghaus Forgetting Curve + Synaptic Pruning
+    # R(t) = e^(-decay_rate * days_unused). Unused > 30d → lose 50% confidence.
+    # Confidence < 0.25 + unused > 7d → soft-delete (synaptic pruning).
+    # ──────────────────────────────────────────────────────────────────────────
+
+    async def consolidation_cycle(self) -> Dict[str, int]:
+        """
+        Nightly sleep consolidation: applies Ebbinghaus forgetting curve to all active lessons.
+        Mimics biological synaptic consolidation that occurs during slow-wave sleep.
+
+        - Decayed: lessons whose confidence was reduced by the forgetting formula.
+        - Pruned:  lessons soft-deleted (is_active=FALSE) due to very low confidence + long disuse.
+        """
+        try:
+            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+                async with conn.cursor() as cur:
+                    # Apply Ebbinghaus decay: confidence × e^(-decay_rate × days_unused)
+                    # Uses last_used_at if available, else created_at as fallback.
+                    await cur.execute(
+                        """
+                        UPDATE agent_lessons
+                        SET confidence = GREATEST(
+                            confidence * EXP(
+                                -decay_rate * EXTRACT(
+                                    EPOCH FROM (NOW() - COALESCE(last_used_at, created_at))
+                                ) / 86400.0
+                            ),
+                            0.01
+                        )
+                        WHERE is_active = TRUE
+                          AND COALESCE(last_used_at, created_at) < NOW() - INTERVAL '1 day'
+                        """
+                    )
+                    decayed = cur.rowcount
+
+                    # Synaptic pruning: deactivate very weak, long-unused lessons
+                    # Mirrors adolescent brain pruning: "use it or lose it"
+                    await cur.execute(
+                        """
+                        UPDATE agent_lessons
+                        SET is_active = FALSE
+                        WHERE is_active = TRUE
+                          AND confidence < 0.25
+                          AND COALESCE(last_used_at, created_at) < NOW() - INTERVAL '7 days'
+                        """
+                    )
+                    pruned = cur.rowcount
+                    await conn.commit()
+
+            # Also expire stale episodes
+            expired = await self.expire_old_episodes()
+
+            if decayed or pruned or expired:
+                logger.info(
+                    "[MemoryService] 🌙 Nightly consolidation: decayed=%d, pruned=%d, episodes_expired=%d",
+                    decayed, pruned, expired,
+                )
+            return {"decayed": decayed, "pruned": pruned, "episodes_expired": expired}
+
+        except Exception as e:
+            logger.error("[MemoryService] consolidation_cycle error: %s", e)
+            return {"decayed": 0, "pruned": 0, "episodes_expired": 0}
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Phase 2 (v3.0): Memory Reconsolidation (Hippocampal labile state model)
+    # When a new lesson is similar to an existing one, UPDATE (reconsolidate)
+    # instead of inserting a duplicate — mirrors biological reconsolidation.
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def _jaccard_similarity(self, text_a: str, text_b: str) -> float:
+        """Lightweight Jaccard token similarity — no embedding overhead."""
+        words_a = set(re.sub(r'[^\w\s]', '', text_a.lower()).split())
+        words_b = set(re.sub(r'[^\w\s]', '', text_b.lower()).split())
+        union = words_a | words_b
+        if not union:
+            return 0.0
+        return len(words_a & words_b) / len(union)
+
+    async def find_similar_lesson(
+        self, lesson_text: str, threshold: float = 0.68
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Find an existing active lesson semantically similar to the new one.
+        Uses Jaccard similarity as a lightweight proxy (no embedding API call).
+        Returns the best match if similarity >= threshold, else None.
+        """
+        if not self._lesson_cache or self._cache_dirty:
+            await self._refresh_lesson_cache(limit=30)
+
+        best_match: Optional[Dict[str, Any]] = None
+        best_sim = 0.0
+
+        for lesson in self._lesson_cache:
+            sim = self._jaccard_similarity(lesson_text, lesson["lesson_text"])
+            if sim > best_sim:
+                best_sim = sim
+                best_match = lesson
+
+        return best_match if best_sim >= threshold else None
+
+    async def _update_lesson_content(
+        self, lesson_id: int, new_text: str, new_confidence: float
+    ) -> None:
+        """
+        Reconsolidate: update an existing lesson with new text and boosted confidence.
+        Called when a new lesson is semantically similar to an old one (labile window).
+        """
+        try:
+            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        """
+                        UPDATE agent_lessons
+                        SET lesson_text   = %s,
+                            confidence    = %s,
+                            last_used_at  = NOW(),
+                            last_verified_at = NOW()
+                        WHERE id = %s AND is_active = TRUE
+                        """,
+                        (new_text, new_confidence, lesson_id),
+                    )
+                    await conn.commit()
+                    self._cache_dirty = True
+        except Exception as e:
+            logger.warning("[MemoryService] _update_lesson_content error: %s", e)
+
+    async def reconsolidate_or_insert(
+        self,
+        trigger_pattern: str,
+        lesson_text: str,
+        event_type: str,
+        confidence: float,
+        is_search_grounded: bool,
+        search_query: Optional[str],
+    ) -> tuple[Optional[int], bool]:
+        """
+        Memory Reconsolidation gate (v3.0):
+        - If a similar lesson already exists (Jaccard ≥ 0.68) → UPDATE it (reconsolidate).
+          The new lesson strengthens and refines the existing memory (LTP-like boost).
+        - If no similar lesson → INSERT new lesson (normal plasticity).
+
+        Returns (lesson_id, was_reconsolidated).
+        """
+        existing = await self.find_similar_lesson(lesson_text, threshold=0.68)
+
+        if existing:
+            # Reconsolidate: merge evidence, boost confidence (bounded at 0.92)
+            # Favor the newer, more specific phrasing
+            new_conf = min(max(existing["confidence"], confidence) + 0.05, 0.92)
+            await self._update_lesson_content(existing["id"], lesson_text, new_conf)
+            logger.info(
+                "[MemoryService] 🔄 Reconsolidation: updated lesson #%d "
+                "(sim≥0.68, new_conf=%.2f): %s",
+                existing["id"], new_conf, lesson_text[:80],
+            )
+            return existing["id"], True
+
+        # No similar lesson found — insert as new (normal Hebbian potentiation)
+        lesson_id = await self._insert_lesson(
+            trigger_pattern, lesson_text, event_type,
+            confidence, is_search_grounded, search_query,
+        )
+        return lesson_id, False
 
     async def _insert_lesson(
         self,

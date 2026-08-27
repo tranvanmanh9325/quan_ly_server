@@ -184,6 +184,59 @@ class AiAgentService:
         return result[:cap] if result else raw[:cap]
 
     # ──────────────────────────────────────────────────────────────────────────
+    # v3.0: Neuroscience-Inspired Cognitive Mechanisms
+    # ──────────────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _compute_prediction_error(predicted: str, actual: str) -> float:
+        """
+        Phase 3 (v3.0) — Dopamine Reward Prediction Error (RPE) proxy.
+
+        Measures surprise level (0.0 = expected, 1.0 = completely unexpected).
+        High PE → episode recorded with higher salience (learns more from surprises).
+
+        Uses Jaccard distance as a lightweight semantic distance proxy.
+        Mirrors: δ(t) = R(t) + γV(S_t+1) − V(S_t) from Schultz 1997.
+        """
+        if not predicted.strip():
+            return 0.5  # Unknown prediction = medium surprise
+        pred_words = set(re.sub(r'[^\w\s]', '', predicted.lower()).split())
+        actual_words = set(re.sub(r'[^\w\s]', '', actual.lower()).split())
+        union = pred_words | actual_words
+        if not union:
+            return 0.0
+        jaccard_sim = len(pred_words & actual_words) / len(union)
+        return round(1.0 - jaccard_sim, 3)  # Distance ≈ Prediction Error
+
+    # OK signals (healthy system) — used by ACC Conflict Monitor
+    _ACC_OK_RE    = re.compile(r'\b(ok|healthy|running|up|200|started|active|success|passed)\b', re.I)
+    # Error signals (system anomaly) — competing with OK = conflict
+    _ACC_ERR_RE   = re.compile(r'\b(error|fail|oom|kill|crash|exception|exit [1-9]|traceback|refused)\b', re.I)
+
+    @classmethod
+    def _detect_tool_conflict(cls, tool_results: list) -> str | None:
+        """
+        Phase 4 (v3.0) — Anterior Cingulate Cortex (ACC) Conflict Monitor.
+
+        Detects when multiple tool outputs send contradictory signals
+        (e.g., one says 'healthy', another shows OOM kills).
+        When conflict is detected → injects a warning into the synthesis turn
+        to trigger System 2 deliberate reconciliation (Botvinick 2001 model).
+        """
+        if len(tool_results) < 2:
+            return None
+        has_ok    = any(cls._ACC_OK_RE.search(str(r))  for r in tool_results)
+        has_error = any(cls._ACC_ERR_RE.search(str(r)) for r in tool_results)
+        if has_ok and has_error:
+            return (
+                "\n⚠️ [ACC Conflict Monitor]: Phát hiện mâu thuẫn giữa các kết quả tool "
+                "(một số báo OK, một số báo lỗi). "
+                "Hãy phân tích TỪ TỪNG tool riêng biệt và xác định nguyên nhân mâu thuẫn "
+                "trước khi đưa ra kết luận tổng thể."
+            )
+        return None
+
+    # ──────────────────────────────────────────────────────────────────────────
     # System Prompt
     # ──────────────────────────────────────────────────────────────────────────
 
@@ -1769,6 +1822,12 @@ Dạ container `dashboard_ai_agent` đang bị lỗi OOM (Out of Memory) — RAM
         _consecutive_tool_failures: int = 0
         _reflexion_triggered: bool = False  # Prevent spamming lesson extraction per turn
 
+        # ── v3.0: Neuroscience Variables ─────────────────────────────────────
+        # P3 (Dopamine RPE): collect all tool outputs to compute prediction error later
+        _all_tool_results: list = []
+        # P5 (Predictive Pre-Act): LLM's prediction before task (injected on first tool call)
+        _pre_task_prediction: str = ""
+
         # ── Phase 1: Dual Process Gating ─────────────────────────────────────
         # Classify query complexity ONCE before entering the loop.
         # Like the brain routing to System 1 (fast) vs System 2 (slow, deliberate).
@@ -1938,6 +1997,9 @@ Dạ container `dashboard_ai_agent` đang bị lỗi OOM (Out of Memory) — RAM
                         "content": tool_result,
                     })
 
+                    # P3 (Dopamine RPE): track all tool outputs for post-task salience scoring
+                    _all_tool_results.append(str(tool_result)[:400])
+
                     # Terminal tools — flush pending photos then return immediately
                     if fn_name in self._DIRECT_RETURN_TOOLS:
                         await self._flush_pending_photos(pending_photos, chat_id)
@@ -1948,6 +2010,13 @@ Dạ container `dashboard_ai_agent` đang bị lỗi OOM (Out of Memory) — RAM
                     # Non-terminal tools: add to executed_once set to prevent redundant calls
                     if fn_name in self._SCREENSHOT_TOOLS:
                         executed_once_tools.add(fn_name)
+
+                # P4 (ACC Conflict Monitor): inject conflict warning before next LLM synthesis
+                # Detects when tool outputs send contradictory OK vs ERROR signals
+                _conflict_warning = self._detect_tool_conflict(_all_tool_results)
+                if _conflict_warning and force_synthesis:
+                    # Only inject when entering synthesis — avoid mid-loop noise
+                    history.append({"role": "user", "content": _conflict_warning})
 
                 continue  # Feed observation back into the next LLM call
 
@@ -1994,6 +2063,25 @@ Dạ container `dashboard_ai_agent` đang bị lỗi OOM (Out of Memory) — RAM
                 await self._flush_pending_photos(pending_photos, chat_id)
                 history.append(assistant_msg)
                 self._trim_history(history)
+
+                # P3 (Dopamine RPE): record episode with surprise-weighted salience
+                # Multi-step tasks (≥2 tool calls) get episodic encoding.
+                # PE-boosted salience: agent remembers MORE from unexpected outcomes.
+                if self.memory_service and len(_all_tool_results) >= 2:
+                    pe_score = self._compute_prediction_error(
+                        _pre_task_prediction, final
+                    )
+                    # High PE = surprise → higher salience (amygdala tagging)
+                    salience = round(min(0.45 + pe_score * 0.45, 0.95), 2)
+                    severity = "high" if pe_score > 0.7 else "medium" if pe_score > 0.4 else "low"
+                    asyncio.create_task(self.memory_service.record_episode(
+                        event_summary=f"Multi-step task: {user_message[:120]}",
+                        event_type="task_completion",
+                        severity=severity,
+                        salience_score=salience,
+                        tags=["auto", f"pe_{int(pe_score * 10)}", f"tools_{len(_all_tool_results)}"],
+                    ))
+
                 return final
 
         # ── Graceful Synthesis Fallback (If max iterations reached) ──

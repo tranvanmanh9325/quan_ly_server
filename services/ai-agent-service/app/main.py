@@ -124,6 +124,38 @@ async def proactive_scan_loop(proactive_service: ProactiveIntelligenceService):
     await proactive_service.start()
 
 
+async def nightly_consolidation_loop(memory_service):
+    """
+    Phase 1 (v3.0): Ebbinghaus Forgetting Curve + Synaptic Pruning — nightly at 03:00 ICT.
+
+    Mimics biological sleep-phase consolidation:
+    - Decays lesson confidence over time (unused lessons weaken).
+    - Prunes very weak lessons (confidence < 0.25 + unused > 7 days).
+    - Expires stale episodes.
+    """
+    import datetime as _dt
+    logger.info("[Consolidation] 🌙 Nightly memory consolidation loop started.")
+    while True:
+        try:
+            # Calculate seconds until next 03:00 ICT (UTC+7)
+            now_utc   = _dt.datetime.now(_dt.timezone.utc)
+            now_ict   = now_utc + _dt.timedelta(hours=7)
+            target    = now_ict.replace(hour=3, minute=0, second=0, microsecond=0)
+            if now_ict >= target:
+                target += _dt.timedelta(days=1)
+            wait_secs = (target - now_ict).total_seconds()
+            logger.info("[Consolidation] 💤 Next consolidation in %.0f seconds (03:00 ICT).", wait_secs)
+            await asyncio.sleep(wait_secs)
+            result = await memory_service.consolidation_cycle()
+            logger.info("[Consolidation] ✅ Done: %s", result)
+        except asyncio.CancelledError:
+            logger.info("[Consolidation] Nightly consolidation loop cancelled.")
+            break
+        except Exception as e:
+            logger.error("[Consolidation] Unexpected error: %s", e)
+            await asyncio.sleep(3600)  # Retry in 1 hour on failure
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting up AI Agent & 9Router Service (Python)...")
@@ -181,12 +213,13 @@ async def lifespan(app: FastAPI):
     app.state.appointment_service = appointment_service
 
     # 4. Start background workers
-    telegram_task = asyncio.create_task(telegram_bot.start_polling())
-    fb_scan_task = asyncio.create_task(facebook_periodic_scan_loop(fb_service))
-    tiktok_scan_task = asyncio.create_task(tiktok_periodic_scan_loop(tiktok_service))
-    reminder_task = asyncio.create_task(appointment_reminder_loop(appointment_service, telegram_bot))
-    rtk_persist_task = asyncio.create_task(rtk_stats_persist_loop(llm_router))
-    proactive_task = asyncio.create_task(proactive_scan_loop(proactive_service))
+    telegram_task        = asyncio.create_task(telegram_bot.start_polling())
+    fb_scan_task         = asyncio.create_task(facebook_periodic_scan_loop(fb_service))
+    tiktok_scan_task     = asyncio.create_task(tiktok_periodic_scan_loop(tiktok_service))
+    reminder_task        = asyncio.create_task(appointment_reminder_loop(appointment_service, telegram_bot))
+    rtk_persist_task     = asyncio.create_task(rtk_stats_persist_loop(llm_router))
+    proactive_task       = asyncio.create_task(proactive_scan_loop(proactive_service))
+    consolidation_task   = asyncio.create_task(nightly_consolidation_loop(memory_service))
 
     yield
 
@@ -199,10 +232,11 @@ async def lifespan(app: FastAPI):
     reminder_task.cancel()
     rtk_persist_task.cancel()
     proactive_task.cancel()
+    consolidation_task.cancel()
     try:
         await asyncio.gather(
             telegram_task, fb_scan_task, tiktok_scan_task, reminder_task,
-            rtk_persist_task, proactive_task,
+            rtk_persist_task, proactive_task, consolidation_task,
             return_exceptions=True,
         )
     except Exception:

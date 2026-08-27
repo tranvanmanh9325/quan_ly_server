@@ -2,6 +2,7 @@ import asyncio
 from datetime import datetime, timezone, timedelta
 import json
 import logging
+import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.config import settings
@@ -16,6 +17,35 @@ VN_TZ = timezone(timedelta(hours=7))
 MAX_AGENT_ITERATIONS = 8
 # How many messages to keep in the sliding conversation window
 MAX_HISTORY_MESSAGES = 10
+
+# ── Phase 1: Dual Process Gating ─────────────────────────────────────────────
+# Inspired by Kahneman Dual Process Theory: System 1 (fast) vs System 2 (slow).
+# The brain knows when to think fast vs think deep — we make that explicit here.
+
+# Keywords that signal a COMPLEX/System 2 task (multi-step reasoning, diagnosis, dangerous ops)
+_COMPLEX_KEYWORDS = frozenset({
+    "tại sao", "why", "phân tích", "analyze", "debug", "chẩn đoán",
+    "diagnose", "lỗi", "sự cố", "incident", "tổng quan", "overview",
+    "kiểm tra toàn bộ", "health check", "giải thích", "explain",
+    "so sánh", "compare", "kế hoạch", "plan", "tối ưu", "optimize",
+    "bảo mật", "security", "log", "journalctl", "oom", "crash",
+    "container nào", "dịch vụ nào",
+})
+
+# Keywords that signal a CRITICAL/dangerous operation (mandatory confirmation)
+_CRITICAL_KEYWORDS = frozenset({
+    "xóa", "delete", "drop", "rm -", "rm -rf", "shutdown", "halt",
+    "format", "truncate", "purge", "wipe", "kill -9", "stop tất cả",
+    "restart tất cả", "iptables -f", "disable firewall",
+})
+
+# Fast-path patterns for truly SIMPLE factual queries (≤ 1 tool, ground truth)
+_SIMPLE_PATTERN = re.compile(
+    r'^(server|máy chủ|kirito|đặt ở|vị trí|ip|địa chỉ|tên em|em là|'
+    r'mấy giờ|hôm nay|ngày|ram|cpu|disk|ổ đĩa|ping|uptime|'
+    r'version|phiên bản|docker ps|container)\b',
+    re.IGNORECASE | re.UNICODE
+)
 
 
 class AiAgentService:
@@ -65,6 +95,91 @@ class AiAgentService:
             return False
         t = text.strip().lower()
         return t in ["chào bạn", "chào", "hello", "hi", "bắt đầu", "chào bot", "xin chào", "alo"]
+
+    def _classify_complexity(self, msg: str) -> str:
+        """
+        Phase 1 — Dual Process Gating (Kahneman System 1 vs System 2).
+
+        The prefrontal cortex evaluates uncertainty to decide whether fast pattern
+        matching (System 1) or deliberate multi-step reasoning (System 2) is needed.
+        We make that evaluation explicit here.
+
+        Returns: 'simple' | 'complex' | 'critical'
+        """
+        msg_lower = msg.lower()
+        word_count = len(msg.split())
+
+        # CRITICAL: dangerous/destructive commands → mandatory confirmation gate
+        if any(k in msg_lower for k in _CRITICAL_KEYWORDS):
+            return "critical"
+
+        # COMPLEX: multi-step reasoning, diagnosis, comparison
+        if word_count > 20 or any(k in msg_lower for k in _COMPLEX_KEYWORDS):
+            return "complex"
+
+        # SIMPLE: short factual query matching known ground-truth patterns
+        if word_count <= 15 and _SIMPLE_PATTERN.search(msg_lower):
+            return "simple"
+
+        # Default to complex when uncertain (Dunning-Kruger inverse: err on the side of depth)
+        return "complex"
+
+    def _smart_chunk_tool_output(self, raw: str, is_recent: bool) -> str:
+        """
+        Phase 2 — Semantic Chunker (Baddeley Working Memory + Miller Chunking).
+
+        The brain doesn't memorize every log line — it extracts meaningful patterns:
+        errors, numbers, and status changes. We replicate that here instead of dumb char-cutting.
+
+        Priority tiers:
+          Tier 1 (always keep): ERROR, WARNING, CRIT, numbers/%, OOM, exit codes
+          Tier 2 (summarize):   OK/healthy/running lines → 1 summary line
+          Tier 3 (first+last):  Timestamp lines
+          Tier 4 (drop):        Blank lines, ANSI noise, pure separators
+        """
+        if not raw:
+            return raw
+
+        lines = [ln.rstrip() for ln in raw.splitlines() if ln.strip()]
+        cap = 1800 if is_recent else 500
+
+        # If already short enough, return as-is
+        if len(raw) <= cap:
+            return raw
+
+        # Tier 1: Critical lines — keep all
+        tier1 = [
+            ln for ln in lines if re.search(
+                r"(error|warn|crit|fatal|fail|oom|killed|panic|"
+                r"exit\s+\d+|exception|\d+\s*%|\d+[\.,]\d+\s*(gb|mb|g|m)\b)",
+                ln, re.IGNORECASE
+            )
+        ]
+
+        # Tier 2: OK/healthy lines — count and summarize
+        ok_lines = [
+            ln for ln in lines if re.search(
+                r"\b(ok|healthy|running|active|up|online|pass)\b", ln, re.IGNORECASE
+            ) and ln not in tier1
+        ]
+        tier2 = ([f"[{len(ok_lines)}× OK/healthy — omitted]"] if len(ok_lines) > 2 else ok_lines)
+
+        # Tier 3: Timestamp lines — keep first + last only
+        ts_lines = [
+            ln for ln in lines
+            if re.search(r"\d{2}:\d{2}(:\d{2})?", ln) and ln not in tier1
+        ]
+        tier3 = ([ts_lines[0], "...", ts_lines[-1]] if len(ts_lines) > 2 else ts_lines)
+
+        # Remaining important lines not yet captured
+        captured = set(tier1 + ok_lines + ts_lines)
+        tier4 = [
+            ln for ln in lines
+            if ln not in captured and re.search(r"\d", ln)  # lines with numbers
+        ][:5]
+
+        result = "\n".join(tier1 + tier2 + tier3 + tier4)
+        return result[:cap] if result else raw[:cap]
 
     # ──────────────────────────────────────────────────────────────────────────
     # System Prompt
@@ -1547,9 +1662,43 @@ Dạ container `dashboard_ai_agent` đang bị lỗi OOM (Out of Memory) — RAM
         _consecutive_tool_failures: int = 0
         _reflexion_triggered: bool = False  # Prevent spamming lesson extraction per turn
 
+        # ── Phase 1: Dual Process Gating ─────────────────────────────────────
+        # Classify query complexity ONCE before entering the loop.
+        # Like the brain routing to System 1 (fast) vs System 2 (slow, deliberate).
+        _complexity = self._classify_complexity(user_message)
+        logger.info("[AiAgent] 🧠 Complexity: %s | query: %.60s", _complexity, user_message)
+
+        # Critical gate: dangerous commands require explicit confirmation
+        if _complexity == "critical":
+            critical_warning = (
+                "⚠️ **CẢNH BÁO AN TOÀN:**\n"
+                "Em nhận thấy yêu cầu này có thể thực hiện thao tác **phá hủy dữ liệu hoặc dừng hệ thống** "
+                f"(`{user_message[:80]}`).\n\n"
+                "🔒 Để bảo vệ hệ thống, anh Mạnh vui lòng xác nhận:\n"
+                "• Gõ **XÁC NHẬN** để tiếp tục thực thi\n"
+                "• Gõ **HỦY** để dừng lại\n\n"
+                "_Em sẽ chờ xác nhận rõ ràng trước khi thực hiện bất kỳ thao tác không thể hoàn tác nào._"
+            )
+            history.append({"role": "assistant", "content": critical_warning})
+            self._trim_history(history)
+            return critical_warning
+
+        # System 1 (SIMPLE): fast path parameters
+        # System 2 (COMPLEX): full depth parameters
+        _is_simple = (_complexity == "simple")
+        _force_synth_threshold = 2 if _is_simple else 4   # synthesize earlier for simple queries
+        _max_tools_threshold   = 1 if _is_simple else 3   # fewer tool calls for simple queries
+        _temp_tool   = 0.05 if _is_simple else 0.1
+        _temp_synth  = 0.15 if _is_simple else 0.25
+        _tok_tool    = 800  if _is_simple else 2048
+        _tok_synth   = 1024 if _is_simple else 3072
+
         for iteration in range(MAX_AGENT_ITERATIONS):
-            # Enforce synthesis mode when loop reaches 4 iterations or when 3 commands were already run
-            force_synthesis = iteration >= 4 or len(executed_commands) >= 3
+            # Enforce synthesis mode when loop reaches threshold (varies by complexity)
+            force_synthesis = (
+                iteration >= _force_synth_threshold
+                or len(executed_commands) >= _max_tools_threshold
+            )
 
             messages = self._build_compact_messages_for_llm(
                 history=history,
@@ -1564,9 +1713,8 @@ Dạ container `dashboard_ai_agent` đang bị lỗi OOM (Out of Memory) — RAM
                 messages=messages,
                 tools=tools_available if (tools_available and tool_choice != "none") else None,
                 tool_choice=tool_choice,
-                # Higher temperature for synthesis turn for more natural Vietnamese
-                temperature=0.25 if force_synthesis else 0.1,
-                max_tokens=3072 if force_synthesis else 2048,
+                temperature=_temp_synth if force_synthesis else _temp_tool,
+                max_tokens=_tok_synth if force_synthesis else _tok_tool,
             )
 
             if not llm_result:
@@ -1794,18 +1942,22 @@ Dạ container `dashboard_ai_agent` đang bị lỗi OOM (Out of Memory) — RAM
             content = m.get("content")
             if role == "tool" and isinstance(content, str):
                 tool_pos = tool_indices.index(i)
-                # If this is older than the last 2 tool outputs: compress down to 5 lines max
-                if tool_pos < num_tools - 2:
-                    lines = [ln.strip() for ln in content.split("\n") if ln.strip()]
-                    summary = lines[:3] + (["... (các dòng trước đã được tóm tắt) ..."] if len(lines) > 4 else []) + lines[-1:]
-                    compact_content = "\n".join(summary)
+                is_recent = (tool_pos >= num_tools - 2)
+
+                if is_recent:
+                    # Phase 2: Semantic chunker for RECENT tool output
+                    # Keep ERROR/numbers/status patterns, summarize redundant OK lines
+                    chunked = self._smart_chunk_tool_output(content, is_recent=True)
+                    # RTK compression as second pass for ANSI/JSON noise
+                    compressed = self.llm_router.rtk.compress(chunked, max_chars=1800, max_lines=30)
                     m_copy = dict(m)
-                    m_copy["content"] = compact_content[:500]
+                    m_copy["content"] = compressed
                     messages.append(m_copy)
                 else:
-                    # Recent tool output: keep up to 1800 chars for better context retention
+                    # Phase 2: Semantic chunker for OLD tool output (tighter budget)
+                    chunked = self._smart_chunk_tool_output(content, is_recent=False)
                     m_copy = dict(m)
-                    m_copy["content"] = self.llm_router.rtk.compress(content, max_chars=1800, max_lines=30)
+                    m_copy["content"] = chunked[:500]
                     messages.append(m_copy)
 
             elif role in ("user", "assistant") and isinstance(content, str):
@@ -1825,8 +1977,15 @@ Dạ container `dashboard_ai_agent` đang bị lỗi OOM (Out of Memory) — RAM
                 "content": (
                     "⚡ [HỆ THỐNG YÊU CẦU]: Đã thu thập đủ thông tin từ các công cụ trên. "
                     "Hãy DỪNG gọi thêm tool và TỔNG HỢP câu trả lời cuối cùng trực diện cho anh Mạnh "
-                    "theo nguyên tắc BLUF (Dòng 1: Kết luận dứt khoát -> Dòng 2: Chi tiết thẻ -> Dòng 3: Giải thích/khuyến nghị). "
-                    "Tuyệt đối KHÔNG trả về câu báo lỗi máy móc."
+                    "theo nguyên tắc BLUF (Dòng 1: Kết luận dứt khoát → Dòng 2: Chi tiết thẻ bullet → Dòng 3: Giải thích nếu cần). "
+                    "Tuyệt đối KHÔNG trả về câu báo lỗi máy móc.\n\n"
+                    # Phase 3: Metacognition / Uncertainty Calibration
+                    "🧠 [ĐÁNH GIÁ MỨC ĐỘ CHẮC CHẮN — Metacognition]:\n"
+                    "• 🟢 Nếu có đủ dữ liệu từ tool → Kết luận dứt khoát, dùng số liệu cụ thể.\n"
+                    "• 🟡 Nếu dữ liệu chỉ một phần → Nói rõ: 'Em thấy X, nhưng cần xác minh thêm Y...'\n"
+                    "• 🔴 Nếu KHÔNG có dữ liệu tool → KHÔNG suy đoán. Nói thẳng: "
+                    "'Em chưa chạy lệnh kiểm tra X. Muốn em kiểm tra ngay không anh Mạnh?' "
+                    "TUYỆT ĐỐI KHÔNG bịa số liệu."
                 )
             })
 

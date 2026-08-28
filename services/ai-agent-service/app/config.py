@@ -60,8 +60,8 @@ class Settings(BaseSettings):
     OPENROUTER_MODEL_FALLBACK: str = Field(default="nvidia/nemotron-3-super-120b-a12b:free", alias="OPENROUTER_MODEL_FALLBACK")
     OPENROUTER_API_URL: str = Field(default="https://openrouter.ai/api/v1/chat/completions", alias="OPENROUTER_API_URL")
 
-    # Server Physical Ground Truth Metadata
-    SERVER_PHYSICAL_LOCATION: str = Field(default="Định Công, Hoàng Mai, Hà Nội, Việt Nam", alias="SERVER_PHYSICAL_LOCATION")
+    # Server Physical Ground Truth Metadata (Dynamically resolved via Wi-Fi WPS)
+    SERVER_PHYSICAL_LOCATION: str = Field(default="Tự động phân giải theo thời gian thực qua Wi-Fi WPS", alias="SERVER_PHYSICAL_LOCATION")
     SERVER_ISP: str = Field(default="FPT Telecom", alias="SERVER_ISP")
     SERVER_OWNER: str = Field(default="Trần Văn Mạnh (kirito)", alias="SERVER_OWNER")
 

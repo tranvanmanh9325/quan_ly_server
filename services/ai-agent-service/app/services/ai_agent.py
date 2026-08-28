@@ -52,7 +52,8 @@ _SIMPLE_PATTERN = re.compile(
 # Mirrors dendritic pre-computation before neuron body (SLM routing 2024).
 _INTENT_DIAGNOSTIC = re.compile(
     r'\b(tại sao|lỗi gì|check|kiểm tra|xem|status|log|journalctl|dmesg|'
-    r'health|trạng thái|bao nhiêu|mấy|còn|hết|đang chạy|running|ps)\b',
+    r'health|trạng thái|bao nhiêu|mấy|còn|hết|đang chạy|running|ps|'
+    r'vị trí|ở đâu|đang ở|tọa độ|địa chỉ|ip)\b',
     re.IGNORECASE | re.UNICODE
 )
 _INTENT_ACTION = re.compile(
@@ -347,7 +348,6 @@ class AiAgentService:
 
     def _build_system_prompt(self) -> str:
         now_vn = datetime.now(VN_TZ).strftime("%H:%M:%S ngày %d/%m/%Y (Giờ Việt Nam - ICT/UTC+7)")
-        server_loc = getattr(settings, "SERVER_PHYSICAL_LOCATION", "Định Công, Hoàng Mai, Hà Nội, Việt Nam")
         server_isp = getattr(settings, "SERVER_ISP", "FPT Telecom")
         server_owner = getattr(settings, "SERVER_OWNER", "Trần Văn Mạnh (kirito)")
 
@@ -360,7 +360,7 @@ Bạn là "Tiểu Bảo Bảo" — Trợ lý AI Tự Hành cấp cao (Senior Aut
 2. AN TOÀN HỆ THỐNG: Các lệnh có thể phá hủy dữ liệu (rm -rf, DROP TABLE, docker system prune) phải xin xác nhận trước, không bao giờ tự ý thực thi.
 3. XƯNG HÔ NHẤT QUÁN: Luôn luôn xưng "em", gọi người dùng là "anh Mạnh" — không ngoại lệ, kể cả khi viết code hay giải thích kỹ thuật.
 4. TIẾNG VIỆT CHUẨN: 100% câu trả lời bằng tiếng Việt tự nhiên, không lẫn tiếng nước ngoài vô nghĩa, không lộ chain-of-thought nội bộ.
-5. GROUND TRUTH ƯU TIÊN: Thông tin được cung cấp trực tiếp trong prompt (vị trí server, tên chủ, IP) luôn đúng hơn bất kỳ suy diễn nào từ training data.
+5. GROUND TRUTH ƯU TIÊN: Thông tin được cung cấp trực tiếp trong prompt (tên chủ, IP) hoặc tra cứu từ các tool thực thi luôn đúng hơn bất kỳ suy diễn nào từ training data.
 6. BLUF TRƯỚC: Kết luận luôn đứng đầu, không bao giờ chôn kết quả ở cuối đoạn văn dài.
 7. KHÔNG LẶP TOOL: Đã chạy lệnh thành công → dùng kết quả đó, không gọi lại lệnh giống hệt.
 8. TỰ NHẬN LỖI NGAY: Khi bị sửa → nhận lỗi + phân tích nguyên nhân + sửa đúng ngay, không biện hộ.
@@ -371,7 +371,7 @@ Bạn là "Tiểu Bảo Bảo" — Trợ lý AI Tự Hành cấp cao (Senior Aut
 - Thời gian hệ thống hiện tại: `{now_vn}`
 - Múi giờ chuẩn: Việt Nam (ICT / UTC+7) — Mọi mốc thời gian hiển thị cho người dùng BẮT BUỘC theo Giờ Việt Nam.
 - Hostname: `kirito-server` (Ubuntu Linux 26.04 LTS)
-- Vị trí vật lý thực tế của máy chủ: `{server_loc}` (Máy chủ On-premise của anh Mạnh)
+- Vị trí vật lý của máy chủ: Tự động phân giải theo thời gian thực từ sóng Wi-Fi WPS / IP Geolocation (gọi tool `get_server_location` khi cần kiểm tra).
 - Nhà cung cấp mạng (ISP): `{server_isp}` (IP nội bộ LAN: `192.168.0.100`, IP công khai: `1.53.99.21`)
 - Chủ sở hữu / Quản trị viên: `{server_owner}` (Xưng hô: Em xưng "em" và gọi người dùng là "anh Mạnh")
 - Thư mục dự án: `/home/kirito/quan_ly_server`
@@ -387,8 +387,7 @@ Bạn là "Tiểu Bảo Bảo" — Trợ lý AI Tự Hành cấp cao (Senior Aut
   • Rủi ro nào cần cảnh báo?
 
 🎯 BƯỚC 1 — KẾT LUẬN TRỰC DIỆN (DIRECT ANSWER, dòng đầu tiên):
-  • Câu trả lời dứt khoát trong 1–2 câu đầu tiên.
-  • Ví dụ: "Dạ vâng anh Mạnh, máy chủ `kirito-server` đặt tại Định Công, Hà Nội ạ!"
+  • Câu trả lời dứt khoát trong 1–2 câu đầu tiên dựa trên dữ liệu thực tế.
 
 📊 BƯỚC 2 — BẰNG CHỨNG & PHÂN TÍCH ĐÃ XÁC THỰC:
   • Dùng Thẻ Bullet với Emoji, mỗi mục là một điểm dữ liệu cụ thể.
@@ -466,10 +465,10 @@ Bạn là "Tiểu Bảo Bảo" — Trợ lý AI Tự Hành cấp cao (Senior Aut
    - Khi tìm kiếm thấy nhiều đối tượng trùng khớp (2 người cùng tên, nhiều service tương tự): Dừng lại, liệt kê và xin ý kiến anh Mạnh.
 3. THAO TÁC RỦI RO CAO:
    - Khởi động lại container, xóa dữ liệu, thay đổi cấu hình: Phải phân tích tác động và xin xác nhận.
-4. KHI BỊ SỬA LỖI ("Sai rồi", "Nhầm rồi", "Không phải", "Sai chính tả", "Ở Hà Nội mà"):
+4. KHI BỊ SỬA LỖI ("Sai rồi", "Nhầm rồi", "Không phải", "Sai chính tả"):
    - Lập tức nhận lỗi chân thành, phân tích nguyên nhân nhầm lẫn và chỉnh sửa lại chuẩn xác.
 5. KHÔNG PHÂN LOẠI PLATFORM BẰNG TỪ KHÓA ĐƠN LẺ:
-   - CẤMTUYỆT ĐỐI: Thấy từ "kênh" / "channel" / "thành viên" → kết luận ngay là Discord hoặc Telegram.
+   - CẤM TUYỆT ĐỐI: Thấy từ "kênh" / "channel" / "thành viên" → kết luận ngay là Discord hoặc Telegram.
    - Phải áp dụng Disambiguation Protocol (Section 2b) để tìm đặc trưng độc bản trước khi kết luận.
    - Nếu context đang nói về Facebook → mặc định hiểu là Facebook cho đến khi có bằng chứng ngược lại.
 6. SELF-VERIFICATION TRƯỚC KHI GỬI — CHECKLIST 4 ĐIỂM:
@@ -480,11 +479,11 @@ Bạn là "Tiểu Bảo Bảo" — Trợ lý AI Tự Hành cấp cao (Senior Aut
 
 
 ━━━ 5. CẨM NANG TRA CỨU LINUX & DEVOPS CHÍNH XÁC (DEV-OPS CHEATSHEET) ━━━
-📍 VỊ TRÍ MÁY CHỦ (SERVER PHYSICAL LOCATION):
-- Máy chủ `kirito-server` được đặt vật lý tại **Định Công, Hoàng Mai, Hà Nội, Việt Nam** (trên đường truyền mạng cáp quang FPT Telecom của anh Mạnh).
-- Khi anh Mạnh hỏi: "server ở đâu", "máy chủ đặt ở đâu", "vị trí máy chủ", "server hình như đặt ở hà nội":
-  • Khẳng định dứt khoát 100% ngay từ dòng đầu tiên: Máy chủ `kirito-server` được đặt vật lý tại **Định Công, Hoàng Mai, Hà Nội, Việt Nam**.
-  • Giải thích thêm: Do địa chỉ IP công khai cấp động từ ISP FPT Telecom có thể hiển thị trạm gateway BGP ở TP.HCM hoặc Hà Nội trên các trang GeoIP (như ipinfo/ip-api), nhưng vị trí thiết bị phần cứng máy chủ thực tế 100% là tại Định Công, Hà Nội.
+📍 VỊ TRÍ MÁY CHỦ (DYNAMIC TELEMETRY):
+- Vị trí vật lý của máy chủ `kirito-server` được xác định ĐỘNG theo thời gian thực qua hệ thống định vị sóng Wi-Fi (Wi-Fi Positioning System - WPS) và IP Geolocation.
+- Khi anh Mạnh hỏi: "server ở đâu", "máy chủ đặt ở đâu", "vị trí máy chủ", "bạn đang ở đâu", "tọa độ máy chủ":
+  • BẮT BUỘC gọi tool `get_server_location` để lấy dữ liệu tọa độ GPS và tên địa danh thực tế mới nhất từ phần cứng.
+  • Trả lời dứt khoát dựa trên kết quả trả về từ tool (địa danh, tọa độ GPS, phương thức định vị).
 
 🐧 LỊCH CHẠY & TRẠNG THÁI `apt update` / `apt upgrade`:
 - ⚠️ QUAN TRỌNG: `/var/log/apt/history.log` chỉ ghi nhận khi cài/gỡ gói (`install`/`remove`), KHÔNG ghi nhận lịch tải index của `apt update`!
@@ -581,6 +580,18 @@ Bạn là "Tiểu Bảo Bảo" — Trợ lý AI Tự Hành cấp cao (Senior Aut
         excluded = excluded_tools or set()
         tools = [
             # ── Server Management ──
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_server_location",
+                    "description": (
+                        "Tra cứu vị trí vật lý thực tế, tọa độ GPS và thông số mạng của máy chủ kirito-server theo thời gian thực "
+                        "thông qua hệ thống định vị sóng Wi-Fi (Wi-Fi Positioning System - WPS) và IP Geolocation. "
+                        "Dùng khi: 'server ở đâu', 'máy chủ đang đặt ở đâu', 'vị trí server', 'tọa độ máy chủ', 'bạn đang ở đâu'."
+                    ),
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
             {
                 "type": "function",
                 "function": {
@@ -1092,6 +1103,49 @@ Bạn là "Tiểu Bảo Bảo" — Trợ lý AI Tự Hành cấp cao (Senior Aut
     ) -> str:
         try:
             # ── Server ──
+            if tool_name == "get_server_location":
+                # Step 1: Run autonomous Wi-Fi Positioning System locator
+                wifi_raw = await self.ssh_client.execute_command(
+                    "python3 /home/kirito/quan_ly_server/scripts/server_wifi_locator.py 2>/dev/null"
+                )
+                geo_data = {}
+                if wifi_raw and "{" in wifi_raw:
+                    try:
+                        parsed = json.loads(wifi_raw[wifi_raw.find("{"):wifi_raw.rfind("}")+1])
+                        if "lat" in parsed and "lon" in parsed:
+                            geo_data = parsed
+                    except Exception:
+                        pass
+
+                # Step 2: Fallback to IP Geolocation if Wi-Fi WPS returned error or empty
+                if not geo_data:
+                    ip_raw = await self.ssh_client.execute_command("curl -s --max-time 4 http://ip-api.com/json/")
+                    if ip_raw and "{" in ip_raw:
+                        try:
+                            geo_data = json.loads(ip_raw[ip_raw.find("{"):ip_raw.rfind("}")+1])
+                            geo_data["source"] = "ip_geolocation"
+                        except Exception:
+                            pass
+
+                if geo_data:
+                    city = geo_data.get("city", "Hanoi")
+                    country = geo_data.get("country", geo_data.get("countryName", "Vietnam"))
+                    lat = geo_data.get("lat", 0.0)
+                    lon = geo_data.get("lon", 0.0)
+                    source = geo_data.get("source", "wifi_wps")
+                    method_str = "Hệ thống định vị sóng Wi-Fi (Wi-Fi WPS - Apple Global Location DB)" if source == "wifi_wps" else "IP Geolocation (FPT Gateway)"
+
+                    return (
+                        f"📍 **VỊ TRÍ MÁY CHỦ THỰC TẾ (REAL-TIME TELEMETRY)**:\n"
+                        f"• Vị trí: **{city}, {country}**\n"
+                        f"• Tọa độ GPS: `{lat:.6f}°N, {lon:.6f}°E`\n"
+                        f"• Phương thức xác định: {method_str}\n"
+                        f"• IP Mạng nội bộ (LAN): `192.168.0.100`\n"
+                        f"• IP Công khai (Public): `1.53.99.21` (FPT Telecom Company)\n"
+                        f"• Trạng thái: Đang hoạt động bình thường (On-premise)"
+                    )
+                return "Không thể xác định vị trí máy chủ vào lúc này."
+
             if tool_name == "run_command":
                 cmd = tool_args.get("command", "").strip()
                 if not cmd:

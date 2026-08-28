@@ -81,18 +81,6 @@ public class MetricsController {
     // relying on JacksonAutoConfiguration bean registration order.
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    @org.springframework.beans.factory.annotation.Value("${server.geo.override:true}")
-    private boolean serverGeoOverride;
-
-    @org.springframework.beans.factory.annotation.Value("${server.geo.city:Dinh Cong, Hanoi}")
-    private String serverGeoCity;
-
-    @org.springframework.beans.factory.annotation.Value("${server.geo.lat:20.9856}")
-    private double serverGeoLat;
-
-    @org.springframework.beans.factory.annotation.Value("${server.geo.lon:105.8345}")
-    private double serverGeoLon;
-
     public MetricsController(SshService sshService, ServerMetricRepository metricRepository,
                              ActiveClientRegistry activeClientRegistry) {
         this.sshService = sshService;
@@ -562,6 +550,29 @@ public class MetricsController {
     }
 
     /**
+     * Dynamically resolves the physical location of the Linux Server using Wi-Fi BSSID triangulation
+     * (Apple WPS Protocol + BigDataCloud Reverse Geocoding).
+     * Works autonomously on headless Linux machines without requiring GPS hardware or paid API keys.
+     */
+    private Map<String, Object> fetchServerWifiGeolocation() {
+        String cacheKey = "server_wifi_geo";
+        GeoEntry cached = geoCache.get(cacheKey);
+        if (cached != null && !cached.isExpired()) return cached.data();
+
+        String raw = sshService.executeCommand("python3 /home/kirito/quan_ly_server/scripts/server_wifi_locator.py 2>/dev/null");
+        Map<String, Object> result = new HashMap<>();
+        if (raw != null && raw.contains("\"lat\"") && raw.contains("\"lon\"")) {
+            result = parseGeoJson(raw);
+            log.info("[ServerWifiGeo] Autonomously resolved Server HQ physical location via Wi-Fi WPS: lat={} lon={} city={}",
+                    result.get("lat"), result.get("lon"), result.get("city"));
+        }
+        if (!result.isEmpty()) {
+            geoCache.put(cacheKey, new GeoEntry(result, Instant.now().toEpochMilli()));
+        }
+        return result;
+    }
+
+    /**
      * Browser self-reports its precise GPS location via this endpoint.
      * Called from WorldMapPage on mount using navigator.geolocation.
      *
@@ -640,7 +651,8 @@ public class MetricsController {
     public Map<String, Object> getGeolocation() {
         Map<String, Object> result = new HashMap<>();
 
-        // 1. Server's own geolocation
+        // 1. Server's own geolocation (Dynamic Layered Resolution Engine)
+        // Step 1: Base IP & ISP metadata from network lookup
         String serverGeoRaw = sshService.executeCommand("curl -s --max-time 4 http://ip-api.com/json/");
         Map<String, Object> serverMap;
         if (serverGeoRaw != null && serverGeoRaw.contains("\"status\":\"success\"")) {
@@ -651,21 +663,26 @@ public class MetricsController {
             fallback.put("status", "success");
             fallback.put("country", "Vietnam");
             fallback.put("countryCode", "VN");
-            fallback.put("city", "Dinh Cong, Hanoi");
-            fallback.put("lat", 20.9856);
-            fallback.put("lon", 105.8345);
+            fallback.put("city", "Hanoi");
+            fallback.put("lat", 21.0278);
+            fallback.put("lon", 105.8340);
             fallback.put("isp", "FPT Telecom Company");
             fallback.put("query", "1.53.99.21");
             serverMap = fallback;
         }
 
-        // Apply high-precision server physical location override (Dinh Cong, Hanoi)
-        if (serverGeoOverride) {
-            serverMap.put("city", serverGeoCity);
-            serverMap.put("lat", serverGeoLat);
-            serverMap.put("lon", serverGeoLon);
-            if (!serverMap.containsKey("country") || "Unknown".equals(serverMap.get("country"))) {
-                serverMap.put("country", "Vietnam");
+        // Step 2: Dynamic Autonomous Wi-Fi BSSID Positioning (High-Precision Physical Location)
+        // Scans nearby Wi-Fi APs on host, calculates coordinates via WPS & reverse-geocodes to exact locality (e.g. Phuong Dinh Cong)
+        Map<String, Object> wifiGeo = fetchServerWifiGeolocation();
+        if (!wifiGeo.isEmpty() && wifiGeo.containsKey("lat") && wifiGeo.containsKey("lon")) {
+            serverMap.put("city", wifiGeo.getOrDefault("city", serverMap.get("city")));
+            serverMap.put("lat", wifiGeo.get("lat"));
+            serverMap.put("lon", wifiGeo.get("lon"));
+            if (wifiGeo.containsKey("country")) {
+                serverMap.put("country", wifiGeo.get("country"));
+            }
+            if (wifiGeo.containsKey("countryCode")) {
+                serverMap.put("countryCode", wifiGeo.get("countryCode"));
             }
         }
 

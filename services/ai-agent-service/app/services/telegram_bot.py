@@ -572,7 +572,7 @@ class TelegramBot:
             try:
                 audio_bytes = await self._media.download_telegram_file(file_id)
                 filename = voice.get("file_name", "voice.oga")
-                transcript = await self._media.transcribe_voice(audio_bytes, filename=filename)
+                transcript = await self._media.transcribe_voice(audio_bytes, filename=filename, duration=duration)
                 if transcript:
                     user_input = f"[🎤 Tin nhắn thoại]: {transcript}"
                     logger.info("[TelegramBot] STT transcript: '%s'", transcript[:80])

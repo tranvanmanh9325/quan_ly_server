@@ -89,16 +89,78 @@ class MediaProcessor:
 
     # ─── Modality 1: Voice → Groq Whisper STT ────────────────────────────────
 
+    # Known Whisper hallucination patterns (trained on YouTube/podcast data).
+    # Whisper "fills in" these phrases when audio is short, quiet, or ambiguous.
+    # We reject transcriptions that are ONLY these patterns to avoid false positives.
+    _HALLUCINATION_BLACKLIST = [
+        # Vietnamese YouTube/livestream patterns
+        "cảm ơn các bạn đã theo dõi",
+        "đăng ký kênh",
+        "subscribe",
+        "hẹn gặp lại",
+        "like và subscribe",
+        "nhấn chuông thông báo",
+        "cảm ơn các bạn",
+        "xin chào các bạn",
+        "chúc các bạn",
+        "ghiền mì gõ",
+        "cảm ơn bạn đã xem",
+        # English YouTube patterns
+        "thank you for watching",
+        "please subscribe",
+        "don't forget to subscribe",
+        "see you in the next video",
+        "like and subscribe",
+        "hit the bell",
+        # Common noise/silence patterns
+        ".",
+        " .",
+        "...",
+        "thank you",
+        "thanks for watching",
+    ]
+
+    @staticmethod
+    def _is_hallucination(text: str, duration_seconds: int) -> bool:
+        """
+        Detects Whisper hallucinations by checking:
+        1. Known hallucination phrases (YouTube/livestream patterns)
+        2. Suspiciously long transcription for very short audio (ratio check)
+        """
+        if not text:
+            return False
+        t_lower = text.lower().strip()
+
+        # Check against known hallucination patterns
+        for pattern in MediaProcessor._HALLUCINATION_BLACKLIST:
+            if pattern in t_lower:
+                # Only reject if the hallucination pattern DOMINATES the transcription
+                # (i.e., the pattern makes up >60% of total text length)
+                if len(pattern) / max(len(t_lower), 1) > 0.6:
+                    return True
+
+        # Suspiciously verbose for very short audio (< 4s producing > 60 chars is suspect)
+        if duration_seconds <= 3 and len(text) > 60:
+            return True
+
+        return False
+
     async def transcribe_voice(
         self,
         audio_bytes: bytes,
         filename: str = "voice.oga",
         language: str = "vi",
+        duration: int = 0,
     ) -> str:
         """
         Sends audio to Groq Whisper STT.
         Primary: whisper-large-v3-turbo (216x real-time, 20 RPM, 28,800 audio-sec/day).
         Fallback: whisper-large-v3.
+
+        Anti-hallucination measures:
+        - temperature=0: greedy decoding — no random sampling → far fewer hallucinations
+        - prompt anchor: primes model toward conversational Vietnamese (away from YouTube patterns)
+        - blacklist filter: rejects known hallucination phrases post-transcription
 
         NOTE: Groq Whisper rejects .oga extension (Telegram native format).
         We rename to .ogg which Groq accepts — same OGG container, Opus codec.
@@ -109,30 +171,47 @@ class MediaProcessor:
 
         # Groq whitelist: flac, mp3, mp4, mpeg, mpga, m4a, ogg, opus, wav, webm
         # Telegram voice messages use .oga (OGG Opus) which is NOT in Groq's whitelist.
-        # Renaming to .ogg (identical container format) resolves the 400 error.
         ext = Path(filename).suffix.lower()
         if ext == ".oga":
             filename = Path(filename).with_suffix(".ogg").name
-        # If still unknown extension, force .ogg as safe default
         _GROQ_AUDIO_EXTS = {".flac", ".mp3", ".mp4", ".mpeg", ".mpga", ".m4a", ".ogg", ".opus", ".wav", ".webm"}
         if Path(filename).suffix.lower() not in _GROQ_AUDIO_EXTS:
             filename = "voice.ogg"
 
+        # Prompt anchor: steers model toward conversational Vietnamese.
+        # Whisper was trained heavily on YouTube → biased toward "Thank you for watching".
+        # Providing a conversational context shifts probability mass away from those patterns.
+        _STT_PROMPT = "Cuộc trò chuyện bằng tiếng Việt:"
+
         models = [settings.GROQ_WHISPER_MODEL, settings.GROQ_WHISPER_MODEL_FALLBACK]
 
         for model in models:
-            for key in groq_keys[:3]:  # try up to 3 keys per model before switching model
+            for key in groq_keys[:3]:
                 try:
                     resp = await self._http.post(
                         "https://api.groq.com/openai/v1/audio/transcriptions",
                         headers={"Authorization": f"Bearer {key}"},
-                        data={"model": model, "language": language, "response_format": "json"},
+                        data={
+                            "model": model,
+                            "language": language,
+                            "response_format": "json",
+                            "temperature": "0",        # greedy decoding → minimal hallucination
+                            "prompt": _STT_PROMPT,     # anchor away from YouTube patterns
+                        },
                         files={"file": (filename, audio_bytes, "audio/ogg")},
                         timeout=90.0,
                     )
                     if resp.status_code == 200:
                         text = resp.json().get("text", "").strip()
-                        logger.info("[MediaProcessor] STT ✅ model=%s len=%d", model, len(text))
+                        # Post-processing: reject known hallucination patterns
+                        if self._is_hallucination(text, duration):
+                            logger.warning(
+                                "[MediaProcessor] STT hallucination detected (model=%s): '%s' → discarding",
+                                model, text[:80]
+                            )
+                            # Return empty string → caller will ask user to repeat
+                            return ""
+                        logger.info("[MediaProcessor] STT ✅ model=%s len=%d text='%s'", model, len(text), text[:60])
                         return text
                     if resp.status_code == 429:
                         logger.warning("[MediaProcessor] STT 429 key=%s... model=%s", key[:8], model)

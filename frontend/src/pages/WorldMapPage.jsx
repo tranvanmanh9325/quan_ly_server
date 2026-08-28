@@ -5,8 +5,9 @@ import { feature } from 'topojson-client';
 import { SciFiGlobeIcon, SciFiRefreshIcon, SciFiPulseBadge, SciFiPlayIcon, SciFiStopIcon } from '../components/SciFiIcons';
 import { VIETNAM_MARITIME_ISLANDS } from '../data/vietnamIslandsGeo';
 
-// World Atlas TopoJSON CDN — 110m resolution (public domain, Natural Earth)
-const WORLD_ATLAS_URL = 'https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json';
+// High-Resolution World Atlas TopoJSON (50m scale contains all world islands and coastlines)
+const LOCAL_WORLD_ATLAS_URL = '/data/countries-50m.json';
+const CDN_WORLD_ATLAS_URL = 'https://cdn.jsdelivr.net/npm/world-atlas@2/countries-50m.json';
 
 export default function WorldMapPage() {
   const [geoData, setGeoData] = useState({ server: null, connections: [] });
@@ -47,16 +48,32 @@ export default function WorldMapPage() {
 
   // --- Data Fetching ---
 
-  // Fetch World Atlas TopoJSON on mount
+  // Fetch High-Resolution World Atlas TopoJSON on mount (with local-first caching)
   useEffect(() => {
-    fetch(WORLD_ATLAS_URL)
-      .then(res => res.json())
-      .then(topo => {
+    const loadTopoData = async () => {
+      try {
+        let res = await fetch(LOCAL_WORLD_ATLAS_URL);
+        if (!res.ok) {
+          res = await fetch(CDN_WORLD_ATLAS_URL);
+        }
+        const topo = await res.json();
         const countries = feature(topo, topo.objects.countries);
         const land = feature(topo, topo.objects.land);
         setWorldGeo({ countries, land });
-      })
-      .catch(err => console.error('Failed to load world atlas:', err));
+      } catch (err) {
+        console.error('Failed to load local world atlas, trying fallback CDN:', err);
+        try {
+          const res = await fetch(CDN_WORLD_ATLAS_URL);
+          const topo = await res.json();
+          const countries = feature(topo, topo.objects.countries);
+          const land = feature(topo, topo.objects.land);
+          setWorldGeo({ countries, land });
+        } catch (cdnErr) {
+          console.error('All world atlas data sources failed:', cdnErr);
+        }
+      }
+    };
+    loadTopoData();
   }, []);
 
   // Fetch Geolocation API

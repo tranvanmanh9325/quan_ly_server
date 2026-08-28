@@ -46,7 +46,7 @@ class Settings(BaseSettings):
     GROQ_API_KEY_8: str = Field(default="", alias="GROQ_API_KEY_8")
     GROQ_API_KEY_9: str = Field(default="", alias="GROQ_API_KEY_9")
     GROQ_API_KEY_10: str = Field(default="", alias="GROQ_API_KEY_10")
-    GROQ_MODEL: str = Field(default="openai/gpt-oss-120b", alias="GROQ_MODEL")
+    GROQ_MODEL: str = Field(default="llama-3.3-70b-versatile", alias="GROQ_MODEL")
 
     # OpenRouter Multi-Key Pool (mirrors Groq pool pattern)
     OPENROUTER_API_KEY: str = Field(default="", alias="OPENROUTER_API_KEY")

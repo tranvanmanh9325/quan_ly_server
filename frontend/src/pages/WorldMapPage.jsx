@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import axios from 'axios';
 import { geoOrthographic, geoPath, geoGraticule } from 'd3-geo';
-import { feature } from 'topojson-client';
+import { feature, mesh } from 'topojson-client';
 import { SciFiGlobeIcon, SciFiRefreshIcon, SciFiPulseBadge, SciFiPlayIcon, SciFiStopIcon } from '../components/SciFiIcons';
 import { VIETNAM_MARITIME_ISLANDS } from '../data/vietnamIslandsGeo';
 
@@ -49,25 +49,30 @@ export default function WorldMapPage() {
   // --- Data Fetching ---
 
   // Fetch High-Resolution World Atlas TopoJSON on mount (with local-first caching)
+  // Pre-compute mesh + graticule ONCE so the render loop never recomputes them
   useEffect(() => {
     const loadTopoData = async () => {
       try {
         let res = await fetch(LOCAL_WORLD_ATLAS_URL);
-        if (!res.ok) {
-          res = await fetch(CDN_WORLD_ATLAS_URL);
-        }
+        if (!res.ok) res = await fetch(CDN_WORLD_ATLAS_URL);
         const topo = await res.json();
-        const countries = feature(topo, topo.objects.countries);
+
         const land = feature(topo, topo.objects.land);
-        setWorldGeo({ countries, land });
+        // topojson.mesh merges ALL country borders into ONE MultiLineString — single stroke call per frame
+        const borders = mesh(topo, topo.objects.countries, (a, b) => a !== b);
+        // Pre-compute graticule once (static, never changes)
+        const graticuleData = geoGraticule()();
+
+        setWorldGeo({ land, borders, graticuleData });
       } catch (err) {
         console.error('Failed to load local world atlas, trying fallback CDN:', err);
         try {
           const res = await fetch(CDN_WORLD_ATLAS_URL);
           const topo = await res.json();
-          const countries = feature(topo, topo.objects.countries);
           const land = feature(topo, topo.objects.land);
-          setWorldGeo({ countries, land });
+          const borders = mesh(topo, topo.objects.countries, (a, b) => a !== b);
+          const graticuleData = geoGraticule()();
+          setWorldGeo({ land, borders, graticuleData });
         } catch (cdnErr) {
           console.error('All world atlas data sources failed:', cdnErr);
         }
@@ -174,25 +179,87 @@ export default function WorldMapPage() {
     }
   };
 
-  // --- 3D Canvas Rendering Engine ---
+  // --- 3D Canvas Rendering Engine (High-Performance) ---
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !worldGeo) return;
-    const ctx = canvas.getContext('2d');
+
+    // ─── Performance Optimization: Use willReadFrequently=false for pure draw-only canvas
+    const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
     let animFrameId;
     let pulseTime = 0;
+    let lastFrameTime = 0;
+    // Target ~50fps (20ms per frame) — smooth but saves ~17% CPU vs 60fps on complex scenes
+    const FRAME_BUDGET_MS = 20;
 
     const sLat = parseFloat(geoData.server?.lat) || 10.8231;
     const sLon = parseFloat(geoData.server?.lon) || 106.6297;
 
-    const render = () => {
+    // ─── Memoize projection & pathGen OUTSIDE render loop (avoid GC pressure each frame)
+    // These are mutated in place on every frame — NO new object allocation per frame
+    const projection = geoOrthographic()
+      .clipAngle(90);
+    const pathGen = geoPath(projection, ctx);
+
+    // ─── OFFSCREEN LAYER: Pre-render static globe features (land + borders + graticule)
+    // This layer only needs re-draw when zoom/rotation changes, NOT every frame
+    let offscreenCanvas = null;
+    let offscreenCtx = null;
+    let offscreenValid = false;         // Flag: needs redraw
+    let lastRot0 = null, lastRot1 = null, lastRadius = null;
+
+    const buildOffscreen = (W, H, radius, cx, cy) => {
+      if (!offscreenCanvas || offscreenCanvas.width !== W || offscreenCanvas.height !== H) {
+        offscreenCanvas = document.createElement('canvas');
+        offscreenCanvas.width = W;
+        offscreenCanvas.height = H;
+        offscreenCtx = offscreenCanvas.getContext('2d', { alpha: true });
+      }
+      offscreenCtx.clearRect(0, 0, W, H);
+
+      // Share projection with offscreen (already configured for this frame)
+      const offPathGen = geoPath(projection, offscreenCtx);
+
+      // A. Graticule grid (pre-computed once at load, reused every frame)
+      offscreenCtx.beginPath();
+      offPathGen(worldGeo.graticuleData);
+      offscreenCtx.strokeStyle = 'rgba(0, 243, 255, 0.07)';
+      offscreenCtx.lineWidth = 0.5;
+      offscreenCtx.stroke();
+
+      // B. Land fill — all countries as a single draw call
+      offscreenCtx.beginPath();
+      offPathGen(worldGeo.land);
+      offscreenCtx.fillStyle = 'rgba(0, 30, 50, 0.94)';
+      offscreenCtx.fill();
+
+      // C. Country borders — topojson.mesh: ONE MultiLineString = ONE beginPath+stroke call
+      // (was: 241 separate beginPath+stroke calls per frame → now: 1)
+      offscreenCtx.beginPath();
+      offPathGen(worldGeo.borders);
+      offscreenCtx.strokeStyle = 'rgba(0, 243, 255, 0.28)';
+      offscreenCtx.lineWidth = 0.6;
+      offscreenCtx.stroke();
+
+      offscreenValid = true;
+    };
+
+    const render = (timestamp) => {
+      // ─── Timestamp-based frame throttle: skip frames that arrive too soon
+      const elapsed = timestamp - lastFrameTime;
+      if (elapsed < FRAME_BUDGET_MS) {
+        animFrameId = requestAnimationFrame(render);
+        return;
+      }
+      lastFrameTime = timestamp - (elapsed % FRAME_BUDGET_MS);
+
       const W = canvas.clientWidth;
       const H = canvas.clientHeight;
       if (canvas.width !== W || canvas.height !== H) {
         canvas.width = W;
         canvas.height = H;
+        offscreenValid = false; // Canvas resized — must redraw offscreen
       }
-      ctx.clearRect(0, 0, W, H);
 
       // Auto rotate
       if (autoRotate && !isDraggingRef.current) {
@@ -201,67 +268,54 @@ export default function WorldMapPage() {
 
       const baseRadius = Math.min(W, H) * 0.42;
       const radius = baseRadius * zoomLevelRef.current;
+      const cx = W / 2, cy = H / 2;
 
-      const projection = geoOrthographic()
+      // ─── Mutate projection in-place (NO new object allocation per frame)
+      projection
         .scale(radius)
-        .translate([W / 2, H / 2])
-        .clipAngle(90)
+        .translate([cx, cy])
         .rotate(rotRef.current);
 
-      const pathGen = geoPath(projection, ctx);
-      const graticule = geoGraticule();
+      pulseTime += 0.03;
 
-      pulseTime += 0.035;
+      // ─── Full clear
+      ctx.fillStyle = '#020d1a';
+      ctx.fillRect(0, 0, W, H);
 
-      // 1. Atmosphere Glow
-      const cx = W / 2, cy = H / 2;
-      const atmoGrad = ctx.createRadialGradient(cx, cy, radius * 0.88, cx, cy, radius * 1.25);
-      atmoGrad.addColorStop(0, 'rgba(0, 243, 255, 0.07)');
-      atmoGrad.addColorStop(0.6, 'rgba(0, 255, 157, 0.03)');
+      // 1. Atmosphere Glow (radial gradient — cheap arc fill)
+      const atmoGrad = ctx.createRadialGradient(cx, cy, radius * 0.88, cx, cy, radius * 1.22);
+      atmoGrad.addColorStop(0, 'rgba(0, 243, 255, 0.06)');
+      atmoGrad.addColorStop(0.55, 'rgba(0, 255, 157, 0.025)');
       atmoGrad.addColorStop(1, 'rgba(0,0,0,0)');
       ctx.fillStyle = atmoGrad;
       ctx.beginPath();
-      ctx.arc(cx, cy, radius * 1.25, 0, Math.PI * 2);
+      ctx.arc(cx, cy, radius * 1.22, 0, Math.PI * 2);
       ctx.fill();
 
-      // 2. Ocean fill (sphere background)
+      // 2. Ocean fill (sphere background) — direct arc, no pathGen needed
       ctx.beginPath();
-      pathGen({ type: 'Sphere' });
+      ctx.arc(cx, cy, radius, 0, Math.PI * 2);
       ctx.fillStyle = '#030d1a';
       ctx.fill();
 
-      // 3. Sphere border
+      // ─── Offscreen cache: only rebuild when rotation or zoom actually changed
+      const r0 = Math.round(rotRef.current[0] * 10);
+      const r1 = Math.round(rotRef.current[1] * 10);
+      const rr = Math.round(radius);
+      if (!offscreenValid || r0 !== lastRot0 || r1 !== lastRot1 || rr !== lastRadius) {
+        buildOffscreen(W, H, radius, cx, cy);
+        lastRot0 = r0; lastRot1 = r1; lastRadius = rr;
+      }
+
+      // ─── Blit offscreen layer (land + borders + graticule) — single drawImage call
+      ctx.drawImage(offscreenCanvas, 0, 0);
+
+      // 3. Sphere border ring
       ctx.beginPath();
-      pathGen({ type: 'Sphere' });
+      ctx.arc(cx, cy, radius, 0, Math.PI * 2);
       ctx.strokeStyle = 'rgba(0, 243, 255, 0.3)';
       ctx.lineWidth = 1.5;
       ctx.stroke();
-
-      // 4. Graticule grid lines
-      ctx.beginPath();
-      pathGen(graticule());
-      ctx.strokeStyle = 'rgba(0, 243, 255, 0.06)';
-      ctx.lineWidth = 0.6;
-      ctx.stroke();
-
-      // 5. Land fill — actual country borders
-      if (worldGeo.land) {
-        ctx.beginPath();
-        pathGen(worldGeo.land);
-        ctx.fillStyle = 'rgba(0, 30, 50, 0.92)';
-        ctx.fill();
-      }
-
-      // 6. Country borders
-      if (worldGeo.countries) {
-        worldGeo.countries.features.forEach(feat => {
-          ctx.beginPath();
-          pathGen(feat);
-          ctx.strokeStyle = 'rgba(0, 243, 255, 0.3)';
-          ctx.lineWidth = 0.7;
-          ctx.stroke();
-        });
-      }
 
       // 7. Draw 3D Elevated Laser Arcs between clients and server
       const clients = geoData.connections || [];
@@ -275,46 +329,41 @@ export default function WorldMapPage() {
         const cLon = hasGps ? parsedLon : sLon;
 
         // Build great-circle arc with elevation via interpolated midpoints
-        const steps = 40;
+        // PERF: Batch all 40 segments into ONE beginPath+stroke (was: 40 separate draw calls)
+        const steps = 32; // reduced from 40 — imperceptible difference at this scale
+        const arcAlpha = 0.7 + 0.3 * Math.sin(pulseTime * 2);
+        ctx.beginPath();
+        ctx.strokeStyle = `rgba(0, 243, 255, ${arcAlpha})`;
+        ctx.lineWidth = 2.0;
+        ctx.setLineDash([8, 4]);
+        ctx.lineDashOffset = -pulseTime * 22;
         let prevPt = null;
         for (let i = 0; i <= steps; i++) {
           const t = i / steps;
-          // Linear interpolation lat/lon
           const iLat = cLat + (sLat - cLat) * t;
           const iLon = cLon + (sLon - cLon) * t;
-          // Elevation: lift midpoints above sphere
-          const lift = Math.sin(t * Math.PI) * 18; // degrees above surface
+          const lift = Math.sin(t * Math.PI) * 18;
           const ptProj = projection([iLon, iLat + lift * (lift / radius)]);
           if (ptProj) {
-            if (prevPt) {
-              ctx.beginPath();
-              ctx.moveTo(prevPt[0], prevPt[1]);
-              ctx.lineTo(ptProj[0], ptProj[1]);
-              ctx.strokeStyle = `rgba(0, 243, 255, ${0.7 + 0.3 * Math.sin(pulseTime * 2 + i * 0.2)})`;
-              ctx.lineWidth = 2.2;
-              ctx.shadowColor = '#00f3ff';
-              ctx.shadowBlur = 8;
-              ctx.setLineDash([8, 4]);
-              ctx.lineDashOffset = -pulseTime * 24;
-              ctx.stroke();
-              ctx.setLineDash([]);
-              ctx.shadowBlur = 0;
-            }
+            if (!prevPt) { ctx.moveTo(ptProj[0], ptProj[1]); }
+            else { ctx.lineTo(ptProj[0], ptProj[1]); }
             prevPt = ptProj;
           } else {
-            prevPt = null; // behind the globe
+            prevPt = null;
           }
         }
+        ctx.stroke();
+        ctx.setLineDash([]);
 
         // --- Client Teardrop Pin ---
         const clientProj = projection([cLon, cLat]);
         if (clientProj) {
           const [px, py] = clientProj;
-          const pinH = 20; // total pin height
-          const pinR = 7;  // circle head radius
+          const pinH = 20;
+          const pinR = 7;
           const circleCy = py - pinH + pinR;
 
-          // Sonar ripple (single ring, fading out)
+          // Sonar ripple ring
           const rippleR = pinR + 6 + Math.sin(pulseTime * 2.5 + cLon) * 4;
           const rippleAlpha = 0.6 - (Math.sin(pulseTime * 2.5 + cLon) * 0.5 + 0.5) * 0.45;
           ctx.beginPath();
@@ -323,37 +372,31 @@ export default function WorldMapPage() {
           ctx.lineWidth = 1.2;
           ctx.stroke();
 
-          // Pin shadow glow (drawn first, slightly larger, blurred)
-          ctx.shadowColor = '#00f3ff';
-          ctx.shadowBlur = 14;
+          // PERF: Manual soft glow ring (no shadowBlur — avoids GPU composite flush)
+          ctx.beginPath();
+          ctx.arc(px, circleCy, pinR + 3, 0, Math.PI * 2);
+          ctx.strokeStyle = 'rgba(0, 243, 255, 0.25)';
+          ctx.lineWidth = 4;
+          ctx.stroke();
 
           // Teardrop body path
           ctx.beginPath();
-          ctx.arc(px, circleCy, pinR, Math.PI * 0.2, Math.PI * 0.8, true); // top arc
-          ctx.bezierCurveTo(
-            px - pinR * 0.6, py - pinH * 0.2,
-            px, py + 2,
-            px, py + 2
-          );
-          ctx.bezierCurveTo(
-            px, py + 2,
-            px + pinR * 0.6, py - pinH * 0.2,
-            px + pinR, circleCy + pinR * Math.sin(Math.PI * 0.8)
-          );
+          ctx.arc(px, circleCy, pinR, Math.PI * 0.2, Math.PI * 0.8, true);
+          ctx.bezierCurveTo(px - pinR * 0.6, py - pinH * 0.2, px, py + 2, px, py + 2);
+          ctx.bezierCurveTo(px, py + 2, px + pinR * 0.6, py - pinH * 0.2, px + pinR, circleCy + pinR * Math.sin(Math.PI * 0.8));
           ctx.fillStyle = 'rgba(0, 188, 220, 0.85)';
           ctx.fill();
           ctx.strokeStyle = '#00f3ff';
-          ctx.lineWidth = 1.5;
+          ctx.lineWidth = 1.4;
           ctx.stroke();
-          ctx.shadowBlur = 0;
 
-          // Inner white dot (light source)
+          // Inner dot
           ctx.beginPath();
           ctx.arc(px, circleCy, pinR * 0.32, 0, Math.PI * 2);
           ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
           ctx.fill();
 
-          // Label: prefer real city, skip "Unknown", fallback to shortened IP
+          // Label
           const rawCity = (client.city || '').trim();
           let labelCity = 'CLIENT';
           if (rawCity && rawCity !== 'Unknown' && rawCity !== 'Internal LAN') {
@@ -366,7 +409,6 @@ export default function WorldMapPage() {
             }
           }
 
-          // Cyberpunk Badge Background for Client Label
           ctx.font = 'bold 9px "Share Tech Mono"';
           const labelText = `[${labelCity}]`;
           const textW = ctx.measureText(labelText).width;
@@ -381,7 +423,6 @@ export default function WorldMapPage() {
           }
           ctx.fill();
           ctx.stroke();
-
           ctx.fillStyle = '#00f3ff';
           ctx.fillText(labelText, px + pinR + 8, circleCy + 3);
         }
@@ -407,50 +448,40 @@ export default function WorldMapPage() {
           ctx.stroke();
         }
 
-        // Pin glow shadow
-        ctx.shadowColor = '#00ff9d';
-        ctx.shadowBlur = 22;
+        // PERF: Manual glow ring instead of shadowBlur (avoids GPU composite pipeline flush)
+        ctx.beginPath();
+        ctx.arc(sx, sCy, sPinR + 5, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(0, 255, 157, 0.22)';
+        ctx.lineWidth = 6;
+        ctx.stroke();
 
         // Server teardrop body
         ctx.beginPath();
         ctx.arc(sx, sCy, sPinR, Math.PI * 0.2, Math.PI * 0.8, true);
-        ctx.bezierCurveTo(
-          sx - sPinR * 0.6, sy - sPinH * 0.2,
-          sx, sy + 3,
-          sx, sy + 3
-        );
-        ctx.bezierCurveTo(
-          sx, sy + 3,
-          sx + sPinR * 0.6, sy - sPinH * 0.2,
-          sx + sPinR, sCy + sPinR * Math.sin(Math.PI * 0.8)
-        );
+        ctx.bezierCurveTo(sx - sPinR * 0.6, sy - sPinH * 0.2, sx, sy + 3, sx, sy + 3);
+        ctx.bezierCurveTo(sx, sy + 3, sx + sPinR * 0.6, sy - sPinH * 0.2, sx + sPinR, sCy + sPinR * Math.sin(Math.PI * 0.8));
         ctx.fillStyle = 'rgba(0, 180, 100, 0.9)';
         ctx.fill();
         ctx.strokeStyle = '#00ff9d';
         ctx.lineWidth = 2;
         ctx.stroke();
-        ctx.shadowBlur = 0;
 
-        // Crosshair inside the circle head
+        // Crosshair (batch both lines into single beginPath)
         const chSize = sPinR * 0.65;
         ctx.strokeStyle = 'rgba(255,255,255,0.85)';
         ctx.lineWidth = 1.2;
         ctx.beginPath();
-        ctx.moveTo(sx - chSize, sCy);
-        ctx.lineTo(sx + chSize, sCy);
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.moveTo(sx, sCy - chSize);
-        ctx.lineTo(sx, sCy + chSize);
+        ctx.moveTo(sx - chSize, sCy); ctx.lineTo(sx + chSize, sCy);
+        ctx.moveTo(sx, sCy - chSize); ctx.lineTo(sx, sCy + chSize);
         ctx.stroke();
 
-        // Center dot of crosshair
+        // Center dot
         ctx.beginPath();
         ctx.arc(sx, sCy, 2.5, 0, Math.PI * 2);
         ctx.fillStyle = '#fff';
         ctx.fill();
 
-        // HQ Label with Cyberpunk Badge
+        // HQ Label
         ctx.font = 'bold 10px "Share Tech Mono"';
         const hqText = '[HQ] SERVER';
         const hqW = ctx.measureText(hqText).width;
@@ -467,32 +498,28 @@ export default function WorldMapPage() {
         ctx.stroke();
 
         ctx.fillStyle = '#00ff9d';
-        ctx.shadowColor = '#00ff9d';
-        ctx.shadowBlur = 8;
         ctx.fillText(hqText, sx + sPinR + 9, sCy + 4);
-        ctx.shadowBlur = 0;
       }
 
-      // 9. High-Precision Maritime Island Radar Pins & Cyberpunk Labels (Hoàng Sa, Trường Sa, Phú Quốc, Côn Đảo...)
+      // 9. Maritime Island Radar Pins — All shadowBlur replaced with manual rings
       VIETNAM_MARITIME_ISLANDS.forEach(item => {
-        // A. Archipelago Clusters (Hoàng Sa, Trường Sa)
         if (item.type === 'archipelago_cluster') {
-          // Render individual reefs/islets inside cluster
           if (item.islands) {
             item.islands.forEach(isl => {
               const islProj = projection([isl.lon, isl.lat]);
               if (islProj) {
                 const [ix, iy] = islProj;
                 const dotR = Math.max(1.5, isl.r * Math.sqrt(zoomLevelRef.current) * 0.9);
-
-                // Island dot glow
+                // Soft outer glow ring (no shadowBlur)
+                ctx.beginPath();
+                ctx.arc(ix, iy, dotR + 2, 0, Math.PI * 2);
+                ctx.fillStyle = 'rgba(0, 255, 180, 0.18)';
+                ctx.fill();
+                // Island dot (sharp)
                 ctx.beginPath();
                 ctx.arc(ix, iy, dotR, 0, Math.PI * 2);
                 ctx.fillStyle = 'rgba(0, 255, 180, 0.9)';
-                ctx.shadowColor = '#00ff9d';
-                ctx.shadowBlur = 6;
                 ctx.fill();
-                ctx.shadowBlur = 0;
               }
             });
           }
@@ -525,7 +552,6 @@ export default function WorldMapPage() {
             ctx.font = 'bold 8.5px "Share Tech Mono"';
             const labelW = ctx.measureText(item.label).width;
             const badgeH = 14;
-            // Shift Hoang Sa slightly up-right, Truong Sa slightly down-right to avoid overlap
             const yShift = item.id === 'hoang_sa_main' ? -10 : 8;
             const badgeX = cx + 10;
             const badgeY = cy + yShift;
@@ -549,31 +575,28 @@ export default function WorldMapPage() {
 
         // B. Major & Minor Islands (Phú Quốc, Côn Đảo, Bạch Long Vĩ, Lý Sơn, Phú Quý...)
         else {
-          // If island has detailed outline polygon, project and draw it
+          // Island outline polygon
           if (item.outline && item.outline.length > 2) {
             ctx.beginPath();
             let firstPt = null;
             item.outline.forEach((pt, pidx) => {
               const proj = projection(pt);
               if (proj) {
-                if (pidx === 0) {
-                  ctx.moveTo(proj[0], proj[1]);
-                  firstPt = proj;
-                } else {
-                  ctx.lineTo(proj[0], proj[1]);
-                }
+                if (pidx === 0) { ctx.moveTo(proj[0], proj[1]); firstPt = proj; }
+                else ctx.lineTo(proj[0], proj[1]);
               }
             });
             if (firstPt) {
               ctx.closePath();
               ctx.fillStyle = 'rgba(0, 243, 255, 0.8)';
               ctx.fill();
-              ctx.strokeStyle = '#00f3ff';
-              ctx.lineWidth = 1.0;
-              ctx.shadowColor = '#00f3ff';
-              ctx.shadowBlur = 6;
+              // Manual glow: draw slightly larger stroke with low opacity instead of shadowBlur
+              ctx.strokeStyle = 'rgba(0, 243, 255, 0.3)';
+              ctx.lineWidth = 3.5;
               ctx.stroke();
-              ctx.shadowBlur = 0;
+              ctx.strokeStyle = '#00f3ff';
+              ctx.lineWidth = 0.9;
+              ctx.stroke();
             }
           }
 
@@ -583,38 +606,35 @@ export default function WorldMapPage() {
             const [ix, iy] = islProj;
             const dotR = Math.max(2.0, (item.r || 2.0) * Math.sqrt(zoomLevelRef.current) * 0.9);
 
+            // Soft outer glow ring (manual, no shadowBlur)
+            ctx.beginPath();
+            ctx.arc(ix, iy, dotR + 2.5, 0, Math.PI * 2);
+            ctx.fillStyle = `${item.color || '#00f3ff'}2a`; // 16% opacity
+            ctx.fill();
+
+            // Sharp dot
             ctx.beginPath();
             ctx.arc(ix, iy, dotR, 0, Math.PI * 2);
             ctx.fillStyle = item.color || '#00f3ff';
-            ctx.shadowColor = item.color || '#00f3ff';
-            ctx.shadowBlur = 8;
             ctx.fill();
-            ctx.shadowBlur = 0;
 
-            // Cyberpunk Badge (Visible when Zoom >= 1.4X for clean non-overlapping typography)
+            // Cyberpunk Badge (Visible when Zoom >= 1.4X)
             if (zoomLevelRef.current >= 1.4) {
               ctx.font = '7.5px "Share Tech Mono"';
               const labelW = ctx.measureText(item.label).width;
               const badgeH = 12;
 
-              // Smart directional offsets based on island geographical sector
               let xOffset = 7;
               let yOffset = -badgeH / 2;
 
               if (item.id === 'phu_quoc' || item.id === 'tho_chu') {
-                // Western islands (Gulf of Thailand) → shift label to the left
                 xOffset = -(labelW + 12);
               } else if (item.id === 'con_dao') {
-                // Southern island → shift down-right
-                xOffset = 8;
-                yOffset = 4;
+                xOffset = 8; yOffset = 4;
               } else if (item.id === 'bach_long_vi') {
-                // Northern gulf → shift up-right
-                xOffset = 8;
-                yOffset = -8;
+                xOffset = 8; yOffset = -8;
               } else if (item.id === 'cu_lao_cham') {
-                xOffset = -(labelW + 10);
-                yOffset = -6;
+                xOffset = -(labelW + 10); yOffset = -6;
               }
 
               const badgeX = ix + xOffset;
@@ -642,7 +662,7 @@ export default function WorldMapPage() {
       animFrameId = requestAnimationFrame(render);
     };
 
-    render();
+    render(0);
     return () => cancelAnimationFrame(animFrameId);
   }, [worldGeo, geoData, autoRotate, rotationSpeed, zoomLevel]);
 

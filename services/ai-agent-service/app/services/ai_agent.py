@@ -517,151 +517,6 @@ Bạn là "Tiểu Bảo Bảo" — Trợ lý AI Tự Hành cấp cao (Senior Aut
 - `messenger_list_groups`: Liệt kê tất cả các nhóm Messenger đã biết.
 - `messenger_get_group_members`: Tra cứu danh sách thành viên chi tiết của một nhóm cụ thể.
 
-━━━ 7. MẪU TRẢ LỜI CHUẨN MỰC (FEW-SHOT EXEMPLARS) ━━━
-
-📌 MẪU 1: TRA CỨU VỊ TRÍ MÁY CHỦ (SERVER LOCATION)
-```text
-🎯 *KẾT QUẢ KIỂM TRA:*
-Dạ máy chủ `kirito-server` được đặt vật lý tại *Định Công, Hoàng Mai, Hà Nội, Việt Nam* trên đường truyền mạng FPT Telecom của anh Mạnh ạ!
-
-📊 *THÔNG TIN CHI TIẾT:*
-
-📌 *1. Vị trí vật lý thực tế:*
-   • 📍 Địa chỉ: *Định Công, Hoàng Mai, Hà Nội, Việt Nam*
-   • 👤 Quản trị viên: *Trần Văn Mạnh (anh Mạnh)*
-
-📌 *2. Hạ tầng mạng & Hệ điều hành:*
-   • 🌐 Nhà mạng (ISP): *FPT Telecom*
-   • 💻 IP nội bộ (LAN): `192.168.0.100` (IP công khai: `1.53.99.21`)
-   • 🕒 Múi giờ hệ thống: *Asia/Ho_Chi_Minh (ICT / UTC+7)*
-   • 🖥️ Hệ điều hành: *Ubuntu Linux 26.04 LTS (kirito-server)*
-
-💡 *GIẢI THÍCH THÊM:*
-Dải IP công khai do nhà mạng FPT cấp định tuyến qua các gateway của ISP nên các trang GeoIP (như ipinfo.io / ip-api) có thể hiển thị gateway tại TP.HCM hoặc Hà Nội. Tuy nhiên, vị trí vật lý thực tế của thiết bị máy chủ kirito-server được đặt chính xác 100% tại *Định Công, Hoàng Mai, Hà Nội* ạ!
-```
-
-📌 MẪU 2: KIỂM TRA LỊCH CHẠY TỰ ĐỘNG / SYSTEMD / CRON
-```text
-🎯 *KẾT QUẢ KIỂM TRA:*
-Dạ vâng anh Mạnh, các lệnh `apt update` và `apt upgrade` *ĐANG ĐƯỢC CHẠY TỰ ĐỘNG* đúng định kỳ mỗi ngày lúc *06:00 sáng* qua Systemd Timer anh nhé!
-
-📊 *CHI TIẾT ĐÃ XÁC THỰC:*
-
-📌 *1. Bộ định thời: apt-daily.timer*
-   • 🕒 Lịch chạy: *06:00 hàng ngày (ICT/UTC+7)*
-   • ⏱ Lần chạy gần nhất: `06:00:11 ngày 24/08/2026`
-   • ✅ Trạng thái: *Đang hoạt động (active, waiting)*
-
-📌 *2. Dịch vụ thực thi: apt-daily.service*
-   • ⚙️ Nhiệm vụ: Tự động tải gói cập nhật hệ thống và danh sách package mới
-   • 📝 Nhật ký hôm nay:
-     ```text
-     Aug 24 06:00:11 systemd[1]: Starting apt-daily.service...
-     Aug 24 06:00:41 systemd[1]: Finished apt-daily.service.
-     ```
-   • ✅ Kết quả: Hoàn thành trong *30 giây*, không phát sinh lỗi.
-
-💡 *GIẢI THÍCH THÊM:*
-Trên Ubuntu hiện đại, cơ chế *Systemd Timer* đã thay thế hoàn toàn `cron.daily` cho apt để tránh xung đột tài nguyên. Vì vậy file trong `/etc/cron.daily/apt-compat` sẽ tự động nhường quyền cho systemd timer xử lý. Hệ thống của anh hoàn toàn bình thường và chuẩn chỉ ạ!
-```
-
-📌 MẪU 3: KIỂM TRA TỔNG QUAN TÀI NGUYÊN MÁY CHỦ
-```text
-🎯 *TRẠNG THÁI MÁY CHỦ KIRITO-SERVER:*
-Dạ máy chủ hiện đang hoạt động *RẤT ỔN ĐỊNH*, tải CPU thấp và RAM còn dư dả anh Mạnh nhé!
-
-📊 *THỐNG KÊ CHI TIẾT:*
-
-⚡ *CPU & Tải hệ thống:*
-   • Tải trung bình (Load Avg): `0.15, 0.20, 0.18` (Mức an toàn tuyệt đối)
-   • Thời gian hoạt động (Uptime): *14 ngày 6 giờ*
-
-💾 *Bộ nhớ (RAM & Swap):*
-   • RAM đã dùng: *3.8 GB / 15.6 GB* (Còn trống `11.8 GB` ~ *75%*)
-   • Swap đã dùng: *0 MB / 4.0 GB*
-
-💿 *Dung lượng ổ đĩa (Root /):*
-   • Đã dùng: *42 GB / 250 GB* (Chiếm `17%` — Rất an toàn)
-
-🐳 *Docker Containers:*
-   • Hoạt động: *6/6 containers ONLINE* (frontend, auth, metrics, files, ai-agent, db)
-
-💡 _Hệ thống đang vận hành rất trơn tru, không có cảnh báo nào cần xử lý ạ!_
-```
-
-📌 MẪU 4: DANH SÁCH NHÓM MESSENGER
-```text
-👥 *DANH SÁCH NHÓM MESSENGER*
-Hệ thống hiện ghi nhận *1 nhóm*:
-
-📌 *1. Trần, Minh*
-   • 👤 Thành viên: *3 người*
-   • 🕒 Lần quét cuối: `17/08/2026 06:35`
-
-💡 _Anh Mạnh có thể nhắn: "Xem thành viên nhóm Trần, Minh" để em kiểm tra danh sách chi tiết nhé!_
-```
-
-📌 MẪU 5: CHẨN ĐOÁN ĐA BƯỚC (MULTI-STEP DIAGNOSIS)
-```text
-🎯 *KẾT QUẢ CHẨN ĐOÁN:*
-Dạ container `dashboard_ai_agent` đang bị lỗi OOM (Out of Memory) — RAM bị cạn kiệt lúc 03:47 sáng nay anh Mạnh ơi!
-
-📊 *PHÂN TÍCH ĐÃ XÁC THỰC (3 bước kiểm tra):*
-
-📌 *Bước 1 — Trạng thái container:*
-   • ❌ `dashboard_ai_agent`: Exited (137) — Code 137 = bị kill bởi OOM Killer
-   • ✅ Các containers còn lại: 5/6 ONLINE bình thường
-
-📌 *Bước 2 — Nguyên nhân gốc (journalctl):*
-   • 🔍 Log: `kernel: Out of memory: Killed process 4821 (python3)`
-   • 🕒 Thời điểm: `03:47:22 ngày 27/08/2026`
-   • 💾 RAM tại thời điểm OOM: Đã dùng 95% (14.8 GB / 15.6 GB)
-
-📌 *Bước 3 — Hành động khắc phục:*
-   • Em đã restart container: `docker start dashboard_ai_agent` ✅
-   • Container đang chạy lại bình thường sau 45 giây
-
-💡 *KHUYẾN NGHỊ:*
-Để tránh OOM tái diễn, anh Mạnh nên xem xét: (1) Tăng giới hạn RAM container trong `docker-compose.yml`, hoặc (2) Kiểm tra memory leak trong Python service bằng `docker stats --no-stream`.
-```
-
-📌 MẪU 6: PHÂN BIỆT NỀN TẢNG TƯƠNG TỰ (DISAMBIGUATION CONTRASTIVE EXAMPLE)
-⚠️ Đây là ví dụ về LỖI THỰC TẾ em đã mắc (28/08/2026) và cách phân tích ĐÚNG:
-
-TÌNH HUỐNG: Anh Mạnh mô tả một thông báo có "kênh phát sóng", "thành viên", "chỉ admin mới nhắn", "cuộc thăm dò ý kiến"
-
-❌ SUY LUẬN SAI (Surface Keyword Anchoring):
-  • Thấy "kênh" + "thành viên" + "chỉ admin nhắn" → Nhảy ngay kết luận Discord
-  • Bỏ qua từ khóa "cuộc thăm dò ý kiến / Poll" — ĐÂY LÀ ĐẶC TRƯNG ĐỘC BẢN!
-  • Bỏ qua context: cuộc trò chuyện đang nói về Facebook Messenger
-
-✅ SUY LUẬN ĐÚNG (Disambiguation Protocol D1→D5):
-  • D1: Context toàn cuộc hội thoại → đang nói về Facebook/Messenger
-  • D2: "kênh", "thành viên", "admin" → False positives, có ở cả Discord lẫn Messenger
-  • D3: "cuộc thăm dò ý kiến / Poll" = ĐẶC TRƯNG ĐỘC BẢN của Messenger Broadcast Channel
-       Discord KHÔNG có thông báo hệ thống dạng này
-  • D4: Falsification: Đây có phải Discord không? → Không — Discord không có "Poll system notification" dạng này
-  • D5: Kết luận đủ bằng chứng → Đây là Facebook Messenger Broadcast Channel (Kênh phát sóng)
-
-📌 BẢNG ĐẶC TRƯNG PHÂN BIỆT (để tham chiếu nhanh):
-```text
-• Facebook Messenger Broadcast Channel:
-  - "Kênh phát sóng" / Broadcast Channel
-  - Chỉ admin (Jey Zeta, chủ kênh) mới nhắn tin
-  - Thành viên chỉ reaction + vote poll
-  - "Cuộc thăm dò ý kiến" = đặc trưng độc bản
-  
-• Discord:
-  - "Server" / "Guild" / "Server ID"
-  - Announcement Channel, Text Channel
-  - Slash commands (/help, /kick...)
-  - Webhook URL discord.com/api/webhooks/...
-  
-• Telegram Channel:
-  - @username dạng @TenKenh
-  - "Subscribers" (không phải "members")
-  - Bot @username thường có suffix "bot"
-```
 {self._format_lessons_block()}"""
 
     def _format_lessons_block(self) -> str:
@@ -2531,14 +2386,25 @@ TÌNH HUỐNG: Anh Mạnh mô tả một thông báo có "kênh phát sóng", "t
                 history.pop(0)
 
     def _extract_pseudo_tool_calls(self, text: str) -> List[Dict[str, Any]]:
-        """Parse pseudo-XML function tags emitted by non-native tool-call models."""
+        """Parse pseudo-XML function tags emitted by non-native tool-call models.
+
+        Supports 3 formats:
+        - P1: <function=name>{"key": "val"}</function>  (common OpenRouter format)
+        - P2: <function>name</function>{"key": "val"}
+        - P3: <tool_call><function=name><parameter=key>val</parameter></function></tool_call>
+              (nemotron / nvidia format with named parameter tags)
+        """
         import re
         calls = []
         if not text or ("<function" not in text and "<tool_call" not in text):
             return calls
 
+        # P1: <function=name ...>{"json"}</function>
         p1 = re.findall(r"<function=([a-zA-Z0-9_]+)[^>]*>(.*?)(?:</function>|$)", text, re.DOTALL)
         for fn_name, fn_args_str in p1:
+            # Skip if this is a parameter tag content (handled by P3)
+            if "<parameter=" in fn_args_str or "</parameter>" in fn_args_str:
+                continue
             try:
                 start = fn_args_str.find("{")
                 end = fn_args_str.rfind("}")
@@ -2548,6 +2414,7 @@ TÌNH HUỐNG: Anh Mạnh mô tả một thông báo có "kênh phát sóng", "t
             except Exception:
                 pass
 
+        # P2: <function>name</function>{"json"}
         p2 = re.findall(r"<function>([a-zA-Z0-9_]+)</function>\s*({.*?})(?:</function>|$)", text, re.DOTALL)
         for fn_name, fn_args_str in p2:
             try:
@@ -2558,6 +2425,26 @@ TÌNH HUỐNG: Anh Mạnh mô tả một thông báo có "kênh phát sóng", "t
                     calls.append({"name": fn_name, "args": args})
             except Exception:
                 pass
+
+        # P3: Nemotron/nvidia parameter tag format:
+        # <tool_call>
+        # <function=run_command>
+        # <parameter=command>grep "2026-08-28" /var/log/apt/history.log</parameter>
+        # </function>
+        # </tool_call>
+        tool_call_blocks = re.findall(r"<tool_call>(.*?)</tool_call>", text, re.DOTALL)
+        for block in tool_call_blocks:
+            fn_match = re.search(r"<function=([a-zA-Z0-9_]+)>", block)
+            if not fn_match:
+                continue
+            fn_name = fn_match.group(1)
+            # Extract all <parameter=key>value</parameter> pairs
+            params = re.findall(r"<parameter=([a-zA-Z0-9_]+)>(.*?)</parameter>", block, re.DOTALL)
+            if params:
+                args = {k: v.strip() for k, v in params}
+                # Avoid duplicates with P1 (P1 skips blocks with parameter tags, but double-check)
+                if not any(c["name"] == fn_name and c["args"] == args for c in calls):
+                    calls.append({"name": fn_name, "args": args})
 
         return calls
 

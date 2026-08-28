@@ -268,12 +268,15 @@ export default function WorldMapPage() {
               ctx.beginPath();
               ctx.moveTo(prevPt[0], prevPt[1]);
               ctx.lineTo(ptProj[0], ptProj[1]);
-              ctx.strokeStyle = `rgba(0, 243, 255, ${0.5 + 0.3 * Math.sin(pulseTime + i * 0.2)})`;
-              ctx.lineWidth = 1.6;
-              ctx.setLineDash([6, 4]);
-              ctx.lineDashOffset = -pulseTime * 18;
+              ctx.strokeStyle = `rgba(0, 243, 255, ${0.7 + 0.3 * Math.sin(pulseTime * 2 + i * 0.2)})`;
+              ctx.lineWidth = 2.2;
+              ctx.shadowColor = '#00f3ff';
+              ctx.shadowBlur = 8;
+              ctx.setLineDash([8, 4]);
+              ctx.lineDashOffset = -pulseTime * 24;
               ctx.stroke();
               ctx.setLineDash([]);
+              ctx.shadowBlur = 0;
             }
             prevPt = ptProj;
           } else {
@@ -340,9 +343,25 @@ export default function WorldMapPage() {
               labelCity = client.ip.split('.').slice(0, 2).join('.') + '.*';
             }
           }
-          ctx.fillStyle = '#a8e8ff';
-          ctx.font = '9px "Share Tech Mono"';
-          ctx.fillText(`[${labelCity}]`, px + pinR + 4, circleCy + 3);
+
+          // Cyberpunk Badge Background for Client Label
+          ctx.font = 'bold 9px "Share Tech Mono"';
+          const labelText = `[${labelCity}]`;
+          const textW = ctx.measureText(labelText).width;
+          ctx.fillStyle = 'rgba(3, 13, 26, 0.85)';
+          ctx.strokeStyle = 'rgba(0, 243, 255, 0.5)';
+          ctx.lineWidth = 0.8;
+          ctx.beginPath();
+          if (ctx.roundRect) {
+            ctx.roundRect(px + pinR + 4, circleCy - 7, textW + 8, 14, 3);
+          } else {
+            ctx.rect(px + pinR + 4, circleCy - 7, textW + 8, 14);
+          }
+          ctx.fill();
+          ctx.stroke();
+
+          ctx.fillStyle = '#00f3ff';
+          ctx.fillText(labelText, px + pinR + 8, circleCy + 3);
         }
       });
 
@@ -409,12 +428,26 @@ export default function WorldMapPage() {
         ctx.fillStyle = '#fff';
         ctx.fill();
 
-        // HQ Label
+        // HQ Label with Cyberpunk Badge
+        ctx.font = 'bold 10px "Share Tech Mono"';
+        const hqText = '[HQ] SERVER';
+        const hqW = ctx.measureText(hqText).width;
+        ctx.fillStyle = 'rgba(3, 13, 26, 0.85)';
+        ctx.strokeStyle = 'rgba(0, 255, 157, 0.5)';
+        ctx.lineWidth = 0.8;
+        ctx.beginPath();
+        if (ctx.roundRect) {
+          ctx.roundRect(sx + sPinR + 5, sCy - 8, hqW + 8, 16, 3);
+        } else {
+          ctx.rect(sx + sPinR + 5, sCy - 8, hqW + 8, 16);
+        }
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.fillStyle = '#00ff9d';
         ctx.shadowColor = '#00ff9d';
         ctx.shadowBlur = 8;
-        ctx.fillStyle = '#00ff9d';
-        ctx.font = 'bold 10px "Share Tech Mono"';
-        ctx.fillText('[HQ] SERVER', sx + sPinR + 5, sCy + 4);
+        ctx.fillText(hqText, sx + sPinR + 9, sCy + 4);
         ctx.shadowBlur = 0;
       }
 

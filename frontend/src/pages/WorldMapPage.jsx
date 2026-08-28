@@ -574,13 +574,34 @@ export default function WorldMapPage() {
             ctx.fill();
             ctx.shadowBlur = 0;
 
-            // Cyberpunk Badge (Visible when Zoom >= 1.3X for clean non-overlapping typography)
-            if (zoomLevelRef.current >= 1.3) {
+            // Cyberpunk Badge (Visible when Zoom >= 1.4X for clean non-overlapping typography)
+            if (zoomLevelRef.current >= 1.4) {
               ctx.font = '7.5px "Share Tech Mono"';
               const labelW = ctx.measureText(item.label).width;
               const badgeH = 12;
-              const badgeX = ix + 6;
-              const badgeY = iy - badgeH / 2;
+
+              // Smart directional offsets based on island geographical sector
+              let xOffset = 7;
+              let yOffset = -badgeH / 2;
+
+              if (item.id === 'phu_quoc' || item.id === 'tho_chu') {
+                // Western islands (Gulf of Thailand) → shift label to the left
+                xOffset = -(labelW + 12);
+              } else if (item.id === 'con_dao') {
+                // Southern island → shift down-right
+                xOffset = 8;
+                yOffset = 4;
+              } else if (item.id === 'bach_long_vi') {
+                // Northern gulf → shift up-right
+                xOffset = 8;
+                yOffset = -8;
+              } else if (item.id === 'cu_lao_cham') {
+                xOffset = -(labelW + 10);
+                yOffset = -6;
+              }
+
+              const badgeX = ix + xOffset;
+              const badgeY = iy + yOffset;
 
               ctx.fillStyle = 'rgba(2, 13, 26, 0.85)';
               ctx.strokeStyle = 'rgba(0, 243, 255, 0.45)';

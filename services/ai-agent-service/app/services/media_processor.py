@@ -99,10 +99,24 @@ class MediaProcessor:
         Sends audio to Groq Whisper STT.
         Primary: whisper-large-v3-turbo (216x real-time, 20 RPM, 28,800 audio-sec/day).
         Fallback: whisper-large-v3.
+
+        NOTE: Groq Whisper rejects .oga extension (Telegram native format).
+        We rename to .ogg which Groq accepts — same OGG container, Opus codec.
         """
         groq_keys = settings.groq_keys
         if not groq_keys:
             return ""
+
+        # Groq whitelist: flac, mp3, mp4, mpeg, mpga, m4a, ogg, opus, wav, webm
+        # Telegram voice messages use .oga (OGG Opus) which is NOT in Groq's whitelist.
+        # Renaming to .ogg (identical container format) resolves the 400 error.
+        ext = Path(filename).suffix.lower()
+        if ext == ".oga":
+            filename = Path(filename).with_suffix(".ogg").name
+        # If still unknown extension, force .ogg as safe default
+        _GROQ_AUDIO_EXTS = {".flac", ".mp3", ".mp4", ".mpeg", ".mpga", ".m4a", ".ogg", ".opus", ".wav", ".webm"}
+        if Path(filename).suffix.lower() not in _GROQ_AUDIO_EXTS:
+            filename = "voice.ogg"
 
         models = [settings.GROQ_WHISPER_MODEL, settings.GROQ_WHISPER_MODEL_FALLBACK]
 
@@ -123,7 +137,7 @@ class MediaProcessor:
                     if resp.status_code == 429:
                         logger.warning("[MediaProcessor] STT 429 key=%s... model=%s", key[:8], model)
                         continue
-                    logger.warning("[MediaProcessor] STT HTTP %d: %s", resp.status_code, resp.text[:100])
+                    logger.warning("[MediaProcessor] STT HTTP %d: %s", resp.status_code, resp.text[:200])
                 except Exception as exc:
                     logger.error("[MediaProcessor] STT error: %s", exc)
 

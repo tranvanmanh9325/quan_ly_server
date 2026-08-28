@@ -461,11 +461,14 @@ class LlmRouter:
                     "Authorization": f"Bearer {key_entry.api_key}",
                     "Content-Type": "application/json",
                 }
-                # Sanitize messages (strip provider-specific fields like reasoning_details)
+                # Sanitize messages: strip provider-specific or unsupported fields.
+                # - "reasoning_details": OR-specific, rejected by Groq
+                # - "refusal": OpenAI-specific field, rejected by Groq with HTTP 400
+                _STRIP_FIELDS = {"reasoning_details", "refusal"}
                 clean_messages = []
                 for m in messages:
                     if isinstance(m, dict):
-                        m_copy = {k: v for k, v in m.items() if k not in ("reasoning_details",)}
+                        m_copy = {k: v for k, v in m.items() if k not in _STRIP_FIELDS}
                         clean_messages.append(m_copy)
                     else:
                         clean_messages.append(m)

@@ -129,6 +129,17 @@ class AiAgentService:
         t = text.strip().lower()
         return t in ["chào bạn", "chào", "hello", "hi", "bắt đầu", "chào bot", "xin chào", "alo"]
 
+    @staticmethod
+    def _extract_user_command(msg: str) -> str:
+        """Extracts the actual user query/command text if msg is a document/file attachment envelope."""
+        if msg.startswith("[📄 TỆP ĐÍNH KÈM:") or msg.startswith("[📄 File:") or msg.startswith("[📸"):
+            lines = msg.splitlines()
+            for line in lines[:5]:
+                if line.startswith("[Yêu cầu từ anh Mạnh]:") or line.startswith("Caption:") or line.startswith("[📸"):
+                    return line
+            return lines[0]
+        return msg
+
     def _classify_complexity(self, msg: str) -> str:
         """
         Phase 1 — Dual Process Gating (Kahneman System 1 vs System 2).
@@ -139,19 +150,25 @@ class AiAgentService:
 
         Returns: 'simple' | 'complex' | 'critical'
         """
-        msg_lower = msg.lower()
-        word_count = len(msg.split())
+        cmd_text = self._extract_user_command(msg)
+        cmd_lower = cmd_text.lower()
+        word_count = len(cmd_text.split())
 
         # CRITICAL: dangerous/destructive commands → mandatory confirmation gate
-        if any(k in msg_lower for k in _CRITICAL_KEYWORDS):
+        # Evaluated ONLY on user's direct command/caption, NEVER on raw attachment content
+        if any(k in cmd_lower for k in _CRITICAL_KEYWORDS):
             return "critical"
 
+        # Document attachments are always processed with System 2 (complex) depth
+        if msg.startswith("[📄 TỆP ĐÍNH KÈM:") or msg.startswith("[📄 File:") or msg.startswith("[📸"):
+            return "complex"
+
         # COMPLEX: multi-step reasoning, diagnosis, comparison
-        if word_count > 20 or any(k in msg_lower for k in _COMPLEX_KEYWORDS):
+        if word_count > 20 or any(k in cmd_lower for k in _COMPLEX_KEYWORDS):
             return "complex"
 
         # SIMPLE: short factual query matching known ground-truth patterns
-        if word_count <= 15 and _SIMPLE_PATTERN.search(msg_lower):
+        if word_count <= 15 and _SIMPLE_PATTERN.search(cmd_lower):
             return "simple"
 
         # Default to complex when uncertain (Dunning-Kruger inverse: err on the side of depth)
@@ -171,16 +188,21 @@ class AiAgentService:
 
         Returns: 'diagnostic' | 'action' | 'learning' | 'query' | 'general'
         """
-        msg_lower = msg.lower()
+        if msg.startswith("[📄 TỆP ĐÍNH KÈM:") or msg.startswith("[📄 File:") or msg.startswith("[📸"):
+            return "query"
+
+        cmd_text = self._extract_user_command(msg)
+        cmd_lower = cmd_text.lower()
+
         # Priority: action > learning > diagnostic > query > general
         # (action has highest safety implication, detect first)
-        if _INTENT_ACTION.search(msg_lower):
+        if _INTENT_ACTION.search(cmd_lower):
             return "action"
-        if _INTENT_LEARNING.search(msg_lower):
+        if _INTENT_LEARNING.search(cmd_lower):
             return "learning"
-        if _INTENT_DIAGNOSTIC.search(msg_lower):
+        if _INTENT_DIAGNOSTIC.search(cmd_lower):
             return "diagnostic"
-        if _INTENT_QUERY.search(msg_lower):
+        if _INTENT_QUERY.search(cmd_lower):
             return "query"
         return "general"
 

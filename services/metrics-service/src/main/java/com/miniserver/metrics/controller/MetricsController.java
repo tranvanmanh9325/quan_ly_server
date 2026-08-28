@@ -544,11 +544,11 @@ public class MetricsController {
             lon = Double.parseDouble(body.getOrDefault("lon", "0").toString());
         } catch (NumberFormatException ignored) {}
 
-        if (ip != null && !ip.isBlank() && IPV4_PATTERN.matcher(ip).matches()) {
+        if (isValidIp(ip)) {
             activeClientRegistry.recordCheckin(ip, lat, lon, city, isp, country, countryCode);
             log.info("[ClientCheckin] ip={} lat={} lon={} city={} country={}", ip, lat, lon, city, country);
         } else {
-            log.warn("[ClientCheckin] Could not extract valid IPv4 from request: '{}'", ip);
+            log.warn("[ClientCheckin] Could not extract valid IP from request: '{}'", ip);
         }
 
         Map<String, String> ok = new HashMap<>();
@@ -567,6 +567,15 @@ public class MetricsController {
         String xReal = request.getHeader("X-Real-IP");
         if (xReal != null && !xReal.isBlank()) return xReal.trim();
         return request.getRemoteAddr();
+    }
+
+    /** Returns true for valid IPv4 or IPv6 addresses (not blank, not loopback-only). */
+    private boolean isValidIp(String ip) {
+        if (ip == null || ip.isBlank()) return false;
+        // IPv4
+        if (IPV4_PATTERN.matcher(ip).matches()) return true;
+        // IPv6: must contain colon and be reasonably formed
+        return ip.contains(":") && ip.length() >= 2 && !ip.equals("::");
     }
 
     @GetMapping("/geolocation")
@@ -643,9 +652,9 @@ public class MetricsController {
                 item.put("country",     conn.getOrDefault("country", "Unknown"));
                 item.put("countryCode", conn.getOrDefault("countryCode", "UN"));
             } else if (!processedIps.contains(ip)) {
-                // B3: validate IPv4 format before using in SSH command
-                if (!IPV4_PATTERN.matcher(ip).matches()) {
-                    log.warn("[MetricsController] Skipping geo lookup for non-IPv4 address: {}", ip);
+                // Validate IP format (IPv4 or IPv6) before using in SSH command
+                if (!isValidIp(ip)) {
+                    log.warn("[MetricsController] Skipping geo lookup for invalid IP: {}", ip);
                     resolvedConnections.add(item);
                     continue;
                 }

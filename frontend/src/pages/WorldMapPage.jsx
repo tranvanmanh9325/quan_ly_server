@@ -63,35 +63,17 @@ export default function WorldMapPage() {
   }, []);
 
   /**
-   * Client self-registration: browser reports its own real IP + GPS location.
-   * This bypasses Docker NAT / proxy header issues entirely.
+   * Client self-registration: browser sends GPS + geo metadata, server extracts the real IP.
    * Flow:
-   *   1. Fetch real public IP from ipify.org (lightweight, no CORS issue)
-   *   2. Request GPS coords via navigator.geolocation (prompts user permission)
-   *   3. POST both to /api/metrics/client-checkin
-   *   4. Re-fetch map data so this client shows up immediately
+   *   1. POST to /client-checkin with GPS coords (server extracts real IP server-side)
+   *   2. Use the server-echoed IP to fetch city/ISP from ip-api.com
+   *   3. Re-checkin with full geo data
+   *   4. Re-fetch map so this client appears immediately
    */
   useEffect(() => {
     const doCheckin = async () => {
       try {
-        // Step 1: Get real public IP (works through ngrok, VPN, etc.)
-        const ipRes = await fetch('https://api.ipify.org?format=json');
-        const { ip } = await ipRes.json();
-
-        // Step 2: Get city/ISP from ip-api for this public IP
-        let city = 'Unknown', isp = 'Browser', country = 'Unknown', countryCode = 'UN';
-        try {
-          const geoRes = await fetch(`https://ip-api.com/json/${ip}?fields=status,city,isp,country,countryCode`);
-          const geoJson = await geoRes.json();
-          if (geoJson.status === 'success') {
-            city = geoJson.city || city;
-            isp = geoJson.isp || isp;
-            country = geoJson.country || country;
-            countryCode = geoJson.countryCode || countryCode;
-          }
-        } catch (_) { /* ip-api optional, non-blocking */ }
-
-        // Step 3: Try GPS — ask user for permission (precise location)
+        // Step 1: Get GPS coords (prompt permission if needed)
         const getGps = () => new Promise((resolve) => {
           if (!navigator.geolocation) { resolve({ lat: 0, lon: 0 }); return; }
           navigator.geolocation.getCurrentPosition(
@@ -102,10 +84,34 @@ export default function WorldMapPage() {
         });
         const { lat, lon } = await getGps();
 
-        // Step 4: POST to backend
-        await axios.post('/api/metrics/client-checkin', {
-          ip, lat, lon, city, isp, country, countryCode
+        // Step 2: Initial checkin — server extracts real IP from X-Forwarded-For/X-Real-IP
+        // No ip needed from browser; server returns the extracted IP in response
+        const checkinRes = await axios.post('/api/metrics/client-checkin', {
+          lat, lon, city: 'Unknown', isp: 'Browser', country: 'Unknown', countryCode: 'UN'
         });
+        const serverExtractedIp = checkinRes.data?.ip || '';
+
+        // Step 3: Use server-extracted IP to get accurate city/ISP (ip-api free, no key needed)
+        if (serverExtractedIp) {
+          let city = 'Unknown', isp = 'Browser', country = 'Unknown', countryCode = 'UN';
+          try {
+            const geoRes = await fetch(
+              `https://ip-api.com/json/${serverExtractedIp}?fields=status,city,isp,country,countryCode`
+            );
+            const geoJson = await geoRes.json();
+            if (geoJson.status === 'success') {
+              city        = geoJson.city        || city;
+              isp         = geoJson.isp         || isp;
+              country     = geoJson.country     || country;
+              countryCode = geoJson.countryCode || countryCode;
+            }
+          } catch (_) { /* ip-api optional */ }
+
+          // Step 4: Re-checkin with complete geo data
+          await axios.post('/api/metrics/client-checkin', {
+            lat, lon, city, isp, country, countryCode
+          });
+        }
 
         // Step 5: Re-fetch map so this client appears immediately
         const res = await axios.get('/api/metrics/geolocation');

@@ -62,6 +62,68 @@ export default function WorldMapPage() {
     return () => { isMounted = false; clearInterval(interval); };
   }, []);
 
+  /**
+   * Client self-registration: browser reports its own real IP + GPS location.
+   * This bypasses Docker NAT / proxy header issues entirely.
+   * Flow:
+   *   1. Fetch real public IP from ipify.org (lightweight, no CORS issue)
+   *   2. Request GPS coords via navigator.geolocation (prompts user permission)
+   *   3. POST both to /api/metrics/client-checkin
+   *   4. Re-fetch map data so this client shows up immediately
+   */
+  useEffect(() => {
+    const doCheckin = async () => {
+      try {
+        // Step 1: Get real public IP (works through ngrok, VPN, etc.)
+        const ipRes = await fetch('https://api.ipify.org?format=json');
+        const { ip } = await ipRes.json();
+
+        // Step 2: Get city/ISP from ip-api for this public IP
+        let city = 'Unknown', isp = 'Browser', country = 'Unknown', countryCode = 'UN';
+        try {
+          const geoRes = await fetch(`https://ip-api.com/json/${ip}?fields=status,city,isp,country,countryCode`);
+          const geoJson = await geoRes.json();
+          if (geoJson.status === 'success') {
+            city = geoJson.city || city;
+            isp = geoJson.isp || isp;
+            country = geoJson.country || country;
+            countryCode = geoJson.countryCode || countryCode;
+          }
+        } catch (_) { /* ip-api optional, non-blocking */ }
+
+        // Step 3: Try GPS — ask user for permission (precise location)
+        const getGps = () => new Promise((resolve) => {
+          if (!navigator.geolocation) { resolve({ lat: 0, lon: 0 }); return; }
+          navigator.geolocation.getCurrentPosition(
+            (pos) => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
+            ()    => resolve({ lat: 0, lon: 0 }),
+            { timeout: 5000, maximumAge: 60000 }
+          );
+        });
+        const { lat, lon } = await getGps();
+
+        // Step 4: POST to backend
+        await axios.post('/api/metrics/client-checkin', {
+          ip, lat, lon, city, isp, country, countryCode
+        });
+
+        // Step 5: Re-fetch map so this client appears immediately
+        const res = await axios.get('/api/metrics/geolocation');
+        if (res.data) {
+          setGeoData({ server: res.data.server || null, connections: res.data.connections || [] });
+        }
+      } catch (err) {
+        console.warn('[WorldMap] Client checkin failed (non-critical):', err.message);
+      }
+    };
+
+    doCheckin();
+    // Re-checkin every 4 minutes to stay within the 5-minute TTL
+    const interval = setInterval(doCheckin, 4 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+
   const fetchGeolocationData = async () => {
     setLoading(true);
     setErrorMsg(null);

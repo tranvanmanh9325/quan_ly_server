@@ -515,6 +515,39 @@ public class MetricsController {
         return result;
     }
 
+    /**
+     * Browser self-reports its precise location via this endpoint.
+     * Called from WorldMapPage on mount using navigator.geolocation + ipify.
+     * This is the most accurate way to track client position — bypasses all
+     * proxy-header / Docker-NAT issues that make X-Forwarded-For unreliable.
+     *
+     * Body: { "ip": "...", "lat": ..., "lon": ..., "city": "...", "isp": "..." }
+     * No auth required — data is already available from the browser itself.
+     */
+    @PostMapping("/client-checkin")
+    public Map<String, String> clientCheckin(@RequestBody Map<String, Object> body) {
+        String ip   = body.getOrDefault("ip",   "").toString().trim();
+        String city = body.getOrDefault("city", "Unknown").toString().trim();
+        String isp  = body.getOrDefault("isp",  "Browser").toString().trim();
+        double lat  = 0.0;
+        double lon  = 0.0;
+        try {
+            lat = Double.parseDouble(body.getOrDefault("lat", "0").toString());
+            lon = Double.parseDouble(body.getOrDefault("lon", "0").toString());
+        } catch (NumberFormatException ignored) {}
+
+        if (!ip.isBlank() && IPV4_PATTERN.matcher(ip).matches()) {
+            activeClientRegistry.recordCheckin(ip, lat, lon, city, isp);
+            log.info("[ClientCheckin] Registered: ip={} lat={} lon={} city={}", ip, lat, lon, city);
+        } else {
+            log.warn("[ClientCheckin] Invalid IP skipped: '{}'", ip);
+        }
+
+        Map<String, String> ok = new HashMap<>();
+        ok.put("status", "ok");
+        return ok;
+    }
+
     @GetMapping("/geolocation")
     public Map<String, Object> getGeolocation() {
         Map<String, Object> result = new HashMap<>();
@@ -574,6 +607,20 @@ public class MetricsController {
                 item.put("lat", serverMap.getOrDefault("lat", 10.8231));
                 item.put("lon", serverMap.getOrDefault("lon", 106.6297));
                 item.put("isp", "Private Intranet");
+            } else if (conn.containsKey("lat") && conn.containsKey("lon")) {
+                // Client self-reported precise GPS coordinates via /client-checkin
+                // Use them directly — no need for ip-api lookup
+                try {
+                    item.put("lat", Double.parseDouble(conn.get("lat")));
+                    item.put("lon", Double.parseDouble(conn.get("lon")));
+                } catch (NumberFormatException e) {
+                    item.put("lat", 0.0);
+                    item.put("lon", 0.0);
+                }
+                item.put("city",        conn.getOrDefault("city", "Unknown"));
+                item.put("isp",         conn.getOrDefault("isp",  "Browser"));
+                item.put("country",     conn.getOrDefault("country", "Unknown"));
+                item.put("countryCode", conn.getOrDefault("countryCode", "UN"));
             } else if (!processedIps.contains(ip)) {
                 // B3: validate IPv4 format before using in SSH command
                 if (!IPV4_PATTERN.matcher(ip).matches()) {

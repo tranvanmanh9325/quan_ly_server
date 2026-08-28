@@ -16,8 +16,9 @@ public class WebMvcConfig implements WebMvcConfigurer {
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
         registry.addInterceptor(jwtInterceptor)
-                .addPathPatterns("/api/**")          // protect all API routes
-                .excludePathPatterns("/api/auth/**") // except login/logout
-                .excludePathPatterns("/actuator/**"); // except health check
+                .addPathPatterns("/api/**")                       // protect all API routes
+                .excludePathPatterns("/api/auth/**")             // except login/logout
+                .excludePathPatterns("/api/metrics/client-checkin") // browser self-reports location (no JWT)
+                .excludePathPatterns("/actuator/**");             // except health check
     }
 }

@@ -22,7 +22,24 @@ export default function WorldMapPage() {
   const isDraggingRef = useRef(false);
   const lastMousePosRef = useRef({ x: 0, y: 0 });
   // d3-geo rotation state: [lambda (yaw), phi (pitch), gamma (roll)]
-  const rotRef = useRef([-106.0, -10.8, 0]); // Initial: centered on Vietnam
+  // Initial: centered on Vietnam/Southeast Asia (lon=105.85 → negate → -105.85)
+  const rotRef = useRef([-105.85, -16.0, 0]);
+
+  // Auto-focus globe: when connections arrive, center globe on the average
+  // position between server and all client nodes so all pins are visible.
+  useEffect(() => {
+    const conns = geoData.connections || [];
+    if (conns.length === 0 || !geoData.server) return;
+
+    // Compute centroid of all points (server + clients)
+    const allLats = [parseFloat(geoData.server.lat) || 0, ...conns.map(c => parseFloat(c.lat) || 0)];
+    const allLons = [parseFloat(geoData.server.lon) || 0, ...conns.map(c => parseFloat(c.lon) || 0)];
+    const avgLat = allLats.reduce((s, v) => s + v, 0) / allLats.length;
+    const avgLon = allLons.reduce((s, v) => s + v, 0) / allLons.length;
+
+    // d3-geo: rotation[0] = -longitude, rotation[1] = -latitude
+    rotRef.current = [-avgLon, -avgLat + 5, 0]; // +5 offset to shift globe slightly south
+  }, [geoData.connections?.length]); // re-focus only when connection count changes
 
   // --- Data Fetching ---
 
@@ -406,7 +423,7 @@ export default function WorldMapPage() {
     setIsDragging(false);
   };
 
-  const resetCamera = () => { rotRef.current = [-106.0, -10.8, 0]; };
+  const resetCamera = () => { rotRef.current = [-105.85, -16.0, 0]; };
 
   const serverInfo = geoData.server || {};
   const connections = geoData.connections || [];

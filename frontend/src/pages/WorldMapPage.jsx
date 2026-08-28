@@ -15,12 +15,15 @@ export default function WorldMapPage() {
   const [selectedNode, setSelectedNode] = useState(null);
   const [autoRotate, setAutoRotate] = useState(true);
   const [rotationSpeed, setRotationSpeed] = useState(0.006);
+  const [zoomLevel, setZoomLevel] = useState(1.0);
   // Track drag state separately for cursor styling in JSX (refs cannot be read during render)
   const [isDragging, setIsDragging] = useState(false);
 
   const canvasRef = useRef(null);
   const isDraggingRef = useRef(false);
   const lastMousePosRef = useRef({ x: 0, y: 0 });
+  const zoomLevelRef = useRef(1.0);
+  const touchDistRef = useRef(null);
   // d3-geo rotation state: [lambda (yaw), phi (pitch), gamma (roll)]
   // Initial: centered on Vietnam/Southeast Asia (lon=105.85 → negate → -105.85)
   const rotRef = useRef([-105.85, -16.0, 0]);
@@ -178,7 +181,8 @@ export default function WorldMapPage() {
         rotRef.current[0] -= rotationSpeed * (180 / Math.PI);
       }
 
-      const radius = Math.min(W, H) * 0.42;
+      const baseRadius = Math.min(W, H) * 0.42;
+      const radius = baseRadius * zoomLevelRef.current;
 
       const projection = geoOrthographic()
         .scale(radius)
@@ -456,9 +460,40 @@ export default function WorldMapPage() {
 
     render();
     return () => cancelAnimationFrame(animFrameId);
-  }, [worldGeo, geoData, autoRotate, rotationSpeed]);
+  }, [worldGeo, geoData, autoRotate, rotationSpeed, zoomLevel]);
 
-  // --- Mouse Interaction ---
+  // --- Wheel Zoom Listener on Canvas ---
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const handleWheel = (e) => {
+      e.preventDefault();
+      // Scroll up = Zoom in (+12%), Scroll down = Zoom out (-11%)
+      const zoomFactor = e.deltaY < 0 ? 1.12 : 0.89;
+      const newZoom = Math.min(5.0, Math.max(0.5, Math.round((zoomLevelRef.current * zoomFactor) * 100) / 100));
+      zoomLevelRef.current = newZoom;
+      setZoomLevel(newZoom);
+    };
+
+    canvas.addEventListener('wheel', handleWheel, { passive: false });
+    return () => canvas.removeEventListener('wheel', handleWheel);
+  }, []);
+
+  // --- Zoom Helpers ---
+  const handleZoom = (factor) => {
+    const newZoom = Math.min(5.0, Math.max(0.5, Math.round((zoomLevelRef.current * factor) * 100) / 100));
+    zoomLevelRef.current = newZoom;
+    setZoomLevel(newZoom);
+  };
+
+  const handleSetZoom = (val) => {
+    const newZoom = Math.min(5.0, Math.max(0.5, val));
+    zoomLevelRef.current = newZoom;
+    setZoomLevel(newZoom);
+  };
+
+  // --- Mouse & Touch Interaction ---
   const handleMouseDown = (e) => {
     isDraggingRef.current = true;
     setIsDragging(true);
@@ -481,7 +516,54 @@ export default function WorldMapPage() {
     setIsDragging(false);
   };
 
-  const resetCamera = () => { rotRef.current = [-105.85, -16.0, 0]; };
+  // Touch Support (Drag to rotate + Pinch to zoom on mobile / touchscreen)
+  const handleTouchStart = (e) => {
+    if (e.touches.length === 1) {
+      isDraggingRef.current = true;
+      setIsDragging(true);
+      lastMousePosRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    } else if (e.touches.length === 2) {
+      isDraggingRef.current = false;
+      setIsDragging(false);
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      touchDistRef.current = Math.hypot(dx, dy);
+    }
+  };
+
+  const handleTouchMove = (e) => {
+    if (e.touches.length === 1 && isDraggingRef.current) {
+      const dx = e.touches[0].clientX - lastMousePosRef.current.x;
+      const dy = e.touches[0].clientY - lastMousePosRef.current.y;
+      const sensitivity = 0.25;
+      rotRef.current[0] -= dx * sensitivity;
+      rotRef.current[1] = Math.max(-90, Math.min(90, rotRef.current[1] + dy * sensitivity));
+      lastMousePosRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    } else if (e.touches.length === 2 && touchDistRef.current) {
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      const dist = Math.hypot(dx, dy);
+      const factor = dist / touchDistRef.current;
+      if (Math.abs(factor - 1) > 0.02) {
+        const newZoom = Math.min(5.0, Math.max(0.5, Math.round((zoomLevelRef.current * (factor > 1 ? 1.05 : 0.95)) * 100) / 100));
+        zoomLevelRef.current = newZoom;
+        setZoomLevel(newZoom);
+        touchDistRef.current = dist;
+      }
+    }
+  };
+
+  const handleTouchEnd = () => {
+    isDraggingRef.current = false;
+    setIsDragging(false);
+    touchDistRef.current = null;
+  };
+
+  const resetCamera = () => {
+    rotRef.current = [-105.85, -16.0, 0];
+    zoomLevelRef.current = 1.0;
+    setZoomLevel(1.0);
+  };
 
   const serverInfo = geoData.server || {};
   const connections = geoData.connections || [];
@@ -575,15 +657,127 @@ export default function WorldMapPage() {
               onMouseMove={handleMouseMove}
               onMouseUp={handleMouseUp}
               onMouseLeave={handleMouseUp}
-              style={{ width: '100%', height: '100%', display: 'block' }}
+              onTouchStart={handleTouchStart}
+              onTouchMove={handleTouchMove}
+              onTouchEnd={handleTouchEnd}
+              style={{ width: '100%', height: '100%', display: 'block', touchAction: 'none' }}
             />
+
+            {/* Cyberpunk HUD Floating Zoom Controller */}
+            <div style={{
+              position: 'absolute',
+              top: '12px',
+              right: '12px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '4px',
+              zIndex: 10,
+              background: 'rgba(2, 13, 26, 0.85)',
+              padding: '6px',
+              borderRadius: '4px',
+              border: '1px solid rgba(0, 243, 255, 0.35)',
+              backdropFilter: 'blur(8px)',
+              boxShadow: '0 4px 16px rgba(0, 0, 0, 0.6)'
+            }}>
+              <button
+                type="button"
+                title="Zoom In (Phóng to)"
+                onClick={() => handleZoom(1.2)}
+                style={{
+                  width: '28px',
+                  height: '28px',
+                  background: 'rgba(0, 243, 255, 0.12)',
+                  border: '1px solid var(--accent-cyan)',
+                  color: 'var(--accent-cyan)',
+                  fontFamily: 'Share Tech Mono',
+                  fontSize: '1.1rem',
+                  fontWeight: 'bold',
+                  cursor: 'pointer',
+                  borderRadius: '3px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  transition: 'all 0.15s'
+                }}
+              >
+                +
+              </button>
+
+              <div
+                title="Mức Zoom hiện tại (Click để Reset 1.0X)"
+                onClick={() => handleSetZoom(1.0)}
+                style={{
+                  fontSize: '0.68rem',
+                  fontFamily: 'Share Tech Mono',
+                  color: zoomLevel === 1.0 ? 'var(--text-secondary)' : 'var(--accent-green)',
+                  fontWeight: 'bold',
+                  textAlign: 'center',
+                  padding: '3px 0',
+                  cursor: 'pointer',
+                  userSelect: 'none',
+                  textShadow: zoomLevel !== 1.0 ? '0 0 6px var(--accent-green)' : 'none'
+                }}
+              >
+                {zoomLevel.toFixed(1)}X
+              </div>
+
+              <button
+                type="button"
+                title="Zoom Out (Thu nhỏ)"
+                onClick={() => handleZoom(0.83)}
+                style={{
+                  width: '28px',
+                  height: '28px',
+                  background: 'rgba(0, 243, 255, 0.12)',
+                  border: '1px solid var(--accent-cyan)',
+                  color: 'var(--accent-cyan)',
+                  fontFamily: 'Share Tech Mono',
+                  fontSize: '1.2rem',
+                  fontWeight: 'bold',
+                  cursor: 'pointer',
+                  borderRadius: '3px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  transition: 'all 0.15s'
+                }}
+              >
+                −
+              </button>
+
+              <button
+                type="button"
+                title="Reset Zoom & Góc nhìn (1.0X)"
+                onClick={resetCamera}
+                style={{
+                  width: '28px',
+                  height: '22px',
+                  background: 'rgba(255, 255, 255, 0.06)',
+                  border: '1px solid rgba(255, 255, 255, 0.2)',
+                  color: '#aaa',
+                  fontFamily: 'Share Tech Mono',
+                  fontSize: '0.62rem',
+                  fontWeight: 'bold',
+                  cursor: 'pointer',
+                  borderRadius: '3px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  marginTop: '2px',
+                  transition: 'all 0.15s'
+                }}
+              >
+                1X
+              </button>
+            </div>
+
             {!worldGeo && (
               <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--accent-cyan)', fontFamily: 'Share Tech Mono', fontSize: '0.85rem' }}>
                 LOADING WORLD ATLAS DATA...
               </div>
             )}
-            <div style={{ position: 'absolute', bottom: '12px', left: '16px', fontFamily: 'Share Tech Mono', fontSize: '0.72rem', color: 'rgba(255,255,255,0.4)', pointerEvents: 'none' }}>
-              ✦ TIP: Drag globe to rotate · Real-world country borders via Natural Earth
+            <div style={{ position: 'absolute', bottom: '12px', left: '16px', fontFamily: 'Share Tech Mono', fontSize: '0.72rem', color: 'rgba(255,255,255,0.45)', pointerEvents: 'none', display: 'flex', gap: '12px' }}>
+              <span>✦ TIP: Drag to rotate 360° · Scroll wheel / Pinch / Buttons to Zoom</span>
             </div>
           </div>
 

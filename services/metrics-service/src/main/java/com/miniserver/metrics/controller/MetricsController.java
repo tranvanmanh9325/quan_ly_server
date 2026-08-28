@@ -81,6 +81,18 @@ public class MetricsController {
     // relying on JacksonAutoConfiguration bean registration order.
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    @org.springframework.beans.factory.annotation.Value("${server.geo.override:true}")
+    private boolean serverGeoOverride;
+
+    @org.springframework.beans.factory.annotation.Value("${server.geo.city:Dinh Cong, Hanoi}")
+    private String serverGeoCity;
+
+    @org.springframework.beans.factory.annotation.Value("${server.geo.lat:20.9856}")
+    private double serverGeoLat;
+
+    @org.springframework.beans.factory.annotation.Value("${server.geo.lon:105.8345}")
+    private double serverGeoLon;
+
     public MetricsController(SshService sshService, ServerMetricRepository metricRepository,
                              ActiveClientRegistry activeClientRegistry) {
         this.sshService = sshService;
@@ -630,7 +642,7 @@ public class MetricsController {
 
         // 1. Server's own geolocation
         String serverGeoRaw = sshService.executeCommand("curl -s --max-time 4 http://ip-api.com/json/");
-        final Map<String, Object> serverMap;
+        Map<String, Object> serverMap;
         if (serverGeoRaw != null && serverGeoRaw.contains("\"status\":\"success\"")) {
             serverMap = parseGeoJson(serverGeoRaw);
         } else {
@@ -639,12 +651,22 @@ public class MetricsController {
             fallback.put("status", "success");
             fallback.put("country", "Vietnam");
             fallback.put("countryCode", "VN");
-            fallback.put("city", "Ho Chi Minh City");
-            fallback.put("lat", 10.8231);
-            fallback.put("lon", 106.6297);
-            fallback.put("isp", "Local Private Host / Server");
-            fallback.put("query", "127.0.0.1");
+            fallback.put("city", "Dinh Cong, Hanoi");
+            fallback.put("lat", 20.9856);
+            fallback.put("lon", 105.8345);
+            fallback.put("isp", "FPT Telecom Company");
+            fallback.put("query", "1.53.99.21");
             serverMap = fallback;
+        }
+
+        // Apply high-precision server physical location override (Dinh Cong, Hanoi)
+        if (serverGeoOverride) {
+            serverMap.put("city", serverGeoCity);
+            serverMap.put("lat", serverGeoLat);
+            serverMap.put("lon", serverGeoLon);
+            if (!serverMap.containsKey("country") || "Unknown".equals(serverMap.get("country"))) {
+                serverMap.put("country", "Vietnam");
+            }
         }
 
         // 2. Active connection list

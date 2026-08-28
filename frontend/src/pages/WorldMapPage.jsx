@@ -508,8 +508,10 @@ export default function WorldMapPage() {
             ctx.font = 'bold 8.5px "Share Tech Mono"';
             const labelW = ctx.measureText(item.label).width;
             const badgeH = 14;
-            const badgeX = cx + 8;
-            const badgeY = cy - badgeH / 2;
+            // Shift Hoang Sa slightly up-right, Truong Sa slightly down-right to avoid overlap
+            const yShift = item.id === 'hoang_sa_main' ? -10 : 8;
+            const badgeX = cx + 10;
+            const badgeY = cy + yShift;
 
             ctx.fillStyle = 'rgba(2, 13, 26, 0.88)';
             ctx.strokeStyle = 'rgba(0, 255, 157, 0.65)';
@@ -572,8 +574,8 @@ export default function WorldMapPage() {
             ctx.fill();
             ctx.shadowBlur = 0;
 
-            // Cyberpunk Badge (Visible when Zoom >= 0.85X)
-            if (zoomLevelRef.current >= 0.85) {
+            // Cyberpunk Badge (Visible when Zoom >= 1.3X for clean non-overlapping typography)
+            if (zoomLevelRef.current >= 1.3) {
               ctx.font = '7.5px "Share Tech Mono"';
               const labelW = ctx.measureText(item.label).width;
               const badgeH = 12;

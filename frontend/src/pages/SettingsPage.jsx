@@ -4,7 +4,7 @@ import axios from 'axios';
 import {
   SciFiSettingsIcon, SciFiRefreshIcon, SciFiPulseBadge,
   SciFiConsoleIcon, SciFiCyberLockIcon, SciFiDashboardIcon,
-  SciFiTelegramIcon, SciFiInfoIcon, SciFiTerminalPromptIcon,
+  SciFiInfoIcon, SciFiTerminalPromptIcon,
   SciFiQuantumIcon
 } from '../components/SciFiIcons';
 import { loadSettings, saveSettings, SETTINGS_DEFAULTS } from '../utils/settings';
@@ -488,61 +488,6 @@ export default function SettingsPage() {
         </SettingRow>
       </div>
 
-      {/* ── Section 5: Telegram Integration & AI Bot ────────────────────── */}
-      <div style={card}>
-        <SectionHeader
-          icon={<SciFiTelegramIcon size={18} color="#229ED9" />}
-          title={t('settings.telegram.title') || "TELEGRAM INTEGRATION & BOT AGENT"}
-          subtitle={t('settings.telegram.subtitle') || "Managed centrally in Multi-Platform AI Agents Hub"}
-          badge={<SciFiPulseBadge label={t('aiAgents.statusActive') || "ACTIVE"} color="#229ED9" />}
-        />
-
-        <div style={{
-          padding: '16px 20px',
-          background: 'rgba(34, 158, 217, 0.06)',
-          border: '1px solid rgba(34, 158, 217, 0.25)',
-          borderRadius: '4px',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          flexWrap: 'wrap',
-          gap: '16px',
-        }}>
-          <div>
-            <div style={{ color: '#fff', fontSize: '0.92rem', fontFamily: 'Share Tech Mono', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <SciFiTelegramIcon size={18} color="#229ED9" />
-              <span>{t('settings.telegram.hubMovedTitle') || 'MANAGED CENTRALLY IN AI AGENTS HUB'}</span>
-            </div>
-            <p style={{ color: 'var(--text-secondary)', fontSize: '0.78rem', margin: '6px 0 0 0', maxWidth: '650px', lineHeight: '1.5' }}>
-              {t('settings.telegram.hubMovedDesc') || 'Telegram Bot alerts, resource thresholds, cooldown timers, test alert dispatches, and conversational AI Assistant "Tiểu Bảo Bảo" are now managed centrally in the AI Agents control center.'}
-            </p>
-          </div>
-
-          <button
-            type="button"
-            onClick={() => navigate('/ai-agents?tab=telegram')}
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '8px',
-              padding: '9px 22px',
-              background: 'rgba(34, 158, 217, 0.18)',
-              border: '1px solid #229ED9',
-              borderRadius: '3px',
-              color: '#229ED9',
-              fontFamily: 'Share Tech Mono',
-              fontSize: '0.82rem',
-              letterSpacing: '1px',
-              fontWeight: 'bold',
-              cursor: 'pointer',
-              boxShadow: '0 0 14px rgba(34, 158, 217, 0.25)',
-              transition: 'all 0.2s ease',
-            }}
-          >
-            <span>{t('settings.telegram.openHubBtn') || 'OPEN TELEGRAM AGENT HUB →'}</span>
-          </button>
-        </div>
-      </div>
 
       {/* ── Section 6: 9Router AI Gateway Telemetry ────────────────────────── */}
       <div style={card}>

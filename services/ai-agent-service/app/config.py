@@ -65,6 +65,18 @@ class Settings(BaseSettings):
     SERVER_ISP: str = Field(default="FPT Telecom", alias="SERVER_ISP")
     SERVER_OWNER: str = Field(default="Trần Văn Mạnh (kirito)", alias="SERVER_OWNER")
 
+    # Multimodal — Groq STT (Whisper)
+    GROQ_WHISPER_MODEL: str = Field(default="whisper-large-v3-turbo", alias="GROQ_WHISPER_MODEL")
+    GROQ_WHISPER_MODEL_FALLBACK: str = Field(default="whisper-large-v3", alias="GROQ_WHISPER_MODEL_FALLBACK")
+
+    # Multimodal — Groq Vision (Qwen VL, verified active Aug 2026)
+    GROQ_VISION_MODEL: str = Field(default="qwen/qwen3.8-27b", alias="GROQ_VISION_MODEL")
+    GROQ_VISION_MODEL_FALLBACK: str = Field(default="qwen/qwen3.6-27b", alias="GROQ_VISION_MODEL_FALLBACK")
+
+    # Multimodal — OpenRouter Vision fallback (free tier, verified Aug 2026)
+    OPENROUTER_VISION_MODEL: str = Field(default="google/gemma-4-31b-it:free", alias="OPENROUTER_VISION_MODEL")
+    OPENROUTER_VISION_MODEL_FALLBACK: str = Field(default="google/gemma-4-26b-a4b-it:free", alias="OPENROUTER_VISION_MODEL_FALLBACK")
+
     @property
     def database_url(self) -> str:
         return f"postgresql://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.POSTGRES_DB}"

@@ -8,6 +8,7 @@ from app.config import settings
 from app.core.ssh_client import SshClient
 from app.core.telegram_formatter import TelegramFormatter
 from app.services.ai_agent import AiAgentService
+from app.services.media_processor import MediaProcessor
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,8 @@ class TelegramBot:
         self._http_client = httpx.AsyncClient(timeout=35.0)
         self._running = False
         self._last_offset = 0
+        # Reuse the same http_client to avoid spawning extra connection pools
+        self._media = MediaProcessor(http_client=self._http_client)
         if hasattr(self.ai_agent, "set_telegram_bot"):
             self.ai_agent.set_telegram_bot(self)
 
@@ -544,22 +547,94 @@ class TelegramBot:
             await self._handle_callback_query(callback_query)
             return
 
-        # 2. Handle Text Messages
+        # 2. Handle all message types (text, voice, photo, document)
         message = update.get("message") or update.get("edited_message")
         if not message:
             return
 
         chat = message.get("chat", {})
         chat_id = str(chat.get("id", ""))
-        text = (message.get("text") or "").strip()
-
-        if not text or not chat_id:
+        if not chat_id:
             return
 
-        # Security check: If configured with a specific TELEGRAM_CHAT_ID, reject unauthorized users
+        # Security check: reject unauthorized users before any processing
         if self.chat_id and self.chat_id != chat_id:
             logger.warning("[TelegramBot] Unauthorized message from chat_id %s", chat_id)
             await self.send_message(chat_id, "⛔ Bạn không có quyền truy cập bot này.")
+            return
+
+        # ── 2a. Voice / Audio ─────────────────────────────────────────────────
+        voice = message.get("voice") or message.get("audio")
+        if voice:
+            file_id = voice.get("file_id", "")
+            duration = voice.get("duration", 0)
+            logger.info("[TelegramBot] Voice message from %s (duration=%ds)", chat_id, duration)
+            try:
+                audio_bytes = await self._media.download_telegram_file(file_id)
+                filename = voice.get("file_name", "voice.oga")
+                transcript = await self._media.transcribe_voice(audio_bytes, filename=filename)
+                if transcript:
+                    user_input = f"[🎤 Tin nhắn thoại]: {transcript}"
+                    logger.info("[TelegramBot] STT transcript: '%s'", transcript[:80])
+                else:
+                    user_input = "[🎤 Tin nhắn thoại]: (Không nhận được nội dung âm thanh)"
+                reply = await self.ai_agent.chat(chat_id, user_input)
+                await self.send_message(chat_id, reply)
+            except Exception as err:
+                logger.error("[TelegramBot] Voice processing error: %s", err, exc_info=True)
+                await self.send_message(chat_id, "Xin lỗi, em không thể xử lý tin nhắn thoại lúc này. Vui lòng thử lại sau.")
+            return
+
+        # ── 2b. Photo ─────────────────────────────────────────────────────────
+        photos = message.get("photo")
+        if photos:
+            # Telegram sends multiple resolutions; take the largest (last element)
+            largest = photos[-1]
+            file_id = largest.get("file_id", "")
+            caption = (message.get("caption") or "").strip()
+            logger.info("[TelegramBot] Photo message from %s (caption='%s')", chat_id, caption[:40])
+            try:
+                image_bytes = await self._media.download_telegram_file(file_id)
+                vision_result = await self._media.analyze_image(image_bytes, caption=caption)
+                caption_part = f" (caption: {caption})" if caption else ""
+                user_input = f"[📸 Ảnh từ anh Mạnh{caption_part}]: {vision_result}"
+                logger.info("[TelegramBot] Vision result: '%s'", vision_result[:80])
+                reply = await self.ai_agent.chat(chat_id, user_input)
+                await self.send_message(chat_id, reply)
+            except Exception as err:
+                logger.error("[TelegramBot] Photo processing error: %s", err, exc_info=True)
+                await self.send_message(chat_id, "Xin lỗi, em không thể xử lý ảnh lúc này. Vui lòng thử lại sau.")
+            return
+
+        # ── 2c. Document / File ───────────────────────────────────────────────
+        document = message.get("document")
+        if document:
+            file_id = document.get("file_id", "")
+            filename = document.get("file_name", "unknown")
+            mime_type = document.get("mime_type", "")
+            file_size = document.get("file_size", 0)
+            caption = (message.get("caption") or "").strip()
+            logger.info("[TelegramBot] Document from %s: %s (%s, %d bytes)", chat_id, filename, mime_type, file_size)
+            # Telegram Bot API only allows downloading files up to 20MB
+            if file_size > 20 * 1024 * 1024:
+                await self.send_message(chat_id, f"⚠️ File `{filename}` quá lớn ({file_size // 1048576}MB). Giới hạn là 20MB.")
+                return
+            try:
+                file_bytes = await self._media.download_telegram_file(file_id)
+                content = self._media.extract_document_text(file_bytes, mime_type, filename)
+                caption_part = f"\nCaption: {caption}" if caption else ""
+                user_input = f"[📄 File: {filename}]{caption_part}\n\n{content}"
+                logger.info("[TelegramBot] Document extracted: %d chars", len(content))
+                reply = await self.ai_agent.chat(chat_id, user_input)
+                await self.send_message(chat_id, reply)
+            except Exception as err:
+                logger.error("[TelegramBot] Document processing error: %s", err, exc_info=True)
+                await self.send_message(chat_id, f"Xin lỗi, em không thể đọc file `{filename}` lúc này.")
+            return
+
+        # ── 2d. Text Message ──────────────────────────────────────────────────
+        text = (message.get("text") or "").strip()
+        if not text:
             return
 
         if text.startswith("/"):
@@ -573,6 +648,7 @@ class TelegramBot:
             except Exception as err:
                 logger.error("[TelegramBot] Error processing message from %s: %s", chat_id, err, exc_info=True)
                 await self.send_message(chat_id, "Xin lỗi, đã xảy ra lỗi trong quá trình xử lý tin nhắn. Vui lòng thử lại sau.")
+
 
     async def start_polling(self) -> None:
         if not self.token or not self.polling_enabled:

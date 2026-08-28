@@ -1,78 +1,41 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import axios from 'axios';
-import { geoOrthographic, geoPath, geoGraticule } from 'd3-geo';
-import { feature, mesh } from 'topojson-client';
+import Globe from 'react-globe.gl';
+import { feature } from 'topojson-client';
 import { SciFiGlobeIcon, SciFiRefreshIcon, SciFiPulseBadge, SciFiPlayIcon, SciFiStopIcon } from '../components/SciFiIcons';
 import { VIETNAM_MARITIME_ISLANDS } from '../data/vietnamIslandsGeo';
 
-// High-Resolution World Atlas TopoJSON (50m scale contains all world islands and coastlines)
+// High-Resolution World Atlas TopoJSON (50m scale)
 const LOCAL_WORLD_ATLAS_URL = '/data/countries-50m.json';
 const CDN_WORLD_ATLAS_URL = 'https://cdn.jsdelivr.net/npm/world-atlas@2/countries-50m.json';
 
 export default function WorldMapPage() {
   const [geoData, setGeoData] = useState({ server: null, connections: [] });
-  const [worldGeo, setWorldGeo] = useState(null);
+  const [countries, setCountries] = useState({ features: [] });
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState(null);
   const [selectedNode, setSelectedNode] = useState(null);
   const [autoRotate, setAutoRotate] = useState(true);
-  const [rotationSpeed, setRotationSpeed] = useState(0.006);
-  const [zoomLevel, setZoomLevel] = useState(1.0);
-  // Track drag state separately for cursor styling in JSX (refs cannot be read during render)
-  const [isDragging, setIsDragging] = useState(false);
+  const [rotationSpeed, setRotationSpeed] = useState(0.5); // deg/frame for globe.gl
+  const [hovered, setHovered] = useState(null);
 
-  const canvasRef = useRef(null);
-  const isDraggingRef = useRef(false);
-  const lastMousePosRef = useRef({ x: 0, y: 0 });
-  const zoomLevelRef = useRef(1.0);
-  const touchDistRef = useRef(null);
-  // d3-geo rotation state: [lambda (yaw), phi (pitch), gamma (roll)]
-  // Initial: centered on Vietnam/Southeast Asia (lon=105.85 → negate → -105.85)
-  const rotRef = useRef([-105.85, -16.0, 0]);
+  const globeRef = useRef();
+  const globeContainerRef = useRef();
 
-  // Auto-focus globe: when connections arrive, center globe on the average
-  // position between server and all client nodes so all pins are visible.
-  useEffect(() => {
-    const conns = geoData.connections || [];
-    if (conns.length === 0 || !geoData.server) return;
-
-    // Compute centroid of all points (server + clients)
-    const allLats = [parseFloat(geoData.server.lat) || 0, ...conns.map(c => parseFloat(c.lat) || 0)];
-    const allLons = [parseFloat(geoData.server.lon) || 0, ...conns.map(c => parseFloat(c.lon) || 0)];
-    const avgLat = allLats.reduce((s, v) => s + v, 0) / allLats.length;
-    const avgLon = allLons.reduce((s, v) => s + v, 0) / allLons.length;
-
-    // d3-geo: rotation[0] = -longitude, rotation[1] = -latitude
-    rotRef.current = [-avgLon, -avgLat + 5, 0]; // +5 offset to shift globe slightly south
-  }, [geoData.connections?.length]); // re-focus only when connection count changes
-
-  // --- Data Fetching ---
-
-  // Fetch High-Resolution World Atlas TopoJSON on mount (with local-first caching)
-  // Pre-compute mesh + graticule ONCE so the render loop never recomputes them
+  // --- Load TopoJSON countries geometry (pre-compute once) ---
   useEffect(() => {
     const loadTopoData = async () => {
       try {
         let res = await fetch(LOCAL_WORLD_ATLAS_URL);
         if (!res.ok) res = await fetch(CDN_WORLD_ATLAS_URL);
         const topo = await res.json();
-
-        const land = feature(topo, topo.objects.land);
-        // topojson.mesh merges ALL country borders into ONE MultiLineString — single stroke call per frame
-        const borders = mesh(topo, topo.objects.countries, (a, b) => a !== b);
-        // Pre-compute graticule once (static, never changes)
-        const graticuleData = geoGraticule()();
-
-        setWorldGeo({ land, borders, graticuleData });
+        setCountries(feature(topo, topo.objects.countries));
       } catch (err) {
         console.error('Failed to load local world atlas, trying fallback CDN:', err);
         try {
           const res = await fetch(CDN_WORLD_ATLAS_URL);
           const topo = await res.json();
-          const land = feature(topo, topo.objects.land);
-          const borders = mesh(topo, topo.objects.countries, (a, b) => a !== b);
-          const graticuleData = geoGraticule()();
-          setWorldGeo({ land, borders, graticuleData });
+          setCountries(feature(topo, topo.objects.countries));
         } catch (cdnErr) {
           console.error('All world atlas data sources failed:', cdnErr);
         }
@@ -81,57 +44,23 @@ export default function WorldMapPage() {
     loadTopoData();
   }, []);
 
-  // Fetch Geolocation API
-  useEffect(() => {
-    let isMounted = true;
-    const loadData = async () => {
-      try {
-        const res = await axios.get('/api/metrics/geolocation');
-        if (!isMounted) return;
-        if (res.data) {
-          setGeoData({
-            server: res.data.server || null,
-            connections: res.data.connections || []
-          });
-        }
-      } catch (err) {
-        if (isMounted) setErrorMsg(`Failed to fetch geolocation: ${err.message}`);
-      } finally {
-        if (isMounted) setLoading(false);
-      }
-    };
-    loadData();
-    const interval = setInterval(loadData, 30000);
-    return () => { isMounted = false; clearInterval(interval); };
-  }, []);
-
-  /**
-   * Client self-registration: browser acquires high-precision GPS coordinates,
-   * reverse-geocodes them to the exact administrative locality/province (e.g. Nghe An),
-   * and reports both coordinates and administrative location to the backend.
-   */
+  // --- Client Check-in (GPS → Geolocation → POST) ---
   useEffect(() => {
     const doCheckin = async () => {
       try {
-        // Step 1: Get GPS coords (prompt permission if needed)
-        const getGps = () => new Promise((resolve) => {
-          if (!navigator.geolocation) { resolve({ lat: 0, lon: 0 }); return; }
-          navigator.geolocation.getCurrentPosition(
-            (pos) => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
-            ()    => resolve({ lat: 0, lon: 0 }),
-            { timeout: 8000, maximumAge: 300000, enableHighAccuracy: true }
+        let lat = 0, lon = 0, city = 'Unknown', country = 'Unknown', countryCode = '';
+        try {
+          const pos = await new Promise((res, rej) =>
+            navigator.geolocation.getCurrentPosition(res, rej, { timeout: 5000, maximumAge: 300000 })
           );
-        });
-        const { lat, lon } = await getGps();
+          lat = pos.coords.latitude;
+          lon = pos.coords.longitude;
+        } catch (_) { /* no GPS */ }
 
-        // Step 2: Client-side reverse geocode from accurate GPS coordinates
-        let city = 'Unknown', country = 'Unknown', countryCode = 'UN';
         if (lat !== 0 || lon !== 0) {
           try {
-            const revRes = await fetch(
-              `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=en`
-            );
-            const geo = await revRes.json();
+            const geo = await axios.get(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=vi`)
+              .then(r => r.data);
             if (geo) {
               const subdivision = (geo.principalSubdivision || '').trim();
               const cityName = (geo.city || geo.locality || '').trim();
@@ -144,10 +73,8 @@ export default function WorldMapPage() {
           } catch (_) { /* non-blocking fallback handled on server */ }
         }
 
-        // Step 3: POST checkin with precise GPS + resolved City/Country
         await axios.post('/api/metrics/client-checkin', { lat, lon, city, country, countryCode });
 
-        // Step 4: Re-fetch map so this client appears immediately
         const res = await axios.get('/api/metrics/geolocation');
         if (res.data) {
           setGeoData({ server: res.data.server || null, connections: res.data.connections || [] });
@@ -158,11 +85,9 @@ export default function WorldMapPage() {
     };
 
     doCheckin();
-    // Re-checkin every 4 minutes to stay within the 5-minute TTL
     const interval = setInterval(doCheckin, 4 * 60 * 1000);
     return () => clearInterval(interval);
   }, []);
-
 
   const fetchGeolocationData = async () => {
     setLoading(true);
@@ -179,598 +104,178 @@ export default function WorldMapPage() {
     }
   };
 
-  // --- 3D Canvas Rendering Engine (High-Performance) ---
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas || !worldGeo) return;
-
-    // ─── Performance Optimization: Use willReadFrequently=false for pure draw-only canvas
-    const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
-    let animFrameId;
-    let pulseTime = 0;
-    let lastFrameTime = 0;
-    // Target ~50fps (20ms per frame) — smooth but saves ~17% CPU vs 60fps on complex scenes
-    const FRAME_BUDGET_MS = 20;
-
-    const sLat = parseFloat(geoData.server?.lat) || 10.8231;
-    const sLon = parseFloat(geoData.server?.lon) || 106.6297;
-
-    // ─── Memoize projection & pathGen OUTSIDE render loop (avoid GC pressure each frame)
-    // These are mutated in place on every frame — NO new object allocation per frame
-    const projection = geoOrthographic()
-      .clipAngle(90);
-    const pathGen = geoPath(projection, ctx);
-
-    // ─── OFFSCREEN LAYER: Pre-render static globe features (land + borders + graticule)
-    // This layer only needs re-draw when zoom/rotation changes, NOT every frame
-    let offscreenCanvas = null;
-    let offscreenCtx = null;
-    let offscreenValid = false;         // Flag: needs redraw
-    let lastRot0 = null, lastRot1 = null, lastRadius = null;
-
-    const buildOffscreen = (W, H, radius, cx, cy) => {
-      if (!offscreenCanvas || offscreenCanvas.width !== W || offscreenCanvas.height !== H) {
-        offscreenCanvas = document.createElement('canvas');
-        offscreenCanvas.width = W;
-        offscreenCanvas.height = H;
-        offscreenCtx = offscreenCanvas.getContext('2d', { alpha: true });
-      }
-      offscreenCtx.clearRect(0, 0, W, H);
-
-      // Share projection with offscreen (already configured for this frame)
-      const offPathGen = geoPath(projection, offscreenCtx);
-
-      // A. Graticule grid (pre-computed once at load, reused every frame)
-      offscreenCtx.beginPath();
-      offPathGen(worldGeo.graticuleData);
-      offscreenCtx.strokeStyle = 'rgba(0, 243, 255, 0.07)';
-      offscreenCtx.lineWidth = 0.5;
-      offscreenCtx.stroke();
-
-      // B. Land fill — all countries as a single draw call
-      offscreenCtx.beginPath();
-      offPathGen(worldGeo.land);
-      offscreenCtx.fillStyle = 'rgba(0, 30, 50, 0.94)';
-      offscreenCtx.fill();
-
-      // C. Country borders — topojson.mesh: ONE MultiLineString = ONE beginPath+stroke call
-      // (was: 241 separate beginPath+stroke calls per frame → now: 1)
-      offscreenCtx.beginPath();
-      offPathGen(worldGeo.borders);
-      offscreenCtx.strokeStyle = 'rgba(0, 243, 255, 0.28)';
-      offscreenCtx.lineWidth = 0.6;
-      offscreenCtx.stroke();
-
-      offscreenValid = true;
-    };
-
-    const render = (timestamp) => {
-      // ─── Timestamp-based frame throttle: skip frames that arrive too soon
-      const elapsed = timestamp - lastFrameTime;
-      if (elapsed < FRAME_BUDGET_MS) {
-        animFrameId = requestAnimationFrame(render);
-        return;
-      }
-      lastFrameTime = timestamp - (elapsed % FRAME_BUDGET_MS);
-
-      const W = canvas.clientWidth;
-      const H = canvas.clientHeight;
-      if (canvas.width !== W || canvas.height !== H) {
-        canvas.width = W;
-        canvas.height = H;
-        offscreenValid = false; // Canvas resized — must redraw offscreen
-      }
-
-      // Auto rotate
-      if (autoRotate && !isDraggingRef.current) {
-        rotRef.current[0] -= rotationSpeed * (180 / Math.PI);
-      }
-
-      const baseRadius = Math.min(W, H) * 0.42;
-      const radius = baseRadius * zoomLevelRef.current;
-      const cx = W / 2, cy = H / 2;
-
-      // ─── Mutate projection in-place (NO new object allocation per frame)
-      projection
-        .scale(radius)
-        .translate([cx, cy])
-        .rotate(rotRef.current);
-
-      pulseTime += 0.03;
-
-      // ─── Full clear
-      ctx.fillStyle = '#020d1a';
-      ctx.fillRect(0, 0, W, H);
-
-      // 1. Atmosphere Glow (radial gradient — cheap arc fill)
-      const atmoGrad = ctx.createRadialGradient(cx, cy, radius * 0.88, cx, cy, radius * 1.22);
-      atmoGrad.addColorStop(0, 'rgba(0, 243, 255, 0.06)');
-      atmoGrad.addColorStop(0.55, 'rgba(0, 255, 157, 0.025)');
-      atmoGrad.addColorStop(1, 'rgba(0,0,0,0)');
-      ctx.fillStyle = atmoGrad;
-      ctx.beginPath();
-      ctx.arc(cx, cy, radius * 1.22, 0, Math.PI * 2);
-      ctx.fill();
-
-      // 2. Ocean fill (sphere background) — direct arc, no pathGen needed
-      ctx.beginPath();
-      ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-      ctx.fillStyle = '#030d1a';
-      ctx.fill();
-
-      // ─── Offscreen cache: only rebuild when rotation or zoom actually changed
-      const r0 = Math.round(rotRef.current[0] * 10);
-      const r1 = Math.round(rotRef.current[1] * 10);
-      const rr = Math.round(radius);
-      if (!offscreenValid || r0 !== lastRot0 || r1 !== lastRot1 || rr !== lastRadius) {
-        buildOffscreen(W, H, radius, cx, cy);
-        lastRot0 = r0; lastRot1 = r1; lastRadius = rr;
-      }
-
-      // ─── Blit offscreen layer (land + borders + graticule) — single drawImage call
-      ctx.drawImage(offscreenCanvas, 0, 0);
-
-      // 3. Sphere border ring
-      ctx.beginPath();
-      ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-      ctx.strokeStyle = 'rgba(0, 243, 255, 0.3)';
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-
-      // 7. Draw 3D Elevated Laser Arcs between clients and server
-      const clients = geoData.connections || [];
-      clients.forEach(client => {
-        const parsedLat = parseFloat(client.lat);
-        const parsedLon = parseFloat(client.lon);
-        // Only use GPS coords if they are real (non-zero) — 0,0 means no GPS
-        const hasGps = Number.isFinite(parsedLat) && Number.isFinite(parsedLon)
-                    && (parsedLat !== 0 || parsedLon !== 0);
-        const cLat = hasGps ? parsedLat : sLat;
-        const cLon = hasGps ? parsedLon : sLon;
-
-        // Build great-circle arc with elevation via interpolated midpoints
-        // PERF: Batch all 40 segments into ONE beginPath+stroke (was: 40 separate draw calls)
-        const steps = 32; // reduced from 40 — imperceptible difference at this scale
-        const arcAlpha = 0.7 + 0.3 * Math.sin(pulseTime * 2);
-        ctx.beginPath();
-        ctx.strokeStyle = `rgba(0, 243, 255, ${arcAlpha})`;
-        ctx.lineWidth = 2.0;
-        ctx.setLineDash([8, 4]);
-        ctx.lineDashOffset = -pulseTime * 22;
-        let prevPt = null;
-        for (let i = 0; i <= steps; i++) {
-          const t = i / steps;
-          const iLat = cLat + (sLat - cLat) * t;
-          const iLon = cLon + (sLon - cLon) * t;
-          const lift = Math.sin(t * Math.PI) * 18;
-          const ptProj = projection([iLon, iLat + lift * (lift / radius)]);
-          if (ptProj) {
-            if (!prevPt) { ctx.moveTo(ptProj[0], ptProj[1]); }
-            else { ctx.lineTo(ptProj[0], ptProj[1]); }
-            prevPt = ptProj;
-          } else {
-            prevPt = null;
-          }
-        }
-        ctx.stroke();
-        ctx.setLineDash([]);
-
-        // --- Client Teardrop Pin ---
-        const clientProj = projection([cLon, cLat]);
-        if (clientProj) {
-          const [px, py] = clientProj;
-          const pinH = 20;
-          const pinR = 7;
-          const circleCy = py - pinH + pinR;
-
-          // Sonar ripple ring
-          const rippleR = pinR + 6 + Math.sin(pulseTime * 2.5 + cLon) * 4;
-          const rippleAlpha = 0.6 - (Math.sin(pulseTime * 2.5 + cLon) * 0.5 + 0.5) * 0.45;
-          ctx.beginPath();
-          ctx.arc(px, circleCy, rippleR, 0, Math.PI * 2);
-          ctx.strokeStyle = `rgba(0, 243, 255, ${rippleAlpha})`;
-          ctx.lineWidth = 1.2;
-          ctx.stroke();
-
-          // PERF: Manual soft glow ring (no shadowBlur — avoids GPU composite flush)
-          ctx.beginPath();
-          ctx.arc(px, circleCy, pinR + 3, 0, Math.PI * 2);
-          ctx.strokeStyle = 'rgba(0, 243, 255, 0.25)';
-          ctx.lineWidth = 4;
-          ctx.stroke();
-
-          // Teardrop body path
-          ctx.beginPath();
-          ctx.arc(px, circleCy, pinR, Math.PI * 0.2, Math.PI * 0.8, true);
-          ctx.bezierCurveTo(px - pinR * 0.6, py - pinH * 0.2, px, py + 2, px, py + 2);
-          ctx.bezierCurveTo(px, py + 2, px + pinR * 0.6, py - pinH * 0.2, px + pinR, circleCy + pinR * Math.sin(Math.PI * 0.8));
-          ctx.fillStyle = 'rgba(0, 188, 220, 0.85)';
-          ctx.fill();
-          ctx.strokeStyle = '#00f3ff';
-          ctx.lineWidth = 1.4;
-          ctx.stroke();
-
-          // Inner dot
-          ctx.beginPath();
-          ctx.arc(px, circleCy, pinR * 0.32, 0, Math.PI * 2);
-          ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
-          ctx.fill();
-
-          // Label
-          const rawCity = (client.city || '').trim();
-          let labelCity = 'CLIENT';
-          if (rawCity && rawCity !== 'Unknown' && rawCity !== 'Internal LAN') {
-            labelCity = rawCity;
-          } else if (client.ip) {
-            if (client.ip.includes(':')) {
-              labelCity = client.ip.split(':').slice(0, 3).join(':') + ':*';
-            } else {
-              labelCity = client.ip.split('.').slice(0, 2).join('.') + '.*';
-            }
-          }
-
-          ctx.font = 'bold 9px "Share Tech Mono"';
-          const labelText = `[${labelCity}]`;
-          const textW = ctx.measureText(labelText).width;
-          ctx.fillStyle = 'rgba(3, 13, 26, 0.85)';
-          ctx.strokeStyle = 'rgba(0, 243, 255, 0.5)';
-          ctx.lineWidth = 0.8;
-          ctx.beginPath();
-          if (ctx.roundRect) {
-            ctx.roundRect(px + pinR + 4, circleCy - 7, textW + 8, 14, 3);
-          } else {
-            ctx.rect(px + pinR + 4, circleCy - 7, textW + 8, 14);
-          }
-          ctx.fill();
-          ctx.stroke();
-          ctx.fillStyle = '#00f3ff';
-          ctx.fillText(labelText, px + pinR + 8, circleCy + 3);
-        }
-      });
-
-      // 8. Server HQ — Large Teardrop Pin + Crosshair + 3-ring Sonar
-      const serverProj = projection([sLon, sLat]);
-      if (serverProj) {
-        const [sx, sy] = serverProj;
-        const sPinH = 30;
-        const sPinR = 11;
-        const sCy = sy - sPinH + sPinR;
-
-        // 3 sonar ripple rings radiating outward
-        for (let ring = 0; ring < 3; ring++) {
-          const phase = (pulseTime * 1.2 + ring * 1.1) % (Math.PI * 2);
-          const ringR = sPinR + 10 + ring * 12 + Math.sin(phase) * 5;
-          const ringAlpha = Math.max(0, 0.65 - ring * 0.22 - Math.sin(phase) * 0.15);
-          ctx.beginPath();
-          ctx.arc(sx, sCy, ringR, 0, Math.PI * 2);
-          ctx.strokeStyle = `rgba(0, 255, 157, ${ringAlpha})`;
-          ctx.lineWidth = ring === 0 ? 1.5 : 1;
-          ctx.stroke();
-        }
-
-        // PERF: Manual glow ring instead of shadowBlur (avoids GPU composite pipeline flush)
-        ctx.beginPath();
-        ctx.arc(sx, sCy, sPinR + 5, 0, Math.PI * 2);
-        ctx.strokeStyle = 'rgba(0, 255, 157, 0.22)';
-        ctx.lineWidth = 6;
-        ctx.stroke();
-
-        // Server teardrop body
-        ctx.beginPath();
-        ctx.arc(sx, sCy, sPinR, Math.PI * 0.2, Math.PI * 0.8, true);
-        ctx.bezierCurveTo(sx - sPinR * 0.6, sy - sPinH * 0.2, sx, sy + 3, sx, sy + 3);
-        ctx.bezierCurveTo(sx, sy + 3, sx + sPinR * 0.6, sy - sPinH * 0.2, sx + sPinR, sCy + sPinR * Math.sin(Math.PI * 0.8));
-        ctx.fillStyle = 'rgba(0, 180, 100, 0.9)';
-        ctx.fill();
-        ctx.strokeStyle = '#00ff9d';
-        ctx.lineWidth = 2;
-        ctx.stroke();
-
-        // Crosshair (batch both lines into single beginPath)
-        const chSize = sPinR * 0.65;
-        ctx.strokeStyle = 'rgba(255,255,255,0.85)';
-        ctx.lineWidth = 1.2;
-        ctx.beginPath();
-        ctx.moveTo(sx - chSize, sCy); ctx.lineTo(sx + chSize, sCy);
-        ctx.moveTo(sx, sCy - chSize); ctx.lineTo(sx, sCy + chSize);
-        ctx.stroke();
-
-        // Center dot
-        ctx.beginPath();
-        ctx.arc(sx, sCy, 2.5, 0, Math.PI * 2);
-        ctx.fillStyle = '#fff';
-        ctx.fill();
-
-        // HQ Label
-        ctx.font = 'bold 10px "Share Tech Mono"';
-        const hqText = '[HQ] SERVER';
-        const hqW = ctx.measureText(hqText).width;
-        ctx.fillStyle = 'rgba(3, 13, 26, 0.85)';
-        ctx.strokeStyle = 'rgba(0, 255, 157, 0.5)';
-        ctx.lineWidth = 0.8;
-        ctx.beginPath();
-        if (ctx.roundRect) {
-          ctx.roundRect(sx + sPinR + 5, sCy - 8, hqW + 8, 16, 3);
-        } else {
-          ctx.rect(sx + sPinR + 5, sCy - 8, hqW + 8, 16);
-        }
-        ctx.fill();
-        ctx.stroke();
-
-        ctx.fillStyle = '#00ff9d';
-        ctx.fillText(hqText, sx + sPinR + 9, sCy + 4);
-      }
-
-      // 9. Maritime Island Radar Pins — All shadowBlur replaced with manual rings
-      VIETNAM_MARITIME_ISLANDS.forEach(item => {
-        if (item.type === 'archipelago_cluster') {
-          if (item.islands) {
-            item.islands.forEach(isl => {
-              const islProj = projection([isl.lon, isl.lat]);
-              if (islProj) {
-                const [ix, iy] = islProj;
-                const dotR = Math.max(1.5, isl.r * Math.sqrt(zoomLevelRef.current) * 0.9);
-                // Soft outer glow ring (no shadowBlur)
-                ctx.beginPath();
-                ctx.arc(ix, iy, dotR + 2, 0, Math.PI * 2);
-                ctx.fillStyle = 'rgba(0, 255, 180, 0.18)';
-                ctx.fill();
-                // Island dot (sharp)
-                ctx.beginPath();
-                ctx.arc(ix, iy, dotR, 0, Math.PI * 2);
-                ctx.fillStyle = 'rgba(0, 255, 180, 0.9)';
-                ctx.fill();
-              }
-            });
-          }
-
-          // Center Radar & Sonar Waves for the Archipelago
-          const centerProj = projection([item.lon, item.lat]);
-          if (centerProj) {
-            const [cx, cy] = centerProj;
-
-            // Sonar Ripple Ring
-            const sonarR = (10 + (Math.sin(pulseTime * 2.0 + item.lon) * 0.5 + 0.5) * 8) * Math.sqrt(zoomLevelRef.current);
-            const sonarAlpha = Math.max(0, 0.65 - ((sonarR - 10) / 8) * 0.45);
-            ctx.beginPath();
-            ctx.arc(cx, cy, sonarR, 0, Math.PI * 2);
-            ctx.strokeStyle = `rgba(0, 255, 157, ${sonarAlpha})`;
-            ctx.lineWidth = 1.2;
-            ctx.setLineDash([3, 3]);
-            ctx.stroke();
-            ctx.setLineDash([]);
-
-            // Center Target Cross
-            ctx.strokeStyle = 'rgba(0, 255, 157, 0.7)';
-            ctx.lineWidth = 0.8;
-            ctx.beginPath();
-            ctx.moveTo(cx - 5, cy); ctx.lineTo(cx + 5, cy);
-            ctx.moveTo(cx, cy - 5); ctx.lineTo(cx, cy + 5);
-            ctx.stroke();
-
-            // Cyberpunk Badge Label
-            ctx.font = 'bold 8.5px "Share Tech Mono"';
-            const labelW = ctx.measureText(item.label).width;
-            const badgeH = 14;
-            const yShift = item.id === 'hoang_sa_main' ? -10 : 8;
-            const badgeX = cx + 10;
-            const badgeY = cy + yShift;
-
-            ctx.fillStyle = 'rgba(2, 13, 26, 0.88)';
-            ctx.strokeStyle = 'rgba(0, 255, 157, 0.65)';
-            ctx.lineWidth = 0.8;
-            ctx.beginPath();
-            if (ctx.roundRect) {
-              ctx.roundRect(badgeX, badgeY, labelW + 8, badgeH, 3);
-            } else {
-              ctx.rect(badgeX, badgeY, labelW + 8, badgeH);
-            }
-            ctx.fill();
-            ctx.stroke();
-
-            ctx.fillStyle = '#00ff9d';
-            ctx.fillText(item.label, badgeX + 4, badgeY + badgeH - 4);
-          }
-        }
-
-        // B. Major & Minor Islands (Phú Quốc, Côn Đảo, Bạch Long Vĩ, Lý Sơn, Phú Quý...)
-        else {
-          // Island outline polygon
-          if (item.outline && item.outline.length > 2) {
-            ctx.beginPath();
-            let firstPt = null;
-            item.outline.forEach((pt, pidx) => {
-              const proj = projection(pt);
-              if (proj) {
-                if (pidx === 0) { ctx.moveTo(proj[0], proj[1]); firstPt = proj; }
-                else ctx.lineTo(proj[0], proj[1]);
-              }
-            });
-            if (firstPt) {
-              ctx.closePath();
-              ctx.fillStyle = 'rgba(0, 243, 255, 0.8)';
-              ctx.fill();
-              // Manual glow: draw slightly larger stroke with low opacity instead of shadowBlur
-              ctx.strokeStyle = 'rgba(0, 243, 255, 0.3)';
-              ctx.lineWidth = 3.5;
-              ctx.stroke();
-              ctx.strokeStyle = '#00f3ff';
-              ctx.lineWidth = 0.9;
-              ctx.stroke();
-            }
-          }
-
-          // Render Island Anchor Pin & Label
-          const islProj = projection([item.lon, item.lat]);
-          if (islProj) {
-            const [ix, iy] = islProj;
-            const dotR = Math.max(2.0, (item.r || 2.0) * Math.sqrt(zoomLevelRef.current) * 0.9);
-
-            // Soft outer glow ring (manual, no shadowBlur)
-            ctx.beginPath();
-            ctx.arc(ix, iy, dotR + 2.5, 0, Math.PI * 2);
-            ctx.fillStyle = `${item.color || '#00f3ff'}2a`; // 16% opacity
-            ctx.fill();
-
-            // Sharp dot
-            ctx.beginPath();
-            ctx.arc(ix, iy, dotR, 0, Math.PI * 2);
-            ctx.fillStyle = item.color || '#00f3ff';
-            ctx.fill();
-
-            // Cyberpunk Badge (Visible when Zoom >= 1.4X)
-            if (zoomLevelRef.current >= 1.4) {
-              ctx.font = '7.5px "Share Tech Mono"';
-              const labelW = ctx.measureText(item.label).width;
-              const badgeH = 12;
-
-              let xOffset = 7;
-              let yOffset = -badgeH / 2;
-
-              if (item.id === 'phu_quoc' || item.id === 'tho_chu') {
-                xOffset = -(labelW + 12);
-              } else if (item.id === 'con_dao') {
-                xOffset = 8; yOffset = 4;
-              } else if (item.id === 'bach_long_vi') {
-                xOffset = 8; yOffset = -8;
-              } else if (item.id === 'cu_lao_cham') {
-                xOffset = -(labelW + 10); yOffset = -6;
-              }
-
-              const badgeX = ix + xOffset;
-              const badgeY = iy + yOffset;
-
-              ctx.fillStyle = 'rgba(2, 13, 26, 0.85)';
-              ctx.strokeStyle = 'rgba(0, 243, 255, 0.45)';
-              ctx.lineWidth = 0.7;
-              ctx.beginPath();
-              if (ctx.roundRect) {
-                ctx.roundRect(badgeX, badgeY, labelW + 6, badgeH, 2);
-              } else {
-                ctx.rect(badgeX, badgeY, labelW + 6, badgeH);
-              }
-              ctx.fill();
-              ctx.stroke();
-
-              ctx.fillStyle = '#00f3ff';
-              ctx.fillText(item.label, badgeX + 3, badgeY + badgeH - 3.5);
-            }
-          }
-        }
-      });
-
-      animFrameId = requestAnimationFrame(render);
-    };
-
-    render(0);
-    return () => cancelAnimationFrame(animFrameId);
-  }, [worldGeo, geoData, autoRotate, rotationSpeed, zoomLevel]);
-
-  // --- Wheel Zoom Listener on Canvas ---
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const handleWheel = (e) => {
-      e.preventDefault();
-      // Scroll up = Zoom in (+12%), Scroll down = Zoom out (-11%)
-      const zoomFactor = e.deltaY < 0 ? 1.12 : 0.89;
-      const newZoom = Math.min(5.0, Math.max(0.5, Math.round((zoomLevelRef.current * zoomFactor) * 100) / 100));
-      zoomLevelRef.current = newZoom;
-      setZoomLevel(newZoom);
-    };
-
-    canvas.addEventListener('wheel', handleWheel, { passive: false });
-    return () => canvas.removeEventListener('wheel', handleWheel);
+    fetchGeolocationData();
   }, []);
 
-  // --- Zoom Helpers ---
-  const handleZoom = (factor) => {
-    const newZoom = Math.min(5.0, Math.max(0.5, Math.round((zoomLevelRef.current * factor) * 100) / 100));
-    zoomLevelRef.current = newZoom;
-    setZoomLevel(newZoom);
-  };
+  // --- Auto-rotate control ---
+  useEffect(() => {
+    if (!globeRef.current) return;
+    const controls = globeRef.current.controls();
+    if (!controls) return;
+    controls.autoRotate = autoRotate;
+    controls.autoRotateSpeed = rotationSpeed;
+  }, [autoRotate, rotationSpeed]);
 
-  const handleSetZoom = (val) => {
-    const newZoom = Math.min(5.0, Math.max(0.5, val));
-    zoomLevelRef.current = newZoom;
-    setZoomLevel(newZoom);
-  };
+  // --- Initial camera position: centered on Vietnam ---
+  useEffect(() => {
+    if (!globeRef.current) return;
+    // Wait for globe to be ready
+    setTimeout(() => {
+      globeRef.current?.pointOfView({ lat: 16.0, lng: 105.85, altitude: 2.0 }, 0);
+    }, 500);
+  }, []);
 
-  // --- Mouse & Touch Interaction ---
-  const handleMouseDown = (e) => {
-    isDraggingRef.current = true;
-    setIsDragging(true);
-    lastMousePosRef.current = { x: e.clientX, y: e.clientY };
-  };
+  // --- Auto-focus camera when connections arrive ---
+  useEffect(() => {
+    if (!globeRef.current) return;
+    const conns = geoData.connections || [];
+    if (conns.length === 0 || !geoData.server) return;
 
-  const handleMouseMove = (e) => {
-    if (!isDraggingRef.current) return;
-    const dx = e.clientX - lastMousePosRef.current.x;
-    const dy = e.clientY - lastMousePosRef.current.y;
-    // Sensitivity factor — maps pixel delta to degree rotation
-    const sensitivity = 0.25;
-    rotRef.current[0] -= dx * sensitivity;
-    rotRef.current[1] = Math.max(-90, Math.min(90, rotRef.current[1] + dy * sensitivity));
-    lastMousePosRef.current = { x: e.clientX, y: e.clientY };
-  };
+    const allLats = [parseFloat(geoData.server.lat) || 0, ...conns.map(c => parseFloat(c.lat) || 0)];
+    const allLons = [parseFloat(geoData.server.lon) || 0, ...conns.map(c => parseFloat(c.lon) || 0)];
+    const avgLat = allLats.reduce((s, v) => s + v, 0) / allLats.length;
+    const avgLon = allLons.reduce((s, v) => s + v, 0) / allLons.length;
 
-  const handleMouseUp = () => {
-    isDraggingRef.current = false;
-    setIsDragging(false);
-  };
+    globeRef.current.pointOfView({ lat: avgLat, lng: avgLon, altitude: 2.2 }, 1000);
+  }, [geoData.connections?.length]);
 
-  // Touch Support (Drag to rotate + Pinch to zoom on mobile / touchscreen)
-  const handleTouchStart = (e) => {
-    if (e.touches.length === 1) {
-      isDraggingRef.current = true;
-      setIsDragging(true);
-      lastMousePosRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
-    } else if (e.touches.length === 2) {
-      isDraggingRef.current = false;
-      setIsDragging(false);
-      const dx = e.touches[0].clientX - e.touches[1].clientX;
-      const dy = e.touches[0].clientY - e.touches[1].clientY;
-      touchDistRef.current = Math.hypot(dx, dy);
-    }
-  };
+  // --- Build arc data for react-globe.gl ---
+  const arcsData = useMemo(() => {
+    const sLat = parseFloat(geoData.server?.lat) || 20.98;
+    const sLon = parseFloat(geoData.server?.lon) || 105.83;
+    const clients = geoData.connections || [];
 
-  const handleTouchMove = (e) => {
-    if (e.touches.length === 1 && isDraggingRef.current) {
-      const dx = e.touches[0].clientX - lastMousePosRef.current.x;
-      const dy = e.touches[0].clientY - lastMousePosRef.current.y;
-      const sensitivity = 0.25;
-      rotRef.current[0] -= dx * sensitivity;
-      rotRef.current[1] = Math.max(-90, Math.min(90, rotRef.current[1] + dy * sensitivity));
-      lastMousePosRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
-    } else if (e.touches.length === 2 && touchDistRef.current) {
-      const dx = e.touches[0].clientX - e.touches[1].clientX;
-      const dy = e.touches[0].clientY - e.touches[1].clientY;
-      const dist = Math.hypot(dx, dy);
-      const factor = dist / touchDistRef.current;
-      if (Math.abs(factor - 1) > 0.02) {
-        const newZoom = Math.min(5.0, Math.max(0.5, Math.round((zoomLevelRef.current * (factor > 1 ? 1.05 : 0.95)) * 100) / 100));
-        zoomLevelRef.current = newZoom;
-        setZoomLevel(newZoom);
-        touchDistRef.current = dist;
+    return clients.map((client, idx) => {
+      const parsedLat = parseFloat(client.lat);
+      const parsedLon = parseFloat(client.lon);
+      const hasGps = Number.isFinite(parsedLat) && Number.isFinite(parsedLon)
+        && (parsedLat !== 0 || parsedLon !== 0);
+      return {
+        id: idx,
+        startLat: sLat,
+        startLng: sLon,
+        endLat: hasGps ? parsedLat : sLat + 0.01,
+        endLng: hasGps ? parsedLon : sLon + 0.01,
+        client,
+        color: ['#00f3ff', '#00ff9d'],
+      };
+    });
+  }, [geoData]);
+
+  // --- Build points data (server + clients + Vietnam islands) ---
+  const pointsData = useMemo(() => {
+    const points = [];
+    const sLat = parseFloat(geoData.server?.lat) || 20.98;
+    const sLon = parseFloat(geoData.server?.lon) || 105.83;
+
+    // Server HQ
+    points.push({
+      id: 'server',
+      lat: sLat,
+      lng: sLon,
+      size: 0.6,
+      color: '#00ff9d',
+      label: `[HQ] SERVER\n${geoData.server?.city || 'Định Công'}, ${geoData.server?.country || 'Việt Nam'}`,
+      type: 'server',
+    });
+
+    // Client devices
+    const clients = geoData.connections || [];
+    clients.forEach((client, idx) => {
+      const parsedLat = parseFloat(client.lat);
+      const parsedLon = parseFloat(client.lon);
+      const hasGps = Number.isFinite(parsedLat) && Number.isFinite(parsedLon)
+        && (parsedLat !== 0 || parsedLon !== 0);
+      if (hasGps) {
+        points.push({
+          id: `client-${idx}`,
+          lat: parsedLat,
+          lng: parsedLon,
+          size: 0.35,
+          color: '#00f3ff',
+          label: `[${client.city || client.ip || 'CLIENT'}]\n${client.country || ''}`,
+          type: 'client',
+          client,
+        });
       }
-    }
-  };
+    });
 
-  const handleTouchEnd = () => {
-    isDraggingRef.current = false;
-    setIsDragging(false);
-    touchDistRef.current = null;
-  };
+    // Vietnam Maritime Islands
+    VIETNAM_MARITIME_ISLANDS.forEach(item => {
+      if (item.type === 'archipelago_cluster') {
+        // Add cluster center
+        points.push({
+          id: item.id,
+          lat: item.lat,
+          lng: item.lon,
+          size: 0.28,
+          color: '#00ff9d',
+          label: item.label,
+          type: 'island',
+        });
+        // Add individual islands
+        if (item.islands) {
+          item.islands.forEach(isl => {
+            points.push({
+              id: `${item.id}-${isl.name}`,
+              lat: isl.lat,
+              lng: isl.lon,
+              size: 0.18,
+              color: '#00ff9d',
+              label: isl.name,
+              type: 'island-dot',
+            });
+          });
+        }
+      } else {
+        points.push({
+          id: item.id,
+          lat: item.lat,
+          lng: item.lon,
+          size: 0.22,
+          color: item.color || '#00f3ff',
+          label: item.label,
+          type: 'island',
+        });
+      }
+    });
 
-  const resetCamera = () => {
-    rotRef.current = [-105.85, -16.0, 0];
-    zoomLevelRef.current = 1.0;
-    setZoomLevel(1.0);
-  };
+    return points;
+  }, [geoData]);
+
+  // --- Ring pulses (sonar effect on server + archipelago clusters) ---
+  const ringsData = useMemo(() => {
+    const rings = [];
+    const sLat = parseFloat(geoData.server?.lat) || 20.98;
+    const sLon = parseFloat(geoData.server?.lon) || 105.83;
+
+    rings.push({ lat: sLat, lng: sLon, maxR: 3.5, propagationSpeed: 1.5, repeatPeriod: 900, color: '#00ff9d' });
+
+    VIETNAM_MARITIME_ISLANDS.forEach(item => {
+      if (item.type === 'archipelago_cluster') {
+        rings.push({ lat: item.lat, lng: item.lon, maxR: 2.5, propagationSpeed: 1.2, repeatPeriod: 1200, color: '#00ff9d' });
+      }
+    });
+
+    return rings;
+  }, [geoData.server]);
+
+  const resetCamera = useCallback(() => {
+    globeRef.current?.pointOfView({ lat: 16.0, lng: 105.85, altitude: 2.0 }, 800);
+  }, []);
 
   const serverInfo = geoData.server || {};
   const connections = geoData.connections || [];
+
+  // Tooltip HTML for each point
+  const getPointLabel = useCallback((d) => {
+    if (d.type === 'island-dot') return `<div style="font-family:'Share Tech Mono',monospace;font-size:11px;color:#00ff9d;background:rgba(2,13,26,0.9);padding:4px 8px;border:1px solid rgba(0,255,157,0.4);border-radius:3px">${d.label}</div>`;
+    if (d.type === 'island') return `<div style="font-family:'Share Tech Mono',monospace;font-size:11px;color:#00ff9d;background:rgba(2,13,26,0.9);padding:4px 8px;border:1px solid rgba(0,255,157,0.4);border-radius:3px">🏝 ${d.label}</div>`;
+    if (d.type === 'server') return `<div style="font-family:'Share Tech Mono',monospace;font-size:11px;color:#00ff9d;background:rgba(2,13,26,0.9);padding:6px 10px;border:1px solid rgba(0,255,157,0.6);border-radius:3px"><b>[HQ] SERVER</b><br/>${serverInfo.city || 'Định Công'}, ${serverInfo.country || 'Việt Nam'}<br/>IP: ${serverInfo.query || 'N/A'}</div>`;
+    if (d.type === 'client') return `<div style="font-family:'Share Tech Mono',monospace;font-size:11px;color:#00f3ff;background:rgba(2,13,26,0.9);padding:6px 10px;border:1px solid rgba(0,243,255,0.6);border-radius:3px"><b>[CLIENT]</b><br/>${d.client?.city || d.client?.ip || 'Unknown'}, ${d.client?.country || ''}<br/>IP: ${d.client?.ip || 'N/A'}</div>`;
+    return d.label;
+  }, [serverInfo]);
 
   return (
     <div style={{ padding: '20px', height: '100%', display: 'flex', flexDirection: 'column', gap: '16px', overflowY: 'auto' }}>
@@ -797,7 +302,7 @@ export default function WorldMapPage() {
               INTERACTIVE 3D CYBERPUNK GEOLOCATION GLOBE
             </h2>
             <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontFamily: 'Share Tech Mono' }}>
-              REAL-WORLD COUNTRY BORDERS · 360° DRAG ROTATION · LIVE LASER TELEMETRY
+              REAL-WORLD COUNTRY BORDERS · 360° DRAG ROTATION · LIVE LASER TELEMETRY · WebGL GPU-ACCELERATED
             </span>
           </div>
         </div>
@@ -813,12 +318,12 @@ export default function WorldMapPage() {
             <span>AUTO-ROTATE: {autoRotate ? 'ON' : 'OFF'}</span>
           </button>
 
-          <button onClick={() => setRotationSpeed(prev => prev === 0.006 ? 0.014 : prev === 0.014 ? 0.025 : 0.006)} style={{
+          <button onClick={() => setRotationSpeed(prev => prev === 0.5 ? 1.0 : prev === 1.0 ? 2.0 : 0.5)} style={{
             background: 'rgba(0, 243, 255, 0.1)', border: '1px solid var(--accent-cyan)',
             color: 'var(--accent-cyan)', padding: '6px 12px', fontFamily: 'Share Tech Mono',
             fontSize: '0.78rem', fontWeight: 'bold', cursor: 'pointer', borderRadius: '3px'
           }}>
-            SPEED: {rotationSpeed === 0.006 ? '1X' : rotationSpeed === 0.014 ? '2X' : '3X'}
+            SPEED: {rotationSpeed === 0.5 ? '1X' : rotationSpeed === 1.0 ? '2X' : '3X'}
           </button>
 
           <button onClick={resetCamera} style={{
@@ -842,146 +347,128 @@ export default function WorldMapPage() {
       {/* Main Grid */}
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 2.5fr) minmax(300px, 1fr)', gap: '16px', flex: 1 }}>
 
-        {/* 3D Globe Canvas Panel */}
+        {/* 3D Globe WebGL Panel */}
         <div className="glass-panel" style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px', minHeight: '520px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(0,243,255,0.15)', paddingBottom: '8px' }}>
             <div style={{ fontFamily: 'Share Tech Mono', fontSize: '0.85rem', color: 'var(--accent-cyan)', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '8px' }}>
               <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--accent-green)', boxShadow: '0 0 8px var(--accent-green)' }} />
-              REAL-WORLD 3D GLOBE [DRAG TO ORBIT 360°]
+              REAL-WORLD 3D GLOBE [DRAG TO ORBIT 360°] — WebGL GPU
             </div>
             <div style={{ fontFamily: 'Share Tech Mono', fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-              HQ: <span style={{ color: 'var(--accent-green)' }}>{serverInfo.city || 'HCM'}, {serverInfo.country || 'VN'}</span>
+              HQ: <span style={{ color: 'var(--accent-green)' }}>{serverInfo.city || 'Định Công'}, {serverInfo.country || 'VN'}</span>
             </div>
           </div>
 
-          <div style={{ flex: 1, position: 'relative', minHeight: '440px', background: '#020d1a', borderRadius: '4px', border: '1px solid rgba(0,243,255,0.25)', overflow: 'hidden', cursor: isDragging ? 'grabbing' : 'grab' }}>
-            <canvas
-              ref={canvasRef}
-              onMouseDown={handleMouseDown}
-              onMouseMove={handleMouseMove}
-              onMouseUp={handleMouseUp}
-              onMouseLeave={handleMouseUp}
-              onTouchStart={handleTouchStart}
-              onTouchMove={handleTouchMove}
-              onTouchEnd={handleTouchEnd}
-              style={{ width: '100%', height: '100%', display: 'block', touchAction: 'none' }}
+          <div
+            ref={globeContainerRef}
+            style={{ flex: 1, position: 'relative', minHeight: '440px', background: '#020d1a', borderRadius: '4px', border: '1px solid rgba(0,243,255,0.25)', overflow: 'hidden' }}
+          >
+            <Globe
+              ref={globeRef}
+              // --- Layout ---
+              width={undefined}
+              height={undefined}
+              backgroundColor="rgba(2,13,26,1)"
+
+              // --- Globe surface: dark cyberpunk texture ---
+              globeImageUrl="//unpkg.com/three-globe/example/img/earth-night.jpg"
+              bumpImageUrl="//unpkg.com/three-globe/example/img/earth-topology.png"
+              showGraticules={true}
+              showAtmosphere={true}
+              atmosphereColor="#00f3ff"
+              atmosphereAltitude={0.12}
+
+              // --- Country polygons (country border outlines) ---
+              polygonsData={countries.features}
+              polygonCapColor={() => 'rgba(0, 30, 55, 0.75)'}
+              polygonSideColor={() => 'rgba(0, 100, 180, 0.1)'}
+              polygonStrokeColor={() => 'rgba(0, 243, 255, 0.35)'}
+              polygonAltitude={0.001}
+              polygonsTransitionDuration={0}
+
+              // --- Arcs (laser connections) ---
+              arcsData={arcsData}
+              arcStartLat={d => d.startLat}
+              arcStartLng={d => d.startLng}
+              arcEndLat={d => d.endLat}
+              arcEndLng={d => d.endLng}
+              arcColor={d => d.color}
+              arcAltitude={0.3}
+              arcStroke={1.5}
+              arcDashLength={0.5}
+              arcDashGap={0.25}
+              arcDashAnimateTime={2500}
+              arcLabel={d => `<div style="font-family:'Share Tech Mono';font-size:10px;color:#00f3ff;background:rgba(2,13,26,0.9);padding:3px 7px;border:1px solid rgba(0,243,255,0.4);border-radius:2px">[LINK] → ${d.client?.city || d.client?.ip || 'CLIENT'}</div>`}
+
+              // --- Points (server HQ + clients + islands) ---
+              pointsData={pointsData}
+              pointLat={d => d.lat}
+              pointLng={d => d.lng}
+              pointColor={d => d.color}
+              pointAltitude={d => d.type === 'server' ? 0.08 : d.type === 'client' ? 0.05 : 0.02}
+              pointRadius={d => d.size}
+              pointResolution={8}
+              pointsMerge={false}
+              pointLabel={getPointLabel}
+
+              // --- Rings (sonar pulse effect) ---
+              ringsData={ringsData}
+              ringLat={d => d.lat}
+              ringLng={d => d.lng}
+              ringMaxRadius={d => d.maxR}
+              ringPropagationSpeed={d => d.propagationSpeed}
+              ringRepeatPeriod={d => d.repeatPeriod}
+              ringColor={d => t => `rgba(0,255,157,${1 - t})`}
+              ringResolution={64}
+              ringAltitude={0.003}
+
+              // --- Labels (archipelago + server badges) ---
+              labelsData={pointsData.filter(p => p.type === 'server' || p.type === 'island')}
+              labelLat={d => d.lat}
+              labelLng={d => d.lng}
+              labelText={d => d.type === 'server' ? '[HQ]' : d.label}
+              labelSize={d => d.type === 'server' ? 1.0 : 0.55}
+              labelColor={d => d.type === 'server' ? '#00ff9d' : '#00f3ff'}
+              labelAltitude={d => d.type === 'server' ? 0.12 : 0.06}
+              labelResolution={2}
+              labelDotRadius={d => d.type === 'server' ? 0.45 : 0.22}
+              labelDotOrientation={() => 'bottom'}
+
+              // --- Interaction ---
+              onGlobeReady={() => {
+                setLoading(false);
+                // Apply initial camera
+                globeRef.current?.pointOfView({ lat: 16.0, lng: 105.85, altitude: 2.2 }, 0);
+                const controls = globeRef.current?.controls();
+                if (controls) {
+                  controls.autoRotate = true;
+                  controls.autoRotateSpeed = 0.5;
+                  controls.enableDamping = true;
+                  controls.dampingFactor = 0.08;
+                  controls.minDistance = 101; // prevent zooming inside the globe
+                  controls.maxDistance = 800;
+                }
+              }}
+              onPointClick={(point) => {
+                if (point.type === 'client' && point.client) {
+                  setSelectedNode(point.client);
+                }
+              }}
             />
 
-            {/* Cyberpunk HUD Floating Zoom Controller */}
-            <div style={{
-              position: 'absolute',
-              top: '12px',
-              right: '12px',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '4px',
-              zIndex: 10,
-              background: 'rgba(2, 13, 26, 0.85)',
-              padding: '6px',
-              borderRadius: '4px',
-              border: '1px solid rgba(0, 243, 255, 0.35)',
-              backdropFilter: 'blur(8px)',
-              boxShadow: '0 4px 16px rgba(0, 0, 0, 0.6)'
-            }}>
-              <button
-                type="button"
-                title="Zoom In (Phóng to)"
-                onClick={() => handleZoom(1.2)}
-                style={{
-                  width: '28px',
-                  height: '28px',
-                  background: 'rgba(0, 243, 255, 0.12)',
-                  border: '1px solid var(--accent-cyan)',
-                  color: 'var(--accent-cyan)',
-                  fontFamily: 'Share Tech Mono',
-                  fontSize: '1.1rem',
-                  fontWeight: 'bold',
-                  cursor: 'pointer',
-                  borderRadius: '3px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  transition: 'all 0.15s'
-                }}
-              >
-                +
-              </button>
-
-              <div
-                title="Mức Zoom hiện tại (Click để Reset 1.0X)"
-                onClick={() => handleSetZoom(1.0)}
-                style={{
-                  fontSize: '0.68rem',
-                  fontFamily: 'Share Tech Mono',
-                  color: zoomLevel === 1.0 ? 'var(--text-secondary)' : 'var(--accent-green)',
-                  fontWeight: 'bold',
-                  textAlign: 'center',
-                  padding: '3px 0',
-                  cursor: 'pointer',
-                  userSelect: 'none',
-                  textShadow: zoomLevel !== 1.0 ? '0 0 6px var(--accent-green)' : 'none'
-                }}
-              >
-                {zoomLevel.toFixed(1)}X
-              </div>
-
-              <button
-                type="button"
-                title="Zoom Out (Thu nhỏ)"
-                onClick={() => handleZoom(0.83)}
-                style={{
-                  width: '28px',
-                  height: '28px',
-                  background: 'rgba(0, 243, 255, 0.12)',
-                  border: '1px solid var(--accent-cyan)',
-                  color: 'var(--accent-cyan)',
-                  fontFamily: 'Share Tech Mono',
-                  fontSize: '1.2rem',
-                  fontWeight: 'bold',
-                  cursor: 'pointer',
-                  borderRadius: '3px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  transition: 'all 0.15s'
-                }}
-              >
-                −
-              </button>
-
-              <button
-                type="button"
-                title="Reset Zoom & Góc nhìn (1.0X)"
-                onClick={resetCamera}
-                style={{
-                  width: '28px',
-                  height: '22px',
-                  background: 'rgba(255, 255, 255, 0.06)',
-                  border: '1px solid rgba(255, 255, 255, 0.2)',
-                  color: '#aaa',
-                  fontFamily: 'Share Tech Mono',
-                  fontSize: '0.62rem',
-                  fontWeight: 'bold',
-                  cursor: 'pointer',
-                  borderRadius: '3px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  marginTop: '2px',
-                  transition: 'all 0.15s'
-                }}
-              >
-                1X
-              </button>
-            </div>
-
-            {!worldGeo && (
-              <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--accent-cyan)', fontFamily: 'Share Tech Mono', fontSize: '0.85rem' }}>
-                LOADING WORLD ATLAS DATA...
+            {/* Loading overlay */}
+            {loading && (
+              <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--accent-cyan)', fontFamily: 'Share Tech Mono', fontSize: '0.85rem', background: 'rgba(2,13,26,0.7)', pointerEvents: 'none' }}>
+                <div style={{ textAlign: 'center' }}>
+                  <div style={{ marginBottom: '8px', fontSize: '1.2rem' }}>◈</div>
+                  LOADING WORLD ATLAS DATA...
+                </div>
               </div>
             )}
-            <div style={{ position: 'absolute', bottom: '12px', left: '16px', fontFamily: 'Share Tech Mono', fontSize: '0.72rem', color: 'rgba(255,255,255,0.45)', pointerEvents: 'none', display: 'flex', gap: '12px' }}>
-              <span>✦ TIP: Drag to rotate 360° · Scroll wheel / Pinch / Buttons to Zoom</span>
+
+            {/* Tip overlay */}
+            <div style={{ position: 'absolute', bottom: '12px', left: '16px', fontFamily: 'Share Tech Mono', fontSize: '0.72rem', color: 'rgba(255,255,255,0.45)', pointerEvents: 'none' }}>
+              ✦ TIP: Drag to rotate 360° · Scroll wheel to Zoom · Click pins for details
             </div>
           </div>
 
@@ -997,6 +484,10 @@ export default function WorldMapPage() {
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
               <span style={{ width: '20px', height: '2px', background: 'var(--accent-cyan)', display: 'inline-block' }} />
               <span>LASER ARC</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: '#00ff9d', display: 'inline-block', boxShadow: '0 0 6px #00ff9d' }} />
+              <span>VIETNAM ISLANDS</span>
             </div>
           </div>
         </div>
@@ -1042,7 +533,14 @@ export default function WorldMapPage() {
                 </div>
               ) : (
                 connections.map((conn, idx) => (
-                  <div key={idx} onClick={() => setSelectedNode(conn)} style={{
+                  <div key={idx} onClick={() => {
+                    setSelectedNode(conn);
+                    const parsedLat = parseFloat(conn.lat);
+                    const parsedLon = parseFloat(conn.lon);
+                    if (Number.isFinite(parsedLat) && Number.isFinite(parsedLon) && (parsedLat !== 0 || parsedLon !== 0)) {
+                      globeRef.current?.pointOfView({ lat: parsedLat, lng: parsedLon, altitude: 1.5 }, 800);
+                    }
+                  }} style={{
                     background: selectedNode?.ip === conn.ip ? 'rgba(0, 243, 255, 0.15)' : 'rgba(0,0,0,0.4)',
                     border: selectedNode?.ip === conn.ip ? '1px solid var(--accent-cyan)' : '1px solid rgba(0, 243, 255, 0.15)',
                     padding: '10px', borderRadius: '4px', cursor: 'pointer',

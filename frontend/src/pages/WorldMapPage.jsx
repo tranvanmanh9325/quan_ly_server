@@ -3,7 +3,7 @@ import axios from 'axios';
 import { geoOrthographic, geoPath, geoGraticule } from 'd3-geo';
 import { feature } from 'topojson-client';
 import { SciFiGlobeIcon, SciFiRefreshIcon, SciFiPulseBadge, SciFiPlayIcon, SciFiStopIcon } from '../components/SciFiIcons';
-import { VIETNAM_ISLANDS_GEOJSON, NOTABLE_ISLAND_POINTS } from '../data/vietnamIslandsGeo';
+import { VIETNAM_MARITIME_ISLANDS } from '../data/vietnamIslandsGeo';
 
 // World Atlas TopoJSON CDN — 110m resolution (public domain, Natural Earth)
 const WORLD_ATLAS_URL = 'https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json';
@@ -246,22 +246,6 @@ export default function WorldMapPage() {
         });
       }
 
-      // 6.5. Vietnam Maritime Sovereignty & Archipelagos (Hoàng Sa, Trường Sa, Phú Quốc, Côn Đảo...)
-      if (VIETNAM_ISLANDS_GEOJSON && VIETNAM_ISLANDS_GEOJSON.features) {
-        VIETNAM_ISLANDS_GEOJSON.features.forEach(feat => {
-          ctx.beginPath();
-          pathGen(feat);
-          ctx.fillStyle = 'rgba(0, 255, 180, 0.75)';
-          ctx.fill();
-          ctx.strokeStyle = '#00ff9d';
-          ctx.lineWidth = 1.0;
-          ctx.shadowColor = '#00ff9d';
-          ctx.shadowBlur = 6;
-          ctx.stroke();
-          ctx.shadowBlur = 0;
-        });
-      }
-
       // 7. Draw 3D Elevated Laser Arcs between clients and server
       const clients = geoData.connections || [];
       clients.forEach(client => {
@@ -473,56 +457,145 @@ export default function WorldMapPage() {
       }
 
       // 9. High-Precision Maritime Island Radar Pins & Cyberpunk Labels (Hoàng Sa, Trường Sa, Phú Quốc, Côn Đảo...)
-      NOTABLE_ISLAND_POINTS.forEach(island => {
-        const islandProj = projection([island.lon, island.lat]);
-        if (islandProj) {
-          const [ix, iy] = islandProj;
-          const isHQArchipelago = island.type === 'archipelago_hq';
+      VIETNAM_MARITIME_ISLANDS.forEach(item => {
+        // A. Archipelago Clusters (Hoàng Sa, Trường Sa)
+        if (item.type === 'archipelago_cluster') {
+          // Render individual reefs/islets inside cluster
+          if (item.islands) {
+            item.islands.forEach(isl => {
+              const islProj = projection([isl.lon, isl.lat]);
+              if (islProj) {
+                const [ix, iy] = islProj;
+                const dotR = Math.max(1.5, isl.r * Math.sqrt(zoomLevelRef.current) * 0.9);
 
-          // Glowing Core Dot
-          const dotR = isHQArchipelago ? 3.0 : 2.2;
-          ctx.beginPath();
-          ctx.arc(ix, iy, dotR, 0, Math.PI * 2);
-          ctx.fillStyle = isHQArchipelago ? '#00ff9d' : '#00f3ff';
-          ctx.shadowColor = isHQArchipelago ? '#00ff9d' : '#00f3ff';
-          ctx.shadowBlur = 8;
-          ctx.fill();
-          ctx.shadowBlur = 0;
+                // Island dot glow
+                ctx.beginPath();
+                ctx.arc(ix, iy, dotR, 0, Math.PI * 2);
+                ctx.fillStyle = 'rgba(0, 255, 180, 0.9)';
+                ctx.shadowColor = '#00ff9d';
+                ctx.shadowBlur = 6;
+                ctx.fill();
+                ctx.shadowBlur = 0;
+              }
+            });
+          }
 
-          // Pulsing Sonar Ring for Archipelagos (Hoàng Sa & Trường Sa)
-          if (isHQArchipelago) {
-            const sonarR = 6 + (Math.sin(pulseTime * 2.2 + island.lon) * 0.5 + 0.5) * 5;
-            const sonarAlpha = Math.max(0, 0.65 - ((sonarR - 6) / 5) * 0.45);
+          // Center Radar & Sonar Waves for the Archipelago
+          const centerProj = projection([item.lon, item.lat]);
+          if (centerProj) {
+            const [cx, cy] = centerProj;
+
+            // Sonar Ripple Ring
+            const sonarR = (10 + (Math.sin(pulseTime * 2.0 + item.lon) * 0.5 + 0.5) * 8) * Math.sqrt(zoomLevelRef.current);
+            const sonarAlpha = Math.max(0, 0.65 - ((sonarR - 10) / 8) * 0.45);
             ctx.beginPath();
-            ctx.arc(ix, iy, sonarR, 0, Math.PI * 2);
+            ctx.arc(cx, cy, sonarR, 0, Math.PI * 2);
             ctx.strokeStyle = `rgba(0, 255, 157, ${sonarAlpha})`;
-            ctx.lineWidth = 0.9;
-            ctx.setLineDash([2, 2]);
+            ctx.lineWidth = 1.2;
+            ctx.setLineDash([3, 3]);
             ctx.stroke();
             ctx.setLineDash([]);
+
+            // Center Target Cross
+            ctx.strokeStyle = 'rgba(0, 255, 157, 0.7)';
+            ctx.lineWidth = 0.8;
+            ctx.beginPath();
+            ctx.moveTo(cx - 5, cy); ctx.lineTo(cx + 5, cy);
+            ctx.moveTo(cx, cy - 5); ctx.lineTo(cx, cy + 5);
+            ctx.stroke();
+
+            // Cyberpunk Badge Label
+            ctx.font = 'bold 8.5px "Share Tech Mono"';
+            const labelW = ctx.measureText(item.label).width;
+            const badgeH = 14;
+            const badgeX = cx + 8;
+            const badgeY = cy - badgeH / 2;
+
+            ctx.fillStyle = 'rgba(2, 13, 26, 0.88)';
+            ctx.strokeStyle = 'rgba(0, 255, 157, 0.65)';
+            ctx.lineWidth = 0.8;
+            ctx.beginPath();
+            if (ctx.roundRect) {
+              ctx.roundRect(badgeX, badgeY, labelW + 8, badgeH, 3);
+            } else {
+              ctx.rect(badgeX, badgeY, labelW + 8, badgeH);
+            }
+            ctx.fill();
+            ctx.stroke();
+
+            ctx.fillStyle = '#00ff9d';
+            ctx.fillText(item.label, badgeX + 4, badgeY + badgeH - 4);
+          }
+        }
+
+        // B. Major & Minor Islands (Phú Quốc, Côn Đảo, Bạch Long Vĩ, Lý Sơn, Phú Quý...)
+        else {
+          // If island has detailed outline polygon, project and draw it
+          if (item.outline && item.outline.length > 2) {
+            ctx.beginPath();
+            let firstPt = null;
+            item.outline.forEach((pt, pidx) => {
+              const proj = projection(pt);
+              if (proj) {
+                if (pidx === 0) {
+                  ctx.moveTo(proj[0], proj[1]);
+                  firstPt = proj;
+                } else {
+                  ctx.lineTo(proj[0], proj[1]);
+                }
+              }
+            });
+            if (firstPt) {
+              ctx.closePath();
+              ctx.fillStyle = 'rgba(0, 243, 255, 0.8)';
+              ctx.fill();
+              ctx.strokeStyle = '#00f3ff';
+              ctx.lineWidth = 1.0;
+              ctx.shadowColor = '#00f3ff';
+              ctx.shadowBlur = 6;
+              ctx.stroke();
+              ctx.shadowBlur = 0;
+            }
           }
 
-          // Cyberpunk Badge Label (Always crisp, expands when zoomed)
-          ctx.font = isHQArchipelago ? 'bold 8px "Share Tech Mono"' : '7.5px "Share Tech Mono"';
-          const labelW = ctx.measureText(island.label).width;
-          const badgeH = 13;
-          const badgeX = ix + 6;
-          const badgeY = iy - badgeH / 2;
+          // Render Island Anchor Pin & Label
+          const islProj = projection([item.lon, item.lat]);
+          if (islProj) {
+            const [ix, iy] = islProj;
+            const dotR = Math.max(2.0, (item.r || 2.0) * Math.sqrt(zoomLevelRef.current) * 0.9);
 
-          ctx.fillStyle = 'rgba(2, 13, 26, 0.85)';
-          ctx.strokeStyle = isHQArchipelago ? 'rgba(0, 255, 157, 0.6)' : 'rgba(0, 243, 255, 0.4)';
-          ctx.lineWidth = 0.7;
-          ctx.beginPath();
-          if (ctx.roundRect) {
-            ctx.roundRect(badgeX, badgeY, labelW + 6, badgeH, 2);
-          } else {
-            ctx.rect(badgeX, badgeY, labelW + 6, badgeH);
+            ctx.beginPath();
+            ctx.arc(ix, iy, dotR, 0, Math.PI * 2);
+            ctx.fillStyle = item.color || '#00f3ff';
+            ctx.shadowColor = item.color || '#00f3ff';
+            ctx.shadowBlur = 8;
+            ctx.fill();
+            ctx.shadowBlur = 0;
+
+            // Cyberpunk Badge (Visible when Zoom >= 0.85X)
+            if (zoomLevelRef.current >= 0.85) {
+              ctx.font = '7.5px "Share Tech Mono"';
+              const labelW = ctx.measureText(item.label).width;
+              const badgeH = 12;
+              const badgeX = ix + 6;
+              const badgeY = iy - badgeH / 2;
+
+              ctx.fillStyle = 'rgba(2, 13, 26, 0.85)';
+              ctx.strokeStyle = 'rgba(0, 243, 255, 0.45)';
+              ctx.lineWidth = 0.7;
+              ctx.beginPath();
+              if (ctx.roundRect) {
+                ctx.roundRect(badgeX, badgeY, labelW + 6, badgeH, 2);
+              } else {
+                ctx.rect(badgeX, badgeY, labelW + 6, badgeH);
+              }
+              ctx.fill();
+              ctx.stroke();
+
+              ctx.fillStyle = '#00f3ff';
+              ctx.fillText(item.label, badgeX + 3, badgeY + badgeH - 3.5);
+            }
           }
-          ctx.fill();
-          ctx.stroke();
-
-          ctx.fillStyle = isHQArchipelago ? '#00ff9d' : '#00f3ff';
-          ctx.fillText(island.label, badgeX + 3, badgeY + badgeH - 3.5);
         }
       });
 

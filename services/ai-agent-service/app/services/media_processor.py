@@ -287,6 +287,9 @@ class MediaProcessor:
 
         models = [settings.GROQ_VISION_MODEL, settings.GROQ_VISION_MODEL_FALLBACK]
         messages = self._build_vision_messages(b64, caption, is_archive=is_archive)
+        # Archive images must be compact to avoid 413 when the full payload
+        # (2-3 image descriptions + system prompt + history) is sent to the main LLM
+        max_tokens = 500 if is_archive else 1024
 
         for model in models:
             for key in groq_keys[:3]:
@@ -294,7 +297,7 @@ class MediaProcessor:
                     resp = await self._http.post(
                         "https://api.groq.com/openai/v1/chat/completions",
                         headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-                        json={"model": model, "messages": messages, "temperature": 0.2, "max_tokens": 1024},
+                        json={"model": model, "messages": messages, "temperature": 0.2, "max_tokens": max_tokens},
                         timeout=60.0,
                     )
                     if resp.status_code == 200:
@@ -321,6 +324,7 @@ class MediaProcessor:
             return None
 
         messages = self._build_vision_messages(b64, caption, is_archive=is_archive)
+        max_tokens = 500 if is_archive else 1024
 
         for model in _OR_VISION_MODELS:
             for key in or_keys[:2]:
@@ -328,7 +332,7 @@ class MediaProcessor:
                     resp = await self._http.post(
                         settings.OPENROUTER_API_URL,
                         headers={**_OR_VISION_HEADERS_BASE, "Authorization": f"Bearer {key}"},
-                        json={"model": model, "messages": messages, "temperature": 0.2, "max_tokens": 1024},
+                        json={"model": model, "messages": messages, "temperature": 0.2, "max_tokens": max_tokens},
                         timeout=60.0,
                     )
                     if resp.status_code == 200:

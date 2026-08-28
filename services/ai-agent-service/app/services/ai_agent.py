@@ -2008,6 +2008,15 @@ TÌNH HUỐNG: Anh Mạnh mô tả một thông báo có "kênh phát sóng", "t
                 )
                 logger.info("[AiAgent] 📖 New knowledge detected — recording async.")
 
+        # Attachment messages carry embedded extracted content (images + PDF + docs), 
+        # which can be 3-5x larger than normal messages. Keeping old history would push
+        # the full payload past Groq's per-request limit → HTTP 413.
+        # Solution: flush history before processing any attachment so the context budget
+        # is used entirely for the rich attachment content, not stale prior turns.
+        if user_message.startswith("[📄 TỆP ĐÍNH KÈM:") or user_message.startswith("[📸") or user_message.startswith("[📄 File:"):
+            logger.info("[AiAgent] 📎 Attachment detected — flushing history to prevent 413 context overflow.")
+            history.clear()
+
         history.append({"role": "user", "content": user_message})
         # Tools that should only be called once per conversation turn
         executed_once_tools: set = set()

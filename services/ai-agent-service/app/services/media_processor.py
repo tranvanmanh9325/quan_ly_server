@@ -13,6 +13,7 @@ import csv
 import io
 import json
 import logging
+import os
 from pathlib import Path
 from typing import List, Optional
 
@@ -404,7 +405,168 @@ class MediaProcessor:
             rows.append(" | ".join(row))
         return "\n".join(rows)
 
-    # Supported plain-text extensions (read directly)
+    @staticmethod
+    def _extract_zip(data: bytes) -> str:
+        """
+        Extracts and concatenates text-readable files from a ZIP archive.
+
+        Security guards:
+        - Zip Slip (path traversal): reject any entry whose resolved path
+          escapes the virtual root.
+        - Zip Bomb: reject if total uncompressed size > 50 MB or > 200 files.
+        - Binary spam: only read entries with text-compatible extensions.
+        """
+        import zipfile
+
+        _ZIP_MAX_TOTAL_BYTES = 50 * 1024 * 1024  # 50 MB uncompressed cap
+        _ZIP_MAX_FILES = 200
+        _ZIP_MAX_SINGLE = 10 * 1024 * 1024        # 10 MB per single file
+
+        # Text extensions to extract from inside the archive
+        _EXTRACTABLE = frozenset({
+            ".txt", ".md", ".py", ".js", ".ts", ".sh", ".yaml", ".yml",
+            ".toml", ".ini", ".env", ".log", ".html", ".xml", ".css",
+            ".sql", ".rs", ".go", ".java", ".c", ".cpp", ".h", ".conf",
+            ".cfg", ".json", ".csv",
+        })
+
+        try:
+            zf = zipfile.ZipFile(io.BytesIO(data))
+        except zipfile.BadZipFile as exc:
+            raise ValueError(f"File ZIP bị hỏng: {exc}") from exc
+
+        with zf:
+            members = zf.infolist()
+
+            # Zip Bomb check: total uncompressed size
+            total_uncompressed = sum(m.file_size for m in members)
+            if total_uncompressed > _ZIP_MAX_TOTAL_BYTES:
+                return (
+                    f"(Archive ZIP quá lớn khi giải nén: "
+                    f"{total_uncompressed // 1048576} MB > giới hạn 50 MB)"
+                )
+            if len(members) > _ZIP_MAX_FILES:
+                return f"(Archive ZIP có quá nhiều files: {len(members)} > giới hạn {_ZIP_MAX_FILES})"
+
+            parts: List[str] = []
+            skipped_binary = 0
+            root = "/"  # virtual root for path traversal check
+
+            for member in members:
+                name = member.filename
+                # Skip directories
+                if name.endswith("/"):
+                    continue
+                # Zip Slip guard: reject entries with path traversal
+                resolved = os.path.normpath(os.path.join(root, name))
+                if not resolved.startswith(root):
+                    logger.warning("[MediaProcessor] ZIP Slip attempt blocked: %s", name)
+                    continue
+                # Binary filter: only extract text-compatible files
+                ext = Path(name).suffix.lower()
+                if ext not in _EXTRACTABLE:
+                    skipped_binary += 1
+                    continue
+                # Single file size guard
+                if member.file_size > _ZIP_MAX_SINGLE:
+                    parts.append(f"[{name}]: (file quá lớn {member.file_size // 1048576} MB, bỏ qua)")
+                    continue
+                try:
+                    raw = zf.read(name)
+                    text = raw.decode("utf-8", errors="replace").strip()
+                    if text:
+                        parts.append(f"━━ [{name}] ━━\n{text}")
+                except Exception as exc:
+                    parts.append(f"[{name}]: (không đọc được: {exc})")
+
+            if not parts:
+                return (
+                    f"(Archive ZIP không chứa file văn bản nào có thể đọc được. "
+                    f"Đã bỏ qua {skipped_binary} file nhị phân.)"
+                )
+            if skipped_binary:
+                parts.append(f"\n[ℹ️ Đã bỏ qua {skipped_binary} file nhị phân trong archive]")
+            return "\n\n".join(parts)
+
+    @staticmethod
+    def _extract_rar(data: bytes) -> str:
+        """
+        Extracts and concatenates text-readable files from a RAR archive.
+        Requires 'rarfile' Python package + 'unrar' system binary (Dockerfile).
+        Same security guards as _extract_zip.
+        """
+        try:
+            import rarfile  # lazy import — requires: pip install rarfile + apt install unrar-free
+        except ImportError:
+            raise ImportError(
+                "Thư viện 'rarfile' chưa được cài. "
+                "Thêm 'rarfile' vào requirements.txt và 'unrar-free' vào Dockerfile."
+            )
+
+        _RAR_MAX_TOTAL_BYTES = 50 * 1024 * 1024
+        _RAR_MAX_FILES = 200
+        _RAR_MAX_SINGLE = 10 * 1024 * 1024
+
+        _EXTRACTABLE = frozenset({
+            ".txt", ".md", ".py", ".js", ".ts", ".sh", ".yaml", ".yml",
+            ".toml", ".ini", ".env", ".log", ".html", ".xml", ".css",
+            ".sql", ".rs", ".go", ".java", ".c", ".cpp", ".h", ".conf",
+            ".cfg", ".json", ".csv",
+        })
+
+        try:
+            rf = rarfile.RarFile(io.BytesIO(data))
+        except rarfile.BadRarFile as exc:
+            raise ValueError(f"File RAR bị hỏng: {exc}") from exc
+        except rarfile.NeedFirstVolume:
+            return "(File RAR là một phần của multi-volume archive, không hỗ trợ đọc partial volumes)"
+
+        with rf:
+            members = rf.infolist()
+            total_uncompressed = sum(getattr(m, "file_size", 0) for m in members)
+            if total_uncompressed > _RAR_MAX_TOTAL_BYTES:
+                return f"(Archive RAR quá lớn khi giải nén: {total_uncompressed // 1048576} MB > giới hạn 50 MB)"
+            if len(members) > _RAR_MAX_FILES:
+                return f"(Archive RAR có quá nhiều files: {len(members)} > giới hạn {_RAR_MAX_FILES})"
+
+            parts: List[str] = []
+            skipped_binary = 0
+            root = "/"
+
+            for member in members:
+                name = member.filename
+                if getattr(member, "is_dir", lambda: False)():
+                    continue
+                resolved = os.path.normpath(os.path.join(root, name))
+                if not resolved.startswith(root):
+                    logger.warning("[MediaProcessor] RAR path traversal blocked: %s", name)
+                    continue
+                ext = Path(name).suffix.lower()
+                if ext not in _EXTRACTABLE:
+                    skipped_binary += 1
+                    continue
+                file_size = getattr(member, "file_size", 0)
+                if file_size > _RAR_MAX_SINGLE:
+                    parts.append(f"[{name}]: (file quá lớn {file_size // 1048576} MB, bỏ qua)")
+                    continue
+                try:
+                    raw = rf.read(name)
+                    text = raw.decode("utf-8", errors="replace").strip()
+                    if text:
+                        parts.append(f"━━ [{name}] ━━\n{text}")
+                except Exception as exc:
+                    parts.append(f"[{name}]: (không đọc được: {exc})")
+
+            if not parts:
+                return (
+                    f"(Archive RAR không chứa file văn bản nào có thể đọc được. "
+                    f"Đã bỏ qua {skipped_binary} file nhị phân.)"
+                )
+            if skipped_binary:
+                parts.append(f"\n[ℹ️ Đã bỏ qua {skipped_binary} file nhị phân trong archive]")
+            return "\n\n".join(parts)
+
+    # Supported plain-text extensions (read directly without special parser)
     _TEXT_EXTENSIONS = frozenset({
         ".txt", ".md", ".py", ".js", ".ts", ".sh", ".bash",
         ".yaml", ".yml", ".toml", ".ini", ".env", ".log",
@@ -421,6 +583,9 @@ class MediaProcessor:
         """
         Auto-dispatches to the right extractor based on file extension + MIME type.
         Returns extracted text, capped at _MAX_DOC_CHARS to protect token budget.
+
+        Supported formats:
+          PDF, DOCX, XLSX/XLSM, CSV, JSON, ZIP, RAR, TXT + source code files.
         """
         ext = Path(filename).suffix.lower()
         mime = (mime_type or "").lower()
@@ -437,12 +602,16 @@ class MediaProcessor:
             elif ext == ".json" or "json" in mime:
                 parsed = json.loads(file_bytes.decode("utf-8", errors="replace"))
                 raw = json.dumps(parsed, indent=2, ensure_ascii=False)
+            elif ext == ".zip" or "zip" in mime:
+                raw = self._extract_zip(file_bytes)
+            elif ext == ".rar" or "rar" in mime or "x-rar" in mime:
+                raw = self._extract_rar(file_bytes)
             elif ext in self._TEXT_EXTENSIONS or mime.startswith("text/"):
                 raw = file_bytes.decode("utf-8", errors="replace")
             else:
                 return (
                     f"(Định dạng file `{ext or 'không rõ'}` chưa được hỗ trợ đọc tự động. "
-                    "Hỗ trợ: PDF, DOCX, XLSX, CSV, JSON, TXT và các file source code.)"
+                    "Hỗ trợ: PDF, DOCX, XLSX, CSV, JSON, ZIP, RAR, TXT và các file source code.)"
                 )
         except ImportError as exc:
             logger.error("[MediaProcessor] Missing package for %s: %s", ext, exc)

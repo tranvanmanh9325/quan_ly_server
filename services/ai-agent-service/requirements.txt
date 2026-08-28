@@ -14,3 +14,4 @@ PyMuPDF>=1.24.0
 python-docx>=1.1.0
 openpyxl>=3.1.0
 rarfile>=4.2
+py7zr>=0.21.0

@@ -50,6 +50,20 @@ _VISION_SYSTEM_PROMPT = (
     "Trả lời hoàn toàn bằng tiếng Việt, ngắn gọn và súc tích."
 )
 
+# Technical Extraction Prompt for images inside archives/documents:
+# Must be concise, purely factual (metrics, charts, numbers, text), with ZERO greetings or conclusions.
+_VISION_ARCHIVE_PROMPT = (
+    "Bạn là hệ thống trích xuất dữ liệu hình ảnh kỹ thuật cao. "
+    "Nhiệm vụ: Trích xuất chính xác, súc tích toàn bộ thông tin quan trọng trong ảnh: "
+    "tiêu đề, tên mô hình/dự án, biểu đồ (trục X, trục Y, xu hướng đường cong), các chỉ số metrics (loss, accuracy, RMSE, F1,...), "
+    "bảng số liệu (cột, giá trị các hàng nổi bật) và trạng thái. "
+    "Quy tắc tối quan trọng: "
+    "1. TUYỆT ĐỐI KHÔNG viết lời chào mở đầu (như 'Chào bạn', 'Tôi là Tiểu Bảo Bảo'). "
+    "2. TUYỆT ĐỐI KHÔNG viết kết luận chung chung hay lời kết bài. "
+    "3. Trình bày bằng các gạch đầu dòng súc tích, ngắn gọn, đi thẳng vào các số liệu và sự thật kỹ thuật. "
+    "4. Viết 100% bằng tiếng Việt."
+)
+
 
 class MediaProcessor:
     """
@@ -241,10 +255,17 @@ class MediaProcessor:
             return base64.b64encode(buf.getvalue()).decode("utf-8")
 
     @staticmethod
-    def _build_vision_messages(b64: str, caption: str) -> list:
-        user_text = caption if caption else "Hãy phân tích và mô tả chi tiết nội dung hình ảnh này."
+    def _build_vision_messages(b64: str, caption: str, is_archive: bool = False) -> list:
+        sys_prompt = _VISION_ARCHIVE_PROMPT if is_archive else _VISION_SYSTEM_PROMPT
+        if caption:
+            user_text = caption
+        elif is_archive:
+            user_text = "Trích xuất và tóm tắt toàn bộ dữ liệu kỹ thuật, bảng số liệu, biểu đồ, văn bản trong hình ảnh này một cách súc tích, ngắn gọn."
+        else:
+            user_text = "Hãy phân tích và mô tả chi tiết nội dung hình ảnh này."
+
         return [
-            {"role": "system", "content": _VISION_SYSTEM_PROMPT},
+            {"role": "system", "content": sys_prompt},
             {
                 "role": "user",
                 "content": [
@@ -254,7 +275,7 @@ class MediaProcessor:
             },
         ]
 
-    async def _analyze_image_groq(self, b64: str, caption: str) -> Optional[str]:
+    async def _analyze_image_groq(self, b64: str, caption: str, is_archive: bool = False) -> Optional[str]:
         """
         Try Groq Vision: qwen3.8-27b → qwen3.6-27b.
         Note: tool_calls not passed — Groq vision runs in analysis-only mode,
@@ -265,7 +286,7 @@ class MediaProcessor:
             return None
 
         models = [settings.GROQ_VISION_MODEL, settings.GROQ_VISION_MODEL_FALLBACK]
-        messages = self._build_vision_messages(b64, caption)
+        messages = self._build_vision_messages(b64, caption, is_archive=is_archive)
 
         for model in models:
             for key in groq_keys[:3]:
@@ -289,7 +310,7 @@ class MediaProcessor:
 
         return None
 
-    async def _analyze_image_openrouter(self, b64: str, caption: str) -> Optional[str]:
+    async def _analyze_image_openrouter(self, b64: str, caption: str, is_archive: bool = False) -> Optional[str]:
         """
         OpenRouter Vision fallback chain:
         gemma-4-31b:free → gemma-4-26b:free → openrouter/free (auto-router).
@@ -299,7 +320,7 @@ class MediaProcessor:
         if not or_keys:
             return None
 
-        messages = self._build_vision_messages(b64, caption)
+        messages = self._build_vision_messages(b64, caption, is_archive=is_archive)
 
         for model in _OR_VISION_MODELS:
             for key in or_keys[:2]:
@@ -323,7 +344,7 @@ class MediaProcessor:
 
         return None
 
-    async def analyze_image(self, image_bytes: bytes, caption: str = "") -> str:
+    async def analyze_image(self, image_bytes: bytes, caption: str = "", is_archive: bool = False) -> str:
         """
         Orchestrator: Groq Vision → OpenRouter Vision → graceful text fallback.
         Returns a string description to be prepended and passed to ai_agent.chat().
@@ -334,10 +355,10 @@ class MediaProcessor:
             logger.error("[MediaProcessor] Image encode error: %s", exc)
             return "(Không thể đọc định dạng ảnh này)"
 
-        result = await self._analyze_image_groq(b64, caption)
+        result = await self._analyze_image_groq(b64, caption, is_archive=is_archive)
         if not result:
             logger.info("[MediaProcessor] Groq vision failed, trying OpenRouter...")
-            result = await self._analyze_image_openrouter(b64, caption)
+            result = await self._analyze_image_openrouter(b64, caption, is_archive=is_archive)
 
         if result:
             return result
@@ -348,11 +369,27 @@ class MediaProcessor:
             "Anh Mạnh vui lòng mô tả nội dung ảnh để em hỗ trợ.)"
         )
 
-    # ─── Modality 3: Document → Text Extraction (offline) ────────────────────
+    # ─── Modality 3: Universal Document & Archive Extraction (Offline & Multimodal) ───
+
+    _IMAGE_EXTENSIONS = frozenset({
+        ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tiff", ".tif",
+    })
+
+    _TEXT_EXTENSIONS = frozenset({
+        ".txt", ".md", ".py", ".js", ".ts", ".sh", ".bash",
+        ".yaml", ".yml", ".toml", ".ini", ".env", ".log",
+        ".html", ".xml", ".css", ".sql", ".rs", ".go",
+        ".java", ".c", ".cpp", ".h", ".hpp", ".cs", ".php",
+        ".rb", ".swift", ".kt", ".kts", ".scala", ".r",
+        ".conf", ".cfg", ".properties", ".bat", ".ps1",
+    })
 
     @staticmethod
     def _extract_pdf(data: bytes) -> str:
-        import fitz  # PyMuPDF — lazy import
+        try:
+            import pymupdf as fitz
+        except ImportError:
+            import fitz
         pages: List[str] = []
         with fitz.open(stream=data, filetype="pdf") as doc:
             for page_num in range(min(len(doc), 50)):
@@ -363,7 +400,7 @@ class MediaProcessor:
 
     @staticmethod
     def _extract_docx(data: bytes) -> str:
-        import docx  # python-docx — lazy import
+        import docx
         doc = docx.Document(io.BytesIO(data))
         parts: List[str] = []
         for para in doc.paragraphs:
@@ -377,7 +414,7 @@ class MediaProcessor:
 
     @staticmethod
     def _extract_xlsx(data: bytes) -> str:
-        import openpyxl  # lazy import
+        import openpyxl
         wb = openpyxl.load_workbook(io.BytesIO(data), data_only=True, read_only=True)
         sheets: List[str] = []
         for name in wb.sheetnames:
@@ -407,170 +444,189 @@ class MediaProcessor:
         return "\n".join(rows)
 
     @staticmethod
-    def _extract_zip(data: bytes) -> str:
+    def _extract_json(data: bytes) -> str:
+        parsed = json.loads(data.decode("utf-8", errors="replace"))
+        return json.dumps(parsed, indent=2, ensure_ascii=False)
+
+    @classmethod
+    def _extract_child_file_content(cls, filename: str, data: bytes) -> tuple[str, str, Optional[str]]:
         """
-        Extracts and concatenates text-readable files from a ZIP archive.
-
-        Security guards:
-        - Zip Slip (path traversal): reject any entry whose resolved path
-          escapes the virtual root.
-        - Zip Bomb: reject if total uncompressed size > 50 MB or > 200 files.
-        - Binary spam: only read entries with text-compatible extensions.
+        Universal extractor for individual files inside or outside archives.
+        Returns: (icon, type_label, text_content_or_None)
         """
-        import zipfile
-
-        _ZIP_MAX_TOTAL_BYTES = 50 * 1024 * 1024  # 50 MB uncompressed cap
-        _ZIP_MAX_FILES = 200
-        _ZIP_MAX_SINGLE = 10 * 1024 * 1024        # 10 MB per single file
-
-        # Text extensions to extract from inside the archive
-        _EXTRACTABLE = frozenset({
-            ".txt", ".md", ".py", ".js", ".ts", ".sh", ".yaml", ".yml",
-            ".toml", ".ini", ".env", ".log", ".html", ".xml", ".css",
-            ".sql", ".rs", ".go", ".java", ".c", ".cpp", ".h", ".conf",
-            ".cfg", ".json", ".csv",
-        })
+        ext = Path(filename).suffix.lower()
 
         try:
-            zf = zipfile.ZipFile(io.BytesIO(data))
-        except zipfile.BadZipFile as exc:
-            raise ValueError(f"File ZIP bị hỏng: {exc}") from exc
-
-        with zf:
-            members = zf.infolist()
-
-            # Zip Bomb check: total uncompressed size
-            total_uncompressed = sum(m.file_size for m in members)
-            if total_uncompressed > _ZIP_MAX_TOTAL_BYTES:
-                return (
-                    f"(Archive ZIP quá lớn khi giải nén: "
-                    f"{total_uncompressed // 1048576} MB > giới hạn 50 MB)"
-                )
-            if len(members) > _ZIP_MAX_FILES:
-                return f"(Archive ZIP có quá nhiều files: {len(members)} > giới hạn {_ZIP_MAX_FILES})"
-
-            parts: List[str] = []
-            skipped_binary = 0
-            root = "/"  # virtual root for path traversal check
-
-            for member in members:
-                name = member.filename
-                # Skip directories
-                if name.endswith("/"):
-                    continue
-                # Zip Slip guard: reject entries with path traversal
-                resolved = os.path.normpath(os.path.join(root, name))
-                if not resolved.startswith(root):
-                    logger.warning("[MediaProcessor] ZIP Slip attempt blocked: %s", name)
-                    continue
-                # Binary filter: only extract text-compatible files
-                ext = Path(name).suffix.lower()
-                if ext not in _EXTRACTABLE:
-                    skipped_binary += 1
-                    continue
-                # Single file size guard
-                if member.file_size > _ZIP_MAX_SINGLE:
-                    parts.append(f"[{name}]: (file quá lớn {member.file_size // 1048576} MB, bỏ qua)")
-                    continue
-                try:
-                    raw = zf.read(name)
-                    text = raw.decode("utf-8", errors="replace").strip()
-                    if text:
-                        parts.append(f"━━ [{name}] ━━\n{text}")
-                except Exception as exc:
-                    parts.append(f"[{name}]: (không đọc được: {exc})")
-
-            if not parts:
-                return (
-                    f"(Archive ZIP không chứa file văn bản nào có thể đọc được. "
-                    f"Đã bỏ qua {skipped_binary} file nhị phân.)"
-                )
-            if skipped_binary:
-                parts.append(f"\n[ℹ️ Đã bỏ qua {skipped_binary} file nhị phân trong archive]")
-            return "\n\n".join(parts)
+            if ext == ".pdf":
+                return "📄", "Tài liệu PDF", cls._extract_pdf(data)
+            if ext in (".docx", ".doc"):
+                return "📄", "Tài liệu Word", cls._extract_docx(data)
+            if ext in (".xlsx", ".xlsm", ".xls"):
+                return "📊", "Bảng tính Excel", cls._extract_xlsx(data)
+            if ext == ".csv":
+                return "📊", "Dữ liệu CSV", cls._extract_csv(data)
+            if ext == ".json":
+                return "📋", "Dữ liệu JSON", cls._extract_json(data)
+            if ext in cls._TEXT_EXTENSIONS:
+                return "📝", "Mã nguồn / Văn bản", data.decode("utf-8", errors="replace").strip()
+            if ext in cls._IMAGE_EXTENSIONS:
+                return "🖼️", "Hình ảnh", None  # Will be processed via Vision API
+            return "⚙️", "Tệp nhị phân", None
+        except Exception as exc:
+            logger.warning("[MediaProcessor] Error extracting child file %s: %s", filename, exc)
+            return "⚠️", "Lỗi đọc tệp", f"(Không thể trích xuất nội dung: {exc})"
 
     @staticmethod
-    def _extract_rar(data: bytes) -> str:
+    def _detect_archive_type(ext: str, mime: str, data: bytes) -> str:
         """
-        Extracts and concatenates text-readable files from a RAR archive.
-        Requires 'rarfile' Python package + 'unrar' system binary (Dockerfile).
-        Same security guards as _extract_zip.
+        Robust 3-tier archive format detector:
+        1. File extension (highest confidence)
+        2. Magic bytes (ground truth)
+        3. MIME type (fallback)
         """
-        try:
-            import rarfile  # lazy import — requires: pip install rarfile + apt install unrar-free
-        except ImportError:
-            raise ImportError(
-                "Thư viện 'rarfile' chưa được cài. "
-                "Thêm 'rarfile' vào requirements.txt và 'unrar-free' vào Dockerfile."
-            )
+        ext = ext.lower()
+        if ext in (".zip", ".jar", ".war"):
+            return "zip"
+        if ext in (".rar",):
+            return "rar"
+        if ext in (".tar", ".gz", ".tgz", ".bz2", ".tbz2", ".xz", ".txz") or ext.endswith((".tar.gz", ".tar.bz2", ".tar.xz")):
+            return "tar"
+        if ext in (".7z",):
+            return "7z"
 
-        _RAR_MAX_TOTAL_BYTES = 50 * 1024 * 1024
-        _RAR_MAX_FILES = 200
-        _RAR_MAX_SINGLE = 10 * 1024 * 1024
+        # Magic bytes inspection
+        if data[:4] == b"PK\x03\x04":
+            return "zip"
+        if data[:7] in (b"Rar!\x1a\x07\x00", b"Rar!\x1a\x07\x01"):
+            return "rar"
+        if data[:6] == b"7z\xbc\xaf\x27\x1c":
+            return "7z"
+        if data[:2] == b"\x1f\x8b" or data[:3] == b"BZh" or data[:6] == b"\xfd7zXZ\x00":
+            return "tar"
 
-        _EXTRACTABLE = frozenset({
-            ".txt", ".md", ".py", ".js", ".ts", ".sh", ".yaml", ".yml",
-            ".toml", ".ini", ".env", ".log", ".html", ".xml", ".css",
-            ".sql", ".rs", ".go", ".java", ".c", ".cpp", ".h", ".conf",
-            ".cfg", ".json", ".csv",
-        })
+        # MIME fallback
+        if "zip" in mime:
+            return "zip"
+        if "rar" in mime or "x-rar" in mime:
+            return "rar"
+        if "tar" in mime or "gzip" in mime or "bzip2" in mime:
+            return "tar"
+        if "7z" in mime:
+            return "7z"
 
-        try:
-            rf = rarfile.RarFile(io.BytesIO(data))
-        except rarfile.BadRarFile as exc:
-            raise ValueError(f"File RAR bị hỏng: {exc}") from exc
-        except rarfile.NeedFirstVolume:
-            return "(File RAR là một phần của multi-volume archive, không hỗ trợ đọc partial volumes)"
+        return "unknown"
 
-        with rf:
-            members = rf.infolist()
-            total_uncompressed = sum(getattr(m, "file_size", 0) for m in members)
-            if total_uncompressed > _RAR_MAX_TOTAL_BYTES:
-                return f"(Archive RAR quá lớn khi giải nén: {total_uncompressed // 1048576} MB > giới hạn 50 MB)"
-            if len(members) > _RAR_MAX_FILES:
-                return f"(Archive RAR có quá nhiều files: {len(members)} > giới hạn {_RAR_MAX_FILES})"
+    @classmethod
+    def _unpack_archive_members(
+        cls, file_bytes: bytes, filename: str, mime_type: Optional[str]
+    ) -> list[tuple[str, int, bytes]]:
+        """
+        Safely unpacks all members of an archive in memory.
+        Enforces security bounds:
+        - Zip Slip guard (path traversal)
+        - Zip Bomb guard (< 50MB uncompressed, max 200 files)
+        Returns: list of (member_name, file_size, raw_bytes)
+        """
+        ext = Path(filename).suffix.lower()
+        mime = (mime_type or "").lower()
+        fmt = cls._detect_archive_type(ext, mime, file_bytes)
 
-            parts: List[str] = []
-            skipped_binary = 0
-            root = "/"
+        _MAX_TOTAL_BYTES = 50 * 1024 * 1024
+        _MAX_FILES = 200
+        _MAX_SINGLE_FILE = 10 * 1024 * 1024
 
-            for member in members:
-                name = member.filename
-                if getattr(member, "is_dir", lambda: False)():
-                    continue
-                resolved = os.path.normpath(os.path.join(root, name))
-                if not resolved.startswith(root):
-                    logger.warning("[MediaProcessor] RAR path traversal blocked: %s", name)
-                    continue
-                ext = Path(name).suffix.lower()
-                if ext not in _EXTRACTABLE:
-                    skipped_binary += 1
-                    continue
-                file_size = getattr(member, "file_size", 0)
-                if file_size > _RAR_MAX_SINGLE:
-                    parts.append(f"[{name}]: (file quá lớn {file_size // 1048576} MB, bỏ qua)")
-                    continue
-                try:
+        members_data: list[tuple[str, int, bytes]] = []
+
+        if fmt == "zip":
+            import zipfile
+            with zipfile.ZipFile(io.BytesIO(file_bytes)) as zf:
+                infolist = zf.infolist()
+                total_uncompressed = sum(m.file_size for m in infolist)
+                if total_uncompressed > _MAX_TOTAL_BYTES:
+                    raise ValueError(f"Dung lượng giải nén ZIP quá lớn ({total_uncompressed // 1048576} MB > 50 MB)")
+                if len(infolist) > _MAX_FILES:
+                    raise ValueError(f"Số lượng file trong ZIP vượt quá giới hạn ({len(infolist)} > {_MAX_FILES})")
+
+                for info in infolist:
+                    name = info.filename
+                    if name.endswith("/"):
+                        continue
+                    resolved = os.path.normpath(os.path.join("/", name))
+                    if not resolved.startswith("/"):
+                        continue
+                    if info.file_size > _MAX_SINGLE_FILE:
+                        continue
+                    raw = zf.read(name)
+                    members_data.append((name, info.file_size, raw))
+
+        elif fmt == "rar":
+            try:
+                import rarfile
+            except ImportError:
+                raise ImportError("Thư viện 'rarfile' chưa được cài đặt trong hệ thống")
+            with rarfile.RarFile(io.BytesIO(file_bytes)) as rf:
+                infolist = rf.infolist()
+                total_uncompressed = sum(getattr(m, "file_size", 0) for m in infolist)
+                if total_uncompressed > _MAX_TOTAL_BYTES:
+                    raise ValueError(f"Dung lượng giải nén RAR quá lớn ({total_uncompressed // 1048576} MB > 50 MB)")
+                if len(infolist) > _MAX_FILES:
+                    raise ValueError(f"Số lượng file trong RAR vượt quá giới hạn ({len(infolist)} > {_MAX_FILES})")
+
+                for info in infolist:
+                    name = info.filename
+                    if getattr(info, "is_dir", lambda: False)():
+                        continue
+                    resolved = os.path.normpath(os.path.join("/", name))
+                    if not resolved.startswith("/"):
+                        continue
+                    size = getattr(info, "file_size", 0)
+                    if size > _MAX_SINGLE_FILE:
+                        continue
                     raw = rf.read(name)
-                    text = raw.decode("utf-8", errors="replace").strip()
-                    if text:
-                        parts.append(f"━━ [{name}] ━━\n{text}")
-                except Exception as exc:
-                    parts.append(f"[{name}]: (không đọc được: {exc})")
+                    members_data.append((name, size, raw))
 
-            if not parts:
-                return (
-                    f"(Archive RAR không chứa file văn bản nào có thể đọc được. "
-                    f"Đã bỏ qua {skipped_binary} file nhị phân.)"
-                )
-            if skipped_binary:
-                parts.append(f"\n[ℹ️ Đã bỏ qua {skipped_binary} file nhị phân trong archive]")
-            return "\n\n".join(parts)
+        elif fmt == "tar":
+            import tarfile
+            with tarfile.open(fileobj=io.BytesIO(file_bytes), mode="r:*") as tf:
+                infolist = tf.getmembers()
+                total_uncompressed = sum(m.size for m in infolist)
+                if total_uncompressed > _MAX_TOTAL_BYTES:
+                    raise ValueError(f"Dung lượng giải nén TAR quá lớn ({total_uncompressed // 1048576} MB > 50 MB)")
+                if len(infolist) > _MAX_FILES:
+                    raise ValueError(f"Số lượng file trong TAR vượt quá giới hạn ({len(infolist)} > {_MAX_FILES})")
 
-    # Image extensions recognized inside archives → routed through Vision pipeline
-    _IMAGE_EXTENSIONS = frozenset({
-        ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tiff", ".tif",
-    })
+                for info in infolist:
+                    if info.isdir():
+                        continue
+                    name = info.name
+                    resolved = os.path.normpath(os.path.join("/", name))
+                    if not resolved.startswith("/"):
+                        continue
+                    if info.size > _MAX_SINGLE_FILE:
+                        continue
+                    extracted = tf.extractfile(info)
+                    if extracted:
+                        raw = extracted.read()
+                        members_data.append((name, info.size, raw))
+
+        elif fmt == "7z":
+            try:
+                import py7zr
+            except ImportError:
+                raise ImportError("Thư viện 'py7zr' chưa được cài đặt trong hệ thống")
+            with py7zr.SevenZipFile(io.BytesIO(file_bytes), mode="r") as sz:
+                archive_dict = sz.readall()
+                for name, bio in archive_dict.items():
+                    resolved = os.path.normpath(os.path.join("/", name))
+                    if not resolved.startswith("/"):
+                        continue
+                    raw = bio.getvalue() if hasattr(bio, "getvalue") else bio.read()
+                    members_data.append((name, len(raw), raw))
+
+        else:
+            raise ValueError(f"Định dạng tệp nén không được hỗ trợ: {ext} (MIME: {mime})")
+
+        return members_data
 
     async def process_archive(
         self,
@@ -580,221 +636,70 @@ class MediaProcessor:
         caption: str = "",
     ) -> str:
         """
-        Unified handler for ZIP and RAR archives.
-
-        Strategy:
-        - Text-compatible files → extracted as plain text (same as extract_document_text)
-        - Image files (.jpg/.png/...) → analyzed via Vision pipeline (Groq → OpenRouter)
-        - Binary files (executables, videos...) → skipped, count reported
-
-        Limits to prevent abuse / rate limiting:
-        - Max 3 images analyzed per archive
-        - Max 5MB per image (larger skipped)
-        - Security guards (Zip Slip, Zip Bomb) inherited from _extract_zip / _extract_rar
+        Universal Multi-modal Archive Extractor.
+        Recursively extracts:
+        - Documents (PDF, DOCX, XLSX, CSV, JSON)
+        - Source code and plain text files
+        - Images via concise Technical Vision API (is_archive=True)
+        - Reports full inventory manifest
         """
-        ext = Path(filename).suffix.lower()
-        mime = (mime_type or "").lower()
+        try:
+            members = self._unpack_archive_members(file_bytes, filename, mime_type)
+        except Exception as exc:
+            logger.error("[MediaProcessor] Unpack error for %s: %s", filename, exc, exc_info=True)
+            return f"(Không thể giải nén tệp `{filename}`: {exc})"
+
+        if not members:
+            return f"(Tệp nén `{filename}` trống hoặc không chứa file hợp lệ.)"
 
         _MAX_IMAGES = 3
-        _MAX_IMAGE_BYTES = 5 * 1024 * 1024  # 5 MB per image
-
-        # Shared settings (also used by _extract_zip/_extract_rar)
-        _MAX_TOTAL_BYTES = 50 * 1024 * 1024
-        _MAX_FILES = 200
-        _MAX_SINGLE_TEXT = 10 * 1024 * 1024
-
-        _TEXT_EXTS = frozenset({
-            ".txt", ".md", ".py", ".js", ".ts", ".sh", ".yaml", ".yml",
-            ".toml", ".ini", ".env", ".log", ".html", ".xml", ".css",
-            ".sql", ".rs", ".go", ".java", ".c", ".cpp", ".h", ".conf",
-            ".cfg", ".json", ".csv",
-        })
-
-        parts: List[str] = []
         images_analyzed = 0
-        skipped_binary = 0
 
-        # IMPORTANT: Use file extension as the authoritative format indicator.
-        # Telegram frequently sends incorrect MIME types (e.g., application/zip for .rar files).
-        # Extension → MIME fallback → magic bytes fallback (never let MIME override extension).
-        def _detect_archive_format(ext: str, mime: str, data: bytes) -> str:
-            """Returns 'zip', 'rar', or 'unknown'."""
-            if ext == ".zip":
-                return "zip"
-            if ext == ".rar":
-                return "rar"
-            # Fallback: magic bytes are ground truth
-            if data[:4] == b"PK\x03\x04":          # ZIP magic
-                return "zip"
-            if data[:7] in (b"Rar!\x1a\x07\x00", b"Rar!\x1a\x07\x01"):  # RAR4 / RAR5 magic
-                return "rar"
-            # Last resort: MIME type (least reliable — Telegram often sends wrong MIME)
-            if "zip" in mime:
-                return "zip"
-            if "rar" in mime or "x-rar" in mime:
-                return "rar"
-            return "unknown"
+        manifest_lines: List[str] = []
+        detail_blocks: List[str] = []
 
-        archive_fmt = _detect_archive_format(ext, mime, file_bytes)
-        logger.info("[MediaProcessor] process_archive: file=%s ext=%s mime=%s → fmt=%s", filename, ext, mime, archive_fmt)
+        for idx, (m_name, m_size, m_data) in enumerate(members, 1):
+            icon, type_label, text_content = self._extract_child_file_content(m_name, m_data)
+            size_kb = round(m_size / 1024, 1)
 
-        try:
-            if archive_fmt == "zip":
-                import zipfile
-                try:
-                    zf = zipfile.ZipFile(io.BytesIO(file_bytes))
-                except zipfile.BadZipFile as exc:
-                    return f"(File ZIP bị hỏng: {exc})"
+            # Record in manifest
+            manifest_lines.append(f"  {idx}. {icon} `{m_name}` ({size_kb} KB — {type_label})")
 
-                with zf:
-                    members = zf.infolist()
-                    total_uncompressed = sum(m.file_size for m in members)
-                    if total_uncompressed > _MAX_TOTAL_BYTES:
-                        return f"(Archive ZIP quá lớn khi giải nén: {total_uncompressed // 1048576} MB > 50 MB)"
-                    if len(members) > _MAX_FILES:
-                        return f"(Archive ZIP có quá nhiều files: {len(members)} > {_MAX_FILES})"
-
-                    for member in members:
-                        name = member.filename
-                        if name.endswith("/"):
-                            continue
-                        # Zip Slip guard
-                        resolved = os.path.normpath(os.path.join("/", name))
-                        if not resolved.startswith("/"):
-                            continue
-                        file_ext = Path(name).suffix.lower()
-
-                        if file_ext in _TEXT_EXTS:
-                            if member.file_size > _MAX_SINGLE_TEXT:
-                                parts.append(f"[{name}]: (file quá lớn, bỏ qua)")
-                                continue
-                            try:
-                                raw = zf.read(name)
-                                text = raw.decode("utf-8", errors="replace").strip()
-                                if text:
-                                    parts.append(f"━━ [📄 {name}] ━━\n{text}")
-                            except Exception as exc:
-                                parts.append(f"[{name}]: (lỗi đọc: {exc})")
-
-                        elif file_ext in self._IMAGE_EXTENSIONS:
-                            if images_analyzed >= _MAX_IMAGES:
-                                parts.append(f"[🖼️ {name}]: (bỏ qua — đã phân tích tối đa {_MAX_IMAGES} ảnh)")
-                                continue
-                            if member.file_size > _MAX_IMAGE_BYTES:
-                                parts.append(f"[🖼️ {name}]: (ảnh quá lớn {member.file_size // 1048576}MB, bỏ qua)")
-                                continue
-                            try:
-                                img_bytes = zf.read(name)
-                                img_caption = caption or f"Ảnh '{name}' trong archive {filename}"
-                                logger.info("[MediaProcessor] Analyzing image in ZIP: %s", name)
-                                vision_result = await self.analyze_image(img_bytes, caption=img_caption)
-                                parts.append(f"━━ [🖼️ {name}] ━━\n{vision_result}")
-                                images_analyzed += 1
-                            except Exception as exc:
-                                parts.append(f"[🖼️ {name}]: (lỗi phân tích ảnh: {exc})")
-                        else:
-                            skipped_binary += 1
-
-            elif archive_fmt == "rar":
-                try:
-                    import rarfile
-                except ImportError:
-                    return "(Lỗi: thư viện 'rarfile' chưa được cài đặt)"
-
-                try:
-                    rf = rarfile.RarFile(io.BytesIO(file_bytes))
-                except rarfile.BadRarFile as exc:
-                    return f"(File RAR bị hỏng: {exc})"
-                except rarfile.NeedFirstVolume:
-                    return "(File RAR là partial multi-volume archive, không hỗ trợ)"
-
-                with rf:
-                    members = rf.infolist()
-                    total_uncompressed = sum(getattr(m, "file_size", 0) for m in members)
-                    if total_uncompressed > _MAX_TOTAL_BYTES:
-                        return f"(Archive RAR quá lớn: {total_uncompressed // 1048576} MB > 50 MB)"
-                    if len(members) > _MAX_FILES:
-                        return f"(Archive RAR có quá nhiều files: {len(members)} > {_MAX_FILES})"
-
-                    for member in members:
-                        name = member.filename
-                        if getattr(member, "is_dir", lambda: False)():
-                            continue
-                        resolved = os.path.normpath(os.path.join("/", name))
-                        if not resolved.startswith("/"):
-                            continue
-                        file_ext = Path(name).suffix.lower()
-                        file_size = getattr(member, "file_size", 0)
-
-                        if file_ext in _TEXT_EXTS:
-                            if file_size > _MAX_SINGLE_TEXT:
-                                parts.append(f"[{name}]: (file quá lớn, bỏ qua)")
-                                continue
-                            try:
-                                raw = rf.read(name)
-                                text = raw.decode("utf-8", errors="replace").strip()
-                                if text:
-                                    parts.append(f"━━ [📄 {name}] ━━\n{text}")
-                            except Exception as exc:
-                                parts.append(f"[{name}]: (lỗi đọc: {exc})")
-
-                        elif file_ext in self._IMAGE_EXTENSIONS:
-                            if images_analyzed >= _MAX_IMAGES:
-                                parts.append(f"[🖼️ {name}]: (bỏ qua — đã phân tích tối đa {_MAX_IMAGES} ảnh)")
-                                continue
-                            if file_size > _MAX_IMAGE_BYTES:
-                                parts.append(f"[🖼️ {name}]: (ảnh quá lớn {file_size // 1048576}MB, bỏ qua)")
-                                continue
-                            try:
-                                img_bytes = rf.read(name)
-                                img_caption = caption or f"Ảnh '{name}' trong archive {filename}"
-                                logger.info("[MediaProcessor] Analyzing image in RAR: %s", name)
-                                vision_result = await self.analyze_image(img_bytes, caption=img_caption)
-                                parts.append(f"━━ [🖼️ {name}] ━━\n{vision_result}")
-                                images_analyzed += 1
-                            except Exception as exc:
-                                parts.append(f"[🖼️ {name}]: (lỗi phân tích ảnh: {exc})")
-                        else:
-                            skipped_binary += 1
+            # Extract detailed content
+            if text_content is not None:
+                detail_blocks.append(f"━━━ [{idx}/{len(members)}] {icon} `{m_name}` ({type_label}) ━━━\n{text_content}")
+            elif icon == "🖼️":
+                if images_analyzed < _MAX_IMAGES:
+                    try:
+                        logger.info("[MediaProcessor] Vision analysis for archive image: %s (%d bytes)", m_name, m_size)
+                        v_result = await self.analyze_image(
+                            m_data,
+                            caption=caption or f"Tệp ảnh {m_name} trong archive {filename}",
+                            is_archive=True,
+                        )
+                        detail_blocks.append(f"━━━ [{idx}/{len(members)}] 🖼️ `{m_name}` ({type_label}) ━━━\n{v_result}")
+                        images_analyzed += 1
+                    except Exception as exc:
+                        detail_blocks.append(f"━━━ [{idx}/{len(members)}] 🖼️ `{m_name}` ━━━\n(Lỗi phân tích hình ảnh: {exc})")
+                else:
+                    detail_blocks.append(f"━━━ [{idx}/{len(members)}] 🖼️ `{m_name}` ━━━\n(Bỏ qua phân tích thị giác do đã đạt giới hạn {_MAX_IMAGES} ảnh/tệp nén)")
             else:
-                return f"(Không nhận dạng được định dạng archive: ext={ext}, mime={mime}, fmt={archive_fmt}. Chỉ hỗ trợ ZIP và RAR.)"
+                detail_blocks.append(f"━━━ [{idx}/{len(members)}] ⚙️ `{m_name}` ({type_label}) ━━━\n[Tệp nhị phân không khả dụng trích xuất văn bản/hình ảnh]")
 
-        except Exception as exc:
-            logger.error("[MediaProcessor] process_archive error for %s: %s", filename, exc, exc_info=True)
-            return f"(Không thể xử lý archive `{filename}`: {exc})"
-
-        if not parts:
-            return f"(Archive không chứa nội dung có thể đọc. Đã bỏ qua {skipped_binary} file nhị phân.)"
-
-        # Count text files (parts not starting with image emoji)
-        text_file_count = sum(1 for p in parts if p.startswith("━━ [📄"))
-        img_file_count = sum(1 for p in parts if p.startswith("━━ [🖼️"))
-
-        # Explicit manifest header — prevents LLM from mis-counting files in archive
-        header_parts = []
-        if img_file_count:
-            header_parts.append(f"{img_file_count} ảnh")
-        if text_file_count:
-            header_parts.append(f"{text_file_count} file văn bản")
-        if skipped_binary:
-            header_parts.append(f"{skipped_binary} file nhị phân (bỏ qua)")
         header = (
-            f"[📦 Archive '{filename}' chứa: {', '.join(header_parts)}]\n"
-            f"[Nội dung chi tiết từng file bên dưới:]\n"
+            f"[📦 TỔNG QUAN TỆP NÉN: '{filename}']\n"
+            f"• Tổng số tệp trích xuất: {len(members)} tệp ({images_analyzed} hình ảnh đã phân tích thị giác)\n"
+            f"• Danh mục tệp bên trong:\n" + "\n".join(manifest_lines) + "\n\n"
+            f"═══════════════════════════════════════════════════════════\n"
+            f"[CHI TIẾT NỘI DUNG ĐÃ TRÍCH XUẤT TỪNG TỆP BÊN DƯỚI]\n\n"
         )
 
-        result = header + "\n\n".join(parts)
-        if len(result) > _MAX_DOC_CHARS:
-            result = result[:_MAX_DOC_CHARS] + f"\n\n... (nội dung cắt bớt, chỉ hiển thị {_MAX_DOC_CHARS} ký tự đầu)"
-        return result
+        full_result = header + "\n\n".join(detail_blocks)
 
-    # Supported plain-text extensions (read directly without special parser)
-    _TEXT_EXTENSIONS = frozenset({
-        ".txt", ".md", ".py", ".js", ".ts", ".sh", ".bash",
-        ".yaml", ".yml", ".toml", ".ini", ".env", ".log",
-        ".html", ".xml", ".css", ".sql", ".rs", ".go",
-        ".java", ".c", ".cpp", ".h", ".conf", ".cfg",
-    })
+        if len(full_result) > _MAX_DOC_CHARS:
+            full_result = full_result[:_MAX_DOC_CHARS] + f"\n\n... (nội dung cắt bớt, chỉ hiển thị {_MAX_DOC_CHARS} ký tự đầu)"
+
+        return full_result
 
     def extract_document_text(
         self,
@@ -803,47 +708,16 @@ class MediaProcessor:
         filename: str,
     ) -> str:
         """
-        Auto-dispatches to the right extractor based on file extension + MIME type.
-        Returns extracted text, capped at _MAX_DOC_CHARS to protect token budget.
-
-        Supported formats:
-          PDF, DOCX, XLSX/XLSM, CSV, JSON, ZIP, RAR, TXT + source code files.
+        Standalone document extractor for single files (PDF, Word, Excel, CSV, JSON, Text/Code).
         """
+        icon, type_label, text_content = self._extract_child_file_content(filename, file_bytes)
+        if text_content is not None:
+            if len(text_content) > _MAX_DOC_CHARS:
+                text_content = text_content[:_MAX_DOC_CHARS] + f"\n\n... (nội dung cắt bớt, chỉ hiển thị {_MAX_DOC_CHARS} ký tự đầu)"
+            return text_content
+
         ext = Path(filename).suffix.lower()
-        mime = (mime_type or "").lower()
-
-        try:
-            if ext == ".pdf" or "pdf" in mime:
-                raw = self._extract_pdf(file_bytes)
-            elif ext == ".docx" or "wordprocessingml" in mime or "msword" in mime:
-                raw = self._extract_docx(file_bytes)
-            elif ext in (".xlsx", ".xlsm") or "spreadsheetml" in mime or "ms-excel" in mime:
-                raw = self._extract_xlsx(file_bytes)
-            elif ext == ".csv" or "csv" in mime:
-                raw = self._extract_csv(file_bytes)
-            elif ext == ".json" or "json" in mime:
-                parsed = json.loads(file_bytes.decode("utf-8", errors="replace"))
-                raw = json.dumps(parsed, indent=2, ensure_ascii=False)
-            elif ext == ".zip" or (ext not in (".rar",) and "zip" in mime and file_bytes[:4] == b"PK\x03\x04"):
-                raw = self._extract_zip(file_bytes)
-            elif ext == ".rar" or "rar" in mime or "x-rar" in mime or file_bytes[:4] == b"Rar!":
-                raw = self._extract_rar(file_bytes)
-            elif ext in self._TEXT_EXTENSIONS or mime.startswith("text/"):
-                raw = file_bytes.decode("utf-8", errors="replace")
-            else:
-                return (
-                    f"(Định dạng file `{ext or 'không rõ'}` chưa được hỗ trợ đọc tự động. "
-                    "Hỗ trợ: PDF, DOCX, XLSX, CSV, JSON, ZIP, RAR, TXT và các file source code.)"
-                )
-        except ImportError as exc:
-            logger.error("[MediaProcessor] Missing package for %s: %s", ext, exc)
-            return f"(Lỗi: thiếu thư viện để đọc file `{ext}`. Chi tiết: {exc})"
-        except Exception as exc:
-            logger.error("[MediaProcessor] Extract error for %s: %s", filename, exc)
-            return f"(Không thể đọc file `{filename}`: {exc})"
-
-        # Hard cap to avoid context window overflow
-        if len(raw) > _MAX_DOC_CHARS:
-            raw = raw[:_MAX_DOC_CHARS] + f"\n\n... (nội dung bị cắt bớt, chỉ hiển thị {_MAX_DOC_CHARS} ký tự đầu)"
-
-        return raw.strip()
+        return (
+            f"(Định dạng tệp `{ext or 'không rõ'}` ({type_label}) chưa được hỗ trợ đọc trực tiếp. "
+            "Hỗ trợ: PDF, DOCX, XLSX, CSV, JSON, ZIP, RAR, TAR, 7Z và các tệp mã nguồn.)"
+        )

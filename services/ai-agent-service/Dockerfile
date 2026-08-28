@@ -20,6 +20,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     xdotool \
     scrot \
     unrar-free \
+    p7zip-full \
     && ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone \
     && rm -rf /var/lib/apt/lists/*
 

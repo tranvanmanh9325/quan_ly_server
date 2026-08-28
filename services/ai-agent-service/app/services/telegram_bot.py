@@ -181,7 +181,6 @@ class TelegramBot:
         if not self.token or not photo_path:
             return False
         try:
-            from pathlib import Path
             p = Path(photo_path)
             if not p.exists():
                 logger.error("[TelegramBot] Photo file does not exist: %s", photo_path)
@@ -205,6 +204,38 @@ class TelegramBot:
         except Exception as e:
             logger.error("[TelegramBot] Failed sending photo: %s", e, exc_info=True)
         return False
+
+    async def send_photo_bytes(self, chat_id: str, photo_bytes: bytes, filename: str = "photo.png", caption: Optional[str] = None) -> bool:
+        if not self.token or not photo_bytes:
+            return False
+        try:
+            url = f"{self.api_url}/sendPhoto"
+            files = {"photo": (filename, photo_bytes, "image/png")}
+            data = {"chat_id": chat_id}
+            if caption:
+                data["caption"] = caption
+
+            res = await self._http_client.post(url, data=data, files=files, timeout=40.0)
+            return res.status_code == 200
+        except Exception as e:
+            logger.error("[TelegramBot] Failed sending photo bytes: %s", e)
+            return False
+
+    async def send_document(self, chat_id: str, file_bytes: bytes, filename: str, caption: Optional[str] = None) -> bool:
+        if not self.token or not file_bytes:
+            return False
+        try:
+            url = f"{self.api_url}/sendDocument"
+            files = {"document": (filename, file_bytes, "application/octet-stream")}
+            data = {"chat_id": chat_id}
+            if caption:
+                data["caption"] = caption
+
+            res = await self._http_client.post(url, data=data, files=files, timeout=60.0)
+            return res.status_code == 200
+        except Exception as e:
+            logger.error("[TelegramBot] Failed sending document bytes: %s", e)
+            return False
 
     async def _claim_update(self, update_id: int) -> bool:
         """Ensures at-most-once processing using PostgreSQL unique index."""
@@ -618,24 +649,47 @@ class TelegramBot:
             logger.info("[TelegramBot] Document from %s: %s (%s, %d bytes)", chat_id, filename, mime_type, file_size)
             # Telegram Bot API only allows downloading files up to 20MB
             if file_size > 20 * 1024 * 1024:
-                await self.send_message(chat_id, f"⚠️ File `{filename}` quá lớn ({file_size // 1048576}MB). Giới hạn là 20MB.")
+                await self.send_message(chat_id, f"⚠️ File `{filename}` quá lớn ({file_size // 1048576}MB). Giới hạn tải là 20MB.")
                 return
             try:
                 file_bytes = await self._media.download_telegram_file(file_id)
                 ext = Path(filename).suffix.lower()
-                # ZIP/RAR: use async process_archive() which handles both text + images via Vision
-                if ext in (".zip", ".rar") or "zip" in mime_type or "rar" in mime_type:
+                archive_exts = {".zip", ".rar", ".tar", ".gz", ".tgz", ".bz2", ".tbz2", ".xz", ".txz", ".7z", ".jar", ".war"}
+                mime_lower = (mime_type or "").lower()
+                is_archive = ext in archive_exts or any(t in mime_lower for t in ("zip", "rar", "tar", "7z", "compressed", "archive", "x-rar"))
+
+                if is_archive:
                     content = await self._media.process_archive(file_bytes, mime_type, filename, caption=caption)
                 else:
                     content = self._media.extract_document_text(file_bytes, mime_type, filename)
-                caption_part = f"\nCaption: {caption}" if caption else ""
-                user_input = f"[📄 File: {filename}]{caption_part}\n\n{content}"
+
+                caption_part = f"\n[Yêu cầu từ anh Mạnh]: {caption}" if caption else ""
+                user_input = f"[📄 TỆP ĐÍNH KÈM: {filename}]{caption_part}\n\n{content}"
                 logger.info("[TelegramBot] Document extracted: %d chars", len(content))
                 reply = await self.ai_agent.chat(chat_id, user_input)
                 await self.send_message(chat_id, reply)
+
+                # Optional: If user explicitly requested extracting/sending child files directly
+                if is_archive and any(w in caption.lower() for w in ("trích xuất ra gửi", "tách file gửi", "gửi lại file", "extract and send", "gửi từng file")):
+                    try:
+                        members = self._media._unpack_archive_members(file_bytes, filename, mime_type)
+                        sent_count = 0
+                        for m_name, m_size, m_data in members[:5]:  # Send up to 5 individual extracted files
+                            m_ext = Path(m_name).suffix.lower()
+                            if m_ext in self._media._IMAGE_EXTENSIONS:
+                                await self.send_photo_bytes(chat_id, m_data, filename=m_name, caption=f"🖼️ {m_name}")
+                                sent_count += 1
+                            elif m_size <= 10 * 1024 * 1024:
+                                await self.send_document(chat_id, m_data, filename=m_name, caption=f"📄 {m_name}")
+                                sent_count += 1
+                        if sent_count > 0:
+                            logger.info("[TelegramBot] Auto-extracted and sent %d files from archive to %s", sent_count, chat_id)
+                    except Exception as ex_send:
+                        logger.warning("[TelegramBot] Failed sending extracted child files: %s", ex_send)
+
             except Exception as err:
                 logger.error("[TelegramBot] Document processing error: %s", err, exc_info=True)
-                await self.send_message(chat_id, f"Xin lỗi, em không thể đọc file `{filename}` lúc này.")
+                await self.send_message(chat_id, f"Xin lỗi anh Mạnh, em không thể đọc tệp `{filename}` lúc này ({err}).")
             return
 
         # ── 2d. Text Message ──────────────────────────────────────────────────

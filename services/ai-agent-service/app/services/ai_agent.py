@@ -320,6 +320,31 @@ class AiAgentService:
     # System Prompt
     # ──────────────────────────────────────────────────────────────────────────
 
+    def _build_attachment_system_prompt(self) -> str:
+        """
+        Ultra-compact system prompt for attachment processing (archive, PDF, image analysis).
+        Keeps only attachment-reading rules to stay under Groq's 8000 TPM limit.
+        Full system prompt is ~4500 tokens; this one is ~600 tokens.
+        """
+        now_vn = datetime.now(VN_TZ).strftime("%H:%M %d/%m/%Y (ICT/UTC+7)")
+        return (
+            f'Bạn là "Tiểu Bảo Bảo" — Trợ lý AI của anh Mạnh. Thời gian: {now_vn}.\n'
+            "Xưng \"em\", gọi người dùng là \"anh Mạnh\".\n\n"
+            "NHIỆM VỤ: Đọc và tóm tắt NỘI DUNG TỆP ĐÍNH KÈM đã được trích xuất.\n\n"
+            "QUY TẮC BẮT BUỘC (CHỐNG HALLUCINATION):\n"
+            "1. Chỉ đọc và tổng hợp ĐÚNG những gì có trong phần [CHI TIẾT NỘI DUNG ĐÃ TRÍCH XUẤT].\n"
+            "2. TUYỆT ĐỐI KHÔNG đoán mò, suy diễn nội dung mà KHÔNG có trong text trích xuất.\n"
+            "3. TUYỆT ĐỐI KHÔNG nói 'Dự đoán', 'Có khả năng chứa', 'Có thể là' khi đã có nội dung thực.\n"
+            "4. Với tệp PDF: Đọc đúng số liệu được cung cấp (ví dụ: N3, 32/60, 113/180...) và trình bày chính xác.\n"
+            "5. Với ảnh: Tóm tắt mô tả kỹ thuật đã có trong phần trích xuất.\n"
+            "6. Trình bày có cấu trúc, BLUF (kết luận trước), bằng tiếng Việt.\n"
+            "7. Phân tích TẤT CẢ các file trong archive — không bỏ sót bất kỳ file nào.\n\n"
+            "VÍ DỤ PHẢN HỒI ĐÚNG với PDF kết quả thi:\n"
+            "Phần nội dung trích xuất có: N3, 26A2080102-32551, 32 / 60, 113 / 180, 36 / 60, 45 / 60, A\n"
+            "→ Bot phải đọc: 'Result.pdf là phiếu kết quả thi JLPT N3. SBD: 26A2080102-32551. "
+            "Tổng điểm: 113/180. Ngôn ngữ: 32/60. Đọc hiểu: 36/60. Nghe: 45/60. Kết quả: A (Đạt).'"
+        )
+
     def _build_system_prompt(self) -> str:
         now_vn = datetime.now(VN_TZ).strftime("%H:%M:%S ngày %d/%m/%Y (Giờ Việt Nam - ICT/UTC+7)")
         server_loc = getattr(settings, "SERVER_PHYSICAL_LOCATION", "Định Công, Hoàng Mai, Hà Nội, Việt Nam")
@@ -2013,7 +2038,15 @@ TÌNH HUỐNG: Anh Mạnh mô tả một thông báo có "kênh phát sóng", "t
         # the full payload past Groq's per-request limit → HTTP 413.
         # Solution: flush history before processing any attachment so the context budget
         # is used entirely for the rich attachment content, not stale prior turns.
-        if user_message.startswith("[📄 TỆP ĐÍNH KÈM:") or user_message.startswith("[📸") or user_message.startswith("[📄 File:"):
+        # Additionally: skip tools schema (saves ~3775 tokens) since attachments only need
+        # reading/summarization — no tool calls required on first pass.
+        _is_attachment = (
+            user_message.startswith("[📄 TỆP ĐÍNH KÈM:")
+            or user_message.startswith("[📸")
+            or user_message.startswith("[📄 File:")
+            or user_message.startswith("[🎤 Tin nhắn thoại]:")
+        )
+        if _is_attachment:
             logger.info("[AiAgent] 📎 Attachment detected — flushing history to prevent 413 context overflow.")
             history.clear()
 
@@ -2096,6 +2129,7 @@ TÌNH HUỐNG: Anh Mạnh mô tả một thông báo có "kênh phát sóng", "t
                 history=history,
                 iteration=iteration,
                 force_synthesis=force_synthesis,
+                is_attachment=_is_attachment,
             )
 
             # P9 (v4.0) Dendritic SLM Routing: intent-based tool set restriction
@@ -2110,10 +2144,19 @@ TÌNH HUỐNG: Anh Mạnh mô tả một thông báo có "kênh phát sóng", "t
                 _intent_excluded = {"server_capture_screenshot", "facebook_capture_screenshot"}
             # Note: diagnostic/action/general keep full tool access (run_command needed for all)
 
-            tools_available = self._build_tools(
-                excluded_tools=executed_once_tools | _intent_excluded
-            )
-            tool_choice = "none" if (force_synthesis or not tools_available) else "auto"
+            # Attachment-mode: drop tools entirely on iteration 0 to stay under Groq's 8000 TPM limit.
+            # System prompt (4482) + tools schema (3775) + content (3000+) > 8000 → always 413.
+            # Attachments need summarization only — no tool calls on first response pass.
+            _skip_tools_for_attachment = _is_attachment and iteration == 0
+
+            if _skip_tools_for_attachment:
+                tools_available = []
+                tool_choice = "none"
+            else:
+                tools_available = self._build_tools(
+                    excluded_tools=executed_once_tools | _intent_excluded
+                )
+                tool_choice = "none" if (force_synthesis or not tools_available) else "auto"
 
             llm_result = await self.llm_router.complete(
                 messages=messages,
@@ -2378,15 +2421,22 @@ TÌNH HUỐNG: Anh Mạnh mô tả một thông báo có "kênh phát sóng", "t
         self,
         history: List[Dict[str, Any]],
         iteration: int,
-        force_synthesis: bool = False
+        force_synthesis: bool = False,
+        is_attachment: bool = False,
     ) -> List[Dict[str, Any]]:
         """
         Builds a compacted message payload for LLM completion.
-        - Keeps system prompt.
+        - Keeps system prompt (compact variant for attachment to avoid 413).
         - Compacts older tool outputs in history so total character payload never triggers HTTP 413.
         - If iteration >= 3 or force_synthesis, appends a concise synthesis directive.
         """
-        system_content = self._build_system_prompt()
+        # Attachment mode: use compact prompt (~600 tokens) instead of full (~4500 tokens)
+        # to stay under Groq's 8000 TPM limit when content is already 800+ tokens
+        system_content = (
+            self._build_attachment_system_prompt()
+            if is_attachment
+            else self._build_system_prompt()
+        )
         messages = [{"role": "system", "content": system_content}]
 
         # Count total tool messages in history to identify recent vs older tool results

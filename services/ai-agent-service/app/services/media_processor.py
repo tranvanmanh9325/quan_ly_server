@@ -614,8 +614,32 @@ class MediaProcessor:
         images_analyzed = 0
         skipped_binary = 0
 
+        # IMPORTANT: Use file extension as the authoritative format indicator.
+        # Telegram frequently sends incorrect MIME types (e.g., application/zip for .rar files).
+        # Extension → MIME fallback → magic bytes fallback (never let MIME override extension).
+        def _detect_archive_format(ext: str, mime: str, data: bytes) -> str:
+            """Returns 'zip', 'rar', or 'unknown'."""
+            if ext == ".zip":
+                return "zip"
+            if ext == ".rar":
+                return "rar"
+            # Fallback: magic bytes are ground truth
+            if data[:4] == b"PK\x03\x04":          # ZIP magic
+                return "zip"
+            if data[:7] in (b"Rar!\x1a\x07\x00", b"Rar!\x1a\x07\x01"):  # RAR4 / RAR5 magic
+                return "rar"
+            # Last resort: MIME type (least reliable — Telegram often sends wrong MIME)
+            if "zip" in mime:
+                return "zip"
+            if "rar" in mime or "x-rar" in mime:
+                return "rar"
+            return "unknown"
+
+        archive_fmt = _detect_archive_format(ext, mime, file_bytes)
+        logger.info("[MediaProcessor] process_archive: file=%s ext=%s mime=%s → fmt=%s", filename, ext, mime, archive_fmt)
+
         try:
-            if ext == ".zip" or "zip" in mime:
+            if archive_fmt == "zip":
                 import zipfile
                 try:
                     zf = zipfile.ZipFile(io.BytesIO(file_bytes))
@@ -671,7 +695,7 @@ class MediaProcessor:
                         else:
                             skipped_binary += 1
 
-            elif ext == ".rar" or "rar" in mime or "x-rar" in mime:
+            elif archive_fmt == "rar":
                 try:
                     import rarfile
                 except ImportError:
@@ -733,7 +757,7 @@ class MediaProcessor:
                         else:
                             skipped_binary += 1
             else:
-                return f"(process_archive: định dạng không phải ZIP/RAR: {ext})"
+                return f"(Không nhận dạng được định dạng archive: ext={ext}, mime={mime}, fmt={archive_fmt}. Chỉ hỗ trợ ZIP và RAR.)"
 
         except Exception as exc:
             logger.error("[MediaProcessor] process_archive error for %s: %s", filename, exc, exc_info=True)
@@ -800,9 +824,9 @@ class MediaProcessor:
             elif ext == ".json" or "json" in mime:
                 parsed = json.loads(file_bytes.decode("utf-8", errors="replace"))
                 raw = json.dumps(parsed, indent=2, ensure_ascii=False)
-            elif ext == ".zip" or "zip" in mime:
+            elif ext == ".zip" or (ext not in (".rar",) and "zip" in mime and file_bytes[:4] == b"PK\x03\x04"):
                 raw = self._extract_zip(file_bytes)
-            elif ext == ".rar" or "rar" in mime or "x-rar" in mime:
+            elif ext == ".rar" or "rar" in mime or "x-rar" in mime or file_bytes[:4] == b"Rar!":
                 raw = self._extract_rar(file_bytes)
             elif ext in self._TEXT_EXTENSIONS or mime.startswith("text/"):
                 raw = file_bytes.decode("utf-8", errors="replace")

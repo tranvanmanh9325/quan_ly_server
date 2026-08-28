@@ -566,6 +566,190 @@ class MediaProcessor:
                 parts.append(f"\n[ℹ️ Đã bỏ qua {skipped_binary} file nhị phân trong archive]")
             return "\n\n".join(parts)
 
+    # Image extensions recognized inside archives → routed through Vision pipeline
+    _IMAGE_EXTENSIONS = frozenset({
+        ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tiff", ".tif",
+    })
+
+    async def process_archive(
+        self,
+        file_bytes: bytes,
+        mime_type: Optional[str],
+        filename: str,
+        caption: str = "",
+    ) -> str:
+        """
+        Unified handler for ZIP and RAR archives.
+
+        Strategy:
+        - Text-compatible files → extracted as plain text (same as extract_document_text)
+        - Image files (.jpg/.png/...) → analyzed via Vision pipeline (Groq → OpenRouter)
+        - Binary files (executables, videos...) → skipped, count reported
+
+        Limits to prevent abuse / rate limiting:
+        - Max 3 images analyzed per archive
+        - Max 5MB per image (larger skipped)
+        - Security guards (Zip Slip, Zip Bomb) inherited from _extract_zip / _extract_rar
+        """
+        ext = Path(filename).suffix.lower()
+        mime = (mime_type or "").lower()
+
+        _MAX_IMAGES = 3
+        _MAX_IMAGE_BYTES = 5 * 1024 * 1024  # 5 MB per image
+
+        # Shared settings (also used by _extract_zip/_extract_rar)
+        _MAX_TOTAL_BYTES = 50 * 1024 * 1024
+        _MAX_FILES = 200
+        _MAX_SINGLE_TEXT = 10 * 1024 * 1024
+
+        _TEXT_EXTS = frozenset({
+            ".txt", ".md", ".py", ".js", ".ts", ".sh", ".yaml", ".yml",
+            ".toml", ".ini", ".env", ".log", ".html", ".xml", ".css",
+            ".sql", ".rs", ".go", ".java", ".c", ".cpp", ".h", ".conf",
+            ".cfg", ".json", ".csv",
+        })
+
+        parts: List[str] = []
+        images_analyzed = 0
+        skipped_binary = 0
+
+        try:
+            if ext == ".zip" or "zip" in mime:
+                import zipfile
+                try:
+                    zf = zipfile.ZipFile(io.BytesIO(file_bytes))
+                except zipfile.BadZipFile as exc:
+                    return f"(File ZIP bị hỏng: {exc})"
+
+                with zf:
+                    members = zf.infolist()
+                    total_uncompressed = sum(m.file_size for m in members)
+                    if total_uncompressed > _MAX_TOTAL_BYTES:
+                        return f"(Archive ZIP quá lớn khi giải nén: {total_uncompressed // 1048576} MB > 50 MB)"
+                    if len(members) > _MAX_FILES:
+                        return f"(Archive ZIP có quá nhiều files: {len(members)} > {_MAX_FILES})"
+
+                    for member in members:
+                        name = member.filename
+                        if name.endswith("/"):
+                            continue
+                        # Zip Slip guard
+                        resolved = os.path.normpath(os.path.join("/", name))
+                        if not resolved.startswith("/"):
+                            continue
+                        file_ext = Path(name).suffix.lower()
+
+                        if file_ext in _TEXT_EXTS:
+                            if member.file_size > _MAX_SINGLE_TEXT:
+                                parts.append(f"[{name}]: (file quá lớn, bỏ qua)")
+                                continue
+                            try:
+                                raw = zf.read(name)
+                                text = raw.decode("utf-8", errors="replace").strip()
+                                if text:
+                                    parts.append(f"━━ [📄 {name}] ━━\n{text}")
+                            except Exception as exc:
+                                parts.append(f"[{name}]: (lỗi đọc: {exc})")
+
+                        elif file_ext in self._IMAGE_EXTENSIONS:
+                            if images_analyzed >= _MAX_IMAGES:
+                                parts.append(f"[🖼️ {name}]: (bỏ qua — đã phân tích tối đa {_MAX_IMAGES} ảnh)")
+                                continue
+                            if member.file_size > _MAX_IMAGE_BYTES:
+                                parts.append(f"[🖼️ {name}]: (ảnh quá lớn {member.file_size // 1048576}MB, bỏ qua)")
+                                continue
+                            try:
+                                img_bytes = zf.read(name)
+                                img_caption = caption or f"Ảnh '{name}' trong archive {filename}"
+                                logger.info("[MediaProcessor] Analyzing image in ZIP: %s", name)
+                                vision_result = await self.analyze_image(img_bytes, caption=img_caption)
+                                parts.append(f"━━ [🖼️ {name}] ━━\n{vision_result}")
+                                images_analyzed += 1
+                            except Exception as exc:
+                                parts.append(f"[🖼️ {name}]: (lỗi phân tích ảnh: {exc})")
+                        else:
+                            skipped_binary += 1
+
+            elif ext == ".rar" or "rar" in mime or "x-rar" in mime:
+                try:
+                    import rarfile
+                except ImportError:
+                    return "(Lỗi: thư viện 'rarfile' chưa được cài đặt)"
+
+                try:
+                    rf = rarfile.RarFile(io.BytesIO(file_bytes))
+                except rarfile.BadRarFile as exc:
+                    return f"(File RAR bị hỏng: {exc})"
+                except rarfile.NeedFirstVolume:
+                    return "(File RAR là partial multi-volume archive, không hỗ trợ)"
+
+                with rf:
+                    members = rf.infolist()
+                    total_uncompressed = sum(getattr(m, "file_size", 0) for m in members)
+                    if total_uncompressed > _MAX_TOTAL_BYTES:
+                        return f"(Archive RAR quá lớn: {total_uncompressed // 1048576} MB > 50 MB)"
+                    if len(members) > _MAX_FILES:
+                        return f"(Archive RAR có quá nhiều files: {len(members)} > {_MAX_FILES})"
+
+                    for member in members:
+                        name = member.filename
+                        if getattr(member, "is_dir", lambda: False)():
+                            continue
+                        resolved = os.path.normpath(os.path.join("/", name))
+                        if not resolved.startswith("/"):
+                            continue
+                        file_ext = Path(name).suffix.lower()
+                        file_size = getattr(member, "file_size", 0)
+
+                        if file_ext in _TEXT_EXTS:
+                            if file_size > _MAX_SINGLE_TEXT:
+                                parts.append(f"[{name}]: (file quá lớn, bỏ qua)")
+                                continue
+                            try:
+                                raw = rf.read(name)
+                                text = raw.decode("utf-8", errors="replace").strip()
+                                if text:
+                                    parts.append(f"━━ [📄 {name}] ━━\n{text}")
+                            except Exception as exc:
+                                parts.append(f"[{name}]: (lỗi đọc: {exc})")
+
+                        elif file_ext in self._IMAGE_EXTENSIONS:
+                            if images_analyzed >= _MAX_IMAGES:
+                                parts.append(f"[🖼️ {name}]: (bỏ qua — đã phân tích tối đa {_MAX_IMAGES} ảnh)")
+                                continue
+                            if file_size > _MAX_IMAGE_BYTES:
+                                parts.append(f"[🖼️ {name}]: (ảnh quá lớn {file_size // 1048576}MB, bỏ qua)")
+                                continue
+                            try:
+                                img_bytes = rf.read(name)
+                                img_caption = caption or f"Ảnh '{name}' trong archive {filename}"
+                                logger.info("[MediaProcessor] Analyzing image in RAR: %s", name)
+                                vision_result = await self.analyze_image(img_bytes, caption=img_caption)
+                                parts.append(f"━━ [🖼️ {name}] ━━\n{vision_result}")
+                                images_analyzed += 1
+                            except Exception as exc:
+                                parts.append(f"[🖼️ {name}]: (lỗi phân tích ảnh: {exc})")
+                        else:
+                            skipped_binary += 1
+            else:
+                return f"(process_archive: định dạng không phải ZIP/RAR: {ext})"
+
+        except Exception as exc:
+            logger.error("[MediaProcessor] process_archive error for %s: %s", filename, exc, exc_info=True)
+            return f"(Không thể xử lý archive `{filename}`: {exc})"
+
+        if not parts:
+            summary = f"(Archive không chứa nội dung có thể đọc. Đã bỏ qua {skipped_binary} file nhị phân.)"
+            return summary
+
+        if skipped_binary:
+            parts.append(f"\n[ℹ️ Bỏ qua {skipped_binary} file nhị phân | Đã phân tích {images_analyzed} ảnh]")
+
+        result = "\n\n".join(parts)
+        if len(result) > _MAX_DOC_CHARS:
+            result = result[:_MAX_DOC_CHARS] + f"\n\n... (nội dung cắt bớt, chỉ hiển thị {_MAX_DOC_CHARS} ký tự đầu)"
+        return result
+
     # Supported plain-text extensions (read directly without special parser)
     _TEXT_EXTENSIONS = frozenset({
         ".txt", ".md", ".py", ".js", ".ts", ".sh", ".bash",

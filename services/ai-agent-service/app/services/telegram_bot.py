@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from pathlib import Path
 from typing import Any, Dict, Optional
 import httpx
 import psycopg
@@ -621,7 +622,12 @@ class TelegramBot:
                 return
             try:
                 file_bytes = await self._media.download_telegram_file(file_id)
-                content = self._media.extract_document_text(file_bytes, mime_type, filename)
+                ext = Path(filename).suffix.lower()
+                # ZIP/RAR: use async process_archive() which handles both text + images via Vision
+                if ext in (".zip", ".rar") or "zip" in mime_type or "rar" in mime_type:
+                    content = await self._media.process_archive(file_bytes, mime_type, filename, caption=caption)
+                else:
+                    content = self._media.extract_document_text(file_bytes, mime_type, filename)
                 caption_part = f"\nCaption: {caption}" if caption else ""
                 user_input = f"[📄 File: {filename}]{caption_part}\n\n{content}"
                 logger.info("[TelegramBot] Document extracted: %d chars", len(content))

@@ -24,8 +24,9 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Max document text fed into LLM context to avoid token overflow
-_MAX_DOC_CHARS = 8_000
+# Max document/archive text fed into LLM context.
+# Raised to 12000 to handle archives with up to 3 images (~2500 chars/image description each)
+_MAX_DOC_CHARS = 12_000
 # Max image dimension before resizing (Groq 4MB base64 limit)
 _MAX_IMG_DIMENSION = 1024
 _IMG_QUALITY = 85
@@ -739,13 +740,26 @@ class MediaProcessor:
             return f"(Không thể xử lý archive `{filename}`: {exc})"
 
         if not parts:
-            summary = f"(Archive không chứa nội dung có thể đọc. Đã bỏ qua {skipped_binary} file nhị phân.)"
-            return summary
+            return f"(Archive không chứa nội dung có thể đọc. Đã bỏ qua {skipped_binary} file nhị phân.)"
 
+        # Count text files (parts not starting with image emoji)
+        text_file_count = sum(1 for p in parts if p.startswith("━━ [📄"))
+        img_file_count = sum(1 for p in parts if p.startswith("━━ [🖼️"))
+
+        # Explicit manifest header — prevents LLM from mis-counting files in archive
+        header_parts = []
+        if img_file_count:
+            header_parts.append(f"{img_file_count} ảnh")
+        if text_file_count:
+            header_parts.append(f"{text_file_count} file văn bản")
         if skipped_binary:
-            parts.append(f"\n[ℹ️ Bỏ qua {skipped_binary} file nhị phân | Đã phân tích {images_analyzed} ảnh]")
+            header_parts.append(f"{skipped_binary} file nhị phân (bỏ qua)")
+        header = (
+            f"[📦 Archive '{filename}' chứa: {', '.join(header_parts)}]\n"
+            f"[Nội dung chi tiết từng file bên dưới:]\n"
+        )
 
-        result = "\n\n".join(parts)
+        result = header + "\n\n".join(parts)
         if len(result) > _MAX_DOC_CHARS:
             result = result[:_MAX_DOC_CHARS] + f"\n\n... (nội dung cắt bớt, chỉ hiển thị {_MAX_DOC_CHARS} ký tự đầu)"
         return result

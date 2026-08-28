@@ -516,8 +516,42 @@ public class MetricsController {
     }
 
     /**
+     * Reverse geocodes GPS coordinates to accurate administrative province/city using BigDataCloud.
+     * Results are cached per coordinate pair for GEO_CACHE_TTL_MS (1 hour).
+     */
+    private Map<String, Object> fetchReverseGeoForCoordinates(double lat, double lon) {
+        if (lat == 0.0 && lon == 0.0) return new HashMap<>();
+
+        String cacheKey = String.format(java.util.Locale.US, "geo:%.4f,%.4f", lat, lon);
+        GeoEntry cached = geoCache.get(cacheKey);
+        if (cached != null && !cached.isExpired()) return cached.data();
+
+        String url = String.format(java.util.Locale.US, "https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=%.6f&longitude=%.6f&localityLanguage=en", lat, lon);
+        String raw = sshService.executeCommand("curl -s --max-time 4 '" + url + "'");
+        Map<String, Object> result = new HashMap<>();
+        if (raw != null && raw.contains("\"countryName\"")) {
+            Map<String, Object> parsed = parseGeoJson(raw);
+            String subdivision = String.valueOf(parsed.getOrDefault("principalSubdivision", "")).trim();
+            String city = String.valueOf(parsed.getOrDefault("city", "")).trim();
+            String locality = String.valueOf(parsed.getOrDefault("locality", "")).trim();
+            String country = String.valueOf(parsed.getOrDefault("countryName", "")).trim();
+            String countryCode = String.valueOf(parsed.getOrDefault("countryCode", "")).trim();
+
+            String displayCity = !subdivision.isBlank() ? (
+                !city.isBlank() && !city.equalsIgnoreCase(subdivision) ? city + ", " + subdivision : subdivision
+            ) : (!city.isBlank() ? city : (!locality.isBlank() ? locality : "Unknown"));
+
+            result.put("city", displayCity);
+            result.put("country", !country.isBlank() ? country : "Vietnam");
+            result.put("countryCode", !countryCode.isBlank() ? countryCode : "VN");
+        }
+        geoCache.put(cacheKey, new GeoEntry(result, Instant.now().toEpochMilli()));
+        return result;
+    }
+
+    /**
      * Browser self-reports its precise GPS location via this endpoint.
-     * Called from WorldMapPage on mount using navigator.geolocation + ipify.
+     * Called from WorldMapPage on mount using navigator.geolocation.
      *
      * Security: the client IP is ALWAYS extracted server-side from proxy headers
      * (X-Forwarded-For → X-Real-IP → remoteAddr), never trusted from the request body.
@@ -544,6 +578,16 @@ public class MetricsController {
             lon = Double.parseDouble(body.getOrDefault("lon", "0").toString());
         } catch (NumberFormatException ignored) {}
 
+        // If client provided GPS coordinates but city is Unknown, reverse-geocode on server
+        if ((lat != 0.0 || lon != 0.0) && "Unknown".equals(city)) {
+            Map<String, Object> revGeo = fetchReverseGeoForCoordinates(lat, lon);
+            if (!revGeo.isEmpty() && !"Unknown".equals(revGeo.get("city"))) {
+                city = String.valueOf(revGeo.getOrDefault("city", city));
+                country = String.valueOf(revGeo.getOrDefault("country", country));
+                countryCode = String.valueOf(revGeo.getOrDefault("countryCode", countryCode));
+            }
+        }
+
         if (isValidIp(ip)) {
             activeClientRegistry.recordCheckin(ip, lat, lon, city, isp, country, countryCode);
             log.info("[ClientCheckin] ip={} lat={} lon={} city={} country={}", ip, lat, lon, city, country);
@@ -554,6 +598,8 @@ public class MetricsController {
         Map<String, String> ok = new HashMap<>();
         ok.put("status", "ok");
         ok.put("ip", ip != null ? ip : "");
+        ok.put("city", city);
+        ok.put("country", country);
         return ok;
     }
 
@@ -648,8 +694,26 @@ public class MetricsController {
                 String countryCode = conn.getOrDefault("countryCode", "UN");
                 String isp         = conn.getOrDefault("isp",         "Browser");
 
-                // If city is still Unknown, try server-side ip-api lookup (supports IPv6)
-                if ("Unknown".equals(city) && isValidIp(ip) && !processedIps.contains(ip)) {
+                if (cLat != 0.0 || cLon != 0.0) {
+                    // Priority 1: Accurate GPS available -> reverse-geocode if city is missing or generic
+                    if ("Unknown".equals(city)) {
+                        Map<String, Object> revGeo = fetchReverseGeoForCoordinates(cLat, cLon);
+                        if (!revGeo.isEmpty() && !"Unknown".equals(revGeo.get("city"))) {
+                            city        = String.valueOf(revGeo.getOrDefault("city", city));
+                            country     = String.valueOf(revGeo.getOrDefault("country", country));
+                            countryCode = String.valueOf(revGeo.getOrDefault("countryCode", countryCode));
+                        }
+                    }
+                    // Fetch ISP from IP lookup if needed, but preserve GPS coordinates and city/country
+                    if ("Browser".equals(isp) && isValidIp(ip) && !processedIps.contains(ip)) {
+                        processedIps.add(ip);
+                        Map<String, Object> clientGeo = fetchGeoForIp(ip);
+                        if (!clientGeo.isEmpty() && clientGeo.containsKey("isp")) {
+                            isp = String.valueOf(clientGeo.get("isp"));
+                        }
+                    }
+                } else if (!processedIps.contains(ip)) {
+                    // Fallback: No GPS coordinates (0,0) -> resolve from IP
                     processedIps.add(ip);
                     Map<String, Object> clientGeo = fetchGeoForIp(ip);
                     if (!clientGeo.isEmpty()) {
@@ -657,11 +721,8 @@ public class MetricsController {
                         country     = String.valueOf(clientGeo.getOrDefault("country",     "Unknown"));
                         countryCode = String.valueOf(clientGeo.getOrDefault("countryCode", "UN"));
                         isp         = String.valueOf(clientGeo.getOrDefault("isp",         "Browser"));
-                        // If GPS is 0,0, also use ip-api coordinates
-                        if (cLat == 0.0 && cLon == 0.0) {
-                            cLat = (double) clientGeo.getOrDefault("lat", 0.0);
-                            cLon = (double) clientGeo.getOrDefault("lon", 0.0);
-                        }
+                        cLat        = (double) clientGeo.getOrDefault("lat", 0.0);
+                        cLon        = (double) clientGeo.getOrDefault("lon", 0.0);
                     }
                 }
 

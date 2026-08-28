@@ -80,10 +80,9 @@ export default function WorldMapPage() {
   }, []);
 
   /**
-   * Client self-registration: browser sends GPS coordinates to server.
-   * Server extracts the real IP server-side (from X-Forwarded-For/X-Real-IP),
-   * and does its own city/ISP lookup via SSH curl (supports both IPv4 and IPv6).
-   * Frontend only needs to provide GPS coords for precise pin placement.
+   * Client self-registration: browser acquires high-precision GPS coordinates,
+   * reverse-geocodes them to the exact administrative locality/province (e.g. Nghe An),
+   * and reports both coordinates and administrative location to the backend.
    */
   useEffect(() => {
     const doCheckin = async () => {
@@ -94,16 +93,35 @@ export default function WorldMapPage() {
           navigator.geolocation.getCurrentPosition(
             (pos) => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
             ()    => resolve({ lat: 0, lon: 0 }),
-            { timeout: 8000, maximumAge: 300000 }
+            { timeout: 8000, maximumAge: 300000, enableHighAccuracy: true }
           );
         });
         const { lat, lon } = await getGps();
 
-        // Step 2: POST checkin — server extracts real IP and echoes it back.
-        // City/ISP resolved server-side via SSH curl (supports IPv4 + IPv6).
-        await axios.post('/api/metrics/client-checkin', { lat, lon });
+        // Step 2: Client-side reverse geocode from accurate GPS coordinates
+        let city = 'Unknown', country = 'Unknown', countryCode = 'UN';
+        if (lat !== 0 || lon !== 0) {
+          try {
+            const revRes = await fetch(
+              `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=en`
+            );
+            const geo = await revRes.json();
+            if (geo) {
+              const subdivision = (geo.principalSubdivision || '').trim();
+              const cityName = (geo.city || geo.locality || '').trim();
+              city = subdivision
+                ? (cityName && !cityName.toLowerCase().includes(subdivision.toLowerCase()) ? `${cityName}, ${subdivision}` : subdivision)
+                : (cityName || 'Unknown');
+              country = geo.countryName || 'Vietnam';
+              countryCode = geo.countryCode || 'VN';
+            }
+          } catch (_) { /* non-blocking fallback handled on server */ }
+        }
 
-        // Step 3: Re-fetch map so this client appears immediately
+        // Step 3: POST checkin with precise GPS + resolved City/Country
+        await axios.post('/api/metrics/client-checkin', { lat, lon, city, country, countryCode });
+
+        // Step 4: Re-fetch map so this client appears immediately
         const res = await axios.get('/api/metrics/geolocation');
         if (res.data) {
           setGeoData({ server: res.data.server || null, connections: res.data.connections || [] });
@@ -310,11 +328,18 @@ export default function WorldMapPage() {
           ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
           ctx.fill();
 
-          // Label: prefer real city, skip "Unknown", fallback to last IP octet pair
+          // Label: prefer real city, skip "Unknown", fallback to shortened IP
           const rawCity = (client.city || '').trim();
-          const labelCity = rawCity && rawCity !== 'Unknown' && rawCity !== 'Internal LAN'
-            ? rawCity
-            : (client.ip ? client.ip.split('.').slice(0, 2).join('.') + '.*' : 'CLIENT');
+          let labelCity = 'CLIENT';
+          if (rawCity && rawCity !== 'Unknown' && rawCity !== 'Internal LAN') {
+            labelCity = rawCity;
+          } else if (client.ip) {
+            if (client.ip.includes(':')) {
+              labelCity = client.ip.split(':').slice(0, 3).join(':') + ':*';
+            } else {
+              labelCity = client.ip.split('.').slice(0, 2).join('.') + '.*';
+            }
+          }
           ctx.fillStyle = '#a8e8ff';
           ctx.font = '9px "Share Tech Mono"';
           ctx.fillText(`[${labelCity}]`, px + pinR + 4, circleCy + 3);

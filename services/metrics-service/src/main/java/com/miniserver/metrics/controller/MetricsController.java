@@ -516,36 +516,57 @@ public class MetricsController {
     }
 
     /**
-     * Browser self-reports its precise location via this endpoint.
+     * Browser self-reports its precise GPS location via this endpoint.
      * Called from WorldMapPage on mount using navigator.geolocation + ipify.
-     * This is the most accurate way to track client position — bypasses all
-     * proxy-header / Docker-NAT issues that make X-Forwarded-For unreliable.
      *
-     * Body: { "ip": "...", "lat": ..., "lon": ..., "city": "...", "isp": "..." }
-     * No auth required — data is already available from the browser itself.
+     * Security: the client IP is ALWAYS extracted server-side from proxy headers
+     * (X-Forwarded-For → X-Real-IP → remoteAddr), never trusted from the request body.
+     * This prevents fake IP injection (e.g. curl with arbitrary body IP).
+     *
+     * Body: { "lat": ..., "lon": ..., "city": "...", "isp": "...", "country": "...", "countryCode": "..." }
      */
     @PostMapping("/client-checkin")
-    public Map<String, String> clientCheckin(@RequestBody Map<String, Object> body) {
-        String ip   = body.getOrDefault("ip",   "").toString().trim();
-        String city = body.getOrDefault("city", "Unknown").toString().trim();
-        String isp  = body.getOrDefault("isp",  "Browser").toString().trim();
-        double lat  = 0.0;
-        double lon  = 0.0;
+    public Map<String, String> clientCheckin(
+            @RequestBody Map<String, Object> body,
+            jakarta.servlet.http.HttpServletRequest request) {
+
+        // Always use server-extracted IP — never trust client-supplied IP
+        String ip = extractClientIp(request);
+
+        String city        = body.getOrDefault("city",        "Unknown").toString().trim();
+        String isp         = body.getOrDefault("isp",         "Browser").toString().trim();
+        String country     = body.getOrDefault("country",     "Unknown").toString().trim();
+        String countryCode = body.getOrDefault("countryCode", "UN").toString().trim();
+        double lat = 0.0;
+        double lon = 0.0;
         try {
             lat = Double.parseDouble(body.getOrDefault("lat", "0").toString());
             lon = Double.parseDouble(body.getOrDefault("lon", "0").toString());
         } catch (NumberFormatException ignored) {}
 
-        if (!ip.isBlank() && IPV4_PATTERN.matcher(ip).matches()) {
-            activeClientRegistry.recordCheckin(ip, lat, lon, city, isp);
-            log.info("[ClientCheckin] Registered: ip={} lat={} lon={} city={}", ip, lat, lon, city);
+        if (ip != null && !ip.isBlank() && IPV4_PATTERN.matcher(ip).matches()) {
+            activeClientRegistry.recordCheckin(ip, lat, lon, city, isp, country, countryCode);
+            log.info("[ClientCheckin] ip={} lat={} lon={} city={} country={}", ip, lat, lon, city, country);
         } else {
-            log.warn("[ClientCheckin] Invalid IP skipped: '{}'", ip);
+            log.warn("[ClientCheckin] Could not extract valid IPv4 from request: '{}'", ip);
         }
 
         Map<String, String> ok = new HashMap<>();
         ok.put("status", "ok");
+        ok.put("ip", ip != null ? ip : "");
         return ok;
+    }
+
+    /** Extract real client IP from proxy headers (same logic as ClientTrackingFilter). */
+    private String extractClientIp(jakarta.servlet.http.HttpServletRequest request) {
+        String xff = request.getHeader("X-Forwarded-For");
+        if (xff != null && !xff.isBlank()) {
+            String first = xff.split(",")[0].trim();
+            if (!first.isBlank()) return first;
+        }
+        String xReal = request.getHeader("X-Real-IP");
+        if (xReal != null && !xReal.isBlank()) return xReal.trim();
+        return request.getRemoteAddr();
     }
 
     @GetMapping("/geolocation")

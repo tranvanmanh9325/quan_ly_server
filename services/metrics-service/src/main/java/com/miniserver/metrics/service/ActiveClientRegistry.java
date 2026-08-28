@@ -12,8 +12,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * Thread-safe in-memory registry of active HTTP clients.
  *
  * Two registration paths:
- *   1. ClientTrackingFilter.recordAccess(ip)   — passive, IP-only, from proxy headers
- *   2. recordCheckin(ip, lat, lon, city, isp)  — active, full geo from browser self-report
+ *   1. ClientTrackingFilter.recordAccess(ip)                  — passive, IP-only
+ *   2. recordCheckin(ip, lat, lon, city, isp, country, cc)    — active, full geo from browser
  *
  * Active checkins (path 2) override passive entries so the map always shows
  * the most precise location available. Entries expire after 5 minutes.
@@ -29,6 +29,8 @@ public class ActiveClientRegistry {
             double lon,
             String city,
             String isp,
+            String country,
+            String countryCode,
             long lastSeenMs
     ) {
         boolean isExpired() {
@@ -43,38 +45,46 @@ public class ActiveClientRegistry {
 
     /**
      * Called by ClientTrackingFilter on every inbound HTTP request.
-     * Only updates if no existing entry or existing entry has no geo data,
-     * so active checkins are not overwritten by passive tracking.
+     * Only updates timestamp if existing entry already has geo data from a checkin,
+     * so precise coordinates are never overwritten by passive tracking.
      */
     public void recordAccess(String ip) {
         clients.compute(ip, (k, existing) -> {
-            // Preserve geo data if already present from a checkin
             if (existing != null && existing.hasGeo()) {
+                // Refresh TTL, preserve all geo fields
                 return new ClientEntry(ip, existing.lat(), existing.lon(),
-                        existing.city(), existing.isp(), System.currentTimeMillis());
+                        existing.city(), existing.isp(),
+                        existing.country(), existing.countryCode(),
+                        System.currentTimeMillis());
             }
-            return new ClientEntry(ip, 0.0, 0.0, null, null, System.currentTimeMillis());
+            return new ClientEntry(ip, 0.0, 0.0, null, null, null, null,
+                    System.currentTimeMillis());
         });
     }
 
     /**
      * Called by the /client-checkin endpoint with precise browser-reported geo.
-     * This is the most accurate source: browser GPS or network geolocation.
+     * IP is always extracted server-side — never trusted from client body.
      */
-    public void recordCheckin(String ip, double lat, double lon, String city, String isp) {
-        clients.put(ip, new ClientEntry(ip, lat, lon,
-                city != null ? city : "Unknown",
-                isp != null ? isp : "Browser",
-                System.currentTimeMillis()));
+    public void recordCheckin(String ip, double lat, double lon,
+                              String city, String isp,
+                              String country, String countryCode) {
+        clients.put(ip, new ClientEntry(
+                ip, lat, lon,
+                city        != null ? city        : "Unknown",
+                isp         != null ? isp         : "Browser",
+                country     != null ? country     : "Unknown",
+                countryCode != null ? countryCode : "UN",
+                System.currentTimeMillis()
+        ));
     }
 
     /**
      * Returns a snapshot of active clients, pruning expired entries first.
-     * Shape matches MetricsController.getConnections() output, with extra geo fields
-     * for entries that have done a checkin (lat/lon will override ip-api lookup downstream).
+     * Shape matches MetricsController.getConnections() output with extra geo fields
+     * when the client has done a checkin.
      */
     public List<Map<String, String>> getActiveClients() {
-        // Prune expired entries in-place (ConcurrentHashMap is safe for this)
         clients.entrySet().removeIf(e -> e.getValue().isExpired());
 
         List<Map<String, String>> result = new ArrayList<>();
@@ -84,15 +94,13 @@ public class ActiveClientRegistry {
             m.put("user",      "browser");
             m.put("terminal",  "HTTP/HTTPS");
             m.put("loginTime", "VIEWING");
-            // Include geo data if available — MetricsController will use these
-            // instead of calling ip-api for this client
             if (entry.hasGeo()) {
-                m.put("lat",  String.valueOf(entry.lat()));
-                m.put("lon",  String.valueOf(entry.lon()));
-                m.put("city", entry.city());
-                m.put("isp",  entry.isp());
-                m.put("country",     "Vietnam");  // Will be overridden by reverse-geo if needed
-                m.put("countryCode", "VN");
+                m.put("lat",         String.valueOf(entry.lat()));
+                m.put("lon",         String.valueOf(entry.lon()));
+                m.put("city",        entry.city());
+                m.put("isp",         entry.isp());
+                m.put("country",     entry.country());
+                m.put("countryCode", entry.countryCode());
             }
             result.add(m);
         }

@@ -309,10 +309,14 @@ export default function WorldMapPage() {
           ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
           ctx.fill();
 
-          // Label with bracket
+          // Label: prefer real city, skip "Unknown", fallback to last IP octet pair
+          const rawCity = (client.city || '').trim();
+          const labelCity = rawCity && rawCity !== 'Unknown' && rawCity !== 'Internal LAN'
+            ? rawCity
+            : (client.ip ? client.ip.split('.').slice(0, 2).join('.') + '.*' : 'CLIENT');
           ctx.fillStyle = '#a8e8ff';
           ctx.font = '9px "Share Tech Mono"';
-          ctx.fillText(`[${client.city || client.ip || 'CLIENT'}]`, px + pinR + 4, circleCy + 3);
+          ctx.fillText(`[${labelCity}]`, px + pinR + 4, circleCy + 3);
         }
       });
 

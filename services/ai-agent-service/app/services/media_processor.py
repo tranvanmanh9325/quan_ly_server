@@ -178,10 +178,14 @@ class MediaProcessor:
         if Path(filename).suffix.lower() not in _GROQ_AUDIO_EXTS:
             filename = "voice.ogg"
 
-        # Prompt anchor: steers model toward conversational Vietnamese.
-        # Whisper was trained heavily on YouTube → biased toward "Thank you for watching".
-        # Providing a conversational context shifts probability mass away from those patterns.
-        _STT_PROMPT = "Cuộc trò chuyện bằng tiếng Việt:"
+        # Whisper prompt acts as a "fictitious transcript prefix" — the model predicts
+        # the next token after the prompt. Only the final 224 tokens of prompt matter.
+        # Test result (Aug 2026 on file 6091204043177206473.ogg "chào bạn"):
+        #   ✅ "bạn, chào bạn, xin chào bạn"  → correct: 'chào bạn'
+        #   ❌ "Cuộc trò chuyện bằng tiếng Việt: ..."  → wrong: 'Chào bác'
+        # Lesson: SHORT, FOCUSED vocabulary prompts beat instruction-style prompts.
+        # "bạn" biases away from the acoustically similar "bác" (tonal confusion).
+        _STT_PROMPT = "bạn, chào bạn, xin chào bạn, bạn ơi, cảm ơn bạn, được rồi, ổn rồi."
 
         models = [settings.GROQ_WHISPER_MODEL, settings.GROQ_WHISPER_MODEL_FALLBACK]
 
@@ -195,8 +199,8 @@ class MediaProcessor:
                             "model": model,
                             "language": language,
                             "response_format": "json",
-                            "temperature": "0",        # greedy decoding → minimal hallucination
-                            "prompt": _STT_PROMPT,     # anchor away from YouTube patterns
+                            "temperature": "0",    # greedy decoding → minimal hallucination
+                            "prompt": _STT_PROMPT, # vocabulary anchor → tonal accuracy
                         },
                         files={"file": (filename, audio_bytes, "audio/ogg")},
                         timeout=90.0,
@@ -209,7 +213,6 @@ class MediaProcessor:
                                 "[MediaProcessor] STT hallucination detected (model=%s): '%s' → discarding",
                                 model, text[:80]
                             )
-                            # Return empty string → caller will ask user to repeat
                             return ""
                         logger.info("[MediaProcessor] STT ✅ model=%s len=%d text='%s'", model, len(text), text[:60])
                         return text

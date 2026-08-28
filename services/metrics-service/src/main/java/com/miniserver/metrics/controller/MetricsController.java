@@ -638,19 +638,39 @@ public class MetricsController {
                 item.put("lon", serverMap.getOrDefault("lon", 106.6297));
                 item.put("isp", "Private Intranet");
             } else if (conn.containsKey("lat") && conn.containsKey("lon")) {
-                // Client self-reported precise GPS coordinates via /client-checkin
-                // Use them directly — no need for ip-api lookup
-                try {
-                    item.put("lat", Double.parseDouble(conn.get("lat")));
-                    item.put("lon", Double.parseDouble(conn.get("lon")));
-                } catch (NumberFormatException e) {
-                    item.put("lat", 0.0);
-                    item.put("lon", 0.0);
+                // Client self-reported GPS coordinates via /client-checkin
+                double cLat = 0.0, cLon = 0.0;
+                try { cLat = Double.parseDouble(conn.get("lat")); } catch (NumberFormatException ignored) {}
+                try { cLon = Double.parseDouble(conn.get("lon")); } catch (NumberFormatException ignored) {}
+
+                String city        = conn.getOrDefault("city",        "Unknown");
+                String country     = conn.getOrDefault("country",     "Unknown");
+                String countryCode = conn.getOrDefault("countryCode", "UN");
+                String isp         = conn.getOrDefault("isp",         "Browser");
+
+                // If city is still Unknown, try server-side ip-api lookup (supports IPv6)
+                if ("Unknown".equals(city) && isValidIp(ip) && !processedIps.contains(ip)) {
+                    processedIps.add(ip);
+                    Map<String, Object> clientGeo = fetchGeoForIp(ip);
+                    if (!clientGeo.isEmpty()) {
+                        city        = String.valueOf(clientGeo.getOrDefault("city",        "Unknown"));
+                        country     = String.valueOf(clientGeo.getOrDefault("country",     "Unknown"));
+                        countryCode = String.valueOf(clientGeo.getOrDefault("countryCode", "UN"));
+                        isp         = String.valueOf(clientGeo.getOrDefault("isp",         "Browser"));
+                        // If GPS is 0,0, also use ip-api coordinates
+                        if (cLat == 0.0 && cLon == 0.0) {
+                            cLat = (double) clientGeo.getOrDefault("lat", 0.0);
+                            cLon = (double) clientGeo.getOrDefault("lon", 0.0);
+                        }
+                    }
                 }
-                item.put("city",        conn.getOrDefault("city", "Unknown"));
-                item.put("isp",         conn.getOrDefault("isp",  "Browser"));
-                item.put("country",     conn.getOrDefault("country", "Unknown"));
-                item.put("countryCode", conn.getOrDefault("countryCode", "UN"));
+
+                item.put("lat",         cLat);
+                item.put("lon",         cLon);
+                item.put("city",        city);
+                item.put("isp",         isp);
+                item.put("country",     country);
+                item.put("countryCode", countryCode);
             } else if (!processedIps.contains(ip)) {
                 // Validate IP format (IPv4 or IPv6) before using in SSH command
                 if (!isValidIp(ip)) {

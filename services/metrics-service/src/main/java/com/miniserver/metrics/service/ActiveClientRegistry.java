@@ -63,20 +63,41 @@ public class ActiveClientRegistry {
     }
 
     /**
-     * Called by the /client-checkin endpoint with precise browser-reported geo.
+     * Called by the /client-checkin endpoint with browser-reported geo.
      * IP is always extracted server-side — never trusted from client body.
+     *
+     * Smart merge: existing GPS coordinates are preserved if the new checkin
+     * carries 0,0 (GPS unavailable/pending). Similarly, existing non-Unknown
+     * city/country is preserved if the new checkin has Unknown values.
      */
     public void recordCheckin(String ip, double lat, double lon,
                               String city, String isp,
                               String country, String countryCode) {
-        clients.put(ip, new ClientEntry(
-                ip, lat, lon,
-                city        != null ? city        : "Unknown",
-                isp         != null ? isp         : "Browser",
-                country     != null ? country     : "Unknown",
-                countryCode != null ? countryCode : "UN",
-                System.currentTimeMillis()
-        ));
+        clients.compute(ip, (k, existing) -> {
+            // Preserve existing GPS coords if new checkin has no GPS (0,0)
+            double finalLat = (lat != 0.0 || lon != 0.0) ? lat
+                    : (existing != null ? existing.lat() : 0.0);
+            double finalLon = (lat != 0.0 || lon != 0.0) ? lon
+                    : (existing != null ? existing.lon() : 0.0);
+
+            // Preserve existing city/country if new values are Unknown
+            String finalCity        = isKnown(city)        ? city        : (existing != null && isKnown(existing.city())        ? existing.city()        : safeStr(city,        "Unknown"));
+            String finalIsp         = isKnown(isp)         ? isp         : (existing != null && isKnown(existing.isp())         ? existing.isp()         : safeStr(isp,         "Browser"));
+            String finalCountry     = isKnown(country)     ? country     : (existing != null && isKnown(existing.country())     ? existing.country()     : safeStr(country,     "Unknown"));
+            String finalCountryCode = isKnown(countryCode) ? countryCode : (existing != null && isKnown(existing.countryCode()) ? existing.countryCode() : safeStr(countryCode, "UN"));
+
+            return new ClientEntry(ip, finalLat, finalLon,
+                    finalCity, finalIsp, finalCountry, finalCountryCode,
+                    System.currentTimeMillis());
+        });
+    }
+
+    private boolean isKnown(String s) {
+        return s != null && !s.isBlank() && !s.equals("Unknown") && !s.equals("UN") && !s.equals("Browser");
+    }
+
+    private String safeStr(String s, String fallback) {
+        return s != null && !s.isBlank() ? s : fallback;
     }
 
     /**

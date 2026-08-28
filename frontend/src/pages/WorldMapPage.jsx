@@ -63,12 +63,10 @@ export default function WorldMapPage() {
   }, []);
 
   /**
-   * Client self-registration: browser sends GPS + geo metadata, server extracts the real IP.
-   * Flow:
-   *   1. POST to /client-checkin with GPS coords (server extracts real IP server-side)
-   *   2. Use the server-echoed IP to fetch city/ISP from ip-api.com
-   *   3. Re-checkin with full geo data
-   *   4. Re-fetch map so this client appears immediately
+   * Client self-registration: browser sends GPS coordinates to server.
+   * Server extracts the real IP server-side (from X-Forwarded-For/X-Real-IP),
+   * and does its own city/ISP lookup via SSH curl (supports both IPv4 and IPv6).
+   * Frontend only needs to provide GPS coords for precise pin placement.
    */
   useEffect(() => {
     const doCheckin = async () => {
@@ -79,41 +77,16 @@ export default function WorldMapPage() {
           navigator.geolocation.getCurrentPosition(
             (pos) => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
             ()    => resolve({ lat: 0, lon: 0 }),
-            { timeout: 5000, maximumAge: 60000 }
+            { timeout: 8000, maximumAge: 300000 }
           );
         });
         const { lat, lon } = await getGps();
 
-        // Step 2: Initial checkin — server extracts real IP from X-Forwarded-For/X-Real-IP
-        // No ip needed from browser; server returns the extracted IP in response
-        const checkinRes = await axios.post('/api/metrics/client-checkin', {
-          lat, lon, city: 'Unknown', isp: 'Browser', country: 'Unknown', countryCode: 'UN'
-        });
-        const serverExtractedIp = checkinRes.data?.ip || '';
+        // Step 2: POST checkin — server extracts real IP and echoes it back.
+        // City/ISP resolved server-side via SSH curl (supports IPv4 + IPv6).
+        await axios.post('/api/metrics/client-checkin', { lat, lon });
 
-        // Step 3: Use server-extracted IP to get accurate city/ISP (ip-api free, no key needed)
-        if (serverExtractedIp) {
-          let city = 'Unknown', isp = 'Browser', country = 'Unknown', countryCode = 'UN';
-          try {
-            const geoRes = await fetch(
-              `https://ip-api.com/json/${serverExtractedIp}?fields=status,city,isp,country,countryCode`
-            );
-            const geoJson = await geoRes.json();
-            if (geoJson.status === 'success') {
-              city        = geoJson.city        || city;
-              isp         = geoJson.isp         || isp;
-              country     = geoJson.country     || country;
-              countryCode = geoJson.countryCode || countryCode;
-            }
-          } catch (_) { /* ip-api optional */ }
-
-          // Step 4: Re-checkin with complete geo data
-          await axios.post('/api/metrics/client-checkin', {
-            lat, lon, city, isp, country, countryCode
-          });
-        }
-
-        // Step 5: Re-fetch map so this client appears immediately
+        // Step 3: Re-fetch map so this client appears immediately
         const res = await axios.get('/api/metrics/geolocation');
         if (res.data) {
           setGeoData({ server: res.data.server || null, connections: res.data.connections || [] });
@@ -236,8 +209,13 @@ export default function WorldMapPage() {
       // 7. Draw 3D Elevated Laser Arcs between clients and server
       const clients = geoData.connections || [];
       clients.forEach(client => {
-        const cLat = parseFloat(client.lat) || sLat;
-        const cLon = parseFloat(client.lon) || sLon;
+        const parsedLat = parseFloat(client.lat);
+        const parsedLon = parseFloat(client.lon);
+        // Only use GPS coords if they are real (non-zero) — 0,0 means no GPS
+        const hasGps = Number.isFinite(parsedLat) && Number.isFinite(parsedLon)
+                    && (parsedLat !== 0 || parsedLon !== 0);
+        const cLat = hasGps ? parsedLat : sLat;
+        const cLon = hasGps ? parsedLon : sLon;
 
         // Build great-circle arc with elevation via interpolated midpoints
         const steps = 40;

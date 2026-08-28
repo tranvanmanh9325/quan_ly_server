@@ -43,6 +43,7 @@ _CRITICAL_KEYWORDS = frozenset({
 _SIMPLE_PATTERN = re.compile(
     r'^(server|máy chủ|kirito|đặt ở|vị trí|ip|địa chỉ|tên em|em là|'
     r'mấy giờ|hôm nay|ngày|ram|cpu|disk|ổ đĩa|ping|uptime|'
+    r'đăng nhập|login|kết nối|truy cập|ai đang|máy tính|'
     r'version|phiên bản|docker ps|container)\b',
     re.IGNORECASE | re.UNICODE
 )
@@ -53,7 +54,8 @@ _SIMPLE_PATTERN = re.compile(
 _INTENT_DIAGNOSTIC = re.compile(
     r'\b(tại sao|lỗi gì|check|kiểm tra|xem|status|log|journalctl|dmesg|'
     r'health|trạng thái|bao nhiêu|mấy|còn|hết|đang chạy|running|ps|'
-    r'vị trí|ở đâu|đang ở|tọa độ|địa chỉ|ip)\b',
+    r'vị trí|ở đâu|đang ở|tọa độ|địa chỉ|ip|'
+    r'đăng nhập|login|kết nối|truy cập|ai đang|máy tính nào|session|phiên)\b',
     re.IGNORECASE | re.UNICODE
 )
 _INTENT_ACTION = re.compile(
@@ -485,6 +487,14 @@ Bạn là "Tiểu Bảo Bảo" — Trợ lý AI Tự Hành cấp cao (Senior Aut
   • BẮT BUỘC gọi tool `get_server_location` để lấy dữ liệu tọa độ GPS và tên địa danh thực tế mới nhất từ phần cứng.
   • Trả lời dứt khoát dựa trên kết quả trả về từ tool (địa danh, tọa độ GPS, phương thức định vị).
 
+👥 KIỂM TRA MÁY TÍNH & PHIÊN ĐĂNG NHẬP VÀO SERVER:
+- Khi anh Mạnh hỏi: "có ai đăng nhập không", "có máy tính nào kết nối không", "ai đang truy cập server", "thiết bị nào online", "danh sách máy tính đăng nhập":
+  • BẮT BUỘC gọi tool `get_server_active_sessions`.
+  • Hệ thống có 2 tầng kết nối phân biệt:
+    1. Tầng 1 — Web Dashboard: Máy tính Windows của anh Mạnh hoặc thiết bị khác đang đăng nhập qua trình duyệt web (HTTP/HTTPS qua IP mạng FPT/VNPT/Viettel, có định vị địa lý).
+    2. Tầng 2 — SSH Terminal: Các phiên truy cập shell dòng lệnh (Port 22 / pts / tty).
+  • BẮT BUỘC báo cáo đầy đủ cả 2 tầng này, KHÔNG được chỉ kiểm tra mỗi lệnh `who`/`w` SSH rồi nói nhầm là không có máy tính nào kết nối!
+
 🐧 LỊCH CHẠY & TRẠNG THÁI `apt update` / `apt upgrade`:
 - ⚠️ QUAN TRỌNG: `/var/log/apt/history.log` chỉ ghi nhận khi cài/gỡ gói (`install`/`remove`), KHÔNG ghi nhận lịch tải index của `apt update`!
 - Để kiểm tra `apt update` đã chạy sáng nay hay chưa:
@@ -580,6 +590,21 @@ Bạn là "Tiểu Bảo Bảo" — Trợ lý AI Tự Hành cấp cao (Senior Aut
         excluded = excluded_tools or set()
         tools = [
             # ── Server Management ──
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_server_active_sessions",
+                    "description": (
+                        "Tra cứu TẤT CẢ các thiết bị, máy tính và người dùng đang đăng nhập hoặc kết nối vào máy chủ kirito-server "
+                        "theo thời gian thực. Báo cáo đồng thời cả 2 tầng: "
+                        "1. Các máy tính đang đăng nhập Web Dashboard (phiên Web/Browser HTTP/HTTPS của quản trị viên qua mạng, kèm IP, vị trí địa lý, ISP). "
+                        "2. Các phiên đăng nhập Terminal / SSH trực tiếp (Port 22 / pts / tty). "
+                        "Dùng khi: 'có ai đang đăng nhập server không', 'có máy tính nào kết nối không', 'kiểm tra người dùng đăng nhập', "
+                        "'ai đang truy cập server', 'thiết bị nào đang online', 'danh sách máy tính đăng nhập'."
+                    ),
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
             {
                 "type": "function",
                 "function": {
@@ -1103,6 +1128,66 @@ Bạn là "Tiểu Bảo Bảo" — Trợ lý AI Tự Hành cấp cao (Senior Aut
     ) -> str:
         try:
             # ── Server ──
+            if tool_name == "get_server_active_sessions":
+                # 1. Query Web Dashboard Active Sessions from metrics-service via internal JWT
+                web_clients = []
+                try:
+                    import jwt as _jwt
+                    import time as _time
+                    import urllib.request as _urllib
+                    token_payload = {
+                        "sub": "kiritoserver",
+                        "iat": int(_time.time()),
+                        "exp": int(_time.time()) + 3600
+                    }
+                    admin_token = _jwt.encode(token_payload, settings.JWT_SECRET, algorithm="HS256")
+                    req = _urllib.Request(
+                        "http://metrics-service:8082/api/metrics/geolocation",
+                        headers={"Authorization": f"Bearer {admin_token}"}
+                    )
+                    with _urllib.urlopen(req, timeout=4) as res:
+                        geo_res = json.loads(res.read().decode())
+                        web_clients = geo_res.get("connections", [])
+                except Exception as e:
+                    logger.warning("[AiAgent] Error fetching web clients from metrics-service: %s", e)
+
+                # 2. Query OS-level SSH & Terminal logins via SSH command
+                ssh_raw = await self.ssh_client.execute_command(
+                    "who 2>/dev/null; echo '---SS_ESTABLISHED---'; ss -tn state established '( dport = :22 )' 2>/dev/null"
+                )
+
+                # 3. Format structured dual-layer response
+                lines = ["📊 **BÁO CÁO TOÀN DIỆN CÁC PHIÊN ĐĂNG NHẬP & KẾT NỐI VÀO MÁY CHỦ (REAL-TIME)**:\n"]
+
+                # Tầng 1: Web Dashboard Sessions
+                lines.append("🌐 **1. TẦNG WEB DASHBOARD (QUẢN TRỊ VIÊN ĐĂNG NHẬP TRÌNH DUYỆT)**:")
+                if web_clients:
+                    for idx, c in enumerate(web_clients, 1):
+                        ip = c.get("ip", "Unknown")
+                        city = c.get("city", "Unknown")
+                        country = c.get("country", c.get("countryName", "Vietnam"))
+                        isp = c.get("isp", "Unknown ISP")
+                        status = c.get("loginTime", "CONNECTED")
+                        lat = c.get("lat")
+                        lon = c.get("lon")
+                        coord_str = f" (`{lat:.4f}°N, {lon:.4f}°E`)" if lat and lon else ""
+                        lines.append(
+                            f"• **Thiết bị #{idx} (Máy tính Web Client)**: Đang đăng nhập Web Dashboard (`{status}`)\n"
+                            f"  - Địa chỉ IP: `{ip}`\n"
+                            f"  - Vị trí địa lý thực tế: **{city}, {country}**{coord_str}\n"
+                            f"  - Nhà mạng (ISP): **{isp}**\n"
+                            f"  - Giao thức: `HTTP/HTTPS` (Mini Server Web UI)"
+                        )
+                else:
+                    lines.append("• Hiện không có phiên Web Dashboard nào từ bên ngoài đang mở.")
+
+                lines.append("")
+                # Tầng 2: SSH Terminal Sessions
+                lines.append("🖥️ **2. TẦNG TERMINAL / SSH (DÒNG LỆNH CỔNG 22 & CỤC BỘ)**:")
+                lines.append(f"• Trạng thái phiên SSH:\n```\n{ssh_raw.strip()}\n```")
+
+                return "\n".join(lines)
+
             if tool_name == "get_server_location":
                 # Step 1: Run autonomous Wi-Fi Positioning System locator
                 wifi_raw = await self.ssh_client.execute_command(

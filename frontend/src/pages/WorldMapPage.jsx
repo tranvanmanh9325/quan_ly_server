@@ -3,6 +3,7 @@ import axios from 'axios';
 import { geoOrthographic, geoPath, geoGraticule } from 'd3-geo';
 import { feature } from 'topojson-client';
 import { SciFiGlobeIcon, SciFiRefreshIcon, SciFiPulseBadge, SciFiPlayIcon, SciFiStopIcon } from '../components/SciFiIcons';
+import { VIETNAM_ISLANDS_GEOJSON, NOTABLE_ISLAND_POINTS } from '../data/vietnamIslandsGeo';
 
 // World Atlas TopoJSON CDN — 110m resolution (public domain, Natural Earth)
 const WORLD_ATLAS_URL = 'https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json';
@@ -245,6 +246,22 @@ export default function WorldMapPage() {
         });
       }
 
+      // 6.5. Vietnam Maritime Sovereignty & Archipelagos (Hoàng Sa, Trường Sa, Phú Quốc, Côn Đảo...)
+      if (VIETNAM_ISLANDS_GEOJSON && VIETNAM_ISLANDS_GEOJSON.features) {
+        VIETNAM_ISLANDS_GEOJSON.features.forEach(feat => {
+          ctx.beginPath();
+          pathGen(feat);
+          ctx.fillStyle = 'rgba(0, 255, 180, 0.75)';
+          ctx.fill();
+          ctx.strokeStyle = '#00ff9d';
+          ctx.lineWidth = 1.0;
+          ctx.shadowColor = '#00ff9d';
+          ctx.shadowBlur = 6;
+          ctx.stroke();
+          ctx.shadowBlur = 0;
+        });
+      }
+
       // 7. Draw 3D Elevated Laser Arcs between clients and server
       const clients = geoData.connections || [];
       clients.forEach(client => {
@@ -454,6 +471,60 @@ export default function WorldMapPage() {
         ctx.fillText(hqText, sx + sPinR + 9, sCy + 4);
         ctx.shadowBlur = 0;
       }
+
+      // 9. High-Precision Maritime Island Radar Pins & Cyberpunk Labels (Hoàng Sa, Trường Sa, Phú Quốc, Côn Đảo...)
+      NOTABLE_ISLAND_POINTS.forEach(island => {
+        const islandProj = projection([island.lon, island.lat]);
+        if (islandProj) {
+          const [ix, iy] = islandProj;
+          const isHQArchipelago = island.type === 'archipelago_hq';
+
+          // Glowing Core Dot
+          const dotR = isHQArchipelago ? 3.0 : 2.2;
+          ctx.beginPath();
+          ctx.arc(ix, iy, dotR, 0, Math.PI * 2);
+          ctx.fillStyle = isHQArchipelago ? '#00ff9d' : '#00f3ff';
+          ctx.shadowColor = isHQArchipelago ? '#00ff9d' : '#00f3ff';
+          ctx.shadowBlur = 8;
+          ctx.fill();
+          ctx.shadowBlur = 0;
+
+          // Pulsing Sonar Ring for Archipelagos (Hoàng Sa & Trường Sa)
+          if (isHQArchipelago) {
+            const sonarR = 6 + (Math.sin(pulseTime * 2.2 + island.lon) * 0.5 + 0.5) * 5;
+            const sonarAlpha = Math.max(0, 0.65 - ((sonarR - 6) / 5) * 0.45);
+            ctx.beginPath();
+            ctx.arc(ix, iy, sonarR, 0, Math.PI * 2);
+            ctx.strokeStyle = `rgba(0, 255, 157, ${sonarAlpha})`;
+            ctx.lineWidth = 0.9;
+            ctx.setLineDash([2, 2]);
+            ctx.stroke();
+            ctx.setLineDash([]);
+          }
+
+          // Cyberpunk Badge Label (Always crisp, expands when zoomed)
+          ctx.font = isHQArchipelago ? 'bold 8px "Share Tech Mono"' : '7.5px "Share Tech Mono"';
+          const labelW = ctx.measureText(island.label).width;
+          const badgeH = 13;
+          const badgeX = ix + 6;
+          const badgeY = iy - badgeH / 2;
+
+          ctx.fillStyle = 'rgba(2, 13, 26, 0.85)';
+          ctx.strokeStyle = isHQArchipelago ? 'rgba(0, 255, 157, 0.6)' : 'rgba(0, 243, 255, 0.4)';
+          ctx.lineWidth = 0.7;
+          ctx.beginPath();
+          if (ctx.roundRect) {
+            ctx.roundRect(badgeX, badgeY, labelW + 6, badgeH, 2);
+          } else {
+            ctx.rect(badgeX, badgeY, labelW + 6, badgeH);
+          }
+          ctx.fill();
+          ctx.stroke();
+
+          ctx.fillStyle = isHQArchipelago ? '#00ff9d' : '#00f3ff';
+          ctx.fillText(island.label, badgeX + 3, badgeY + badgeH - 3.5);
+        }
+      });
 
       animFrameId = requestAnimationFrame(render);
     };

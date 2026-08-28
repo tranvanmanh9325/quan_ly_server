@@ -710,13 +710,31 @@ class TelegramBot:
                 await self.send_message(chat_id, "Xin lỗi, đã xảy ra lỗi trong quá trình xử lý tin nhắn. Vui lòng thử lại sau.")
 
 
+    async def _load_offset_from_db(self) -> int:
+        """Recover the highest claimed update_id from DB to resume after restart."""
+        try:
+            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute("SELECT MAX(update_id) FROM processed_telegram_updates")
+                    row = await cur.fetchone()
+                    if row and row[0]:
+                        logger.info("[TelegramBot] Restored offset from DB: %d", row[0])
+                        return int(row[0])
+        except Exception as e:
+            logger.warning("[TelegramBot] Could not load offset from DB: %s", e)
+        return 0
+
     async def start_polling(self) -> None:
         if not self.token or not self.polling_enabled:
             logger.info("[TelegramBot] Polling disabled or token missing.")
             return
 
+        # Seed offset from DB so we don't replay already-claimed updates after restart
+        if self._last_offset == 0:
+            self._last_offset = await self._load_offset_from_db()
+
         self._running = True
-        logger.info("[TelegramBot] Starting async long-polling...")
+        logger.info("[TelegramBot] Starting async long-polling (resume from offset=%d)...", self._last_offset)
 
         backoff = 2
         while self._running:
@@ -732,6 +750,8 @@ class TelegramBot:
                     data = res.json()
                     updates = data.get("result", [])
                     for u in updates:
+                        # Always advance offset regardless of whether we process this update —
+                        # this prevents the loop from getting stuck re-fetching claimed updates
                         self._last_offset = max(self._last_offset, u.get("update_id", 0))
                         asyncio.create_task(self._process_update(u))
                     backoff = 2

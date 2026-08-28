@@ -430,10 +430,16 @@ class LlmRouter:
         temperature: float = 0.1,
         max_tokens: int = 1024,
         requested_model: Optional[str] = None,
+        reasoning_effort: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         Routes the chat completion through the 9Router smart tiered fallback engine.
         Returns OpenAI-compatible response dict or None.
+
+        reasoning_effort: "low" | "medium" | "high" | None
+          Applied only to Groq Qwen3 family models.
+          Uses reasoning_format="hidden" so think tokens don't leak into content
+          and don't break tool_calls JSON parsing.
         """
         self.total_routed += 1
         sorted_providers = sorted(self.providers.values(), key=lambda p: p.tier)
@@ -473,6 +479,13 @@ class LlmRouter:
                 if tools:
                     payload["tools"] = tools
                     payload["tool_choice"] = tool_choice
+
+                # Inject Groq native reasoning mode for Qwen3 family models.
+                # reasoning_format="hidden": think tokens run internally but never
+                # appear in content — safe with tool_calls (raw format would break JSON).
+                if provider.name == "Groq" and reasoning_effort and "qwen" in model_to_use.lower():
+                    payload["reasoning_effort"] = reasoning_effort
+                    payload["reasoning_format"] = "hidden"
 
                 try:
                     t0 = time.time()

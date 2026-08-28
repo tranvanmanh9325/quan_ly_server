@@ -77,6 +77,11 @@ class Settings(BaseSettings):
     OPENROUTER_VISION_MODEL: str = Field(default="google/gemma-4-31b-it:free", alias="OPENROUTER_VISION_MODEL")
     OPENROUTER_VISION_MODEL_FALLBACK: str = Field(default="google/gemma-4-26b-a4b-it:free", alias="OPENROUTER_VISION_MODEL_FALLBACK")
 
+    # Reasoning — Groq native think mode (qwen3 family only, Aug 2026)
+    # Values: "low" | "medium" | "high" — controls thinking budget/quality tradeoff
+    # Applied only to qwen3 models; gpt-oss-120b ignores this parameter
+    GROQ_REASONING_EFFORT_DEFAULT: str = Field(default="medium", alias="GROQ_REASONING_EFFORT_DEFAULT")
+
     @property
     def database_url(self) -> str:
         return f"postgresql://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.POSTGRES_DB}"

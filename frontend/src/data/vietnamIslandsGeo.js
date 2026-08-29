@@ -141,3 +141,33 @@ export const VIETNAM_MARITIME_ISLANDS = [
     r: 1.8
   }
 ];
+
+/**
+ * Tactical Maritime Boundary Polygons / Paths (Paracel & Spratly EEZ perimeters)
+ * Coords format: [[lat, lng], [lat, lng], ...] for direct ingestion into react-globe.gl pathsData
+ */
+export const VIETNAM_MARITIME_BOUNDARIES = [
+  {
+    id: 'hoang_sa_patrol_perimeter',
+    name: 'Vùng biển Quần đảo Hoàng Sa (VN)',
+    coords: [
+      [17.30, 111.00], [17.30, 113.20],
+      [15.60, 113.20], [15.60, 111.00],
+      [17.30, 111.00]
+    ],
+    color: 'rgba(0, 255, 157, 0.55)',
+    stroke: 0.6,
+  },
+  {
+    id: 'truong_sa_patrol_perimeter',
+    name: 'Vùng biển Quần đảo Trường Sa (VN)',
+    coords: [
+      [12.00, 113.80], [11.80, 117.50],
+      [7.20, 115.80], [7.20, 111.50],
+      [9.50, 111.50], [12.00, 113.80]
+    ],
+    color: 'rgba(0, 255, 157, 0.55)',
+    stroke: 0.6,
+  }
+];
+

@@ -3,7 +3,7 @@ import axios from 'axios';
 import Globe from 'react-globe.gl';
 import { mesh } from 'topojson-client';
 import { SciFiGlobeIcon, SciFiRefreshIcon, SciFiPulseBadge, SciFiPlayIcon, SciFiStopIcon } from '../components/SciFiIcons';
-import { VIETNAM_MARITIME_ISLANDS } from '../data/vietnamIslandsGeo';
+import { VIETNAM_MARITIME_ISLANDS, VIETNAM_MARITIME_BOUNDARIES } from '../data/vietnamIslandsGeo';
 import GlobeHudLegend from '../components/GlobeHudLegend';
 
 // 110m resolution: 105KB vs 756KB (50m) — 90% fewer border vertices, imperceptible at 600px canvas
@@ -12,6 +12,26 @@ const CDN_WORLD_ATLAS_URL = 'https://cdn.jsdelivr.net/npm/world-atlas@2/countrie
 
 // Resized 1024x512 local texture: 35KB vs 698KB — fits 600x440px canvas pixel-perfect
 const EARTH_TEXTURE_URL = '/textures/earth-night-1024.jpg';
+
+/**
+ * Calculates dynamic arc altitude based on Great-Circle chord distance
+ * Short distances (Hanoi -> Nghe An) stay sleek and low (~0.035),
+ * while long transcontinental links curve naturally up to 0.30.
+ */
+function getDynamicArcAltitude(lat1, lon1, lat2, lon2) {
+  const toRad = Math.PI / 180;
+  const phi1 = lat1 * toRad;
+  const phi2 = lat2 * toRad;
+  const deltaPhi = (lat2 - lat1) * toRad;
+  const deltaLambda = (lon2 - lon1) * toRad;
+
+  const a = Math.sin(deltaPhi / 2) ** 2 +
+            Math.cos(phi1) * Math.cos(phi2) * (Math.sin(deltaLambda / 2) ** 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  const chordNormalized = Math.sin(c / 2);
+  const altitude = 0.025 + 0.28 * Math.pow(chordNormalized, 0.7);
+  return Math.min(Math.max(altitude, 0.025), 0.30);
+}
 
 export default function WorldMapPage() {
   const [geoData, setGeoData] = useState({ server: null, connections: [] });
@@ -162,14 +182,16 @@ export default function WorldMapPage() {
       const parsedLon = parseFloat(client.lon);
       const hasGps = Number.isFinite(parsedLat) && Number.isFinite(parsedLon)
         && (parsedLat !== 0 || parsedLon !== 0);
+      const endLat = hasGps ? parsedLat : sLat + 0.01;
+      const endLng = hasGps ? parsedLon : sLon + 0.01;
       return {
         id: idx,
         startLat: sLat, startLng: sLon,
-        endLat: hasGps ? parsedLat : sLat + 0.01,
-        endLng: hasGps ? parsedLon : sLon + 0.01,
+        endLat, endLng,
+        dynamicAltitude: getDynamicArcAltitude(sLat, sLon, endLat, endLng),
         client,
-        // 3-stop gradient: transparent at tips → bright cyan at center → laser glow
-        color: ['rgba(0,255,157,0)', 'rgba(0,243,255,0.95)', 'rgba(0,255,157,0)'],
+        // High-energy photon laser: transparent tips with bright neon cyan core
+        color: ['rgba(0,243,255,0)', 'rgba(0,255,157,0.95)', 'rgba(0,243,255,0)'],
       };
     });
   }, [geoData]);
@@ -179,7 +201,7 @@ export default function WorldMapPage() {
     const sLat = parseFloat(geoData.server?.lat) || 20.98;
     const sLon = parseFloat(geoData.server?.lon) || 105.83;
 
-    points.push({ id: 'server', lat: sLat, lng: sLon, size: 0.6, color: '#00ff9d', type: 'server' });
+    points.push({ id: 'server', lat: sLat, lng: sLon, size: 0.5, color: '#00ff9d', type: 'server' });
 
     (geoData.connections || []).forEach((client, idx) => {
       const parsedLat = parseFloat(client.lat);
@@ -191,7 +213,7 @@ export default function WorldMapPage() {
       }
     });
 
-    // Only cluster centers for VN islands (skip sub-dots to reduce point count)
+    // All major and archipelago centers for VN islands
     VIETNAM_MARITIME_ISLANDS.forEach(item => {
       points.push({
         id: item.id, lat: item.lat, lng: item.lon,
@@ -203,8 +225,12 @@ export default function WorldMapPage() {
     return points;
   }, [geoData]);
 
-  // htmlElementsData: DOM overlay markers (CSS-styleable) — replaces plain WebGL labelsData
-  // Uses geoData.server directly (not serverInfo) to avoid temporal dead zone
+  // Combined paths data: Country borders + VN Maritime Patrol Perimeters
+  const combinedPathsData = useMemo(() => {
+    return [...deferredBorders, ...VIETNAM_MARITIME_BOUNDARIES];
+  }, [deferredBorders]);
+
+  // htmlElementsData: DOM overlay markers with Directional Anti-Collision Slotting
   const htmlMarkersData = useMemo(() => {
     const markers = [];
     const srv = geoData.server;
@@ -213,34 +239,42 @@ export default function WorldMapPage() {
     const sLat = parseFloat(srv.lat) || 20.98;
     const sLon = parseFloat(srv.lon) || 105.83;
 
-    // Server HQ callout
+    // Server HQ marker — shoots Top-Right
     markers.push({
       id: 'hq',
       lat: sLat, lng: sLon,
       type: 'server',
-      label: 'SERVER HQ',
-      sublabel: srv.city ? `${srv.city}, ${srv.country || 'VN'}` : 'Phường Định Công, VN',
+      label: 'SERVER HQ // C2',
+      sublabel: srv.city ? `${srv.city}, ${srv.country || 'VN'}` : 'Định Công, Hà Nội, VN',
+      dir: 'top-right',
       color: '#00ff9d',
-      borderColor: 'rgba(0,255,157,0.65)',
-      glowColor: 'rgba(0,255,157,0.25)',
+      glowColor: 'rgba(0,255,157,0.45)',
     });
 
-    // Client callout markers (only those with valid GPS)
+    // Client callout markers with dynamic anti-collision direction
     (geoData.connections || []).forEach((client, idx) => {
       const parsedLat = parseFloat(client.lat);
       const parsedLon = parseFloat(client.lon);
       const hasGps = Number.isFinite(parsedLat) && Number.isFinite(parsedLon)
         && (parsedLat !== 0 || parsedLon !== 0);
       if (hasGps) {
+        const dLat = parsedLat - sLat;
+        const dLng = parsedLon - sLon;
+        // Directional slotting: if node is south of server (e.g. Nghe An), shoot bottom-left
+        let dir = 'bottom-left';
+        if (Math.abs(dLat) < 6.0 && Math.abs(dLng) < 6.0) {
+          dir = dLat < 0 ? (dLng >= 0 ? 'bottom-right' : 'bottom-left') : 'top-left';
+        }
+
         markers.push({
           id: `client-${idx}`,
           lat: parsedLat, lng: parsedLon,
           type: 'client',
-          label: 'CLIENT NODE',
-          sublabel: client.city ? `${client.city}, ${client.country || ''}` : (client.ip || 'Unknown'),
+          label: `CLIENT // ${client.ip?.slice(-8) || 'NODE'}`,
+          sublabel: client.city ? `${client.city}, ${client.country || ''}` : (client.ip || 'Unknown IP'),
+          dir,
           color: '#00f3ff',
-          borderColor: 'rgba(0,243,255,0.6)',
-          glowColor: 'rgba(0,243,255,0.2)',
+          glowColor: 'rgba(0,243,255,0.45)',
           client,
         });
       }
@@ -249,15 +283,49 @@ export default function WorldMapPage() {
     return markers;
   }, [geoData]);
 
-
-
-
+  // Multi-Stage Sonar Waves (HQ Surveillance + Sovereign Maritime Radars)
   const ringsData = useMemo(() => {
     const sLat = parseFloat(geoData.server?.lat) || 20.98;
     const sLon = parseFloat(geoData.server?.lon) || 105.83;
-    return [{ lat: sLat, lng: sLon, maxR: 3.5, propagationSpeed: 1.2, repeatPeriod: 1000 }];
+    return [
+      // 1. Server HQ Primary Long-Range Sonar
+      {
+        id: 'hq_primary',
+        lat: sLat, lng: sLon,
+        maxR: 4.5,
+        propagationSpeed: 1.4,
+        repeatPeriod: 1800,
+        color: (t) => `rgba(0, 255, 157, ${Math.pow(1 - t, 2) * 0.75})`,
+      },
+      // 2. Server HQ High-Frequency Tactical Echo
+      {
+        id: 'hq_hf',
+        lat: sLat, lng: sLon,
+        maxR: 2.0,
+        propagationSpeed: 1.0,
+        repeatPeriod: 900,
+        color: (t) => `rgba(0, 243, 255, ${Math.pow(1 - t, 1.5) * 0.85})`,
+      },
+      // 3. Quần đảo Hoàng Sa — Radar Hải quân
+      {
+        id: 'hoang_sa_radar',
+        lat: 16.50, lng: 112.00,
+        maxR: 2.6,
+        propagationSpeed: 1.1,
+        repeatPeriod: 2200,
+        color: (t) => `rgba(0, 255, 157, ${Math.pow(1 - t, 2) * 0.6})`,
+      },
+      // 4. Quần đảo Trường Sa — Radar Hải quân
+      {
+        id: 'truong_sa_radar',
+        lat: 9.80, lng: 114.00,
+        maxR: 3.5,
+        propagationSpeed: 1.2,
+        repeatPeriod: 2600,
+        color: (t) => `rgba(0, 255, 157, ${Math.pow(1 - t, 2) * 0.6})`,
+      },
+    ];
   }, [geoData.server]);
-
 
   const resetCamera = useCallback(() => {
     globeRef.current?.pointOfView({ lat: 16.0, lng: 105.85, altitude: 2.0 }, 800);
@@ -266,105 +334,107 @@ export default function WorldMapPage() {
   const serverInfo = geoData.server || {};
   const connections = geoData.connections || [];
 
-  // Tooltip on hover (still used for island and fallback)
   const getPointLabel = useCallback((d) => {
     if (d.type === 'island') return `<div style="font-family:'Share Tech Mono',monospace;font-size:10px;color:#00ff9d;background:rgba(2,13,26,0.95);padding:3px 8px;border:1px solid rgba(0,255,157,0.4);border-radius:2px;letter-spacing:0.5px">◆ ${d.label}</div>`;
     return '';
   }, []);
 
-  // Create DOM element for htmlElementsData markers — Palantir/Cesium callout style
-  // Uses raw DOM API (not React) as required by react-globe.gl htmlElement prop
+  // Military CAD-style Dogleg Leader Line + Reticle Marker
   const createHtmlMarkerElement = useCallback((d) => {
     const isServer = d.type === 'server';
     const color = d.color;
-    const borderColor = d.borderColor;
     const glowColor = d.glowColor;
+    const dir = d.dir || (isServer ? 'top-right' : 'bottom-left');
+
+    const isTop = dir.startsWith('top');
+    const isRight = dir.endsWith('right');
+    const stemLen = 18;
+    const shelfLen = isServer ? 115 : 95;
+
+    const cardX = isRight ? stemLen + 2 : -(stemLen + shelfLen + 2);
+    const cardY = isTop ? -(stemLen + 24) : (stemLen + 4);
 
     const el = document.createElement('div');
     el.style.cssText = `
       position: relative;
       pointer-events: none;
-      transform: translate(-50%, -100%);
-      padding-bottom: 8px;
-    `;
-
-    // Leader line (connector from box to pin)
-    const leaderLine = document.createElement('div');
-    leaderLine.style.cssText = `
-      position: absolute;
-      bottom: 0;
-      left: 50%;
-      transform: translateX(-50%);
-      width: 1px;
-      height: 8px;
-      background: linear-gradient(to bottom, ${borderColor}, transparent);
-    `;
-    el.appendChild(leaderLine);
-
-    // Callout box
-    const box = document.createElement('div');
-    box.style.cssText = `
-      background: linear-gradient(135deg, rgba(2,10,22,0.94) 0%, rgba(0,20,38,0.90) 100%);
-      border: 1px solid ${borderColor};
-      border-radius: 2px;
-      padding: ${isServer ? '5px 10px' : '4px 8px'};
+      user-select: none;
       font-family: 'Share Tech Mono', monospace;
+    `;
+
+    // Center target reticle at (0,0)
+    const reticle = document.createElement('div');
+    reticle.style.cssText = `
+      position: absolute;
+      top: 0; left: 0;
+      width: 12px; height: 12px;
+      transform: translate(-50%, -50%);
+      pointer-events: auto;
+      cursor: pointer;
+    `;
+    reticle.innerHTML = `
+      <svg width="12" height="12" viewBox="0 0 12 12" style="overflow:visible">
+        <circle cx="6" cy="6" r="4.5" fill="none" stroke="${color}" stroke-width="1" stroke-dasharray="3 2" opacity="0.85"/>
+        <polygon points="6,2.5 8.5,6 6,9.5 3.5,6" fill="${color}"/>
+      </svg>
+    `;
+    el.appendChild(reticle);
+
+    // SVG Dogleg Leader Line
+    const svgLine = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svgLine.style.cssText = `
+      position: absolute;
+      top: 0; left: 0;
+      overflow: visible;
+      pointer-events: none;
+      filter: drop-shadow(0 0 3px ${glowColor});
+    `;
+    const dPath = isRight
+      ? (isTop ? `M 0 0 L ${stemLen} ${-stemLen} L ${stemLen + shelfLen} ${-stemLen}` : `M 0 0 L ${stemLen} ${stemLen} L ${stemLen + shelfLen} ${stemLen}`)
+      : (isTop ? `M 0 0 L ${-stemLen} ${-stemLen} L ${-(stemLen + shelfLen)} ${-stemLen}` : `M 0 0 L ${-stemLen} ${stemLen} L ${-(stemLen + shelfLen)} ${stemLen}`);
+
+    svgLine.innerHTML = `
+      <path d="${dPath}" fill="none" stroke="${color}" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+      <circle cx="${isRight ? stemLen + shelfLen : -(stemLen + shelfLen)}" cy="${isTop ? -stemLen : stemLen}" r="1.8" fill="${color}"/>
+    `;
+    el.appendChild(svgLine);
+
+    // Card attached on shelf
+    const card = document.createElement('div');
+    card.style.cssText = `
+      position: absolute;
+      left: ${cardX}px;
+      top: ${cardY}px;
+      width: ${shelfLen}px;
+      background: linear-gradient(135deg, rgba(2,10,22,0.95) 0%, rgba(0,20,38,0.92) 100%);
+      border: 1px solid ${color};
+      border-left: 2.5px solid ${color};
+      padding: 3px 6px;
+      border-radius: 2px;
+      box-shadow: 0 0 10px ${glowColor}, inset 0 0 8px rgba(0,0,0,0.8);
       white-space: nowrap;
-      box-shadow: 0 0 12px ${glowColor}, inset 0 1px 0 ${glowColor};
-      clip-path: polygon(6px 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%, 0 6px);
+      pointer-events: auto;
+      cursor: pointer;
     `;
 
-    // Badge row
-    const badgeRow = document.createElement('div');
-    badgeRow.style.cssText = `
-      display: flex;
-      align-items: center;
-      gap: 5px;
-      margin-bottom: ${isServer ? '2px' : '0'};
+    card.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:4px">
+        <span style="font-size:${isServer ? '9px' : '8px'};font-weight:bold;color:${color};letter-spacing:0.8px">${d.label}</span>
+        <span style="display:inline-block;width:4px;height:4px;border-radius:50%;background:${color};box-shadow:0 0 4px ${color}"></span>
+      </div>
+      ${d.sublabel ? `<div style="font-size:7.5px;color:rgba(255,255,255,0.7);letter-spacing:0.4px;overflow:hidden;text-overflow:ellipsis;margin-top:1px">${d.sublabel}</div>` : ''}
     `;
 
-    // Pulse dot
-    const pulseDot = document.createElement('div');
-    pulseDot.style.cssText = `
-      width: 5px;
-      height: 5px;
-      border-radius: 50%;
-      background: ${color};
-      box-shadow: 0 0 4px ${color};
-      flex-shrink: 0;
-    `;
-    badgeRow.appendChild(pulseDot);
+    card.onclick = (e) => {
+      e.stopPropagation();
+      if (d.client) setSelectedNode(d.client);
+      globeRef.current?.pointOfView({ lat: d.lat, lng: d.lng, altitude: 1.6 }, 800);
+    };
 
-    // Label text
-    const labelSpan = document.createElement('span');
-    labelSpan.style.cssText = `
-      font-size: ${isServer ? '10px' : '9px'};
-      font-weight: bold;
-      color: ${color};
-      letter-spacing: 1px;
-      text-shadow: 0 0 8px ${color};
-    `;
-    labelSpan.textContent = d.label;
-    badgeRow.appendChild(labelSpan);
-
-    box.appendChild(badgeRow);
-
-    // Sublabel (city/IP info)
-    if (d.sublabel) {
-      const sub = document.createElement('div');
-      sub.style.cssText = `
-        font-size: 8px;
-        color: rgba(255,255,255,0.55);
-        letter-spacing: 0.5px;
-        line-height: 1.3;
-      `;
-      sub.textContent = d.sublabel;
-      box.appendChild(sub);
-    }
-
-    el.appendChild(box);
+    el.appendChild(card);
     return el;
   }, []);
+
 
 
 
@@ -513,13 +583,13 @@ export default function WorldMapPage() {
               showAtmosphere={false}
               globeCurvatureResolution={6}  // Reduce globe triangles ~4000 vs ~16000 default
 
-              // deferredBorders: low-priority update — globe renders before borders arrive
-              pathsData={deferredBorders}
+              // combinedPathsData: low-priority country borders + Vietnam Maritime Patrol Perimeters
+              pathsData={combinedPathsData}
               pathPoints={d => d.coords}
               pathPointLat={p => p[0]}
               pathPointLng={p => p[1]}
-              pathColor={() => 'rgba(0, 243, 255, 0.5)'}
-              pathStroke={0.5}
+              pathColor={d => d.color || 'rgba(0, 243, 255, 0.45)'}
+              pathStroke={d => d.stroke || 0.45}
               pathDashLength={1}
               pathDashGap={0}
               pathTransitionDuration={0}
@@ -530,11 +600,11 @@ export default function WorldMapPage() {
               arcEndLat={d => d.endLat}
               arcEndLng={d => d.endLng}
               arcColor={d => d.color}
-              arcAltitude={0.2}
-              arcStroke={0.2}
-              arcDashLength={0.4}
-              arcDashGap={0.15}
-              arcDashAnimateTime={2400}
+              arcAltitude={d => d.dynamicAltitude || 0.1}
+              arcStroke={0.22}
+              arcDashLength={0.35}
+              arcDashGap={0.65}
+              arcDashAnimateTime={1800}
 
               // Throttle raycasting — only raycast 'point' objects, skip border geometry entirely
               pointerEventsFilter={obj => obj.__globeObjType === 'point'}
@@ -543,7 +613,7 @@ export default function WorldMapPage() {
               pointLat={d => d.lat}
               pointLng={d => d.lng}
               pointColor={d => d.color}
-              pointAltitude={d => d.type === 'server' ? 0.05 : d.type === 'client' ? 0.03 : 0.005}
+              pointAltitude={d => d.type === 'server' ? 0.04 : d.type === 'client' ? 0.03 : 0.005}
               pointRadius={d => d.size}
               pointResolution={12}
               pointsMerge={false}
@@ -555,7 +625,7 @@ export default function WorldMapPage() {
               ringMaxRadius={d => d.maxR}
               ringPropagationSpeed={d => d.propagationSpeed}
               ringRepeatPeriod={d => d.repeatPeriod}
-              ringColor={() => t => `rgba(0,255,157,${(1 - t) * 0.7})`}
+              ringColor={d => (typeof d.color === 'function' ? d.color : (t => `rgba(0,255,157,${(1 - t) * 0.7})`))}
               ringResolution={32}
               ringAltitude={0.002}
 
@@ -569,6 +639,7 @@ export default function WorldMapPage() {
                 el.style.opacity = isVisible ? '1' : '0';
                 el.style.transition = 'opacity 0.3s';
               }}
+
 
               onGlobeReady={handleGlobeReady}
               onPointClick={(point) => {

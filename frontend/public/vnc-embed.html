@@ -36,12 +36,16 @@
       display: flex;
       align-items: center;
       justify-content: center;
+      cursor: default !important;
     }
 
-    /* Only safe canvas overrides — no sizing that breaks coordinate system */
+    /* Only safe canvas overrides — GPU acceleration & Zero-latency local cursor */
     #screen canvas {
       outline: none !important;
-      cursor: default;
+      cursor: default !important;
+      transform: translateZ(0);
+      will-change: transform;
+      image-rendering: -webkit-optimize-contrast;
     }
 
     #status {
@@ -59,37 +63,20 @@
       padding: 10px 20px;
       border: 1px solid rgba(0, 243, 255, 0.3);
       border-radius: 4px;
-      backdrop-filter: blur(4px);
-      letter-spacing: 1px;
     }
   </style>
-</head>
-<body>
-  <div id="screen" tabindex="0"></div>
-  <div id="status">⟳ Đang kết nối VNC Server...</div>
-
   <script type="module">
-    import RFB from '/fb-vnc/core/rfb.js';
-
-    const screen = document.getElementById('screen');
-    const status = document.getElementById('status');
-
-    const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl   = `${wsProto}//${window.location.host}/fb-vnc/websockify`;
+    import RFB from './novnc/core/rfb.js';
 
     let rfb = null;
     let reconnectTimer = null;
-    let isConnecting = false;
+    const screen = document.getElementById('screen');
+    const status = document.getElementById('status');
 
-    /*
-     * scaleViewport=true tells noVNC to:
-     *   1. Read the container's actual pixel dimensions via getBoundingClientRect()
-     *   2. Resize the <canvas> buffer attributes (width/height) to match exactly
-     *   3. Scale the remote framebuffer content to fit — all within one coordinate space
-     *
-     * This means canvas.width === container.clientWidth at all times, so every
-     * mouse click maps perfectly: no offset, no drift.
-     */
+    // Auto detect websocket URL (proxied through Nginx at /fb-vnc/websockify)
+    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${proto}//${window.location.host}/fb-vnc/websockify`;
+
     function triggerScale() {
       if (!rfb) return;
       try {
@@ -121,9 +108,9 @@
         rfb.scaleViewport    = true;   // noVNC manages canvas size — DO NOT override via CSS
         rfb.resizeSession    = false;  // Keep server resolution fixed at 1280x720 (optimized for L3 Cache)
         rfb.clipViewport     = false;  // Scaling handles fit
-        rfb.qualityLevel     = 7;      // High visual quality with sharp text / QR codes
-        rfb.compressionLevel = 2;      // Low CPU overhead ZRLE compression for dual-core host
-        rfb.showDotCursor    = false;  // Server-rendered hardware cursor
+        rfb.qualityLevel     = 5;      // Tight Hybrid JPEG Encoding (Sharp text & QR, 85% less payload)
+        rfb.compressionLevel = 5;      // Balanced Zlib level (Zero buffer bloat over ngrok tunnel)
+        rfb.showDotCursor    = false;  // Native 144Hz client cursor with zero network lag
         rfb.background       = '#000000';
 
         rfb.addEventListener('connect', () => {

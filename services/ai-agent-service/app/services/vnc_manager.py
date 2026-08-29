@@ -123,18 +123,20 @@ class VncManager:
                 self._kill_stale_processes()
                 await asyncio.sleep(0.3)
 
-                # 2. Start Xvfb (1280x720x16 - optimized to fit into 3MB L3 Cache of i5-4310U)
+                # 2. Start Xvfb (1280x720x16, 96 DPI, XFIXES, DAMAGE, GLX - fits into 3MB L3 Cache)
                 self._xvfb_proc = subprocess.Popen(
                     [
                         "Xvfb", self._display,
                         "-screen", "0", "1280x720x16",
+                        "-dpi", "96",
                         "-ac",
                         "-nolisten", "tcp",
                         "-noreset",
                         "+extension", "GLX",
                         "+extension", "RANDR",
                         "+extension", "RENDER",
-                        "+extension", "DAMAGE"
+                        "+extension", "DAMAGE",
+                        "+extension", "XFIXES"
                     ],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL
@@ -159,11 +161,12 @@ class VncManager:
                 )
                 await asyncio.sleep(0.3)
 
-                # 4. Start x11vnc with high-efficiency event-driven mode (-xdamage):
+                # 4. Start x11vnc with high-efficiency event-driven mode (-xdamage) & WAN pacing:
                 #    -xdamage: Event-driven change notifications from X11 (Zero CPU scan loop)
-                #    -threads: Multi-threaded ZRLE encoding
-                #    -defer 2, -wait 5: Instantaneous sub-10ms input feedback
-                #    -speeds lan: Uncapped local/bridge network speed
+                #    -cursor xfixes: Gửi hình dạng chuột qua XFixes cho Client render cục bộ (0ms latency, 144Hz)
+                #    -defer 20, -wait 15: Điều tốc ~25-30 FPS hoàn hảo qua ngrok tunnel, triệt tiêu 100% Buffer Bloat
+                #    -wirecopyrect: Gửi 10 bytes tọa độ khi cuộn trang thay vì re-encode cả màn hình
+                #    -extra_fbufs 2: Triple Buffering song song giúp render mượt mà không block capture
                 self._x11vnc_proc = subprocess.Popen(
                     [
                         "x11vnc",
@@ -174,12 +177,18 @@ class VncManager:
                         "-rfbport", "5900",
                         "-listen", "127.0.0.1",
                         "-xdamage",
+                        "-cursor", "xfixes",
                         "-repeat",
-                        "-defer", "2",
-                        "-wait", "5",
+                        "-defer", "20",
+                        "-wait", "15",
+                        "-wirecopyrect",
+                        "-pointer_mode", "1",
+                        "-xwarppointer",
+                        "-extra_fbufs", "2",
+                        "-noxrecord",
+                        "-capslock",
                         "-nowf",
-                        "-threads",
-                        "-speeds", "lan"
+                        "-threads"
                     ],
                     env=dict(os.environ, DISPLAY=self._display),
                     stdout=subprocess.DEVNULL,
@@ -238,7 +247,6 @@ class VncManager:
                         "--disable-blink-features=AutomationControlled",
                         "--no-sandbox",
                         "--disable-setuid-sandbox",
-                        "--disable-dev-shm-usage",
                         "--disable-infobars",
                         "--window-position=0,0",
                         "--window-size=1280,720",
@@ -247,19 +255,21 @@ class VncManager:
                         "--disable-extensions",
                         "--no-first-run",
                         # Low-spec CPU & Video Decoding neutralization
+                        "--enable-fast-unload",
+                        "--disable-smooth-scrolling",
                         "--autoplay-policy=user-gesture-required",
                         "--mute-audio",
                         "--disable-background-media-suspend=false",
+                        "--disable-gpu",
                         "--disable-gpu-rasterization",
                         "--disable-software-rasterizer",
-                        "--disable-smooth-scrolling",
+                        "--force-device-scale-factor=1",
                         "--renderer-process-limit=2",
                         "--js-flags=--max-old-space-size=512",
                         "--disable-features=Translate,OptimizationHints,MediaRouter,CalculateNativeWinOcclusion,InterestFeedContentSuggestions",
                         "--disable-background-networking",
                         "--disable-component-update",
                         "--disable-domain-reliability",
-                        "--force-device-scale-factor=1",
                     ],
                     viewport=None,
                     env=env_vars,

@@ -430,6 +430,50 @@ export function parseDockerStats(raw) {
   return map;
 }
 
+/**
+ * Format Docker container status into a concise status descriptor
+ * E.g. "Up 2 hours (healthy)" -> { isUp: true, label: "UP (2h)", full: "Up 2 hours (healthy)" }
+ * @param {string} statusStr
+ */
+export function formatDockerStatus(statusStr = '') {
+  if (!statusStr) return { isUp: false, label: 'OFFLINE', full: '' };
+  const isUp = statusStr.toLowerCase().startsWith('up');
+  
+  if (!isUp) {
+    const exitedMatch = statusStr.match(/Exited\s*\(\d+\)/i);
+    return { isUp: false, label: exitedMatch ? exitedMatch[0] : 'EXITED', full: statusStr };
+  }
+
+  let uptime = statusStr
+    .replace(/^Up\s+/i, '')
+    .replace(/\s+ago$/i, '')
+    .replace(/About a minute/i, '1m')
+    .replace(/About an hour/i, '1h')
+    .replace(/hours?/i, 'h')
+    .replace(/minutes?/i, 'm')
+    .replace(/seconds?/i, 's')
+    .replace(/weeks?/i, 'w')
+    .replace(/days?/i, 'd')
+    .trim();
+
+  return { isUp: true, label: `UP (${uptime})`, full: statusStr };
+}
+
+/**
+ * Format port mappings into concise public ports string
+ * @param {string} portsStr
+ */
+export function formatDockerPorts(portsStr = '') {
+  if (!portsStr || portsStr === '—' || portsStr === '-') return null;
+  const matches = portsStr.match(/(?:0\.0\.0\.0|:::|\[::\]):(\d+)->/g);
+  if (matches && matches.length > 0) {
+    const uniquePorts = [...new Set(matches.map(m => m.match(/:(\d+)->/)[1]))];
+    return uniquePorts.slice(0, 2).map(p => `:${p}`).join(' ');
+  }
+  const simpleMatch = portsStr.match(/(\d+)\//);
+  return simpleMatch ? `:${simpleMatch[1]}` : portsStr.slice(0, 10);
+}
+
 // Helper used by datetime formatters below
 function pad2(num) {
   return String(num).padStart(2, '0');

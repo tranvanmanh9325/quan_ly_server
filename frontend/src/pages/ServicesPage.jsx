@@ -1,8 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import axios from 'axios';
-import { SciFiShieldIcon, SciFiContainerIcon, SciFiChronoIcon, SciFiQuantumIcon } from '../components/SciFiIcons';
-import { parseDockerStats } from '../utils/parsers';
+import { 
+  SciFiShieldIcon, SciFiContainerIcon, SciFiChronoIcon, SciFiQuantumIcon,
+  SciFiTerminalIcon, SciFiRefreshIcon, SciFiStopIcon, SciFiPlayIcon, SciFiChronoSpinnerIcon
+} from '../components/SciFiIcons';
+import { parseDockerStats, formatDockerStatus, formatDockerPorts } from '../utils/parsers';
 import LogViewer from '../components/LogViewer';
 
 /**
@@ -383,31 +386,50 @@ export default function ServicesPage() {
           </div>
         </section>
 
-        {/* Panel 2: Docker Containers */}
-        <section className="glass-panel" style={{ display: 'flex', flexDirection: 'column', height: '380px', minWidth: 0 }}>
-          <div className="section-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-            <h2 style={{ margin: 0, fontSize: '1rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <SciFiContainerIcon size={20} color="var(--accent-green)" /> Docker Containers
+        {/* Panel 2: Docker Containers (Sci-Fi Modular Row-Cards HUD) */}
+        <section className="glass-panel" style={{ display: 'flex', flexDirection: 'column', height: '380px', minWidth: 0, overflow: 'hidden' }}>
+          <div className="section-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+            <h2 style={{ margin: 0, fontSize: '0.95rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <SciFiContainerIcon size={18} color="var(--accent-green)" /> Docker Containers
             </h2>
-            <div style={{ display: 'flex', gap: '6px' }}>
-              <span style={{ fontSize: '0.7rem', fontFamily: 'Share Tech Mono', color: 'var(--accent-cyan)', background: 'rgba(0, 243, 255, 0.08)', padding: '2px 6px', border: '1px solid rgba(0, 243, 255, 0.3)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span style={{ fontSize: '0.68rem', fontFamily: 'Share Tech Mono', color: 'var(--accent-cyan)', background: 'rgba(0, 243, 255, 0.08)', padding: '2px 5px', border: '1px solid rgba(0, 243, 255, 0.3)', borderRadius: '2px' }}>
                 TOTAL: {containers.length}
               </span>
-              <span style={{ fontSize: '0.7rem', fontFamily: 'Share Tech Mono', color: 'var(--accent-green)', background: 'rgba(0, 255, 157, 0.08)', padding: '2px 6px', border: '1px solid rgba(0, 255, 157, 0.3)' }}>
+              <span style={{ fontSize: '0.68rem', fontFamily: 'Share Tech Mono', color: 'var(--accent-green)', background: 'rgba(0, 255, 157, 0.08)', padding: '2px 5px', border: '1px solid rgba(0, 255, 157, 0.3)', borderRadius: '2px' }}>
                 UP: {docUpCount}
               </span>
               {docExitedCount > 0 && (
-                <span style={{ fontSize: '0.7rem', fontFamily: 'Share Tech Mono', color: 'var(--text-secondary)', background: 'rgba(255, 255, 255, 0.08)', padding: '2px 6px', border: '1px solid rgba(255, 255, 255, 0.2)' }}>
+                <span style={{ fontSize: '0.68rem', fontFamily: 'Share Tech Mono', color: 'var(--accent-pink)', background: 'rgba(255, 0, 85, 0.08)', padding: '2px 5px', border: '1px solid rgba(255, 0, 85, 0.3)', borderRadius: '2px' }}>
                   EXITED: {docExitedCount}
                 </span>
               )}
+              <a
+                href="/containers"
+                style={{
+                  fontSize: '0.65rem',
+                  fontFamily: 'Share Tech Mono',
+                  color: 'var(--accent-cyan)',
+                  textDecoration: 'none',
+                  border: '1px solid rgba(0, 243, 255, 0.4)',
+                  padding: '2px 6px',
+                  borderRadius: '2px',
+                  background: 'rgba(0, 243, 255, 0.1)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '3px'
+                }}
+                title="Open Full Container Management Console (9 Columns & Extended Tools)"
+              >
+                FULL ↗
+              </a>
             </div>
           </div>
 
-          <div style={{ display: 'flex', gap: '10px', marginBottom: '10px' }}>
+          <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
             <input
               type="text"
-              placeholder="Search containers..."
+              placeholder="Search container..."
               value={dockerSearch}
               onChange={e => setDockerSearch(e.target.value)}
               style={{
@@ -415,10 +437,11 @@ export default function ServicesPage() {
                 background: 'rgba(0,0,0,0.4)',
                 border: '1px solid rgba(0,243,255,0.2)',
                 color: '#fff',
-                padding: '4px 8px',
-                fontSize: '0.75rem',
+                padding: '3px 8px',
+                fontSize: '0.72rem',
                 fontFamily: 'Share Tech Mono',
-                borderRadius: '3px'
+                borderRadius: '3px',
+                minWidth: 0
               }}
             />
             <div style={{ display: 'flex', gap: '2px', background: 'rgba(0,0,0,0.4)', padding: '2px', borderRadius: '3px' }}>
@@ -444,120 +467,243 @@ export default function ServicesPage() {
             </div>
           </div>
 
-          <div style={{ overflow: 'auto', flex: 1, paddingRight: '6px', minWidth: 0 }}>
+          <div style={{ overflowY: 'auto', overflowX: 'hidden', flex: 1, paddingRight: '4px', display: 'flex', flexDirection: 'column', gap: '6px', minWidth: 0 }}>
             {dockerData.status === 'NOT_INSTALLED' ? (
-              <div style={{ color: 'var(--text-secondary)' }}>Docker is not installed on this host.</div>
+              <div style={{ color: 'var(--text-secondary)', padding: '20px', textAlign: 'center', fontSize: '0.8rem', fontFamily: 'Share Tech Mono' }}>Docker is not installed on this host.</div>
             ) : dockerData.status === 'ERROR' ? (
-              <div style={{ color: 'var(--accent-pink)' }}>Error fetching Docker status.</div>
+              <div style={{ color: 'var(--accent-pink)', padding: '20px', textAlign: 'center', fontSize: '0.8rem', fontFamily: 'Share Tech Mono' }}>Error fetching Docker status.</div>
+            ) : filteredContainers.length === 0 ? (
+              <div style={{ color: 'var(--text-secondary)', padding: '20px', textAlign: 'center', fontSize: '0.8rem', fontFamily: 'Share Tech Mono' }}>No matching containers found.</div>
             ) : (
-              <table className="glass-table docker-table" style={{ width: '100%', fontSize: '0.75rem' }}>
-                <thead>
-                  <tr>
-                    <th style={{ textAlign: 'left' }}>Container</th>
-                    <th style={{ textAlign: 'left' }}>Image</th>
-                    <th style={{ textAlign: 'left' }}>Status</th>
-                    <th style={{ textAlign: 'center' }}>CPU</th>
-                    <th style={{ textAlign: 'center' }}>Memory</th>
-                    <th style={{ textAlign: 'center' }}>Ports</th>
-                    <th style={{ textAlign: 'right' }}>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredContainers.map((c, i) => {
-                    const isUp = (c.status || '').startsWith('Up');
-                    const cId = c.id || c.name;
-                    const stats = dockerStats[c.name] || dockerStats[c.id] || {};
-                    const cpuVal = stats.cpu || (isUp ? '0.0%' : '-');
-                    const memVal = stats.mem || (isUp ? '-' : '-');
+              filteredContainers.map((c, i) => {
+                const isUp = (c.status || '').toLowerCase().startsWith('up');
+                const cId = c.id || c.name;
+                const stats = dockerStats[c.name] || dockerStats[c.id] || {};
+                const { label: statusLabel } = formatDockerStatus(c.status);
+                const portDisplay = formatDockerPorts(c.ports);
+                const cpuVal = stats.cpu || (isUp ? '0.0%' : '—');
+                const memVal = stats.mem ? stats.mem.split('/')[0].trim() : (isUp ? '—' : '—');
 
-                    return (
-                      <tr key={i}>
-                        <td style={{ fontWeight: 'bold', color: 'var(--accent-cyan)', fontFamily: 'Share Tech Mono', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.name}>{c.name}</td>
-                        <td style={{ color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.image}>{c.image}</td>
-                        <td className={isUp ? 'docker-status-up' : 'docker-status-exited'} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.status}>{c.status}</td>
-                        <td style={{ textAlign: 'center', color: 'var(--accent-green)', fontFamily: 'Share Tech Mono', fontWeight: 'bold', whiteSpace: 'nowrap' }}>{cpuVal}</td>
-                        <td style={{ textAlign: 'center', color: 'var(--accent-cyan)', fontFamily: 'Share Tech Mono', fontSize: '0.65rem', whiteSpace: 'nowrap' }} title={memVal}>{memVal}</td>
-                        <td style={{ textAlign: 'center', fontSize: '0.65rem', fontFamily: 'Share Tech Mono', color: 'var(--text-secondary)', maxWidth: '90px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.ports}>
-                          {c.ports || '-'}
-                        </td>
-                        <td style={{ textAlign: 'right' }}>
-                          <div style={{ display: 'flex', gap: '3px', justifyContent: 'flex-end' }}>
-                            <button
-                              onClick={() => openContainerLogs(cId, c.name)}
-                              style={{
-                                background: 'rgba(0, 255, 157, 0.1)',
-                                border: '1px solid var(--accent-green)',
-                                color: 'var(--accent-green)',
-                                padding: '1px 4px',
-                                fontSize: '0.58rem',
-                                cursor: 'pointer',
-                                fontFamily: 'Share Tech Mono'
-                              }}
-                              title="View Container Logs"
-                            >
-                              LOGS
-                            </button>
-                            <button
-                              onClick={() => handleDockerControl(cId, c.name, 'restart')}
-                              disabled={actionLoading[`doc-${cId}-restart`]}
-                              style={{
-                                background: 'rgba(0, 243, 255, 0.1)',
-                                border: '1px solid var(--accent-cyan)',
-                                color: 'var(--accent-cyan)',
-                                padding: '1px 4px',
-                                fontSize: '0.58rem',
-                                cursor: 'pointer',
-                                fontFamily: 'Share Tech Mono'
-                              }}
-                              title="Restart Container"
-                            >
-                              {actionLoading[`doc-${cId}-restart`] ? '...' : 'RESTART'}
-                            </button>
-                            {isUp ? (
-                              <button
-                                onClick={() => handleDockerControl(cId, c.name, 'stop')}
-                                disabled={actionLoading[`doc-${cId}-stop`]}
-                                style={{
-                                  background: 'rgba(255, 0, 85, 0.1)',
-                                  border: '1px solid var(--accent-pink)',
-                                  color: 'var(--accent-pink)',
-                                  padding: '1px 4px',
-                                  fontSize: '0.58rem',
-                                  cursor: 'pointer',
-                                  fontFamily: 'Share Tech Mono'
-                                }}
-                                title="Stop Container"
-                              >
-                                {actionLoading[`doc-${cId}-stop`] ? '...' : 'STOP'}
-                              </button>
+                return (
+                  <div
+                    key={i}
+                    style={{
+                      background: 'rgba(10, 15, 26, 0.7)',
+                      border: `1px solid ${isUp ? 'rgba(0, 243, 255, 0.18)' : 'rgba(255, 0, 85, 0.2)'}`,
+                      borderLeft: `3px solid ${isUp ? 'var(--accent-green)' : 'var(--accent-pink)'}`,
+                      padding: '6px 8px',
+                      borderRadius: '3px',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '4px',
+                      transition: 'background 0.2s',
+                    }}
+                  >
+                    {/* Top Row: LED + Name + Uptime Pill | Action Buttons */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', minWidth: 0, gap: '6px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0, flex: 1 }}>
+                        <span
+                          style={{
+                            width: '6px',
+                            height: '6px',
+                            borderRadius: '50%',
+                            background: isUp ? 'var(--accent-green)' : 'var(--accent-pink)',
+                            boxShadow: isUp ? '0 0 6px var(--accent-green)' : '0 0 6px var(--accent-pink)',
+                            flexShrink: 0
+                          }}
+                        />
+                        <span
+                          style={{
+                            fontFamily: 'Share Tech Mono',
+                            fontSize: '0.8rem',
+                            fontWeight: 'bold',
+                            color: '#fff',
+                            whiteSpace: 'nowrap',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis'
+                          }}
+                          title={c.name}
+                        >
+                          {c.name}
+                        </span>
+                        <span
+                          style={{
+                            fontFamily: 'Share Tech Mono',
+                            fontSize: '0.62rem',
+                            padding: '1px 4px',
+                            borderRadius: '2px',
+                            whiteSpace: 'nowrap',
+                            flexShrink: 0,
+                            color: isUp ? 'var(--accent-green)' : 'var(--accent-pink)',
+                            background: isUp ? 'rgba(0, 255, 102, 0.1)' : 'rgba(255, 0, 85, 0.1)',
+                            border: `1px solid ${isUp ? 'rgba(0, 255, 102, 0.25)' : 'rgba(255, 0, 85, 0.25)'}`
+                          }}
+                          title={c.status}
+                        >
+                          {statusLabel}
+                        </span>
+                      </div>
+
+                      {/* Action Buttons Group */}
+                      <div style={{ display: 'flex', gap: '3px', flexShrink: 0 }}>
+                        <button
+                          onClick={() => openContainerLogs(cId, c.name)}
+                          style={{
+                            background: 'rgba(255, 187, 0, 0.12)',
+                            border: '1px solid rgba(255, 187, 0, 0.4)',
+                            color: 'var(--accent-yellow)',
+                            padding: '2px 5px',
+                            fontSize: '0.62rem',
+                            fontFamily: 'Share Tech Mono',
+                            cursor: 'pointer',
+                            borderRadius: '2px',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '2px'
+                          }}
+                          title="View Container Logs"
+                        >
+                          <SciFiTerminalIcon size={10} color="var(--accent-yellow)" />
+                          <span>LOGS</span>
+                        </button>
+
+                        <button
+                          onClick={() => handleDockerControl(cId, c.name, 'restart')}
+                          disabled={actionLoading[`doc-${cId}-restart`]}
+                          style={{
+                            background: 'rgba(0, 243, 255, 0.12)',
+                            border: '1px solid rgba(0, 243, 255, 0.4)',
+                            color: 'var(--accent-cyan)',
+                            padding: '2px 5px',
+                            fontSize: '0.62rem',
+                            fontFamily: 'Share Tech Mono',
+                            cursor: 'pointer',
+                            borderRadius: '2px',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '2px'
+                          }}
+                          title="Restart Container"
+                        >
+                          {actionLoading[`doc-${cId}-restart`] ? (
+                            <SciFiChronoSpinnerIcon size={10} color="var(--accent-cyan)" />
+                          ) : (
+                            <SciFiRefreshIcon size={10} color="var(--accent-cyan)" />
+                          )}
+                          <span>RST</span>
+                        </button>
+
+                        {isUp ? (
+                          <button
+                            onClick={() => handleDockerControl(cId, c.name, 'stop')}
+                            disabled={actionLoading[`doc-${cId}-stop`]}
+                            style={{
+                              background: 'rgba(255, 0, 85, 0.12)',
+                              border: '1px solid rgba(255, 0, 85, 0.4)',
+                              color: 'var(--accent-pink)',
+                              padding: '2px 5px',
+                              fontSize: '0.62rem',
+                              fontFamily: 'Share Tech Mono',
+                              cursor: 'pointer',
+                              borderRadius: '2px',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '2px'
+                            }}
+                            title="Stop Container"
+                          >
+                            {actionLoading[`doc-${cId}-stop`] ? (
+                              <SciFiChronoSpinnerIcon size={10} color="var(--accent-pink)" />
                             ) : (
-                              <button
-                                onClick={() => handleDockerControl(cId, c.name, 'start')}
-                                disabled={actionLoading[`doc-${cId}-start`]}
-                                style={{
-                                  background: 'rgba(0, 255, 157, 0.1)',
-                                  border: '1px solid var(--accent-green)',
-                                  color: 'var(--accent-green)',
-                                  padding: '1px 4px',
-                                  fontSize: '0.58rem',
-                                  cursor: 'pointer',
-                                  fontFamily: 'Share Tech Mono'
-                                }}
-                                title="Start Container"
-                              >
-                                {actionLoading[`doc-${cId}-start`] ? '...' : 'START'}
-                              </button>
+                              <SciFiStopIcon size={9} color="var(--accent-pink)" />
                             )}
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                  {filteredContainers.length === 0 && (
-                    <tr><td colSpan="7" style={{textAlign: 'center', color: 'var(--text-secondary)'}}>No matching containers found.</td></tr>
-                  )}
-                </tbody>
-              </table>
+                            <span>STOP</span>
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => handleDockerControl(cId, c.name, 'start')}
+                            disabled={actionLoading[`doc-${cId}-start`]}
+                            style={{
+                              background: 'rgba(0, 255, 157, 0.12)',
+                              border: '1px solid rgba(0, 255, 157, 0.4)',
+                              color: 'var(--accent-green)',
+                              padding: '2px 5px',
+                              fontSize: '0.62rem',
+                              fontFamily: 'Share Tech Mono',
+                              cursor: 'pointer',
+                              borderRadius: '2px',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '2px'
+                            }}
+                            title="Start Container"
+                          >
+                            {actionLoading[`doc-${cId}-start`] ? (
+                              <SciFiChronoSpinnerIcon size={10} color="var(--accent-green)" />
+                            ) : (
+                              <SciFiPlayIcon size={9} color="var(--accent-green)" />
+                            )}
+                            <span>START</span>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Bottom Row: Image Tag + Port Chip | CPU + RAM Metrics */}
+                    <div
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        fontFamily: 'Share Tech Mono',
+                        fontSize: '0.65rem',
+                        borderTop: '1px dashed rgba(255, 255, 255, 0.08)',
+                        paddingTop: '3px',
+                        minWidth: 0
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0, flex: 1, overflow: 'hidden' }}>
+                        <span
+                          style={{
+                            color: 'rgba(224, 242, 254, 0.65)',
+                            whiteSpace: 'nowrap',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis'
+                          }}
+                          title={c.image}
+                        >
+                          {c.image}
+                        </span>
+                        {portDisplay && (
+                          <span
+                            style={{
+                              color: 'var(--accent-cyan)',
+                              background: 'rgba(0, 243, 255, 0.08)',
+                              padding: '0 4px',
+                              borderRadius: '2px',
+                              whiteSpace: 'nowrap',
+                              flexShrink: 0
+                            }}
+                            title={c.ports}
+                          >
+                            {portDisplay}
+                          </span>
+                        )}
+                      </div>
+
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
+                        <span style={{ color: 'var(--accent-yellow)', fontWeight: 'bold' }} title={`CPU: ${cpuVal}`}>
+                          ⚡ {cpuVal}
+                        </span>
+                        <span style={{ color: 'rgba(255, 255, 255, 0.2)' }}>/</span>
+                        <span style={{ color: 'var(--accent-cyan)' }} title={`Memory: ${stats.mem || memVal}`}>
+                          💾 {memVal}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
             )}
           </div>
         </section>

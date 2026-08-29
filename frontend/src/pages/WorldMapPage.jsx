@@ -167,7 +167,9 @@ export default function WorldMapPage() {
         startLat: sLat, startLng: sLon,
         endLat: hasGps ? parsedLat : sLat + 0.01,
         endLng: hasGps ? parsedLon : sLon + 0.01,
-        client, color: ['#00f3ff', '#00ff9d'],
+        client,
+        // 3-stop gradient: transparent at tips → bright cyan at center → laser glow
+        color: ['rgba(0,255,157,0)', 'rgba(0,243,255,0.95)', 'rgba(0,255,157,0)'],
       };
     });
   }, [geoData]);
@@ -201,11 +203,58 @@ export default function WorldMapPage() {
     return points;
   }, [geoData]);
 
+  // htmlElementsData: DOM overlay markers (CSS-styleable) — replaces plain WebGL labelsData
+  // Each item: { lat, lng, type, label, sublabel, color }
+  const htmlMarkersData = useMemo(() => {
+    const markers = [];
+    const sLat = parseFloat(geoData.server?.lat) || 20.98;
+    const sLon = parseFloat(geoData.server?.lon) || 105.83;
+
+    // Server HQ callout
+    if (geoData.server) {
+      markers.push({
+        id: 'hq',
+        lat: sLat, lng: sLon,
+        type: 'server',
+        label: 'SERVER HQ',
+        sublabel: serverInfo.city ? `${serverInfo.city}, ${serverInfo.country || 'VN'}` : 'Phường Định Công, VN',
+        color: '#00ff9d',
+        borderColor: 'rgba(0,255,157,0.65)',
+        glowColor: 'rgba(0,255,157,0.25)',
+      });
+    }
+
+    // Client callout markers
+    (geoData.connections || []).forEach((client, idx) => {
+      const parsedLat = parseFloat(client.lat);
+      const parsedLon = parseFloat(client.lon);
+      const hasGps = Number.isFinite(parsedLat) && Number.isFinite(parsedLon)
+        && (parsedLat !== 0 || parsedLon !== 0);
+      if (hasGps) {
+        markers.push({
+          id: `client-${idx}`,
+          lat: parsedLat, lng: parsedLon,
+          type: 'client',
+          label: 'CLIENT NODE',
+          sublabel: client.city ? `${client.city}, ${client.country || ''}` : (client.ip || 'Unknown'),
+          color: '#00f3ff',
+          borderColor: 'rgba(0,243,255,0.6)',
+          glowColor: 'rgba(0,243,255,0.2)',
+          client,
+        });
+      }
+    });
+
+    return markers;
+  }, [geoData, serverInfo]);
+
+
   const ringsData = useMemo(() => {
     const sLat = parseFloat(geoData.server?.lat) || 20.98;
     const sLon = parseFloat(geoData.server?.lon) || 105.83;
     return [{ lat: sLat, lng: sLon, maxR: 3.5, propagationSpeed: 1.2, repeatPeriod: 1000 }];
   }, [geoData.server]);
+
 
   const resetCamera = useCallback(() => {
     globeRef.current?.pointOfView({ lat: 16.0, lng: 105.85, altitude: 2.0 }, 800);
@@ -214,12 +263,107 @@ export default function WorldMapPage() {
   const serverInfo = geoData.server || {};
   const connections = geoData.connections || [];
 
+  // Tooltip on hover (still used for island and fallback)
   const getPointLabel = useCallback((d) => {
-    if (d.type === 'server') return `<div style="font-family:'Share Tech Mono',monospace;font-size:11px;color:#00ff9d;background:rgba(2,13,26,0.9);padding:5px 9px;border:1px solid rgba(0,255,157,0.55);border-radius:3px"><b>[HQ]</b> ${serverInfo.city || 'Định Công'}, VN<br/>IP: ${serverInfo.query || 'N/A'}</div>`;
-    if (d.type === 'client') return `<div style="font-family:'Share Tech Mono',monospace;font-size:11px;color:#00f3ff;background:rgba(2,13,26,0.9);padding:5px 9px;border:1px solid rgba(0,243,255,0.55);border-radius:3px"><b>[CLIENT]</b><br/>${d.client?.city || d.client?.ip || 'Unknown'}, ${d.client?.country || ''}</div>`;
-    if (d.type === 'island') return `<div style="font-family:'Share Tech Mono',monospace;font-size:10px;color:#00ff9d;background:rgba(2,13,26,0.9);padding:3px 7px;border:1px solid rgba(0,255,157,0.35);border-radius:2px">🏝 ${d.label}</div>`;
+    if (d.type === 'island') return `<div style="font-family:'Share Tech Mono',monospace;font-size:10px;color:#00ff9d;background:rgba(2,13,26,0.95);padding:3px 8px;border:1px solid rgba(0,255,157,0.4);border-radius:2px;letter-spacing:0.5px">◆ ${d.label}</div>`;
     return '';
-  }, [serverInfo]);
+  }, []);
+
+  // Create DOM element for htmlElementsData markers — Palantir/Cesium callout style
+  // Uses raw DOM API (not React) as required by react-globe.gl htmlElement prop
+  const createHtmlMarkerElement = useCallback((d) => {
+    const isServer = d.type === 'server';
+    const color = d.color;
+    const borderColor = d.borderColor;
+    const glowColor = d.glowColor;
+
+    const el = document.createElement('div');
+    el.style.cssText = `
+      position: relative;
+      pointer-events: none;
+      transform: translate(-50%, -100%);
+      padding-bottom: 8px;
+    `;
+
+    // Leader line (connector from box to pin)
+    const leaderLine = document.createElement('div');
+    leaderLine.style.cssText = `
+      position: absolute;
+      bottom: 0;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 1px;
+      height: 8px;
+      background: linear-gradient(to bottom, ${borderColor}, transparent);
+    `;
+    el.appendChild(leaderLine);
+
+    // Callout box
+    const box = document.createElement('div');
+    box.style.cssText = `
+      background: linear-gradient(135deg, rgba(2,10,22,0.94) 0%, rgba(0,20,38,0.90) 100%);
+      border: 1px solid ${borderColor};
+      border-radius: 2px;
+      padding: ${isServer ? '5px 10px' : '4px 8px'};
+      font-family: 'Share Tech Mono', monospace;
+      white-space: nowrap;
+      box-shadow: 0 0 12px ${glowColor}, inset 0 1px 0 ${glowColor};
+      clip-path: polygon(6px 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%, 0 6px);
+    `;
+
+    // Badge row
+    const badgeRow = document.createElement('div');
+    badgeRow.style.cssText = `
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      margin-bottom: ${isServer ? '2px' : '0'};
+    `;
+
+    // Pulse dot
+    const pulseDot = document.createElement('div');
+    pulseDot.style.cssText = `
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: ${color};
+      box-shadow: 0 0 4px ${color};
+      flex-shrink: 0;
+    `;
+    badgeRow.appendChild(pulseDot);
+
+    // Label text
+    const labelSpan = document.createElement('span');
+    labelSpan.style.cssText = `
+      font-size: ${isServer ? '10px' : '9px'};
+      font-weight: bold;
+      color: ${color};
+      letter-spacing: 1px;
+      text-shadow: 0 0 8px ${color};
+    `;
+    labelSpan.textContent = d.label;
+    badgeRow.appendChild(labelSpan);
+
+    box.appendChild(badgeRow);
+
+    // Sublabel (city/IP info)
+    if (d.sublabel) {
+      const sub = document.createElement('div');
+      sub.style.cssText = `
+        font-size: 8px;
+        color: rgba(255,255,255,0.55);
+        letter-spacing: 0.5px;
+        line-height: 1.3;
+      `;
+      sub.textContent = d.sublabel;
+      box.appendChild(sub);
+    }
+
+    el.appendChild(box);
+    return el;
+  }, []);
+
+
 
   const handleGlobeReady = useCallback(() => {
     setLoading(false);
@@ -383,23 +527,22 @@ export default function WorldMapPage() {
               arcEndLat={d => d.endLat}
               arcEndLng={d => d.endLng}
               arcColor={d => d.color}
-              arcAltitude={0.25}
-              arcStroke={0.9}
-              arcDashLength={0.45}
-              arcDashGap={0.2}
-              arcDashAnimateTime={2800}
+              arcAltitude={0.2}
+              arcStroke={0.2}
+              arcDashLength={0.4}
+              arcDashGap={0.15}
+              arcDashAnimateTime={2400}
 
-              // Throttle raycasting mousemove from 20fps to 5fps — reduces CPU raycasting 75%
-              // Only raycast 'point' objects (pins), skip border line geometry entirely
+              // Throttle raycasting — only raycast 'point' objects, skip border geometry entirely
               pointerEventsFilter={obj => obj.__globeObjType === 'point'}
 
               pointsData={pointsData}
               pointLat={d => d.lat}
               pointLng={d => d.lng}
               pointColor={d => d.color}
-              pointAltitude={d => d.type === 'server' ? 0.06 : d.type === 'client' ? 0.04 : 0.01}
+              pointAltitude={d => d.type === 'server' ? 0.05 : d.type === 'client' ? 0.03 : 0.005}
               pointRadius={d => d.size}
-              pointResolution={6}
+              pointResolution={12}
               pointsMerge={false}
               pointLabel={getPointLabel}
 
@@ -409,20 +552,20 @@ export default function WorldMapPage() {
               ringMaxRadius={d => d.maxR}
               ringPropagationSpeed={d => d.propagationSpeed}
               ringRepeatPeriod={d => d.repeatPeriod}
-              ringColor={() => t => `rgba(0,255,157,${(1 - t) * 0.8})`}
+              ringColor={() => t => `rgba(0,255,157,${(1 - t) * 0.7})`}
               ringResolution={32}
               ringAltitude={0.002}
 
-              labelsData={pointsData.filter(p => p.type === 'server')}
-              labelLat={d => d.lat}
-              labelLng={d => d.lng}
-              labelText={() => '[HQ]'}
-              labelSize={0.9}
-              labelColor={() => '#00ff9d'}
-              labelAltitude={0.1}
-              labelResolution={2}
-              labelDotRadius={0.4}
-              labelDotOrientation={() => 'bottom'}
+              htmlElementsData={htmlMarkersData}
+              htmlLat={d => d.lat}
+              htmlLng={d => d.lng}
+              htmlAltitude={d => d.type === 'server' ? 0.08 : 0.06}
+              htmlElement={createHtmlMarkerElement}
+              htmlTransitionDuration={0}
+              htmlElementVisibilityModifier={(el, isVisible) => {
+                el.style.opacity = isVisible ? '1' : '0';
+                el.style.transition = 'opacity 0.3s';
+              }}
 
               onGlobeReady={handleGlobeReady}
               onPointClick={(point) => {
@@ -436,6 +579,7 @@ export default function WorldMapPage() {
                 }
               }}
             />
+
 
             {loading && (
               <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--accent-cyan)', fontFamily: 'Share Tech Mono', fontSize: '0.8rem', background: 'rgba(2,13,26,0.8)', pointerEvents: 'none' }}>

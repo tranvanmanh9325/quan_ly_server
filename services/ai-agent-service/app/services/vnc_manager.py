@@ -199,14 +199,13 @@ class VncManager:
                     if self._check_port_listening(5900):
                         break
 
-                # 5. Start websockify serving /usr/share/novnc on port 6080 with keepalive & timeout
+                # 5. Start websockify serving /usr/share/novnc on port 6080 with heartbeat keepalive
                 novnc_web = "/usr/share/novnc" if os.path.exists("/usr/share/novnc") else None
                 websockify_cmd = ["websockify"]
                 if novnc_web:
-                    websockify_cmd.extend(["--web", novnc_web, "--file-only"])
+                    websockify_cmd.extend(["--web", novnc_web])
                 websockify_cmd.extend([
                     "--heartbeat", "30",
-                    "--timeout", "120",
                     "6080",
                     "127.0.0.1:5900"
                 ])

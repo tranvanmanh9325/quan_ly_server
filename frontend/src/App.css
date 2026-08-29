@@ -581,15 +581,12 @@ h2.title-glow::after {
 }
 
 .docker-table {
-  table-layout: fixed;
   width: 100%;
 }
 
 .docker-table td, .docker-table th {
-  padding: 8px 10px;
+  padding: 6px 8px;
   border-bottom: 1px solid rgba(0, 243, 255, 0.1);
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 .docker-status-up { color: var(--accent-green); }

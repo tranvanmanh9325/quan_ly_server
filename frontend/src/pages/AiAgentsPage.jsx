@@ -10,6 +10,8 @@ import {
   SciFiQuantumIcon, SciFiEnergyBoltIcon, SciFiChevronLeftIcon, SciFiChevronRightIcon,
   SciFiTerminalPromptIcon, SciFiInfoIcon,
   SciFiFlameStreakIcon, SciFiVideoClipIcon, SciFiMessageStreakIcon, SciFiAddFriendIcon,
+  SciFiTrashIcon, SciFiRadarScanIcon, SciFiAiChatBubbleIcon, SciFiVerifiedCheckIcon,
+  SciFiUsersGroupIcon, SciFiPlayPulseIcon,
 } from '../components/SciFiIcons';
 import { useTranslation } from '../i18n/index.jsx';
 
@@ -674,7 +676,7 @@ export default function AiAgentsPage() {
     try {
       const payload = targetUsername ? { username: targetUsername } : {};
       const res = await axios.post('/api/tiktok/trigger-streak', payload);
-      setTtTestResult(`🔥 ${res.data.message}`);
+      setTtTestResult(res.data.message || 'Streak triggered successfully!');
       fetchTtConfig();
     } catch (e) {
       setTtTestResult(e.response?.data?.message || 'Error triggering streak.');
@@ -739,6 +741,15 @@ export default function AiAgentsPage() {
       setTtAiTestResult('Lỗi khi sinh câu trả lời AI: ' + (e.response?.data?.message || e.message));
     } finally {
       setTtAiTesting(false);
+    }
+  };
+
+  const handleClearTikTokLogs = async () => {
+    try {
+      await axios.post('/api/tiktok/clear-logs');
+      fetchTtConfig();
+    } catch (e) {
+      console.error('Failed to clear logs:', e);
     }
   };
 
@@ -1334,8 +1345,9 @@ export default function AiAgentsPage() {
             </div>
 
             <div style={{ padding: '12px 14px', background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(0, 242, 254, 0.2)', borderRadius: '3px' }}>
-              <div style={{ fontSize: '0.65rem', color: '#00F2FE', fontFamily: 'Share Tech Mono', letterSpacing: '1px' }}>
-                {t('aiAgents.tiktok.overviewStreakKeeper') || 'STREAK KEEPER 🔥'}
+              <div style={{ fontSize: '0.65rem', color: '#00F2FE', fontFamily: 'Share Tech Mono', letterSpacing: '1px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                <span>{t('aiAgents.tiktok.overviewStreakKeeper') || 'STREAK KEEPER'}</span>
+                <SciFiFlameStreakIcon size={12} color="#FE2C55" />
               </div>
               <div style={{ fontSize: '0.92rem', color: ttConfig.streakEnabled ? 'var(--accent-cyan)' : 'var(--accent-pink)', fontFamily: 'Share Tech Mono', fontWeight: 'bold', marginTop: '4px' }}>
                 {ttConfig.streakEnabled ? `${ttConfig.streakTargets?.length || 0} Friends Active` : 'PAUSED'}
@@ -1653,8 +1665,9 @@ export default function AiAgentsPage() {
 
                 {/* Friends List & Target Manager */}
                 <div style={{ marginTop: '20px', paddingTop: '16px', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-                  <div style={{ fontSize: '0.78rem', color: '#FE2C55', fontFamily: 'Share Tech Mono', letterSpacing: '1px', fontWeight: 'bold', marginBottom: '10px' }}>
-                    DANH SÁCH BẠN BÈ CẦN GIỮ CHUỖI ({ttConfig.streakTargets?.length || 0})
+                  <div style={{ fontSize: '0.78rem', color: '#FE2C55', fontFamily: 'Share Tech Mono', letterSpacing: '1px', fontWeight: 'bold', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <SciFiUsersGroupIcon size={14} color="#FE2C55" />
+                    <span>DANH SÁCH BẠN BÈ CẦN GIỮ CHUỖI ({ttConfig.streakTargets?.length || 0})</span>
                   </div>
 
                   {/* Add Friend Row */}
@@ -1663,7 +1676,7 @@ export default function AiAgentsPage() {
                       type="text"
                       value={ttNewFriendUsername}
                       onChange={e => setTtNewFriendUsername(e.target.value)}
-                      placeholder="@username (VD: @linhdan_99)"
+                      placeholder="@username"
                       style={{
                         flex: '1', minWidth: '180px',
                         background: 'rgba(0,0,0,0.5)',
@@ -1679,7 +1692,7 @@ export default function AiAgentsPage() {
                       type="text"
                       value={ttNewFriendNickname}
                       onChange={e => setTtNewFriendNickname(e.target.value)}
-                      placeholder="Tên gợi nhớ (VD: Linh Đan)"
+                      placeholder="Tên gợi nhớ"
                       style={{
                         flex: '1', minWidth: '180px',
                         background: 'rgba(0,0,0,0.5)',
@@ -1739,8 +1752,9 @@ export default function AiAgentsPage() {
                                   <div style={{ fontSize: '0.68rem', color: '#00F2FE', opacity: 0.8 }}>{friend.username}</div>
                                 </td>
                                 <td style={{ padding: '8px 10px' }}>
-                                  <span style={{ padding: '2px 6px', background: 'rgba(254, 44, 85, 0.15)', border: '1px solid rgba(254, 44, 85, 0.4)', borderRadius: '2px', color: '#FE2C55', fontWeight: 'bold' }}>
-                                    🔥 {friend.streak_days || 0} Ngày
+                                  <span style={{ padding: '2px 6px', background: 'rgba(254, 44, 85, 0.15)', border: '1px solid rgba(254, 44, 85, 0.4)', borderRadius: '2px', color: '#FE2C55', fontWeight: 'bold', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                    <SciFiFlameStreakIcon size={12} color="#FE2C55" />
+                                    <span>{friend.streak_days || 0} Ngày</span>
                                   </span>
                                 </td>
                                 <td style={{ padding: '8px 10px', color: 'var(--text-secondary)' }}>
@@ -1765,9 +1779,13 @@ export default function AiAgentsPage() {
                                         fontSize: '0.7rem',
                                         cursor: 'pointer',
                                         borderRadius: '2px',
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '4px',
                                       }}
                                     >
-                                      {isSendingThis ? 'ĐANG GỬI...' : '🔥 GỬI NGAY'}
+                                      <SciFiFlameStreakIcon size={11} color="#FE2C55" />
+                                      <span>{isSendingThis ? 'ĐANG GỬI...' : 'GỬI NGAY'}</span>
                                     </button>
                                     <button
                                       type="button"
@@ -1795,9 +1813,13 @@ export default function AiAgentsPage() {
                                         fontSize: '0.7rem',
                                         cursor: 'pointer',
                                         borderRadius: '2px',
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '4px',
                                       }}
                                     >
-                                      Xóa
+                                      <SciFiTrashIcon size={11} color="var(--accent-pink)" />
+                                      <span>Xóa</span>
                                     </button>
                                   </div>
                                 </td>
@@ -1829,9 +1851,13 @@ export default function AiAgentsPage() {
                     borderRadius: '3px',
                     transition: 'all 0.2s ease',
                     boxShadow: ttSaveSuccess ? '0 0 10px rgba(0,255,102,0.3)' : '0 0 10px rgba(0, 242, 254, 0.2)',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
                   }}
                 >
-                  {ttSaveSuccess ? (t('settings.telegram.saved') || '✓ SAVED') : (t('aiAgents.tiktok.saveBtn') || 'SAVE TIKTOK CONFIG')}
+                  {ttSaveSuccess ? <SciFiVerifiedCheckIcon size={13} color="var(--accent-green)" /> : null}
+                  <span>{ttSaveSuccess ? (t('settings.telegram.saved') || 'SAVED') : (t('aiAgents.tiktok.saveBtn') || 'SAVE TIKTOK CONFIG')}</span>
                 </button>
 
                 <button
@@ -1854,7 +1880,7 @@ export default function AiAgentsPage() {
                     borderRadius: '3px',
                   }}
                 >
-                  {ttTesting ? <SciFiChronoSpinnerIcon size={14} color="#FE2C55" /> : <span>🔥</span>}
+                  {ttTesting ? <SciFiChronoSpinnerIcon size={14} color="#FE2C55" /> : <SciFiFlameStreakIcon size={14} color="#FE2C55" />}
                   <span>{ttTesting ? 'ĐANG GỬI CHUỖI...' : 'GỬI TẤT CẢ CHUỖI NGAY BÂY GIỜ'}</span>
                 </button>
 
@@ -1872,9 +1898,13 @@ export default function AiAgentsPage() {
                     cursor: ttTesting ? 'not-allowed' : 'pointer',
                     letterSpacing: '1px',
                     borderRadius: '3px',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
                   }}
                 >
-                  QUÉT TIN NHẮN THỦ CÔNG
+                  <SciFiRadarScanIcon size={14} color="#00F2FE" />
+                  <span>QUÉT TIN NHẮN THỦ CÔNG</span>
                 </button>
 
                 {ttTestResult && (
@@ -1924,8 +1954,9 @@ export default function AiAgentsPage() {
 
                 {/* AI Chat Sandbox */}
                 <div style={{ padding: '16px', background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '3px' }}>
-                  <div style={{ fontSize: '0.78rem', color: '#00F2FE', fontFamily: 'Share Tech Mono', marginBottom: '8px' }}>
-                    THỬ NGHIỆM SINH CÂU TRẢ LỜI AI 9ROUTER
+                  <div style={{ fontSize: '0.78rem', color: '#00F2FE', fontFamily: 'Share Tech Mono', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <SciFiAiChatBubbleIcon size={14} color="#00F2FE" />
+                    <span>THỬ NGHIỆM SINH CÂU TRẢ LỜI AI 9ROUTER</span>
                   </div>
                   <div style={{ display: 'flex', gap: '6px', marginBottom: '8px' }}>
                     <input
@@ -1972,13 +2003,20 @@ export default function AiAgentsPage() {
                       fontSize: '0.72rem',
                       cursor: 'pointer',
                       borderRadius: '2px',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
                     }}
                   >
-                    {ttAiTesting ? 'ĐANG SINH CÂU TRẢ LỜI...' : '▶ CHẠY THỬ NGHIỆM AI'}
+                    {ttAiTesting ? <SciFiChronoSpinnerIcon size={13} color="#00F2FE" /> : <SciFiPlayPulseIcon size={13} color="#00F2FE" />}
+                    <span>{ttAiTesting ? 'ĐANG SINH CÂU TRẢ LỜI...' : 'CHẠY THỬ NGHIỆM AI'}</span>
                   </button>
                   {ttAiTestResult && (
-                    <div style={{ marginTop: '8px', padding: '8px 10px', background: 'rgba(0, 242, 254, 0.06)', border: '1px solid rgba(0, 242, 254, 0.25)', fontSize: '0.74rem', color: '#fff', borderRadius: '2px' }}>
-                      💬 <strong>AI Trả lời:</strong> {ttAiTestResult}
+                    <div style={{ marginTop: '8px', padding: '8px 10px', background: 'rgba(0, 242, 254, 0.06)', border: '1px solid rgba(0, 242, 254, 0.25)', fontSize: '0.74rem', color: '#fff', borderRadius: '2px', display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
+                      <SciFiAiChatBubbleIcon size={14} color="#00F2FE" style={{ marginTop: '2px', flexShrink: 0 }} />
+                      <div>
+                        <strong style={{ color: '#00F2FE' }}>AI Trả lời:</strong> {ttAiTestResult}
+                      </div>
                     </div>
                   )}
                 </div>
@@ -1992,16 +2030,40 @@ export default function AiAgentsPage() {
                 border: '1px solid rgba(255, 255, 255, 0.08)',
                 borderRadius: '4px',
               }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                     <SciFiTerminalPromptIcon size={16} color="#00F2FE" />
                     <span style={{ fontSize: '0.82rem', fontFamily: 'Share Tech Mono', color: '#00F2FE', letterSpacing: '1px', fontWeight: 'bold' }}>
                       NHẬT KÝ HOẠT ĐỘNG & GỬI CHUỖI GẦN ĐÂY
                     </span>
                   </div>
-                  <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', fontFamily: 'Share Tech Mono' }}>
-                    {ttStatus.recentReplies?.length || 0} sự kiện
-                  </span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', fontFamily: 'Share Tech Mono' }}>
+                      {ttStatus.recentReplies?.length || 0} sự kiện
+                    </span>
+                    {ttStatus.recentReplies?.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={handleClearTikTokLogs}
+                        style={{
+                          padding: '3px 8px',
+                          background: 'rgba(255,0,0,0.1)',
+                          border: '1px solid rgba(255,0,0,0.3)',
+                          color: 'var(--accent-pink)',
+                          fontSize: '0.68rem',
+                          cursor: 'pointer',
+                          borderRadius: '2px',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px',
+                          fontFamily: 'Share Tech Mono',
+                        }}
+                      >
+                        <SciFiTrashIcon size={11} color="var(--accent-pink)" />
+                        <span>XOÁ NHẬT KÝ</span>
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 {ttStatus.recentReplies?.length === 0 ? (
@@ -2032,8 +2094,21 @@ export default function AiAgentsPage() {
                               background: log.targetType?.includes('streak') ? 'rgba(254, 44, 85, 0.2)' : 'rgba(0, 242, 254, 0.2)',
                               color: log.targetType?.includes('streak') ? '#FE2C55' : '#00F2FE',
                               border: log.targetType?.includes('streak') ? '1px solid #FE2C55' : '1px solid #00F2FE',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px',
                             }}>
-                              {log.targetType?.includes('streak') ? '🔥 GIỮ CHUỖI' : '💬 AUTO-REPLY DM'}
+                              {log.targetType?.includes('streak') ? (
+                                <>
+                                  <SciFiFlameStreakIcon size={11} color="#FE2C55" />
+                                  <span>GIỮ CHUỖI</span>
+                                </>
+                              ) : (
+                                <>
+                                  <SciFiAiChatBubbleIcon size={11} color="#00F2FE" />
+                                  <span>AUTO-REPLY DM</span>
+                                </>
+                              )}
                             </span>
                             <span style={{ fontWeight: 'bold', color: '#fff' }}>{log.recipientName}</span>
                             {log.recipientId && <span style={{ color: 'var(--text-secondary)', fontSize: '0.68rem' }}>({log.recipientId})</span>}
@@ -2045,7 +2120,10 @@ export default function AiAgentsPage() {
 
                         <div style={{ textAlign: 'right', flexShrink: 0, fontSize: '0.68rem', color: 'var(--text-secondary)' }}>
                           <div>{log.createdAt}</div>
-                          <div style={{ color: 'var(--accent-green)', marginTop: '2px' }}>✓ ĐÃ GỬI</div>
+                          <div style={{ color: 'var(--accent-green)', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '4px', justifyContent: 'flex-end' }}>
+                            <SciFiVerifiedCheckIcon size={11} color="var(--accent-green)" />
+                            <span>ĐÃ GỬI</span>
+                          </div>
                         </div>
                       </div>
                     ))}

@@ -231,6 +231,18 @@ class TikTokService:
             logger.error("[TikTokService] Failed to get recent replies: %s", e)
             return []
 
+    async def clear_recent_replies(self) -> None:
+        """Clears all records in tiktok_replies table."""
+        await self._ensure_db_tables()
+        try:
+            async with get_db_connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute("TRUNCATE TABLE tiktok_replies;")
+                    await conn.commit()
+            logger.info("[TikTokService] Cleared tiktok_replies table.")
+        except Exception as e:
+            logger.error("[TikTokService] Failed to clear replies: %s", e)
+
     async def log_activity(
         self,
         target_type: str,

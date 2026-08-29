@@ -162,6 +162,12 @@ async def test_ai_chat(
     }
 
 
+@router.post("/clear-logs")
+async def clear_logs(tt: TikTokService = Depends(get_tiktok_service)):
+    await tt.clear_recent_replies()
+    return {"status": "success", "message": "Đã dọn sạch nhật ký hoạt động TikTok."}
+
+
 # ─── Live VNC Server Browser Endpoints for TikTok ────────────────────────────
 
 @router.post("/launch-browser")

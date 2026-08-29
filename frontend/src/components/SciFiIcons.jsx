@@ -1151,5 +1151,121 @@ export const SciFiWarningIcon = ({ size = 14, color = 'var(--accent-pink)', clas
   </svg>
 );
 
+// 63. SCI-FI TRASH / PURGE INCINERATOR — Cyber canister with laser incinerator grid
+export const SciFiTrashIcon = ({ size = 13, color = 'currentColor', className = '', ...props }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    className={className}
+    style={{ display: 'inline-block', verticalAlign: 'middle' }}
+    {...props}
+  >
+    <path d="M3 6H21" stroke={color} strokeWidth="1.6" strokeLinecap="round" />
+    <path d="M8 6V4C8 3.4 8.4 3 9 3H15C15.6 3 16 3.4 16 4V6" stroke={color} strokeWidth="1.4" />
+    <path d="M5 6L6.5 19.5C6.6 20.3 7.3 21 8.2 21H15.8C16.7 21 17.4 20.3 17.5 19.5L19 6" stroke={color} strokeWidth="1.4" fill={color} fillOpacity="0.08" />
+    <line x1="10" y1="10" x2="10" y2="17" stroke={color} strokeWidth="1.2" strokeLinecap="round" />
+    <line x1="14" y1="10" x2="14" y2="17" stroke={color} strokeWidth="1.2" strokeLinecap="round" />
+  </svg>
+);
+
+// 64. SCI-FI RADAR SCAN — Tactical pulse sweep with target reticle
+export const SciFiRadarScanIcon = ({ size = 16, color = 'var(--accent-cyan)', className = '', ...props }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    className={className}
+    style={{ display: 'inline-block', verticalAlign: 'middle' }}
+    {...props}
+  >
+    <circle cx="12" cy="12" r="9" stroke={color} strokeWidth="1.4" fill={color} fillOpacity="0.06" />
+    <circle cx="12" cy="12" r="5" stroke={color} strokeWidth="0.8" strokeDasharray="2 2" strokeOpacity="0.6" />
+    <circle cx="12" cy="12" r="1.5" fill={color} />
+    <line x1="12" y1="12" x2="18.5" y2="5.5" stroke={color} strokeWidth="1.6" strokeLinecap="round" />
+    <path d="M12 3C16.97 3 21 7.03 21 12" stroke={color} strokeWidth="1.2" strokeOpacity="0.4" />
+    <circle cx="16" cy="8" r="1" fill={color} />
+  </svg>
+);
+
+// 65. SCI-FI AI CHAT BUBBLE — Neural network speech pod with circuit node
+export const SciFiAiChatBubbleIcon = ({ size = 15, color = 'var(--accent-cyan)', className = '', ...props }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    className={className}
+    style={{ display: 'inline-block', verticalAlign: 'middle' }}
+    {...props}
+  >
+    <path d="M21 11.5C21 6.8 16.97 3 12 3C7.03 3 3 6.8 3 11.5C3 14.1 4.2 16.4 6.2 17.9L5 21.5L9.3 19.8C10.2 20 11.1 20 12 20C16.97 20 21 16.2 21 11.5Z" stroke={color} strokeWidth="1.4" fill={color} fillOpacity="0.08" strokeLinejoin="round" />
+    <circle cx="8.5" cy="11.5" r="1.2" fill={color} />
+    <circle cx="12" cy="11.5" r="1.2" fill={color} />
+    <circle cx="15.5" cy="11.5" r="1.2" fill={color} />
+    <line x1="8.5" y1="11.5" x2="15.5" y2="11.5" stroke={color} strokeWidth="0.8" strokeOpacity="0.5" />
+  </svg>
+);
+
+// 66. SCI-FI VERIFIED CHECK — Hexagonal cyber shield with glowing check vector
+export const SciFiVerifiedCheckIcon = ({ size = 13, color = 'var(--accent-green)', className = '', ...props }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    className={className}
+    style={{ display: 'inline-block', verticalAlign: 'middle' }}
+    {...props}
+  >
+    <polygon points="12,2 20.5,6.5 20.5,17.5 12,22 3.5,17.5 3.5,6.5" stroke={color} strokeWidth="1.4" fill={color} fillOpacity="0.15" strokeLinejoin="round" />
+    <path d="M7.5 12L10.5 15L16.5 9" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+// 67. SCI-FI USERS GROUP — Multi-node mesh squad network for friends manager
+export const SciFiUsersGroupIcon = ({ size = 16, color = '#FE2C55', className = '', ...props }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    className={className}
+    style={{ display: 'inline-block', verticalAlign: 'middle' }}
+    {...props}
+  >
+    <circle cx="9" cy="7" r="3.5" stroke={color} strokeWidth="1.3" fill={color} fillOpacity="0.1" />
+    <path d="M2 19C2 15.7 4.7 13 8 13H10C13.3 13 16 15.7 16 19" stroke={color} strokeWidth="1.3" strokeLinecap="round" fill="none" />
+    <circle cx="17" cy="8" r="2.5" stroke={color} strokeWidth="1" strokeOpacity="0.7" fill={color} fillOpacity="0.08" />
+    <path d="M16 13.5C18.2 14.1 20 15.8 20 18" stroke={color} strokeWidth="1" strokeOpacity="0.7" strokeLinecap="round" fill="none" />
+    <line x1="9" y1="13" x2="17" y2="10.5" stroke={color} strokeWidth="0.8" strokeDasharray="1.5 1.5" strokeOpacity="0.4" />
+  </svg>
+);
+
+// 68. SCI-FI PLAY PULSE — Crystal vector launcher with expanding wave pulses
+export const SciFiPlayPulseIcon = ({ size = 14, color = 'var(--accent-cyan)', className = '', ...props }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    className={className}
+    style={{ display: 'inline-block', verticalAlign: 'middle' }}
+    {...props}
+  >
+    <polygon points="7,4 19,12 7,20" stroke={color} strokeWidth="1.5" fill={color} fillOpacity="0.25" strokeLinejoin="round" />
+    <path d="M18 7C20 8.5 21 10.2 21 12C21 13.8 20 15.5 18 17" stroke={color} strokeWidth="1.2" strokeLinecap="round" strokeOpacity="0.6" />
+  </svg>
+);
+
+
 
 

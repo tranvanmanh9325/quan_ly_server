@@ -4,7 +4,10 @@ import Globe from 'react-globe.gl';
 import { mesh } from 'topojson-client';
 import { SciFiGlobeIcon, SciFiRefreshIcon, SciFiPulseBadge, SciFiPlayIcon, SciFiStopIcon } from '../components/SciFiIcons';
 import { VIETNAM_MARITIME_ISLANDS, VIETNAM_MARITIME_BOUNDARIES } from '../data/vietnamIslandsGeo';
+import { SATELLITE_CATALOG, getSatellitePosition, getSatelliteOrbitPath } from '../data/satellitesData';
+import { createSatellite3DObject } from '../utils/satelliteModelGenerator';
 import GlobeHudLegend from '../components/GlobeHudLegend';
+import SatelliteTelemetryCard from '../components/SatelliteTelemetryCard';
 
 // 110m resolution: 105KB vs 756KB (50m) — 90% fewer border vertices, imperceptible at 600px canvas
 const LOCAL_WORLD_ATLAS_URL = '/data/countries-110m.json';
@@ -41,6 +44,13 @@ export default function WorldMapPage() {
   const [selectedNode, setSelectedNode] = useState(null);
   const [autoRotate, setAutoRotate] = useState(true);
   const [rotationSpeed, setRotationSpeed] = useState(0.5);
+
+  // Satellite Tracking & Orbit Controls
+  const [showSatellites, setShowSatellites] = useState(true);
+  const [showOrbits, setShowOrbits] = useState(true);
+  const [selectedSatellite, setSelectedSatellite] = useState(null);
+  const [epochSec, setEpochSec] = useState(() => Date.now() / 1000);
+
 
   // useDeferredValue: pass borders to Globe at low priority so first paint isn't blocked
   const deferredBorders = useDeferredValue(bordersData);
@@ -162,22 +172,22 @@ export default function WorldMapPage() {
     ctrl.autoRotateSpeed = rotationSpeed;
   }, [autoRotate, rotationSpeed]);
 
-  // Auto-focus camera when connections arrive
+  // Real-time satellite animation ticker (smooth 10Hz updates)
   useEffect(() => {
-    if (!globeRef.current || !geoData.server) return;
-    const conns = geoData.connections || [];
-    if (conns.length === 0) return;
-    const allLats = [parseFloat(geoData.server.lat) || 0, ...conns.map(c => parseFloat(c.lat) || 0)];
-    const allLons = [parseFloat(geoData.server.lon) || 0, ...conns.map(c => parseFloat(c.lon) || 0)];
-    const avgLat = allLats.reduce((s, v) => s + v, 0) / allLats.length;
-    const avgLon = allLons.reduce((s, v) => s + v, 0) / allLons.length;
-    globeRef.current.pointOfView({ lat: avgLat, lng: avgLon, altitude: 2.2 }, 1000);
-  }, [geoData.connections?.length]);
+    if (!showSatellites) return;
+    const timer = setInterval(() => {
+      setEpochSec(Date.now() / 1000);
+    }, 100);
+    return () => clearInterval(timer);
+  }, [showSatellites]);
 
-  const arcsData = useMemo(() => {
+  // Combined laser arcs: Client connections + Satellite C2 Downlink Lasers
+  const combinedArcsData = useMemo(() => {
     const sLat = parseFloat(geoData.server?.lat) || 20.98;
     const sLon = parseFloat(geoData.server?.lon) || 105.83;
-    return (geoData.connections || []).map((client, idx) => {
+
+    // 1. Client connection arcs
+    const arcs = (geoData.connections || []).map((client, idx) => {
       const parsedLat = parseFloat(client.lat);
       const parsedLon = parseFloat(client.lon);
       const hasGps = Number.isFinite(parsedLat) && Number.isFinite(parsedLon)
@@ -185,7 +195,7 @@ export default function WorldMapPage() {
       const endLat = hasGps ? parsedLat : sLat + 0.01;
       const endLng = hasGps ? parsedLon : sLon + 0.01;
       return {
-        id: idx,
+        id: `client-arc-${idx}`,
         startLat: sLat, startLng: sLon,
         endLat, endLng,
         dynamicAltitude: getDynamicArcAltitude(sLat, sLon, endLat, endLng),
@@ -194,7 +204,41 @@ export default function WorldMapPage() {
         color: ['rgba(0,243,255,0)', 'rgba(0,255,157,0.95)', 'rgba(0,243,255,0)'],
       };
     });
-  }, [geoData]);
+
+    // 2. Downlink laser from selected satellite (or VINASAT-1 by default when satellites shown)
+    if (showSatellites) {
+      const activeSat = selectedSatellite || SATELLITE_CATALOG[0]; // VINASAT-1
+      if (activeSat) {
+        const satPos = getSatellitePosition(activeSat, epochSec);
+        arcs.push({
+          id: `sat-downlink-${activeSat.id}`,
+          startLat: satPos.lat,
+          startLng: satPos.lng,
+          endLat: sLat,
+          endLng: sLon,
+          dynamicAltitude: 0.22,
+          color: ['rgba(0,243,255,0.1)', activeSat.color || '#00ff9d', 'rgba(0,255,157,0.95)'],
+          isSatelliteDownlink: true,
+        });
+      }
+    }
+
+    return arcs;
+  }, [geoData, showSatellites, selectedSatellite, epochSec]);
+
+  // Real-time calculated satellite positions for objectsData
+  const satelliteObjectsData = useMemo(() => {
+    if (!showSatellites) return [];
+    return SATELLITE_CATALOG.map(sat => {
+      const pos = getSatellitePosition(sat, epochSec);
+      return {
+        ...sat,
+        lat: pos.lat,
+        lng: pos.lng,
+        altitude: pos.altitude,
+      };
+    });
+  }, [showSatellites, epochSec]);
 
   const pointsData = useMemo(() => {
     const points = [];
@@ -225,10 +269,17 @@ export default function WorldMapPage() {
     return points;
   }, [geoData]);
 
-  // Combined paths data: Country borders + VN Maritime Patrol Perimeters
+  // Combined paths data: Country borders + VN Maritime Patrol Perimeters + Satellite Orbits
   const combinedPathsData = useMemo(() => {
-    return [...deferredBorders, ...VIETNAM_MARITIME_BOUNDARIES];
-  }, [deferredBorders]);
+    const paths = [...deferredBorders, ...VIETNAM_MARITIME_BOUNDARIES];
+    if (showOrbits) {
+      SATELLITE_CATALOG.forEach(sat => {
+        paths.push(getSatelliteOrbitPath(sat, 72));
+      });
+    }
+    return paths;
+  }, [deferredBorders, showOrbits]);
+
 
   // htmlElementsData: DOM overlay markers with Directional Anti-Collision Slotting
   const htmlMarkersData = useMemo(() => {
@@ -435,11 +486,23 @@ export default function WorldMapPage() {
     return el;
   }, []);
 
+  // 3D Procedural Satellite Object Factory for react-globe.gl
+  const renderSatelliteObject = useCallback((sat) => {
+    return createSatellite3DObject(sat, 1.2);
+  }, []);
 
-
+  // Smooth camera tracking to satellite sub-point
+  const handleTrackSatellite = useCallback((sat) => {
+    if (!sat || !globeRef.current) return;
+    const pos = getSatellitePosition(sat, Date.now() / 1000);
+    if (pos) {
+      globeRef.current.pointOfView({ lat: pos.lat, lng: pos.lng, altitude: 1.8 }, 1000);
+    }
+  }, []);
 
   const handleGlobeReady = useCallback(() => {
     setLoading(false);
+
     globeRef.current?.pointOfView({ lat: 16.0, lng: 105.85, altitude: 2.2 }, 0);
 
     const ctrl = globeRef.current?.controls();
@@ -499,6 +562,24 @@ export default function WorldMapPage() {
           </div>
         </div>
         <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
+          <button onClick={() => setShowSatellites(prev => !prev)} style={{
+            background: showSatellites ? 'rgba(255, 230, 0, 0.15)' : 'rgba(255,255,255,0.08)',
+            border: showSatellites ? '1px solid #ffe600' : '1px solid rgba(255,255,255,0.2)',
+            color: showSatellites ? '#ffe600' : '#ccc', padding: '4px 9px',
+            fontFamily: 'Share Tech Mono', fontSize: '0.72rem', fontWeight: 'bold',
+            cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', borderRadius: '3px',
+          }}>
+            🛰 SATS: {showSatellites ? 'ON' : 'OFF'}
+          </button>
+          <button onClick={() => setShowOrbits(prev => !prev)} style={{
+            background: showOrbits ? 'rgba(0, 243, 255, 0.15)' : 'rgba(255,255,255,0.08)',
+            border: showOrbits ? '1px solid var(--accent-cyan)' : '1px solid rgba(255,255,255,0.2)',
+            color: showOrbits ? 'var(--accent-cyan)' : '#ccc', padding: '4px 9px',
+            fontFamily: 'Share Tech Mono', fontSize: '0.72rem', fontWeight: 'bold',
+            cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', borderRadius: '3px',
+          }}>
+            ⬡ ORBITS: {showOrbits ? 'ON' : 'OFF'}
+          </button>
           <button onClick={() => setAutoRotate(!autoRotate)} style={{
             background: autoRotate ? 'rgba(0, 255, 157, 0.15)' : 'rgba(255,255,255,0.08)',
             border: autoRotate ? '1px solid var(--accent-green)' : '1px solid rgba(255,255,255,0.2)',
@@ -583,18 +664,20 @@ export default function WorldMapPage() {
               showAtmosphere={false}
               globeCurvatureResolution={6}  // Reduce globe triangles ~4000 vs ~16000 default
 
-              // combinedPathsData: low-priority country borders + Vietnam Maritime Patrol Perimeters
+              // combinedPathsData: country borders + VN Maritime Patrol Perimeters + Satellite Orbit trails
               pathsData={combinedPathsData}
               pathPoints={d => d.coords}
               pathPointLat={p => p[0]}
               pathPointLng={p => p[1]}
+              pathPointAlt={p => p[2] || 0}
               pathColor={d => d.color || 'rgba(0, 243, 255, 0.45)'}
               pathStroke={d => d.stroke || 0.45}
-              pathDashLength={1}
-              pathDashGap={0}
+              pathDashLength={d => d.dashLength || 1}
+              pathDashGap={d => d.dashGap || 0}
               pathTransitionDuration={0}
 
-              arcsData={arcsData}
+              // combinedArcsData: Client telemetry arcs + Satellite C2 Downlink Lasers
+              arcsData={combinedArcsData}
               arcStartLat={d => d.startLat}
               arcStartLng={d => d.startLng}
               arcEndLat={d => d.endLat}
@@ -606,8 +689,20 @@ export default function WorldMapPage() {
               arcDashGap={0.65}
               arcDashAnimateTime={1800}
 
-              // Throttle raycasting — only raycast 'point' objects, skip border geometry entirely
-              pointerEventsFilter={obj => obj.__globeObjType === 'point'}
+              // ── 3D Procedural Satellites Layer ──
+              objectsData={satelliteObjectsData}
+              objectLat={d => d.lat}
+              objectLng={d => d.lng}
+              objectAltitude={d => d.altitude}
+              objectThreeObject={renderSatelliteObject}
+              objectFacesSurfaces={true}
+              onObjectClick={(sat) => {
+                setSelectedSatellite(sat);
+                handleTrackSatellite(sat);
+              }}
+
+              // Throttle raycasting — only raycast 'point' and 'custom' objects
+              pointerEventsFilter={obj => obj.__globeObjType === 'point' || obj.__globeObjType === 'object'}
 
               pointsData={pointsData}
               pointLat={d => d.lat}
@@ -640,7 +735,6 @@ export default function WorldMapPage() {
                 el.style.transition = 'opacity 0.3s';
               }}
 
-
               onGlobeReady={handleGlobeReady}
               onPointClick={(point) => {
                 if (point.type === 'client' && point.client) {
@@ -653,6 +747,16 @@ export default function WorldMapPage() {
                 }
               }}
             />
+
+            {/* Satellite Telemetry HUD Card Overlay */}
+            {selectedSatellite && (
+              <SatelliteTelemetryCard
+                satellite={selectedSatellite}
+                onClose={() => setSelectedSatellite(null)}
+                onTrackCamera={handleTrackSatellite}
+              />
+            )}
+
 
 
             {loading && (

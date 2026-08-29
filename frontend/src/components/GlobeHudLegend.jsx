@@ -86,6 +86,12 @@ const GlobeHudLegend = memo(function GlobeHudLegend({
         <LabelGroup label="VN ISLANDS" badge="GEO·VN" badgeColor="#00ff9d" />
       </LegendItem>
 
+      {/* SATELLITES */}
+      <LegendItem borderRight>
+        <SatelliteMarker />
+        <LabelGroup label="SATELLITES" badge="SAT·6" badgeColor="#ffe600" />
+      </LegendItem>
+
       {/* LASER ARC */}
       <LegendItem>
         <LaserBeam />
@@ -94,6 +100,7 @@ const GlobeHudLegend = memo(function GlobeHudLegend({
     </div>
   );
 });
+
 
 function LegendItem({ children, borderRight }) {
   return (
@@ -140,7 +147,26 @@ function DiamondMarker() {
   );
 }
 
+function SatelliteMarker() {
+
+  return (
+    <div style={{ width:'14px', height:'14px', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+        {/* Central satellite body */}
+        <rect x="5" y="5" width="4" height="4" fill="#ffe600" stroke="#fff" strokeWidth="0.5" />
+        {/* Solar panels */}
+        <rect x="1" y="5.5" width="3" height="3" fill="#00f3ff" opacity="0.9" />
+        <rect x="10" y="5.5" width="3" height="3" fill="#00f3ff" opacity="0.9" />
+        {/* Antenna */}
+        <line x1="7" y1="5" x2="7" y2="2" stroke="#ffe600" strokeWidth="1" />
+        <circle cx="7" cy="2" r="1" fill="#ffe600" />
+      </svg>
+    </div>
+  );
+}
+
 function LaserBeam() {
+
   return (
     <div style={{ width:'26px', height:'14px', display:'flex', alignItems:'center', flexShrink:0 }}>
       <svg width="26" height="10" viewBox="0 0 26 10" fill="none" style={{ overflow:'visible' }}>

@@ -89,7 +89,7 @@ const GlobeHudLegend = memo(function GlobeHudLegend({
       {/* SATELLITES */}
       <LegendItem borderRight>
         <SatelliteMarker />
-        <LabelGroup label="SATELLITES" badge="SAT·6" badgeColor="#ffe600" />
+        <LabelGroup label="SATELLITES" badge="SAT·8" badgeColor="#ffe600" />
       </LegendItem>
 
       {/* LASER ARC */}

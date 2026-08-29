@@ -139,6 +139,71 @@ export const VIETNAM_MARITIME_ISLANDS = [
     type: 'minor_island',
     color: '#00f3ff',
     r: 1.8
+  },
+  {
+    id: 'hon_khoai',
+    name: 'Đảo Hòn Khoai',
+    label: '[HÒN KHOAI (A2)]',
+    lon: 104.832,
+    lat: 8.435,
+    type: 'minor_island',
+    color: '#00f3ff',
+    r: 1.8
+  },
+  {
+    id: 'hon_me',
+    name: 'Đảo Hòn Mê',
+    label: '[HÒN MÊ]',
+    lon: 105.925,
+    lat: 19.367,
+    type: 'minor_island',
+    color: '#00f3ff',
+    r: 1.8
+  },
+  {
+    id: 'hon_ngu',
+    name: 'Đảo Hòn Ngư',
+    label: '[HÒN NGƯ]',
+    lon: 105.767,
+    lat: 18.802,
+    type: 'minor_island',
+    color: '#00f3ff',
+    r: 1.8
+  },
+  {
+    id: 'co_to',
+    name: 'Quần đảo Cô Tô',
+    label: '[CÔ TÔ]',
+    lon: 107.765,
+    lat: 20.985,
+    type: 'minor_island',
+    color: '#00f3ff',
+    r: 1.8
+  },
+  {
+    id: 'long_chau',
+    name: 'Quần đảo Long Châu',
+    label: '[LONG CHÂU (A11)]',
+    lon: 107.160,
+    lat: 20.623,
+    type: 'minor_island',
+    color: '#00f3ff',
+    r: 1.8
+  },
+  {
+    id: 'dk1_cluster',
+    name: 'Cụm Nhà Giàn DK1 (Thềm lục địa)',
+    label: '[CỤM DK1 // TƯ CHÍNH]',
+    lon: 109.680,
+    lat: 7.500,
+    type: 'archipelago_cluster',
+    color: '#00ff9d',
+    islands: [
+      { name: 'Nhà giàn DK1/11 (Tư Chính)', lon: 109.683, lat: 7.505, r: 1.6 },
+      { name: 'Nhà giàn DK1/2 (Phúc Tần)', lon: 110.583, lat: 8.150, r: 1.6 },
+      { name: 'Nhà giàn DK1/6 (Phúc Nguyên)', lon: 110.017, lat: 7.900, r: 1.6 },
+      { name: 'Nhà giàn DK1/9 (Ba Kè)', lon: 111.450, lat: 7.450, r: 1.6 }
+    ]
   }
 ];
 
@@ -168,6 +233,30 @@ export const VIETNAM_MARITIME_BOUNDARIES = [
     ],
     color: 'rgba(0, 255, 157, 0.55)',
     stroke: 0.6,
+  },
+  {
+    id: 'gulf_of_tonkin_boundary',
+    name: 'Tuyến phân định Vịnh Bắc Bộ (VN-CN 2000)',
+    coords: [
+      [21.50, 108.05], [21.23, 108.10], [20.78, 108.05],
+      [20.13, 107.95], [19.42, 107.50], [18.50, 107.20],
+      [17.78, 107.10], [17.17, 107.33]
+    ],
+    color: 'rgba(0, 243, 255, 0.45)',
+    stroke: 0.5,
+    dashLength: 0.05,
+    dashGap: 0.02,
+  },
+  {
+    id: 'southern_shelf_patrol',
+    name: 'Vùng biển Thềm lục địa phía Nam & DK1',
+    coords: [
+      [8.68, 106.60], [6.50, 107.50], [6.50, 112.00],
+      [7.50, 111.50], [8.50, 109.50], [8.68, 106.60]
+    ],
+    color: 'rgba(0, 255, 157, 0.45)',
+    stroke: 0.6,
   }
 ];
+
 

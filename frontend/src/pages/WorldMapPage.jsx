@@ -304,8 +304,8 @@ export default function WorldMapPage() {
             id: 'downlink-vinasat-1',
             startLat: pos1.lat,
             startLng: pos1.lng,
-            endLat: v1.groundStation?.lat || sLat,
-            endLng: v1.groundStation?.lng || sLon,
+            endLat: v1.groundStation?.lat || 21.066,
+            endLng: v1.groundStation?.lng || 105.696,
             dynamicAltitude: 0.24,
             color: ['rgba(0,255,157,0.1)', '#00ff9d', 'rgba(0,255,157,0.95)'],
             isSatelliteDownlink: true,
@@ -322,6 +322,21 @@ export default function WorldMapPage() {
             endLng: v2.groundStation?.lng || 106.17,
             dynamicAltitude: 0.28,
             color: ['rgba(0,243,255,0.1)', '#00f3ff', 'rgba(0,243,255,0.95)'],
+            isSatelliteDownlink: true,
+          });
+        }
+
+        const vnred = SATELLITE_CATALOG.find(s => s.id === 'vnredsat-1');
+        if (vnred) {
+          const pos3 = getSatellitePosition(vnred, nowSec);
+          arcs.push({
+            id: 'downlink-vnredsat-1',
+            startLat: pos3.lat,
+            startLng: pos3.lng,
+            endLat: vnred.groundStation?.lat || 21.0478,
+            endLng: vnred.groundStation?.lng || 105.7989,
+            dynamicAltitude: 0.16,
+            color: ['rgba(255,0,85,0.1)', '#ff0055', 'rgba(255,0,85,0.95)'],
             isSatelliteDownlink: true,
           });
         }
@@ -349,13 +364,22 @@ export default function WorldMapPage() {
       }
     });
 
-    // All major and archipelago centers for VN islands
+    // All major and archipelago centers for VN islands + detailed child islands & reefs
     VIETNAM_MARITIME_ISLANDS.forEach(item => {
       points.push({
         id: item.id, lat: item.lat, lng: item.lon,
-        size: item.type === 'archipelago_cluster' ? 0.28 : 0.2,
-        color: '#00ff9d', label: item.label, type: 'island',
+        size: item.type === 'archipelago_cluster' ? 0.32 : 0.22,
+        color: item.color || '#00ff9d', label: item.label, type: 'island',
       });
+      if (Array.isArray(item.islands)) {
+        item.islands.forEach((sub, sIdx) => {
+          points.push({
+            id: `${item.id}_sub_${sIdx}`, lat: sub.lat, lng: sub.lon,
+            size: (sub.r || 1.8) * 0.07,
+            color: item.color || '#00ff9d', label: sub.name, type: 'island_sub',
+          });
+        });
+      }
     });
 
     return points;
@@ -390,11 +414,12 @@ export default function WorldMapPage() {
       label: 'SERVER HQ // C2',
       sublabel: srv.city ? `${srv.city}, ${srv.country || 'VN'}` : 'Định Công, Hà Nội, VN',
       dir: 'top-right',
+      stemLen: 18,
       color: '#00ff9d',
       glowColor: 'rgba(0,255,157,0.45)',
     });
 
-    // Client callout markers with dynamic anti-collision direction
+    // Client callout markers with dynamic anti-collision direction and index-based staggering
     (geoData.connections || []).forEach((client, idx) => {
       const parsedLat = parseFloat(client.lat);
       const parsedLon = parseFloat(client.lon);
@@ -416,6 +441,7 @@ export default function WorldMapPage() {
           label: `CLIENT // ${client.ip?.slice(-8) || 'NODE'}`,
           sublabel: client.city ? `${client.city}, ${client.country || ''}` : (client.ip || 'Unknown IP'),
           dir,
+          stemLen: 18 + (idx % 3) * 8, // Staggers multiple client callout cards in same region
           color: '#00f3ff',
           glowColor: 'rgba(0,243,255,0.45)',
           client,
@@ -449,14 +475,14 @@ export default function WorldMapPage() {
         repeatPeriod: 900,
         color: (t) => `rgba(0, 243, 255, ${Math.pow(1 - t, 1.5) * 0.85})`,
       },
-      // 3. Quần đảo Hoàng Sa — Radar Hải quân
+      // 3. Quần đảo Hoàng Sa — Radar Giám sát Hải quân
       {
         id: 'hoang_sa_radar',
         lat: 16.50, lng: 112.00,
-        maxR: 2.6,
+        maxR: 3.2,
         propagationSpeed: 1.1,
         repeatPeriod: 2200,
-        color: (t) => `rgba(0, 255, 157, ${Math.pow(1 - t, 2) * 0.6})`,
+        color: (t) => `rgba(0, 255, 157, ${Math.pow(1 - t, 2) * 0.65})`,
       },
       // 4. Quần đảo Trường Sa — Radar Hải quân
       {
@@ -479,6 +505,7 @@ export default function WorldMapPage() {
 
   const getPointLabel = useCallback((d) => {
     if (d.type === 'island') return `<div style="font-family:'Share Tech Mono',monospace;font-size:10px;color:#00ff9d;background:rgba(2,13,26,0.95);padding:3px 8px;border:1px solid rgba(0,255,157,0.4);border-radius:2px;letter-spacing:0.5px">◆ ${d.label}</div>`;
+    if (d.type === 'island_sub') return `<div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:#00f3ff;background:rgba(2,13,26,0.9);padding:2px 6px;border:1px solid rgba(0,243,255,0.3);border-radius:2px">● ${d.label}</div>`;
     return '';
   }, []);
 
@@ -491,7 +518,7 @@ export default function WorldMapPage() {
 
     const isTop = dir.startsWith('top');
     const isRight = dir.endsWith('right');
-    const stemLen = 18;
+    const stemLen = d.stemLen || 18;
     const shelfLen = isServer ? 115 : 95;
 
     const cardX = isRight ? stemLen + 2 : -(stemLen + shelfLen + 2);

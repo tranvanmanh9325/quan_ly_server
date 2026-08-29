@@ -184,10 +184,11 @@ const en = {
       streakTemplate: "Streak Message Text",
       streakTemplateDesc: "Greeting text attached with the daily streak video",
       saveBtn: "SAVE TIKTOK CONFIG",
-      loading: "Loading TikTok Automation Agent config...",
+      loading: "Loading TikTok Social Agent config...",
       scanning: "Scanning TikTok DMs...",
-      scanSuccess: "TikTok DMs scan completed successfully!",
+      scanSuccess: "TikTok DM scan complete!",
       scanError: "Error during TikTok DM scan.",
+      vncFooterTip: "💡 Once logged into TikTok successfully, click [SAVE SESSION & CLOSE] to automatically extract and store session cookies.",
     },
     youtube: {
       title: "YOUTUBE COMMUNITY & COMMENT AGENT",

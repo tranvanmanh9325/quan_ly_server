@@ -188,6 +188,7 @@ const vi = {
       scanning: "Đang quét tin nhắn TikTok...",
       scanSuccess: "Đã quét tin nhắn TikTok thành công!",
       scanError: "Lỗi khi quét tin nhắn TikTok.",
+      vncFooterTip: "💡 Sau khi đăng nhập TikTok thành công, hãy bấm [LƯU PHIÊN & ĐÓNG] để hệ thống tự động trích xuất Cookies.",
     },
     youtube: {
       title: "YOUTUBE COMMUNITY & COMMENT AGENT",

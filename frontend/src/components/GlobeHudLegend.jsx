@@ -34,8 +34,9 @@ const GlobeHudLegend = memo(function GlobeHudLegend({
       position: 'relative',
       display: 'flex',
       alignItems: 'center',
-      flexWrap: 'wrap',
-      minHeight: '36px',
+      flexWrap: 'nowrap',
+      minHeight: '34px',
+      overflowX: 'auto',
       background: 'linear-gradient(180deg, rgba(6,18,33,0.82) 0%, rgba(2,8,16,0.92) 100%)',
       backdropFilter: 'blur(10px)',
       WebkitBackdropFilter: 'blur(10px)',
@@ -45,7 +46,7 @@ const GlobeHudLegend = memo(function GlobeHudLegend({
       fontFamily: "'Share Tech Mono', monospace",
       userSelect: 'none',
       flexShrink: 0,
-      overflow: 'hidden',
+
     }}>
       <style>{STYLES}</style>
 
@@ -97,9 +98,9 @@ const GlobeHudLegend = memo(function GlobeHudLegend({
 function LegendItem({ children, borderRight }) {
   return (
     <div style={{
-      padding: '6px 14px',
+      padding: '5px 10px',
       borderRight: borderRight ? '1px solid rgba(0,243,255,0.12)' : 'none',
-      display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0,
+      display: 'flex', alignItems: 'center', gap: '7px', flexShrink: 0,
     }}>
       {children}
     </div>

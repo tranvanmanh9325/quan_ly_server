@@ -1427,6 +1427,22 @@ export const SciFiPlayPulseIcon = ({ size = 14, color = 'var(--accent-cyan)', cl
   </svg>
 );
 
-
-
-
+// 69. SCI-FI HOLO SILHOUETTE — Cyberpunk avatar placeholder with biometric scan nodes
+export const SciFiHoloSilhouette = ({ size = 36, color = 'var(--accent-cyan)', className = '', ...props }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 40 40"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    className={className}
+    style={{ display: 'inline-block', verticalAlign: 'middle' }}
+    {...props}
+  >
+    <rect width="40" height="40" rx="3" fill="rgba(0, 243, 255, 0.05)" stroke={color} strokeWidth="1" strokeDasharray="3 2" />
+    <circle cx="20" cy="14" r="6" stroke={color} strokeWidth="1.4" fill={color} fillOpacity="0.15" />
+    <path d="M10 32C10 26.5 14.5 23 20 23C25.5 23 30 26.5 30 32" stroke={color} strokeWidth="1.4" strokeLinecap="round" />
+    <line x1="6" y1="20" x2="34" y2="20" stroke={color} strokeWidth="0.5" strokeOpacity="0.3" strokeDasharray="2 2" />
+    <circle cx="20" cy="14" r="1.5" fill={color} />
+  </svg>
+);

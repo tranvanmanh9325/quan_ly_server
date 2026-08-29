@@ -11,7 +11,7 @@ import {
   SciFiTerminalPromptIcon, SciFiInfoIcon,
   SciFiFlameStreakIcon, SciFiVideoClipIcon, SciFiMessageStreakIcon, SciFiAddFriendIcon,
   SciFiTrashIcon, SciFiRadarScanIcon, SciFiAiChatBubbleIcon, SciFiVerifiedCheckIcon,
-  SciFiUsersGroupIcon,
+  SciFiUsersGroupIcon, SciFiSearchIcon, SciFiPlayPulseIcon, SciFiHoloSilhouette,
 } from '../components/SciFiIcons';
 import { useTranslation } from '../i18n/index.jsx';
 
@@ -556,6 +556,11 @@ export default function AiAgentsPage() {
   const [ttNewFriendUsername, setTtNewFriendUsername] = useState('');
   const [ttNewFriendNickname, setTtNewFriendNickname] = useState('');
   const [ttInstantSending, setTtInstantSending] = useState('');
+  const [ttFriendsScanning, setTtFriendsScanning] = useState(false);
+  const [ttFriendsScanMsg, setTtFriendsScanMsg] = useState('');
+  const [ttFriendSearch, setTtFriendSearch] = useState('');
+  const [ttFriendFilter, setTtFriendFilter] = useState('all'); // 'all' | 'active' | 'paused'
+  const [ttShowManualAdd, setTtShowManualAdd] = useState(false);
 
   const fetchTtConfig = useCallback(() => {
     setTtLoading(true);
@@ -577,6 +582,7 @@ export default function AiAgentsPage() {
           cooldownMinutes: Number(d.cooldownMinutes ?? 60),
           cookiesJson: cookies,
           customMessage: d.customMessage || '',
+          lastFriendsScannedAt: d.lastFriendsScannedAt || d.last_friends_scanned_at || null,
         });
         setTtStatus({
           enabled: Boolean(d.enabled),
@@ -586,6 +592,7 @@ export default function AiAgentsPage() {
           recentReplies: d.recentReplies || [],
           lastStatus: d.lastStatus || '',
           hasCookies: Boolean(cookies && cookies.length > 20),
+          lastFriendsScannedAt: d.lastFriendsScannedAt || d.last_friends_scanned_at || null,
         });
       })
       .catch(() => {})
@@ -679,6 +686,42 @@ export default function AiAgentsPage() {
     } finally {
       setTtInstantSending('');
       setTtTesting(false);
+    }
+  };
+
+  const handleScanTikTokFriends = async () => {
+    setTtFriendsScanning(true);
+    setTtFriendsScanMsg('Đang kích hoạt Radar quét danh sách bạn bè TikTok...');
+    try {
+      const res = await axios.post('/api/tiktok/scan-friends');
+      if (res.data?.targets) {
+        setTtConfig(prev => ({
+          ...prev,
+          streakTargets: res.data.targets,
+        }));
+      }
+      setTtFriendsScanMsg(res.data?.message || 'Đã quét xong danh sách bạn bè TikTok!');
+      fetchTtConfig();
+    } catch (e) {
+      setTtFriendsScanMsg(e.response?.data?.message || 'Lỗi khi quét bạn bè. Hãy kiểm tra trạng thái đăng nhập TikTok.');
+    } finally {
+      setTtFriendsScanning(false);
+      setTimeout(() => setTtFriendsScanMsg(''), 5000);
+    }
+  };
+
+  const handleBatchToggleFriends = async (action) => {
+    try {
+      const res = await axios.post('/api/tiktok/batch-toggle-friends', { action });
+      if (res.data?.targets) {
+        setTtConfig(prev => ({
+          ...prev,
+          streakTargets: res.data.targets,
+        }));
+      }
+      fetchTtConfig();
+    } catch (e) {
+      console.error('Failed to batch toggle friends:', e);
     }
   };
 
@@ -1643,173 +1686,621 @@ export default function AiAgentsPage() {
                   />
                 </SettingRow>
 
-                {/* Friends List & Target Manager */}
-                <div style={{ marginTop: '20px', paddingTop: '16px', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-                  <div style={{ fontSize: '0.78rem', color: '#FE2C55', fontFamily: 'Share Tech Mono', letterSpacing: '1px', fontWeight: 'bold', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <SciFiUsersGroupIcon size={14} color="#FE2C55" />
-                    <span>DANH SÁCH BẠN BÈ CẦN GIỮ CHUỖI ({ttConfig.streakTargets?.length || 0})</span>
-                  </div>
-
-                  {/* Add Friend Row */}
-                  <div style={{ display: 'flex', gap: '8px', marginBottom: '14px', flexWrap: 'wrap' }}>
-                    <input
-                      type="text"
-                      value={ttNewFriendUsername}
-                      onChange={e => setTtNewFriendUsername(e.target.value)}
-                      placeholder="@username"
-                      style={{
-                        flex: '1', minWidth: '180px',
-                        background: 'rgba(0,0,0,0.5)',
-                        border: '1px solid rgba(255,255,255,0.15)',
-                        color: '#fff',
-                        padding: '6px 12px',
-                        fontFamily: 'Share Tech Mono',
-                        fontSize: '0.76rem',
-                        borderRadius: '2px',
-                      }}
-                    />
-                    <input
-                      type="text"
-                      value={ttNewFriendNickname}
-                      onChange={e => setTtNewFriendNickname(e.target.value)}
-                      placeholder="Tên gợi nhớ"
-                      style={{
-                        flex: '1', minWidth: '180px',
-                        background: 'rgba(0,0,0,0.5)',
-                        border: '1px solid rgba(255,255,255,0.15)',
-                        color: '#fff',
-                        padding: '6px 12px',
-                        fontFamily: 'Share Tech Mono',
-                        fontSize: '0.76rem',
-                        borderRadius: '2px',
-                      }}
-                    />
-                    <button
-                      type="button"
-                      onClick={handleAddStreakFriend}
-                      style={{
-                        padding: '6px 16px',
-                        background: 'rgba(254, 44, 85, 0.2)',
-                        border: '1px solid #FE2C55',
+                {/* ── SMART FRIEND SCANNER & TACTICAL CONTROL BAR ── */}
+                <div style={{
+                  marginTop: '20px',
+                  paddingTop: '16px',
+                  borderTop: '1px solid rgba(255,255,255,0.06)'
+                }}>
+                  {/* Top Bar: Title, Last Scanned At, Scan Button & Manual Drawer Toggle */}
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    flexWrap: 'wrap',
+                    gap: '12px',
+                    marginBottom: '16px'
+                  }}>
+                    <div>
+                      <div style={{
+                        fontSize: '0.82rem',
                         color: '#FE2C55',
                         fontFamily: 'Share Tech Mono',
-                        fontSize: '0.76rem',
+                        letterSpacing: '1.2px',
                         fontWeight: 'bold',
-                        cursor: 'pointer',
-                        borderRadius: '2px',
-                        display: 'flex', alignItems: 'center', gap: '6px',
-                      }}
-                    >
-                      <SciFiAddFriendIcon size={13} color="#FE2C55" />
-                      THÊM BẠN BÈ
-                    </button>
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px'
+                      }}>
+                        <SciFiUsersGroupIcon size={16} color="#FE2C55" />
+                        <span>QUẢN LÝ BẠN BÈ GIỮ CHUỖI TIKTOK</span>
+                        <span style={{ fontSize: '0.74rem', color: 'var(--accent-cyan)', opacity: 0.85 }}>
+                          ({(ttConfig.streakTargets || []).length} BẠN BÈ)
+                        </span>
+                      </div>
+                      <div style={{
+                        fontSize: '0.7rem',
+                        color: 'var(--text-secondary)',
+                        opacity: 0.7,
+                        marginTop: '3px',
+                        fontFamily: 'Share Tech Mono'
+                      }}>
+                        {ttStatus.lastFriendsScannedAt || ttConfig.lastFriendsScannedAt
+                          ? `Lần quét radar gần nhất: ${ttStatus.lastFriendsScannedAt || ttConfig.lastFriendsScannedAt}`
+                          : 'Chưa thực hiện quét bạn bè tự động từ TikTok Messages'}
+                      </div>
+                    </div>
+
+                    {/* Scan and Manual Add Controls */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                      <button
+                        type="button"
+                        onClick={handleScanTikTokFriends}
+                        disabled={ttFriendsScanning}
+                        style={{
+                          padding: '7px 16px',
+                          background: ttFriendsScanning
+                            ? 'rgba(0, 243, 255, 0.2)'
+                            : 'linear-gradient(135deg, rgba(254, 44, 85, 0.25) 0%, rgba(0, 243, 255, 0.15) 100%)',
+                          border: ttFriendsScanning ? '1px solid var(--accent-cyan)' : '1px solid #FE2C55',
+                          color: ttFriendsScanning ? 'var(--accent-cyan)' : '#fff',
+                          fontFamily: 'Share Tech Mono',
+                          fontSize: '0.76rem',
+                          fontWeight: 'bold',
+                          letterSpacing: '1px',
+                          cursor: ttFriendsScanning ? 'not-allowed' : 'pointer',
+                          borderRadius: '2px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '8px',
+                          boxShadow: ttFriendsScanning
+                            ? '0 0 15px rgba(0, 243, 255, 0.4)'
+                            : '0 0 12px rgba(254, 44, 85, 0.25)',
+                          transition: 'all 0.2s ease',
+                        }}
+                      >
+                        {ttFriendsScanning ? (
+                          <>
+                            <SciFiChronoSpinnerIcon size={14} color="var(--accent-cyan)" />
+                            <span>ĐANG QUÉT RADAR TIKTOK...</span>
+                          </>
+                        ) : (
+                          <>
+                            <SciFiRadarScanIcon size={15} color="#FE2C55" />
+                            <span>QUÉT DANH SÁCH BẠN BÈ</span>
+                          </>
+                        )}
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setTtShowManualAdd(!ttShowManualAdd)}
+                        style={{
+                          padding: '7px 12px',
+                          background: ttShowManualAdd ? 'rgba(0, 243, 255, 0.2)' : 'rgba(255, 255, 255, 0.05)',
+                          border: ttShowManualAdd ? '1px solid var(--accent-cyan)' : '1px solid rgba(255, 255, 255, 0.2)',
+                          color: ttShowManualAdd ? 'var(--accent-cyan)' : 'var(--text-secondary)',
+                          fontFamily: 'Share Tech Mono',
+                          fontSize: '0.74rem',
+                          cursor: 'pointer',
+                          borderRadius: '2px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '5px',
+                        }}
+                      >
+                        <SciFiAddFriendIcon size={13} color="currentColor" />
+                        <span>{ttShowManualAdd ? 'ĐÓNG NHẬP TAY' : 'NHẬP THỦ CÔNG'}</span>
+                      </button>
+                    </div>
                   </div>
 
-                  {/* Friends Table */}
-                  {ttConfig.streakTargets?.length === 0 ? (
-                    <div style={{ padding: '20px', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '0.76rem', fontFamily: 'Share Tech Mono', background: 'rgba(0,0,0,0.2)', borderRadius: '2px' }}>
-                      Chưa có bạn bè nào trong danh sách. Hãy nhập @username ở trên để thêm người nhận video giữ chuỗi hàng ngày.
-                    </div>
-                  ) : (
-                    <div style={{ overflowX: 'auto' }}>
-                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.76rem', fontFamily: 'Share Tech Mono' }}>
-                        <thead>
-                          <tr style={{ background: 'rgba(254, 44, 85, 0.08)', color: '#FE2C55', textAlign: 'left' }}>
-                            <th style={{ padding: '8px 10px', borderBottom: '1px solid rgba(254, 44, 85, 0.2)' }}>BẠN BÈ</th>
-                            <th style={{ padding: '8px 10px', borderBottom: '1px solid rgba(254, 44, 85, 0.2)' }}>CHUỖI (STREAK)</th>
-                            <th style={{ padding: '8px 10px', borderBottom: '1px solid rgba(254, 44, 85, 0.2)' }}>GỬI GẦN NHẤT</th>
-                            <th style={{ padding: '8px 10px', borderBottom: '1px solid rgba(254, 44, 85, 0.2)' }}>TRẠNG THÁI</th>
-                            <th style={{ padding: '8px 10px', borderBottom: '1px solid rgba(254, 44, 85, 0.2)', textAlign: 'right' }}>THAO TÁC</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {ttConfig.streakTargets.map((friend, idx) => {
-                            const isSendingThis = ttInstantSending === friend.username;
-                            return (
-                              <tr key={idx} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)', background: idx % 2 === 0 ? 'rgba(0,0,0,0.1)' : 'transparent' }}>
-                                <td style={{ padding: '8px 10px' }}>
-                                  <div style={{ fontWeight: 'bold', color: '#fff' }}>{friend.nickname || friend.username}</div>
-                                  <div style={{ fontSize: '0.68rem', color: '#00F2FE', opacity: 0.8 }}>{friend.username}</div>
-                                </td>
-                                <td style={{ padding: '8px 10px' }}>
-                                  <span style={{ padding: '2px 6px', background: 'rgba(254, 44, 85, 0.15)', border: '1px solid rgba(254, 44, 85, 0.4)', borderRadius: '2px', color: '#FE2C55', fontWeight: 'bold', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                                    <SciFiFlameStreakIcon size={12} color="#FE2C55" />
-                                    <span>{friend.streak_days || 0} Ngày</span>
-                                  </span>
-                                </td>
-                                <td style={{ padding: '8px 10px', color: 'var(--text-secondary)' }}>
-                                  {friend.last_sent ? friend.last_sent : 'Chưa gửi'}
-                                </td>
-                                <td style={{ padding: '8px 10px' }}>
-                                  <span style={{ color: friend.status === 'active' ? 'var(--accent-green)' : 'var(--text-secondary)' }}>
-                                    {friend.status === 'active' ? '● Đang giữ chuỗi' : '○ Tạm dừng'}
-                                  </span>
-                                </td>
-                                <td style={{ padding: '8px 10px', textAlign: 'right' }}>
-                                  <div style={{ display: 'inline-flex', gap: '6px' }}>
-                                    <button
-                                      type="button"
-                                      onClick={() => handleTriggerTikTokStreak(friend.username)}
-                                      disabled={Boolean(ttInstantSending)}
-                                      style={{
-                                        padding: '3px 8px',
-                                        background: 'rgba(254, 44, 85, 0.15)',
-                                        border: '1px solid #FE2C55',
-                                        color: '#FE2C55',
-                                        fontSize: '0.7rem',
-                                        cursor: 'pointer',
-                                        borderRadius: '2px',
-                                        display: 'inline-flex',
-                                        alignItems: 'center',
-                                        gap: '4px',
-                                      }}
-                                    >
-                                      <SciFiFlameStreakIcon size={11} color="#FE2C55" />
-                                      <span>{isSendingThis ? 'ĐANG GỬI...' : 'GỬI NGAY'}</span>
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => handleToggleStreakFriend(friend.username)}
-                                      style={{
-                                        padding: '3px 8px',
-                                        background: 'rgba(255,255,255,0.05)',
-                                        border: '1px solid rgba(255,255,255,0.15)',
-                                        color: 'var(--text-secondary)',
-                                        fontSize: '0.7rem',
-                                        cursor: 'pointer',
-                                        borderRadius: '2px',
-                                      }}
-                                    >
-                                      {friend.status === 'active' ? 'Tạm dừng' : 'Bật lại'}
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => handleRemoveStreakFriend(friend.username)}
-                                      style={{
-                                        padding: '3px 8px',
-                                        background: 'rgba(255,0,0,0.1)',
-                                        border: '1px solid rgba(255,0,0,0.3)',
-                                        color: 'var(--accent-pink)',
-                                        fontSize: '0.7rem',
-                                        cursor: 'pointer',
-                                        borderRadius: '2px',
-                                        display: 'inline-flex',
-                                        alignItems: 'center',
-                                        gap: '4px',
-                                      }}
-                                    >
-                                      <SciFiTrashIcon size={11} color="var(--accent-pink)" />
-                                      <span>Xóa</span>
-                                    </button>
-                                  </div>
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
+                  {/* Scan Result Toast */}
+                  {ttFriendsScanMsg && (
+                    <div style={{
+                      marginBottom: '14px',
+                      padding: '8px 14px',
+                      background: 'rgba(0, 243, 255, 0.1)',
+                      border: '1px solid var(--accent-cyan)',
+                      color: 'var(--accent-cyan)',
+                      fontFamily: 'Share Tech Mono',
+                      fontSize: '0.76rem',
+                      borderRadius: '2px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                    }}>
+                      <SciFiCheckCircleIcon size={14} color="var(--accent-cyan)" />
+                      <span>{ttFriendsScanMsg}</span>
                     </div>
                   )}
+
+                  {/* 3-Tile Telemetry Badges */}
+                  {(() => {
+                    const allTargets = ttConfig.streakTargets || [];
+                    const total = allTargets.length;
+                    const active = allTargets.filter(f => f.status === 'active').length;
+                    const paused = total - active;
+
+                    return (
+                      <div style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))',
+                        gap: '10px',
+                        marginBottom: '16px',
+                      }}>
+                        <div style={{
+                          padding: '10px 14px',
+                          background: 'rgba(0, 0, 0, 0.4)',
+                          border: '1px solid rgba(255, 255, 255, 0.1)',
+                          borderRadius: '3px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                        }}>
+                          <div>
+                            <div style={{ fontSize: '0.66rem', color: 'var(--text-secondary)', fontFamily: 'Share Tech Mono' }}>TỔNG BẠN BÈ</div>
+                            <div style={{ fontSize: '1.1rem', fontWeight: 'bold', color: '#fff', fontFamily: 'Share Tech Mono' }}>{total}</div>
+                          </div>
+                          <SciFiUsersGroupIcon size={20} color="var(--accent-cyan)" />
+                        </div>
+
+                        <div style={{
+                          padding: '10px 14px',
+                          background: 'rgba(254, 44, 85, 0.08)',
+                          border: '1px solid rgba(254, 44, 85, 0.3)',
+                          borderRadius: '3px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                        }}>
+                          <div>
+                            <div style={{ fontSize: '0.66rem', color: '#FE2C55', fontFamily: 'Share Tech Mono' }}>ĐANG GIỮ CHUỖI</div>
+                            <div style={{ fontSize: '1.1rem', fontWeight: 'bold', color: '#FE2C55', fontFamily: 'Share Tech Mono' }}>{active}</div>
+                          </div>
+                          <SciFiFlameStreakIcon size={20} color="#FE2C55" />
+                        </div>
+
+                        <div style={{
+                          padding: '10px 14px',
+                          background: 'rgba(0, 0, 0, 0.4)',
+                          border: '1px solid rgba(255, 255, 255, 0.1)',
+                          borderRadius: '3px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                        }}>
+                          <div>
+                            <div style={{ fontSize: '0.66rem', color: 'rgba(255,255,255,0.5)', fontFamily: 'Share Tech Mono' }}>TẠM DỪNG</div>
+                            <div style={{ fontSize: '1.1rem', fontWeight: 'bold', color: 'var(--text-secondary)', fontFamily: 'Share Tech Mono' }}>{paused}</div>
+                          </div>
+                          <SciFiInfoIcon size={20} color="rgba(255,255,255,0.4)" />
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {/* Toolbar: Search + Filter Chips + Batch Actions */}
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    flexWrap: 'wrap',
+                    gap: '10px',
+                    marginBottom: '16px',
+                    padding: '10px 14px',
+                    background: 'rgba(0, 0, 0, 0.35)',
+                    border: '1px solid rgba(255, 255, 255, 0.08)',
+                    borderRadius: '3px',
+                  }}>
+                    {/* Search Input */}
+                    <div style={{ position: 'relative', flex: '1', minWidth: '200px' }}>
+                      <span style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', opacity: 0.6 }}>
+                        <SciFiSearchIcon size={13} color="var(--accent-cyan)" />
+                      </span>
+                      <input
+                        type="text"
+                        value={ttFriendSearch}
+                        onChange={e => setTtFriendSearch(e.target.value)}
+                        placeholder="Tìm theo nickname hoặc @username..."
+                        style={{
+                          width: '100%',
+                          padding: '6px 12px 6px 30px',
+                          background: 'rgba(0, 0, 0, 0.6)',
+                          border: '1px solid rgba(0, 243, 255, 0.25)',
+                          color: '#fff',
+                          fontFamily: 'Share Tech Mono',
+                          fontSize: '0.76rem',
+                          borderRadius: '2px',
+                          outline: 'none',
+                        }}
+                      />
+                    </div>
+
+                    {/* Filter Tabs */}
+                    {(() => {
+                      const allTargets = ttConfig.streakTargets || [];
+                      const total = allTargets.length;
+                      const active = allTargets.filter(f => f.status === 'active').length;
+                      const paused = total - active;
+
+                      return (
+                        <div style={{ display: 'flex', gap: '6px' }}>
+                          {[
+                            { id: 'all', label: `TẤT CẢ (${total})` },
+                            { id: 'active', label: `BẬT (${active})` },
+                            { id: 'paused', label: `DỪNG (${paused})` },
+                          ].map(tab => (
+                            <button
+                              key={tab.id}
+                              type="button"
+                              onClick={() => setTtFriendFilter(tab.id)}
+                              style={{
+                                padding: '4px 10px',
+                                fontSize: '0.7rem',
+                                fontFamily: 'Share Tech Mono',
+                                borderRadius: '2px',
+                                cursor: 'pointer',
+                                border: ttFriendFilter === tab.id ? '1px solid var(--accent-cyan)' : '1px solid rgba(255,255,255,0.1)',
+                                background: ttFriendFilter === tab.id ? 'rgba(0, 243, 255, 0.15)' : 'rgba(0,0,0,0.4)',
+                                color: ttFriendFilter === tab.id ? 'var(--accent-cyan)' : 'var(--text-secondary)',
+                                transition: 'all 0.15s ease',
+                              }}
+                            >
+                              {tab.label}
+                            </button>
+                          ))}
+                        </div>
+                      );
+                    })()}
+
+                    {/* Batch Actions */}
+                    <div style={{ display: 'flex', gap: '6px' }}>
+                      <button
+                        type="button"
+                        onClick={() => handleBatchToggleFriends('enable_all')}
+                        style={{
+                          padding: '4px 10px',
+                          fontSize: '0.68rem',
+                          fontFamily: 'Share Tech Mono',
+                          fontWeight: 'bold',
+                          borderRadius: '2px',
+                          cursor: 'pointer',
+                          border: '1px solid var(--accent-green)',
+                          background: 'rgba(0, 255, 102, 0.1)',
+                          color: 'var(--accent-green)',
+                        }}
+                      >
+                        ✓ BẬT TẤT CẢ
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleBatchToggleFriends('disable_all')}
+                        style={{
+                          padding: '4px 10px',
+                          fontSize: '0.68rem',
+                          fontFamily: 'Share Tech Mono',
+                          borderRadius: '2px',
+                          cursor: 'pointer',
+                          border: '1px solid rgba(255, 255, 255, 0.2)',
+                          background: 'rgba(255, 255, 255, 0.05)',
+                          color: 'var(--text-secondary)',
+                        }}
+                      >
+                        ✕ TẮT TẤT CẢ
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Collapsible Manual Add Drawer */}
+                  {ttShowManualAdd && (
+                    <div style={{
+                      marginBottom: '16px',
+                      padding: '14px 16px',
+                      background: 'rgba(0, 243, 255, 0.04)',
+                      border: '1px solid rgba(0, 243, 255, 0.3)',
+                      borderRadius: '3px',
+                      display: 'flex',
+                      gap: '10px',
+                      flexWrap: 'wrap',
+                      alignItems: 'center',
+                    }}>
+                      <input
+                        type="text"
+                        value={ttNewFriendUsername}
+                        onChange={e => setTtNewFriendUsername(e.target.value)}
+                        placeholder="@username TikTok"
+                        style={{
+                          flex: '1', minWidth: '160px',
+                          background: 'rgba(0,0,0,0.6)',
+                          border: '1px solid rgba(255,255,255,0.2)',
+                          color: '#fff',
+                          padding: '6px 12px',
+                          fontFamily: 'Share Tech Mono',
+                          fontSize: '0.76rem',
+                          borderRadius: '2px',
+                        }}
+                      />
+                      <input
+                        type="text"
+                        value={ttNewFriendNickname}
+                        onChange={e => setTtNewFriendNickname(e.target.value)}
+                        placeholder="Tên gợi nhớ (Ví dụ: Thảo My)"
+                        style={{
+                          flex: '1', minWidth: '160px',
+                          background: 'rgba(0,0,0,0.6)',
+                          border: '1px solid rgba(255,255,255,0.2)',
+                          color: '#fff',
+                          padding: '6px 12px',
+                          fontFamily: 'Share Tech Mono',
+                          fontSize: '0.76rem',
+                          borderRadius: '2px',
+                        }}
+                      />
+                      <button
+                        type="button"
+                        onClick={handleAddStreakFriend}
+                        style={{
+                          padding: '6px 16px',
+                          background: 'rgba(0, 243, 255, 0.2)',
+                          border: '1px solid var(--accent-cyan)',
+                          color: 'var(--accent-cyan)',
+                          fontFamily: 'Share Tech Mono',
+                          fontSize: '0.76rem',
+                          fontWeight: 'bold',
+                          cursor: 'pointer',
+                          borderRadius: '2px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                        }}
+                      >
+                        <SciFiAddFriendIcon size={12} color="var(--accent-cyan)" />
+                        <span>XÁC NHẬN THÊM</span>
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Friends Matrix Cards Grid */}
+                  {(() => {
+                    const allTargets = ttConfig.streakTargets || [];
+                    const q = ttFriendSearch.toLowerCase().trim();
+                    const filtered = allTargets.filter(f => {
+                      const matchSearch = !q ||
+                        (f.username && f.username.toLowerCase().includes(q)) ||
+                        (f.nickname && f.nickname.toLowerCase().includes(q));
+                      const matchStatus =
+                        ttFriendFilter === 'all' ||
+                        (ttFriendFilter === 'active' && f.status === 'active') ||
+                        (ttFriendFilter === 'paused' && f.status !== 'active');
+                      return matchSearch && matchStatus;
+                    });
+
+                    if (filtered.length === 0) {
+                      return (
+                        <div style={{
+                          padding: '35px 20px',
+                          textAlign: 'center',
+                          background: 'rgba(0, 0, 0, 0.25)',
+                          border: '1px dashed rgba(255, 255, 255, 0.1)',
+                          borderRadius: '3px',
+                          color: 'var(--text-secondary)',
+                          fontFamily: 'Share Tech Mono',
+                          fontSize: '0.78rem',
+                        }}>
+                          {q ? (
+                            <div>Không tìm thấy bạn bè nào khớp với từ khóa "{q}"</div>
+                          ) : (
+                            <div>
+                              Chưa có bạn bè nào trong danh sách. Hãy nhấn nút <b>"QUÉT DANH SÁCH BẠN BÈ"</b> ở trên để hệ thống tự động tìm kiếm từ TikTok Messages.
+                            </div>
+                          )}
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(auto-fill, minmax(310px, 1fr))',
+                        gap: '12px',
+                      }}>
+                        {filtered.map((friend) => {
+                          const isSending = ttInstantSending === friend.username;
+                          const isActive = friend.status === 'active';
+
+                          return (
+                            <div
+                              key={friend.username}
+                              style={{
+                                padding: '14px',
+                                background: isActive
+                                  ? 'linear-gradient(135deg, rgba(254, 44, 85, 0.07) 0%, rgba(10, 12, 18, 0.85) 100%)'
+                                  : 'rgba(0, 0, 0, 0.4)',
+                                border: isActive
+                                  ? '1px solid rgba(254, 44, 85, 0.35)'
+                                  : '1px solid rgba(255, 255, 255, 0.08)',
+                                borderRadius: '4px',
+                                boxShadow: isActive ? '0 0 15px rgba(254, 44, 85, 0.06)' : 'none',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                gap: '10px',
+                                position: 'relative',
+                                transition: 'all 0.2s ease',
+                              }}
+                            >
+                              {/* Card Top: Avatar + Nickname + @username + Status Switch */}
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', overflow: 'hidden' }}>
+                                  {friend.avatar_url ? (
+                                    <img
+                                      src={friend.avatar_url}
+                                      alt={friend.nickname || friend.username}
+                                      style={{
+                                        width: '38px',
+                                        height: '38px',
+                                        borderRadius: '3px',
+                                        border: isActive ? '1px solid #FE2C55' : '1px solid rgba(255,255,255,0.2)',
+                                        objectFit: 'cover',
+                                        flexShrink: 0,
+                                      }}
+                                      onError={e => {
+                                        e.target.style.display = 'none';
+                                      }}
+                                    />
+                                  ) : (
+                                    <SciFiHoloSilhouette size={38} color={isActive ? '#FE2C55' : 'var(--accent-cyan)'} />
+                                  )}
+
+                                  <div style={{ overflow: 'hidden' }}>
+                                    <div style={{
+                                      fontSize: '0.84rem',
+                                      fontWeight: 'bold',
+                                      color: '#fff',
+                                      fontFamily: 'Share Tech Mono',
+                                      lineHeight: '1.2',
+                                      whiteSpace: 'nowrap',
+                                      overflow: 'hidden',
+                                      textOverflow: 'ellipsis',
+                                    }}>
+                                      {friend.nickname || friend.username}
+                                    </div>
+                                    <div style={{
+                                      fontSize: '0.7rem',
+                                      color: 'var(--accent-cyan)',
+                                      opacity: 0.85,
+                                      fontFamily: 'Share Tech Mono',
+                                      marginTop: '2px',
+                                      whiteSpace: 'nowrap',
+                                      overflow: 'hidden',
+                                      textOverflow: 'ellipsis',
+                                    }}>
+                                      {friend.username}
+                                    </div>
+                                  </div>
+                                </div>
+
+                                {/* Custom Toggle Switch */}
+                                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', flexShrink: 0 }}>
+                                  <input
+                                    type="checkbox"
+                                    checked={isActive}
+                                    onChange={() => handleToggleStreakFriend(friend.username)}
+                                    style={{ display: 'none' }}
+                                  />
+                                  <div style={{
+                                    width: '36px',
+                                    height: '18px',
+                                    background: isActive ? 'rgba(254, 44, 85, 0.3)' : 'rgba(255,255,255,0.08)',
+                                    border: isActive ? '1px solid #FE2C55' : '1px solid rgba(255,255,255,0.2)',
+                                    borderRadius: '2px',
+                                    position: 'relative',
+                                    transition: 'all 0.2s ease',
+                                  }}>
+                                    <div style={{
+                                      width: '12px',
+                                      height: '12px',
+                                      background: isActive ? '#FE2C55' : 'rgba(255,255,255,0.4)',
+                                      borderRadius: '1px',
+                                      position: 'absolute',
+                                      top: '2px',
+                                      left: isActive ? '20px' : '2px',
+                                      transition: 'all 0.2s ease',
+                                    }} />
+                                  </div>
+                                </label>
+                              </div>
+
+                              {/* Card Middle: Streak Flame Badge & Last Sent Telemetry */}
+                              <div style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                padding: '6px 10px',
+                                background: 'rgba(0, 0, 0, 0.3)',
+                                border: '1px solid rgba(255, 255, 255, 0.05)',
+                                borderRadius: '2px',
+                                fontSize: '0.72rem',
+                                fontFamily: 'Share Tech Mono',
+                              }}>
+                                <div style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '4px',
+                                  color: '#FE2C55',
+                                  fontWeight: 'bold',
+                                }}>
+                                  <SciFiFlameStreakIcon size={12} color="#FE2C55" />
+                                  <span>{friend.streak_days || 0} NGÀY CHUỖI</span>
+                                </div>
+
+                                <div style={{ color: 'var(--text-secondary)', opacity: 0.8 }}>
+                                  {friend.last_sent ? `Đã gửi: ${friend.last_sent}` : 'Chưa gửi'}
+                                </div>
+                              </div>
+
+                              {/* Card Bottom: Instant Dispatch Button & Delete Action */}
+                              <div style={{ display: 'flex', gap: '6px', marginTop: '2px' }}>
+                                <button
+                                  type="button"
+                                  onClick={() => handleTriggerTikTokStreak(friend.username)}
+                                  disabled={Boolean(ttInstantSending)}
+                                  style={{
+                                    flex: '1',
+                                    padding: '6px 10px',
+                                    background: isSending ? 'rgba(0, 243, 255, 0.2)' : 'rgba(254, 44, 85, 0.15)',
+                                    border: isSending ? '1px solid var(--accent-cyan)' : '1px solid #FE2C55',
+                                    color: isSending ? 'var(--accent-cyan)' : '#FE2C55',
+                                    fontFamily: 'Share Tech Mono',
+                                    fontSize: '0.72rem',
+                                    fontWeight: 'bold',
+                                    cursor: Boolean(ttInstantSending) ? 'not-allowed' : 'pointer',
+                                    borderRadius: '2px',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    gap: '6px',
+                                    transition: 'all 0.15s ease',
+                                  }}
+                                >
+                                  {isSending ? (
+                                    <>
+                                      <SciFiChronoSpinnerIcon size={12} color="var(--accent-cyan)" />
+                                      <span>ĐANG GỬI CLIP...</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <SciFiPlayPulseIcon size={12} color="#FE2C55" />
+                                      <span>BẮN VIDEO NGAY</span>
+                                    </>
+                                  )}
+                                </button>
+
+                                <button
+                                  type="button"
+                                  title="Xóa bạn bè khỏi danh sách"
+                                  onClick={() => handleRemoveStreakFriend(friend.username)}
+                                  style={{
+                                    padding: '6px 10px',
+                                    background: 'rgba(255, 255, 255, 0.04)',
+                                    border: '1px solid rgba(255, 255, 255, 0.15)',
+                                    color: 'var(--text-secondary)',
+                                    cursor: 'pointer',
+                                    borderRadius: '2px',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                  }}
+                                >
+                                  <SciFiTrashIcon size={13} color="currentColor" />
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
                 </div>
               </div>
 

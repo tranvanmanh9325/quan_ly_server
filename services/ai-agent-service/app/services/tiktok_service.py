@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import os
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
 import psycopg
@@ -60,10 +61,12 @@ class TikTokService:
                             last_status             TEXT NOT NULL DEFAULT 'Tắt',
                             last_check_at           TIMESTAMP,
                             last_streak_run_at      TIMESTAMP,
+                            last_friends_scanned_at TIMESTAMP,
                             created_at              TIMESTAMP NOT NULL DEFAULT now(),
                             updated_at              TIMESTAMP NOT NULL DEFAULT now()
                         );
                         INSERT INTO tiktok_config (id) VALUES (1) ON CONFLICT DO NOTHING;
+                        ALTER TABLE tiktok_config ADD COLUMN IF NOT EXISTS last_friends_scanned_at TIMESTAMP;
 
                         CREATE TABLE IF NOT EXISTS tiktok_replies (
                             id              SERIAL PRIMARY KEY,
@@ -102,6 +105,7 @@ class TikTokService:
             "last_status": "Tắt",
             "last_check_at": None,
             "last_streak_run_at": None,
+            "last_friends_scanned_at": None,
         }
         try:
             async with get_db_dict_cursor() as cur:
@@ -113,6 +117,12 @@ class TikTokService:
                         targets_list = json.loads(targets) if isinstance(targets, str) else (targets or [])
                     except Exception:
                         targets_list = []
+
+                    last_friends_scan = row.get("last_friends_scanned_at")
+                    if isinstance(last_friends_scan, datetime):
+                        last_friends_scan_str = last_friends_scan.astimezone(VN_TZ).strftime("%H:%M:%S %d/%m/%Y")
+                    else:
+                        last_friends_scan_str = str(last_friends_scan) if last_friends_scan else None
 
                     return {
                         "id": row.get("id", 1),
@@ -132,6 +142,7 @@ class TikTokService:
                         "last_status": row.get("last_status", "Tắt"),
                         "last_check_at": row.get("last_check_at"),
                         "last_streak_run_at": row.get("last_streak_run_at"),
+                        "last_friends_scanned_at": last_friends_scan_str,
                     }
         except Exception as e:
             logger.error("[TikTokService] Error reading tiktok_config from DB: %s", e)
@@ -463,6 +474,261 @@ class TikTokService:
 
         return {
             "status": "success",
-            "message": f"Đã gửi video giữ chuỗi cho {nickname} ({username}) thành công! (Chuỗi: {streak_days} ngày 🔥)",
+            "message": f"Đã gửi video giữ chuỗi cho {nickname} ({username}) thành công! (Chuỗi: {streak_days} ngày)",
             "streak_days": streak_days,
         }
+
+    async def _extract_conversations_from_page(self, page: Any) -> List[Dict[str, Any]]:
+        """Extracts conversation items from TikTok web messages DOM."""
+        results = []
+        try:
+            items = await page.evaluate("""() => {
+                const list = [];
+                const elements = document.querySelectorAll(
+                    '[data-e2e="chat-list-item"], div[class*="DivConversationList"] > div, div[class*="ConversationItem"], div[class*="ChatList"] > div, div[class*="chat-item"]'
+                );
+                
+                elements.forEach(el => {
+                    try {
+                        const img = el.querySelector('img');
+                        const avatar = img ? img.src : '';
+                        
+                        // Extract name / title
+                        const titleEl = el.querySelector('[data-e2e="chat-user-name"], p[class*="Title"], span[class*="Title"], p[class*="UserTitle"], span[class*="UserTitle"], div[class*="Title"]');
+                        const nickname = titleEl ? titleEl.textContent.trim() : '';
+                        
+                        // Extract snippet / last message
+                        const msgEl = el.querySelector('p[class*="Desc"], span[class*="Desc"], div[class*="Desc"], p[class*="Subtitle"], span[class*="Snippet"]');
+                        const lastMsg = msgEl ? msgEl.textContent.trim() : '';
+                        
+                        // Extract username from link or attributes
+                        const link = el.querySelector('a[href*="/@"]') || el.closest('a[href*="/@"]');
+                        let username = '';
+                        if (link && link.href) {
+                            const match = link.href.match(/@([a-zA-Z0-9_.-]+)/);
+                            if (match) username = '@' + match[1];
+                        }
+                        
+                        if (!username && nickname) {
+                            if (nickname.startsWith('@')) {
+                                username = nickname;
+                            } else {
+                                username = '@' + nickname.replace(/\\s+/g, '_').toLowerCase();
+                            }
+                        }
+                        
+                        if (nickname || username) {
+                            list.push({
+                                username: username || ('@' + nickname),
+                                nickname: nickname || username,
+                                avatar_url: avatar,
+                                last_message: lastMsg,
+                                streak_days: 0,
+                            });
+                        }
+                    } catch (err) {}
+                });
+                return list;
+            }""")
+            if isinstance(items, list):
+                results = items
+        except Exception as e:
+            logger.warning("[TikTokService] DOM extraction warning: %s", e)
+        return results
+
+    async def scan_friends_from_tiktok(self) -> Dict[str, Any]:
+        """
+        Scans TikTok Direct Messages / Conversations using Playwright to extract
+        friends list (nickname, username, avatar_url, last_message).
+        Applies Smart Merge to persist existing streak settings and adds newly found friends.
+        """
+        async with self._lock:
+            cfg = await self.get_config_from_db()
+            cookies_json_str = cfg.get("cookies_json", "")
+            
+            from app.services.vnc_manager import vnc_manager
+            
+            scanned_friends: List[Dict[str, Any]] = []
+            
+            # Check if live VNC session is already active on TikTok
+            if vnc_manager.is_running() and vnc_manager._current_platform == "tiktok" and vnc_manager._page:
+                try:
+                    logger.info("[TikTokFriendsScan] Scraping from active VNC session page...")
+                    page = vnc_manager._page
+                    scanned_friends = await self._extract_conversations_from_page(page)
+                except Exception as e:
+                    logger.warning("[TikTokFriendsScan] Error scraping from active VNC page: %s", e)
+            
+            # If not obtained from active VNC, launch lightweight headless context
+            if not scanned_friends:
+                from playwright.async_api import async_playwright
+                profile_dir = "/app/browser_data/tiktok"
+                os.makedirs(profile_dir, exist_ok=True)
+                
+                async with async_playwright() as p:
+                    args = [
+                        "--no-sandbox",
+                        "--disable-setuid-sandbox",
+                        "--disable-dev-shm-usage",
+                        "--disable-gpu",
+                        "--disable-background-media-suspend=false",
+                        "--autoplay-policy=user-gesture-required",
+                        "--disable-features=Translate,OptimizationHints,MediaRouter",
+                        "--renderer-process-limit=2",
+                        "--mute-audio",
+                        "--js-flags=--max-old-space-size=512",
+                    ]
+                    try:
+                        context = await p.chromium.launch_persistent_context(
+                            user_data_dir=profile_dir,
+                            headless=True,
+                            args=args,
+                            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                            viewport={"width": 1280, "height": 800},
+                        )
+                        
+                        # Pre-inject cookies if available
+                        if cookies_json_str and cookies_json_str.strip() not in ("[]", ""):
+                            try:
+                                raw_cookies = json.loads(cookies_json_str)
+                                formatted_cookies = []
+                                for c in raw_cookies:
+                                    if not c.get("name") or not c.get("value"):
+                                        continue
+                                    formatted_cookies.append({
+                                        "name": str(c["name"]),
+                                        "value": str(c["value"]),
+                                        "domain": str(c.get("domain", ".tiktok.com")),
+                                        "path": str(c.get("path", "/")),
+                                    })
+                                if formatted_cookies:
+                                    await context.add_cookies(formatted_cookies)
+                            except Exception as ce:
+                                logger.warning("[TikTokFriendsScan] Cookie injection warning: %s", ce)
+
+                        page = context.pages[0] if context.pages else await context.new_page()
+                        
+                        # Listen to network responses for potential conversation list API payloads
+                        api_extracted = []
+                        async def on_response(response):
+                            try:
+                                if response.status == 200 and ("im/conversation" in response.url or "im/chat" in response.url or "api/user/list" in response.url):
+                                    data = await response.json()
+                                    user_list = data.get("user_list") or data.get("data") or data.get("conversations") or []
+                                    if isinstance(user_list, list):
+                                        for u in user_list:
+                                            if isinstance(u, dict):
+                                                info = u.get("user_info") or u.get("user") or u
+                                                uname = info.get("unique_id") or info.get("uniqueId") or info.get("screen_name") or info.get("username")
+                                                if uname:
+                                                    api_extracted.append({
+                                                        "username": f"@{uname.lstrip('@')}",
+                                                        "nickname": info.get("nickname") or info.get("display_name") or uname,
+                                                        "avatar_url": info.get("avatar_thumb") or info.get("avatar_medium") or "",
+                                                    })
+                            except Exception:
+                                pass
+
+                        page.on("response", on_response)
+                        
+                        logger.info("[TikTokFriendsScan] Navigating to https://www.tiktok.com/messages ...")
+                        try:
+                            await page.goto("https://www.tiktok.com/messages", wait_until="domcontentloaded", timeout=15000)
+                            await page.wait_for_timeout(3500)
+                        except Exception as ne:
+                            logger.warning("[TikTokFriendsScan] Goto warning: %s", ne)
+
+                        # Extract from DOM
+                        dom_friends = await self._extract_conversations_from_page(page)
+                        
+                        # Combine API and DOM
+                        combined = {}
+                        for f in api_extracted + dom_friends:
+                            uname = f.get("username", "").lower()
+                            if uname:
+                                if uname not in combined:
+                                    combined[uname] = f
+                                else:
+                                    if not combined[uname].get("avatar_url") and f.get("avatar_url"):
+                                        combined[uname]["avatar_url"] = f["avatar_url"]
+                                    if not combined[uname].get("nickname") and f.get("nickname"):
+                                        combined[uname]["nickname"] = f["nickname"]
+                        
+                        scanned_friends = list(combined.values())
+                        await context.close()
+                    except Exception as pe:
+                        logger.error("[TikTokFriendsScan] Playwright headless execution error: %s", pe)
+
+            # Smart Merge with existing targets in Database
+            existing_targets = cfg.get("streak_targets", [])
+            existing_map = {t.get("username", "").lower(): t for t in existing_targets}
+            
+            updated_targets = []
+            new_count = 0
+            
+            for friend in scanned_friends:
+                uname = friend.get("username", "")
+                if not uname:
+                    continue
+                uname_lower = uname.lower()
+                
+                if uname_lower in existing_map:
+                    # Existing target: keep settings, update metadata
+                    ex = existing_map.pop(uname_lower)
+                    ex["nickname"] = friend.get("nickname") or ex.get("nickname") or uname
+                    if friend.get("avatar_url"):
+                        ex["avatar_url"] = friend["avatar_url"]
+                    if friend.get("last_message"):
+                        ex["last_message"] = friend["last_message"]
+                    updated_targets.append(ex)
+                else:
+                    # New friend discovered
+                    new_target = {
+                        "username": uname,
+                        "nickname": friend.get("nickname") or uname,
+                        "avatar_url": friend.get("avatar_url") or "",
+                        "streak_days": int(friend.get("streak_days", 0)),
+                        "status": "active",
+                        "last_sent": "",
+                        "last_message": friend.get("last_message", ""),
+                    }
+                    updated_targets.append(new_target)
+                    new_count += 1
+            
+            # Keep manual targets that were not in the recent scanned conversations
+            for remaining in existing_map.values():
+                updated_targets.append(remaining)
+
+            now_vn = datetime.now(VN_TZ)
+            now_str = now_vn.strftime("%H:%M:%S %d/%m/%Y")
+            
+            cfg["streak_targets"] = updated_targets
+            cfg["last_friends_scanned_at"] = now_vn.strftime("%Y-%m-%d %H:%M:%S")
+            await self.save_config_to_db(cfg)
+
+            msg = f"Đã quét thành công {len(scanned_friends)} bạn bè từ TikTok! (Thêm mới: {new_count})" if scanned_friends else "Đã hoàn tất quét danh sách bạn bè TikTok."
+            logger.info("[TikTokFriendsScan] %s (Total targets: %d)", msg, len(updated_targets))
+            
+            return {
+                "status": "success",
+                "message": msg,
+                "scanned_count": len(scanned_friends),
+                "new_count": new_count,
+                "total_count": len(updated_targets),
+                "last_scanned_at": now_str,
+                "targets": updated_targets,
+            }
+
+    async def batch_toggle_friends(self, action: str = "enable_all") -> Dict[str, Any]:
+        """Batch enables or disables streak keeper for all friends in streak_targets."""
+        async with self._lock:
+            cfg = await self.get_config_from_db()
+            targets = cfg.get("streak_targets", [])
+            target_status = "active" if action == "enable_all" else "paused"
+            for t in targets:
+                t["status"] = target_status
+            cfg["streak_targets"] = targets
+            await self.save_config_to_db(cfg)
+            msg = f"Đã {'bật' if target_status == 'active' else 'tạm dừng'} giữ chuỗi cho tất cả {len(targets)} bạn bè."
+            return {"status": "success", "message": msg, "targets": targets}
+

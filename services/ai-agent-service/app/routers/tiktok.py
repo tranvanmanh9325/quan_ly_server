@@ -39,6 +39,10 @@ class InstantStreakInput(BaseModel):
     username: str
 
 
+class BatchToggleInput(BaseModel):
+    action: str = "enable_all"  # 'enable_all' | 'disable_all'
+
+
 def get_tiktok_service(request: Request) -> TikTokService:
     return request.app.state.tiktok_service
 
@@ -149,6 +153,23 @@ async def get_scan_status(tt: TikTokService = Depends(get_tiktok_service)):
 async def clear_logs(tt: TikTokService = Depends(get_tiktok_service)):
     await tt.clear_recent_replies()
     return {"status": "success", "message": "Đã dọn sạch nhật ký hoạt động TikTok."}
+
+
+@router.post("/scan-friends")
+async def scan_friends_from_tiktok(tt: TikTokService = Depends(get_tiktok_service)):
+    """Triggers automated scanning of TikTok conversations to extract and merge friends list."""
+    res = await tt.scan_friends_from_tiktok()
+    return res
+
+
+@router.post("/batch-toggle-friends")
+async def batch_toggle_friends(
+    input_data: BatchToggleInput,
+    tt: TikTokService = Depends(get_tiktok_service)
+):
+    """Batch enables or disables streak keeper for all friends in streak_targets."""
+    res = await tt.batch_toggle_friends(action=input_data.action)
+    return res
 
 
 # ─── Live VNC Server Browser Endpoints for TikTok ────────────────────────────

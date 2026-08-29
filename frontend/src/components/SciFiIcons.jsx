@@ -374,13 +374,27 @@ export const SciFiQuantumIcon = ({ size = 20, color = 'var(--accent-magenta)' })
   </svg>
 );
 
-// 24. TELEGRAM — Sci-fi signal transmitter icon
-export const SciFiTelegramIcon = ({ size = 20, color = 'var(--accent-cyan)' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
-    <path d="M22 2L11 13" stroke={color} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-    <path d="M22 2L15 22L11 13L2 9L22 2Z" stroke={color} strokeWidth="1.6" strokeLinejoin="round" fill="rgba(0, 243, 255, 0.08)" />
+// 24. TELEGRAM — Supersonic Stealth Glider & Orbital Telemetry Drone
+export const SciFiTelegramIcon = ({ size = 20, color = '#229ED9', className = '', ...props }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    className={className}
+    style={{ display: 'inline-block', verticalAlign: 'middle' }}
+    {...props}
+  >
+    {/* Orbital Telemetry Arc */}
+    <path d="M4 6C2 8.5 2 13 4.5 17.5" stroke={color} strokeWidth="1" strokeDasharray="2 2" strokeOpacity="0.5" strokeLinecap="round" />
+    {/* Hypersonic Stealth Wing Glider */}
+    <polygon points="22,2 2,11.5 10.5,14 14,22 17,16 22,2" stroke={color} strokeWidth="1.4" fill={color} fillOpacity="0.12" strokeLinejoin="round" />
+    {/* Ion Laser Central Spline */}
+    <line x1="22" y1="2" x2="10.5" y2="14" stroke={color} strokeWidth="1.4" strokeLinecap="round" />
+    {/* Ion Core Plasma Spark */}
     <circle cx="22" cy="2" r="1.5" fill={color} />
-    <path d="M6 16L3 19M18 8L21 5" stroke={color} strokeWidth="1" strokeDasharray="2 2" />
+    <circle cx="10.5" cy="14" r="1" fill={color} />
   </svg>
 );
 
@@ -532,86 +546,228 @@ export const SciFiCloseIcon = ({ size = 16, color = 'var(--accent-pink)', classN
 );
 
 
-// 35. FACEBOOK — Cyberpunk Facebook emblem with reticle ring
-export const SciFiFacebookIcon = ({ size = 18, color = 'var(--accent-purple)' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
-    {/* Outer Rounded Hex Box */}
-    <rect x="2" y="2" width="20" height="20" rx="5" stroke={color} strokeWidth="1.5" fill="rgba(187, 0, 255, 0.1)" />
-    {/* Stylized Cyber 'f' path */}
-    <path d="M16 8H13.5C12.7 8 12 8.7 12 9.5V11.5H16L15.5 15.5H12V22H8V15.5H6V11.5H8V9.5C8 7 9.8 5 12.3 5H16V8Z"
-      fill={color} fillOpacity="0.85" />
-    {/* Corner Reticle Sparks */}
-    <circle cx="4" cy="4" r="0.8" fill={color} />
-    <circle cx="20" cy="20" r="0.8" fill={color} />
+// 35. FACEBOOK — Cybernetic Shield Node with Laser Data Monogram
+export const SciFiFacebookIcon = ({ size = 18, color = 'var(--accent-purple)', className = '', ...props }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    className={className}
+    style={{ display: 'inline-block', verticalAlign: 'middle' }}
+    {...props}
+  >
+    {/* Chamfered Hex Shield Frame */}
+    <polygon points="6,2 18,2 22,6 22,18 18,22 6,22 2,18 2,6" stroke={color} strokeWidth="1.3" fill={color} fillOpacity="0.08" strokeLinejoin="round" />
+    {/* Cyber 'f' Monogram with Integrated Data Rails */}
+    <path
+      d="M16 7.5H13.8C12.8 7.5 12 8.3 12 9.3V11H15.5L15 14H12V21H8.5V14H6.5V11H8.5V9.3C8.5 6.4 10.4 4.5 13.3 4.5H16V7.5Z"
+      fill={color}
+      fillOpacity="0.9"
+    />
+    {/* Lateral Data Bus Traces */}
+    <line x1="3.5" y1="11" x2="6.5" y2="11" stroke={color} strokeWidth="1" strokeLinecap="round" />
+    <line x1="15.5" y1="11" x2="20.5" y2="11" stroke={color} strokeWidth="1" strokeLinecap="round" />
+    {/* Optical Sensor Nodes */}
+    <circle cx="12" cy="3" r="0.8" fill={color} />
+    <circle cx="12" cy="21" r="0.8" fill={color} />
   </svg>
 );
 
 // 36. AI BOT / AGENT — Futuristic Cyber AI Core & Visor
-export const SciFiBotIcon = ({ size = 20, color = 'var(--accent-cyan)' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
+export const SciFiBotIcon = ({ size = 20, color = 'var(--accent-cyan)', className = '', ...props }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    className={className}
+    style={{ display: 'inline-block', verticalAlign: 'middle' }}
+    {...props}
+  >
     {/* Head chassis */}
-    <rect x="3" y="6" width="18" height="14" rx="3" stroke={color} strokeWidth="1.5" fill="rgba(0, 243, 255, 0.08)" />
-    {/* Antenna */}
-    <line x1="12" y1="2" x2="12" y2="6" stroke={color} strokeWidth="1.5" strokeLinecap="round" />
-    <circle cx="12" cy="2" r="1.5" fill={color} />
-    {/* Visor / Eye display */}
-    <rect x="6" y="10" width="12" height="4" rx="1.5" stroke={color} strokeWidth="1.2" fill={color} fillOpacity="0.2" />
-    <circle cx="8.5" cy="12" r="1" fill={color} />
-    <circle cx="15.5" cy="12" r="1" fill={color} />
-    {/* Side ears / connectors */}
-    <rect x="1" y="10" width="2" height="6" rx="0.5" fill={color} fillOpacity="0.6" />
-    <rect x="21" y="10" width="2" height="6" rx="0.5" fill={color} fillOpacity="0.6" />
-    {/* Mouth / Data port */}
-    <line x1="9" y1="17" x2="15" y2="17" stroke={color} strokeWidth="1.2" strokeLinecap="round" />
+    <polygon points="5,6 19,6 21,9 21,19 19,21 5,21 3,19 3,9" stroke={color} strokeWidth="1.4" fill={color} fillOpacity="0.08" strokeLinejoin="round" />
+    {/* Antenna Array */}
+    <line x1="12" y1="1.5" x2="12" y2="6" stroke={color} strokeWidth="1.4" strokeLinecap="round" />
+    <circle cx="12" cy="1.5" r="1.2" fill={color} />
+    {/* Neural Visor Sensor */}
+    <polygon points="6,10 18,10 17,14 7,14" stroke={color} strokeWidth="1.2" fill={color} fillOpacity="0.25" strokeLinejoin="round" />
+    <circle cx="9" cy="12" r="1" fill={color} />
+    <circle cx="15" cy="12" r="1" fill={color} />
+    {/* Side Nodes */}
+    <line x1="1.5" y1="11" x2="1.5" y2="17" stroke={color} strokeWidth="1.5" strokeLinecap="round" />
+    <line x1="22.5" y1="11" x2="22.5" y2="17" stroke={color} strokeWidth="1.5" strokeLinecap="round" />
+    {/* Data Bus Mouth */}
+    <line x1="8" y1="18" x2="16" y2="18" stroke={color} strokeWidth="1.2" strokeLinecap="round" strokeDasharray="1.5 1.5" />
   </svg>
 );
 
-// 37. ZALO — Cyber messaging bubble
-export const SciFiZaloIcon = ({ size = 18, color = '#0068FF' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
-    <rect x="2" y="2" width="20" height="20" rx="5" stroke={color} strokeWidth="1.5" fill="rgba(0, 104, 255, 0.12)" />
-    <path d="M6 8H18L8 16H18" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+// 37. ZALO — Quantum Communication Node & Z-Matrix Laser Link
+export const SciFiZaloIcon = ({ size = 18, color = '#0068FF', className = '', ...props }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    className={className}
+    style={{ display: 'inline-block', verticalAlign: 'middle' }}
+    {...props}
+  >
+    {/* Octagonal Frame */}
+    <polygon points="6,2 18,2 22,6 22,18 18,22 6,22 2,18 2,6" stroke={color} strokeWidth="1.3" fill={color} fillOpacity="0.08" strokeLinejoin="round" />
+    {/* Laser Z-Matrix Path */}
+    <path d="M7 8H17L8 16H18" stroke={color} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+    {/* Synchronization Nodes */}
+    <circle cx="7" cy="8" r="1" fill={color} />
+    <circle cx="18" cy="16" r="1" fill={color} />
+    {/* Telemetry Bracket Ticks */}
+    <line x1="12" y1="3" x2="12" y2="4.5" stroke={color} strokeWidth="1" strokeLinecap="round" />
+    <line x1="12" y1="19.5" x2="12" y2="21" stroke={color} strokeWidth="1" strokeLinecap="round" />
   </svg>
 );
 
-// 38. GMAIL — Cyber envelope with laser folds
-export const SciFiGmailIcon = ({ size = 18, color = '#EA4335' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
-    <rect x="3" y="4" width="18" height="16" rx="2" stroke={color} strokeWidth="1.5" fill="rgba(234, 67, 53, 0.1)" />
-    <polyline points="3,6 12,13 21,6" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+// 38. GMAIL — Quantum Encrypted Data Capsule & Laser Facet Envelope
+export const SciFiGmailIcon = ({ size = 18, color = '#EA4335', className = '', ...props }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    className={className}
+    style={{ display: 'inline-block', verticalAlign: 'middle' }}
+    {...props}
+  >
+    {/* Chamfered Hex Box */}
+    <polygon points="5,4 19,4 22,7 22,17 19,20 5,20 2,17 2,7" stroke={color} strokeWidth="1.3" fill={color} fillOpacity="0.08" strokeLinejoin="round" />
+    {/* Geometric Laser Folds */}
+    <polyline points="2,7 12,14 22,7" stroke={color} strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+    <line x1="2" y1="17" x2="9.5" y2="12" stroke={color} strokeWidth="1" strokeLinecap="round" strokeOpacity="0.6" />
+    <line x1="22" y1="17" x2="14.5" y2="12" stroke={color} strokeWidth="1" strokeLinecap="round" strokeOpacity="0.6" />
+    {/* Quantum Key Lock Node */}
+    <circle cx="12" cy="14" r="1.2" fill={color} />
   </svg>
 );
 
-// 39. TIKTOK — Cyber musical rhythm note
-export const SciFiTikTokIcon = ({ size = 18, color = '#00F2FE' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
-    <rect x="2" y="2" width="20" height="20" rx="5" stroke={color} strokeWidth="1.5" fill="rgba(0, 242, 254, 0.08)" />
-    <path d="M14 4V14.5C14 16.43 12.43 18 10.5 18C8.57 18 7 16.43 7 14.5C7 12.57 8.57 11 10.5 11C11.03 11 11.53 11.12 11.97 11.33V7.5C13.2 8.64 14.8 9.35 16.57 9.35V6.5C15.15 6.5 14 5.38 14 4Z" fill={color} />
+// 39. TIKTOK — Cyberpunk Quantum Rhythm Emblem
+export const SciFiTikTokIcon = ({ size = 18, color = '#00F2FE', className = '', ...props }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    className={className}
+    style={{ display: 'inline-block', verticalAlign: 'middle' }}
+    {...props}
+  >
+    {/* Octagonal Cyberpunk Frame with Chamfered Corners */}
+    <polygon points="6,2 18,2 22,6 22,18 18,22 6,22 2,18 2,6" stroke={color} strokeWidth="1.3" fill={color} fillOpacity="0.08" strokeLinejoin="round" />
+    {/* Dual Laser Frequency Stem & Note Head */}
+    <path
+      d="M14.5 4.5V14C14.5 15.93 12.93 17.5 11 17.5C9.07 17.5 7.5 15.93 7.5 14C7.5 12.07 9.07 10.5 11 10.5C11.6 10.5 12.15 10.65 12.65 10.9V7.5C13.85 8.7 15.4 9.4 17 9.4V6.5C15.6 6.5 14.5 5.4 14.5 4.5Z"
+      fill={color}
+      fillOpacity="0.9"
+    />
+    {/* Cyber Equalizer Quantum Waves */}
+    <line x1="4.5" y1="12" x2="6" y2="12" stroke={color} strokeWidth="1.2" strokeLinecap="round" />
+    <line x1="18" y1="12" x2="19.5" y2="12" stroke={color} strokeWidth="1.2" strokeLinecap="round" />
+    {/* Corner Precision Ticks */}
+    <circle cx="5" cy="5" r="0.8" fill={color} />
+    <circle cx="19" cy="5" r="0.8" fill={color} />
+    <circle cx="5" cy="19" r="0.8" fill={color} />
+    <circle cx="19" cy="19" r="0.8" fill={color} />
   </svg>
 );
 
-// 40. YOUTUBE — Cyber video screen with play reticle
-export const SciFiYouTubeIcon = ({ size = 18, color = '#FF0033' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
-    <rect x="2" y="4" width="20" height="16" rx="4" stroke={color} strokeWidth="1.5" fill="rgba(255, 0, 51, 0.1)" />
-    <polygon points="10,8.5 16,12 10,15.5" fill={color} />
+// 40. YOUTUBE — Holographic Video Matrix Display with Laser Prism Core
+export const SciFiYouTubeIcon = ({ size = 18, color = '#FF0033', className = '', ...props }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    className={className}
+    style={{ display: 'inline-block', verticalAlign: 'middle' }}
+    {...props}
+  >
+    {/* 16:9 Chamfered HUD Display Frame */}
+    <polygon points="5,4 19,4 22,7 22,17 19,20 5,20 2,17 2,7" stroke={color} strokeWidth="1.3" fill={color} fillOpacity="0.08" strokeLinejoin="round" />
+    {/* Radiant Central Laser Prism */}
+    <polygon points="10,8.5 16.5,12 10,15.5" fill={color} fillOpacity="0.95" strokeLinejoin="round" />
+    {/* Top / Bottom Sub-pixel Grid Calibration Lines */}
+    <line x1="8" y1="2" x2="16" y2="2" stroke={color} strokeWidth="1" strokeLinecap="round" />
+    <line x1="8" y1="22" x2="16" y2="22" stroke={color} strokeWidth="1" strokeLinecap="round" />
+    {/* Corner Telemetry Points */}
+    <circle cx="4" cy="7" r="0.7" fill={color} />
+    <circle cx="20" cy="7" r="0.7" fill={color} />
+    <circle cx="4" cy="17" r="0.7" fill={color} />
+    <circle cx="20" cy="17" r="0.7" fill={color} />
   </svg>
 );
 
-// 41. INSTAGRAM — Cyber camera reticle
-export const SciFiInstagramIcon = ({ size = 18, color = '#E1306C' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
-    <rect x="2" y="2" width="20" height="20" rx="5" stroke={color} strokeWidth="1.5" fill="rgba(225, 48, 108, 0.1)" />
-    <circle cx="12" cy="12" r="4" stroke={color} strokeWidth="1.5" />
-    <circle cx="17" cy="7" r="1.2" fill={color} />
+// 41. INSTAGRAM — Quantum Optical Sensor & Biometric Iris
+export const SciFiInstagramIcon = ({ size = 18, color = '#E1306C', className = '', ...props }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    className={className}
+    style={{ display: 'inline-block', verticalAlign: 'middle' }}
+    {...props}
+  >
+    {/* Chamfered Octagonal Chassis */}
+    <polygon points="6,2 18,2 22,6 22,18 18,22 6,22 2,18 2,6" stroke={color} strokeWidth="1.3" fill={color} fillOpacity="0.08" strokeLinejoin="round" />
+    {/* Outer Sensor Reticle */}
+    <circle cx="12" cy="12" r="4.5" stroke={color} strokeWidth="1.3" fill={color} fillOpacity="0.15" />
+    {/* Core Optical Lens */}
+    <circle cx="12" cy="12" r="1.8" fill={color} />
+    {/* Laser Flash / Sensor Emitter */}
+    <circle cx="17.5" cy="6.5" r="1.2" fill={color} />
+    {/* Targeting Crosshair Ticks */}
+    <line x1="12" y1="4" x2="12" y2="5.5" stroke={color} strokeWidth="1" strokeLinecap="round" />
+    <line x1="12" y1="18.5" x2="12" y2="20" stroke={color} strokeWidth="1" strokeLinecap="round" />
+    <line x1="4" y1="12" x2="5.5" y2="12" stroke={color} strokeWidth="1" strokeLinecap="round" />
+    <line x1="18.5" y1="12" x2="20" y2="12" stroke={color} strokeWidth="1" strokeLinecap="round" />
   </svg>
 );
 
-// 42. WHATSAPP — Cyber chat node
-export const SciFiWhatsAppIcon = ({ size = 18, color = '#25D366' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
-    <rect x="2" y="2" width="20" height="20" rx="5" stroke={color} strokeWidth="1.5" fill="rgba(37, 211, 102, 0.1)" />
-    <path d="M16.5 14.5C16 15.2 14.5 15.5 13.5 15C11.5 14 9.5 12 8.5 10C8 9 8.3 7.5 9 7L10.5 8.5L9.5 10C10.2 11.5 11.5 12.8 13 13.5L14.5 12.5L16.5 14.5Z" fill={color} />
+// 42. WHATSAPP — Tactical Frequency Comms Node & Neural Wave Array
+export const SciFiWhatsAppIcon = ({ size = 18, color = '#25D366', className = '', ...props }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    className={className}
+    style={{ display: 'inline-block', verticalAlign: 'middle' }}
+    {...props}
+  >
+    {/* Cyber Comms Capsule Bubble with Pointer */}
+    <path
+      d="M12 2C6.5 2 2 6.5 2 12C2 14 2.6 15.9 3.6 17.5L2 22L6.7 20.5C8.3 21.4 10.1 22 12 22C17.5 22 22 17.5 22 12C22 6.5 17.5 2 12 2Z"
+      stroke={color}
+      strokeWidth="1.3"
+      fill={color}
+      fillOpacity="0.08"
+      strokeLinejoin="round"
+    />
+    {/* Tactical Handset Receiver Vector */}
+    <path
+      d="M15.5 14C15 14.8 13.8 15 12.8 14.5C10.8 13.5 9 11.7 8 9.7C7.5 8.7 7.7 7.5 8.5 7L9.8 8.3C10.2 8.7 10.2 9.3 9.8 9.7L9.3 10.2C9.8 11.2 10.8 12.2 11.8 12.7L12.3 12.2C12.7 11.8 13.3 11.8 13.7 12.2L15.5 14Z"
+      fill={color}
+      fillOpacity="0.9"
+    />
+    {/* Radio Frequency Arcs */}
+    <path d="M14 6C16 7 17 9 17 11" stroke={color} strokeWidth="1" strokeLinecap="round" strokeOpacity="0.7" />
+    <path d="M16 4C19 5.5 20.5 8.5 20.5 11.5" stroke={color} strokeWidth="0.8" strokeLinecap="round" strokeOpacity="0.4" />
   </svg>
 );
 
@@ -658,33 +814,38 @@ export const SciFiChevronRightIcon = ({ size = 14, color = 'var(--accent-cyan)' 
   </svg>
 );
 
-// 46. STREAK FLAME — Cyberpunk plasma flame with inner core layers and energy tendrils
-// Designed for TikTok "Daily Streak" feature — evokes burning energy, persistence, chain reaction
-export const SciFiFlameStreakIcon = ({ size = 18, color = '#FE2C55' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
-    {/* Outer flame silhouette — asymmetric for organic feel */}
+// 46. STREAK FLAME — Cyberpunk Plasma Flame with Tri-Core Energy Layers
+export const SciFiFlameStreakIcon = ({ size = 18, color = '#FE2C55', className = '', ...props }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    className={className}
+    style={{ display: 'inline-block', verticalAlign: 'middle' }}
+    {...props}
+  >
+    {/* Outer Plasma Arc Silhouette */}
     <path
-      d="M12 2C12 2 8 6.5 8 10.5C8 11.8 8.4 13 9.2 13.9C9.1 13.3 9.1 12.5 9.5 11.9C10.3 10.7 11 10 11 10C11 10 10.8 13 12.5 14.5C13 14 13.4 13.2 13.4 12.4C14.2 13.4 14.5 14.8 14.2 16C15.3 15.1 16 13.6 16 12C16 9 14 7 14 7C14 9 13 10 13 10C13 10 16 7 12 2Z"
-      fill={color} fillOpacity="0.9"
+      d="M12 2C12 2 7.5 6.5 7.5 11C7.5 13.5 8.8 15 10 16C9.5 14.5 10 13 11 12C11 12 11 14 12.5 15.5C13.5 14.5 14 13.5 14 12C15.5 13.5 16.5 15.2 16.5 11C16.5 6.5 12 2 12 2Z"
+      fill={color}
+      fillOpacity="0.85"
     />
-    {/* Inner hot core — brighter, smaller flame */}
+    {/* Inner White-Hot Plasma Heart */}
     <path
-      d="M12 8C12 8 10.5 10.5 10.5 12.5C10.5 13.8 11.1 14.9 12 15.5C12.9 14.9 13.5 13.8 13.5 12.5C13.5 10.5 12 8 12 8Z"
-      fill={color} fillOpacity="0.4"
+      d="M12 7.5C12 7.5 9.8 10.5 9.8 13C9.8 15 10.8 16.5 12 17C13.2 16.5 14.2 15 14.2 13C14.2 10.5 12 7.5 12 7.5Z"
+      fill="#FFF"
+      fillOpacity="0.85"
     />
-    {/* Flame tip — sharp peak */}
-    <path d="M12 2L11.2 4.5L12 6L12.8 4.5L12 2Z" fill={color} fillOpacity="0.6" />
-    {/* Base glow embers — small sparks at bottom */}
-    <circle cx="10" cy="17" r="0.8" fill={color} fillOpacity="0.7" />
-    <circle cx="14" cy="17" r="0.6" fill={color} fillOpacity="0.5" />
-    <circle cx="12" cy="18" r="1" fill={color} fillOpacity="0.8" />
-    {/* Energy tendril left */}
-    <path d="M9.5 11C9 10.2 8.5 9 8.8 7.5" stroke={color} strokeWidth="0.7" strokeOpacity="0.4" strokeLinecap="round" />
-    {/* Energy tendril right */}
-    <path d="M14.5 9C15 8 15.2 6.8 14.8 5.5" stroke={color} strokeWidth="0.7" strokeOpacity="0.3" strokeLinecap="round" />
-    {/* Bottom base line — grounding the flame */}
-    <line x1="9" y1="19" x2="15" y2="19" stroke={color} strokeWidth="1.2" strokeLinecap="round" strokeOpacity="0.5" />
-    <line x1="10.5" y1="20.5" x2="13.5" y2="20.5" stroke={color} strokeWidth="0.8" strokeLinecap="round" strokeOpacity="0.3" />
+    {/* Sharp Needle Tip Emitter */}
+    <polygon points="12,1 11,4 13,4" fill="#FFF" />
+    {/* Magnetic Plasma Confinement Base Rails */}
+    <line x1="8" y1="19.5" x2="16" y2="19.5" stroke={color} strokeWidth="1.4" strokeLinecap="round" />
+    <line x1="10" y1="21.5" x2="14" y2="21.5" stroke={color} strokeWidth="1" strokeLinecap="round" strokeOpacity="0.6" />
+    {/* Laser Ion Embers */}
+    <circle cx="6.5" cy="14" r="0.8" fill={color} />
+    <circle cx="17.5" cy="13" r="0.8" fill={color} />
   </svg>
 );
 

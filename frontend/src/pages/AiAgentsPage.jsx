@@ -529,7 +529,7 @@ export default function AiAgentsPage() {
     streakEnabled: true,
     streakScheduleHour: 9,
     streakTargets: [],
-    streakMessageTemplate: 'Video giữ chuỗi hôm nay nè! Chúc bạn ngày mới vui vẻ nha 🔥✨',
+    streakMessageTemplate: 'Video giữ chuỗi hôm nay nè! Chúc bạn ngày mới vui vẻ nha',
     streakSendType: 'video',
     threshold: 3,
     scanIntervalMinutes: 3,
@@ -568,7 +568,7 @@ export default function AiAgentsPage() {
           streakEnabled: Boolean(d.streakEnabled ?? true),
           streakScheduleHour: Number(d.streakScheduleHour ?? 9),
           streakTargets: d.streakTargets || [],
-          streakMessageTemplate: d.streakMessageTemplate || 'Video giữ chuỗi hôm nay nè! Chúc bạn ngày mới vui vẻ nha 🔥✨',
+          streakMessageTemplate: d.streakMessageTemplate || 'Video giữ chuỗi hôm nay nè! Chúc bạn ngày mới vui vẻ nha',
           streakSendType: d.streakSendType || 'video',
           threshold: Number(d.threshold ?? 3),
           scanIntervalMinutes: Number(d.scanIntervalMinutes ?? 3),
@@ -1527,7 +1527,7 @@ export default function AiAgentsPage() {
                 </SettingRow>
               </div>
 
-              {/* ── SECTION 2: DAILY AUTO STREAK KEEPER (🔥 GIỮ CHUỖI TIKTOK) ── */}
+              {/* ── SECTION 2: DAILY AUTO STREAK KEEPER (GIỮ CHUỖI TIKTOK) ── */}
               <div style={{
                 marginBottom: '24px',
                 padding: '18px 20px',
@@ -1617,7 +1617,7 @@ export default function AiAgentsPage() {
                       }}
                     >
                       <SciFiMessageStreakIcon size={14} color={ttConfig.streakSendType === 'message' ? '#00F2FE' : 'var(--text-secondary)'} />
-                      Tin Nhắn Giữ Chuỗi (Kèm <SciFiFlameStreakIcon size={12} color={ttConfig.streakSendType === 'message' ? '#00F2FE' : 'var(--text-secondary)'} />)
+                      Tin Nhắn Giữ Chuỗi
                     </button>
                   </div>
                 </SettingRow>
@@ -1628,7 +1628,7 @@ export default function AiAgentsPage() {
                     type="text"
                     value={ttConfig.streakMessageTemplate}
                     onChange={e => handleTtConfigChange('streakMessageTemplate', e.target.value)}
-                    placeholder="Video giữ chuỗi hôm nay nè! Chúc bạn ngày mới vui vẻ nha 🔥✨"
+                    placeholder="Video giữ chuỗi hôm nay nè! Chúc bạn ngày mới vui vẻ nha"
                     style={{
                       width: '380px',
                       background: 'rgba(0,0,0,0.5)',

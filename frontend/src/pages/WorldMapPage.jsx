@@ -11,6 +11,7 @@ import {
 import { VIETNAM_MARITIME_ISLANDS, VIETNAM_MARITIME_BOUNDARIES } from '../data/vietnamIslandsGeo';
 import { SATELLITE_CATALOG, getSatellitePosition, getSatelliteOrbitPath } from '../data/satellitesData';
 import { createSatellite3DObject, updateSatellite3DTransform } from '../utils/satelliteModelGenerator';
+import { fetchLiveTLEFromCelesTrak } from '../utils/sgp4Engine';
 import GlobeHudLegend from '../components/GlobeHudLegend';
 import SatelliteTelemetryCard from '../components/SatelliteTelemetryCard';
 
@@ -86,6 +87,7 @@ export default function WorldMapPage() {
   const [showSatellites, setShowSatellites] = useState(true);
   const [showOrbits, setShowOrbits] = useState(true);
   const [selectedSatellite, setSelectedSatellite] = useState(null);
+  const [telemetrySatellite, setTelemetrySatellite] = useState(null);
 
   // useDeferredValue: pass borders to Globe at low priority so first paint isn't blocked
   const deferredBorders = useDeferredValue(bordersData);
@@ -97,6 +99,39 @@ export default function WorldMapPage() {
   const globeRef = useRef();
   const globeContainerRef = useRef();
   const lightingRefs = useRef(null);
+
+  // Live background TLE sync from CelesTrak (Auto-cache update)
+  useEffect(() => {
+    SATELLITE_CATALOG.forEach(async (sat) => {
+      try {
+        const liveTle = await fetchLiveTLEFromCelesTrak(sat.noradId);
+        if (liveTle) {
+          sat.tleLine1 = liveTle.line1;
+          sat.tleLine2 = liveTle.line2;
+        }
+      } catch {
+        // Keep cached TLE on network error
+      }
+    });
+  }, []);
+
+  // 1-Hz SGP4 real-time telemetry updater for active satellite card
+  useEffect(() => {
+    if (!selectedSatellite) {
+      setTelemetrySatellite(null);
+      return;
+    }
+
+    const updateTelemetry = () => {
+      const pos = getSatellitePosition(selectedSatellite, new Date());
+      setTelemetrySatellite({ ...selectedSatellite, ...pos });
+    };
+
+    updateTelemetry();
+    const timer = setInterval(updateTelemetry, 1000);
+    return () => clearInterval(timer);
+  }, [selectedSatellite]);
+
 
 
 
@@ -813,13 +848,17 @@ export default function WorldMapPage() {
             />
 
             {/* Satellite Telemetry HUD Card Overlay */}
-            {selectedSatellite && (
+            {telemetrySatellite && (
               <SatelliteTelemetryCard
-                satellite={selectedSatellite}
-                onClose={() => setSelectedSatellite(null)}
+                satellite={telemetrySatellite}
+                onClose={() => {
+                  setSelectedSatellite(null);
+                  setTelemetrySatellite(null);
+                }}
                 onTrackCamera={handleTrackSatellite}
               />
             )}
+
 
 
 

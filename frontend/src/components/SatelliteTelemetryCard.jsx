@@ -97,8 +97,8 @@ export default function SatelliteTelemetryCard({ satellite, onClose, onTrackCame
       {/* Telemetry data rows */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '0.68rem', marginBottom: '8px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-          <span style={{ color: 'rgba(255,255,255,0.5)' }}>NORAD CAT ID:</span>
-          <span style={{ color: '#fff', fontWeight: 'bold' }}>#{satellite.noradId}</span>
+          <span style={{ color: 'rgba(255,255,255,0.5)' }}>NORAD / COSPAR:</span>
+          <span style={{ color: '#fff', fontWeight: 'bold' }}>#{satellite.noradId} ({satellite.cosparId || 'N/A'})</span>
         </div>
         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
           <span style={{ color: 'rgba(255,255,255,0.5)' }}>OPERATOR:</span>
@@ -109,31 +109,37 @@ export default function SatelliteTelemetryCard({ satellite, onClose, onTrackCame
           <span style={{ color: '#fff' }}>{satellite.regime}</span>
         </div>
         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-          <span style={{ color: 'rgba(255,255,255,0.5)' }}>ALTITUDE:</span>
-          <span style={{ color: color, fontWeight: 'bold' }}>{satellite.altitudeKm?.toLocaleString()} km</span>
+          <span style={{ color: 'rgba(255,255,255,0.5)' }}>LIVE ALTITUDE:</span>
+          <span style={{ color: color, fontWeight: 'bold' }}>{(satellite.altitudeKm || 0).toLocaleString()} km</span>
         </div>
         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
           <span style={{ color: 'rgba(255,255,255,0.5)' }}>ORBIT VELOCITY:</span>
-          <span style={{ color: '#fff' }}>{satellite.velocity}</span>
+          <span style={{ color: '#fff', fontWeight: 'bold' }}>
+            {satellite.speedKmH ? `${satellite.speedKmH.toLocaleString()} km/h (${satellite.speedKmS} km/s)` : satellite.velocity}
+          </span>
         </div>
         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
           <span style={{ color: 'rgba(255,255,255,0.5)' }}>INCLINATION:</span>
-          <span style={{ color: '#fff' }}>{satellite.inclination}°</span>
+          <span style={{ color: '#fff' }}>{satellite.inclinationDeg || satellite.inclination}°</span>
         </div>
         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-          <span style={{ color: 'rgba(255,255,255,0.5)' }}>FREQUENCY:</span>
-          <span style={{ color: '#ffb700' }}>{satellite.frequency}</span>
+          <span style={{ color: 'rgba(255,255,255,0.5)' }}>ORBIT PERIOD:</span>
+          <span style={{ color: '#ffb700' }}>{satellite.periodMin} min</span>
         </div>
         {satellite.lat !== undefined && satellite.lng !== undefined && (
           <div style={{ display: 'flex', justifyContent: 'space-between' }}>
             <span style={{ color: 'rgba(255,255,255,0.5)' }}>SUB-POINT COORD:</span>
-            <span style={{ color: '#00f3ff' }}>
-              {satellite.lat.toFixed(2)}°N, {satellite.lng.toFixed(2)}°E
+            <span style={{ color: '#00f3ff', fontWeight: 'bold' }}>
+              {Math.abs(satellite.lat).toFixed(2)}°{satellite.lat >= 0 ? 'N' : 'S'}, {Math.abs(satellite.lng).toFixed(2)}°{satellite.lng >= 0 ? 'E' : 'W'}
             </span>
           </div>
         )}
+        <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: '3px' }}>
+          <span style={{ color: 'rgba(255,255,255,0.5)' }}>PROPAGATOR:</span>
+          <span style={{ color: '#00ff9d', fontSize: '0.62rem' }}>SGP4/SDP4 (NORAD TLE)</span>
+        </div>
         {satellite.groundStation && (
-          <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '4px', marginTop: '2px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '3px', marginTop: '1px' }}>
             <span style={{ color: 'rgba(255,255,255,0.5)' }}>C2 DOWNLINK:</span>
             <span style={{ color: '#00ff9d', fontWeight: 'bold' }}>● LOCKED (HQ)</span>
           </div>

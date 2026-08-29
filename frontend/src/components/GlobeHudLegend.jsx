@@ -70,31 +70,31 @@ const GlobeHudLegend = memo(function GlobeHudLegend({
 
       {/* SERVER HQ */}
       <LegendItem borderRight>
-        <SonarDot color="#00ff9d" />
+        <HudServerHQIcon />
         <LabelGroup label="SERVER HQ" badge={serverCount > 0 ? `C2·${serverCount}` : 'C2'} badgeColor="#00ff9d" />
       </LegendItem>
 
       {/* CLIENT NODE */}
       <LegendItem borderRight>
-        <SonarDot color="#00f3ff" delay="0.5s" duration="2s" />
+        <HudClientNodeIcon />
         <LabelGroup label="CLIENT NODE" badge={clientCount > 0 ? `EXT·${clientCount}` : 'EXT'} badgeColor="#00f3ff" />
       </LegendItem>
 
       {/* VN ISLANDS */}
       <LegendItem borderRight>
-        <DiamondMarker />
+        <HudIslandDiamondIcon />
         <LabelGroup label="VN ISLANDS" badge="GEO·VN" badgeColor="#00ff9d" />
       </LegendItem>
 
       {/* SATELLITES */}
       <LegendItem borderRight>
-        <SatelliteMarker />
+        <HudSatelliteIcon />
         <LabelGroup label="SATELLITES" badge="SAT·8" badgeColor="#ffe600" />
       </LegendItem>
 
       {/* LASER ARC */}
       <LegendItem>
-        <LaserBeam />
+        <HudLaserBeamIcon />
         <LabelGroup label="LASER ARC" badge="TX" badgeColor="#00f3ff" />
       </LegendItem>
     </div>
@@ -114,73 +114,165 @@ function LegendItem({ children, borderRight }) {
   );
 }
 
-function SonarDot({ color, delay = '0s', duration = '2.2s' }) {
-  return (
-    <div style={{ position:'relative', width:'16px', height:'16px', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>
-      <span style={{
-        position:'absolute', width:'12px', height:'12px', borderRadius:'50%',
-        border: `1.2px solid ${color}`,
-        animation: `hudSonarWave ${duration} cubic-bezier(0,0.2,0.8,1) infinite ${delay}`,
-        pointerEvents:'none',
-      }} />
-      <span style={{
-        position:'relative', width:'6px', height:'6px', borderRadius:'50%',
-        background: `radial-gradient(circle, #ffffff 20%, ${color} 100%)`,
-        boxShadow: `0 0 6px ${color}, 0 0 12px ${color}`,
-        display:'inline-block',
-      }} />
-    </div>
-  );
-}
+// ═════════════════════════════════════════════════════════════════════
+// HAND-CRAFTED HIGH-TECH CYBERPUNK SVG ICONS (100% EXCLUSIVE VECTOR ART)
+// ═════════════════════════════════════════════════════════════════════
 
-function DiamondMarker() {
+/**
+ * 1. HudServerHQIcon — Command C2 Tower with Sonar Wave Rings
+ */
+function HudServerHQIcon() {
   return (
-    <div style={{ position:'relative', width:'16px', height:'16px', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>
+    <div style={{ position: 'relative', width: '18px', height: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+      {/* Background Pulsing Sonar Wave */}
       <span style={{
-        width:'8px', height:'8px',
-        background: 'rgba(0,255,157,0.3)',
+        position: 'absolute',
+        width: '14px',
+        height: '14px',
+        borderRadius: '50%',
         border: '1.2px solid #00ff9d',
-        display:'inline-block',
-        animation: 'hudDiamondPulse 2.4s ease-in-out infinite',
+        animation: 'hudSonarWave 2.4s cubic-bezier(0,0.2,0.8,1) infinite',
+        pointerEvents: 'none',
       }} />
-    </div>
-  );
-}
-
-function SatelliteMarker() {
-
-  return (
-    <div style={{ width:'14px', height:'14px', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>
-      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-        {/* Central satellite body */}
-        <rect x="5" y="5" width="4" height="4" fill="#ffe600" stroke="#fff" strokeWidth="0.5" />
-        {/* Solar panels */}
-        <rect x="1" y="5.5" width="3" height="3" fill="#00f3ff" opacity="0.9" />
-        <rect x="10" y="5.5" width="3" height="3" fill="#00f3ff" opacity="0.9" />
-        {/* Antenna */}
-        <line x1="7" y1="5" x2="7" y2="2" stroke="#ffe600" strokeWidth="1" />
-        <circle cx="7" cy="2" r="1" fill="#ffe600" />
+      <svg width="18" height="16" viewBox="0 0 18 16" fill="none" style={{ position: 'relative', overflow: 'visible' }}>
+        {/* Chassis Foundation */}
+        <rect x="2" y="11" width="14" height="4" rx="0.8" fill="rgba(0,255,157,0.15)" stroke="#00ff9d" strokeWidth="1" />
+        <circle cx="4.5" cy="13" r="0.7" fill="#00ff9d" />
+        <circle cx="13.5" cy="13" r="0.7" fill="#00ff9d" />
+        {/* Mid C2 Unit */}
+        <polygon points="9,2 14,8 4,8" fill="rgba(0,255,157,0.3)" stroke="#00ff9d" strokeWidth="1" strokeLinejoin="round" />
+        {/* Zenith Mast & Emitter */}
+        <line x1="9" y1="2" x2="9" y2="0" stroke="#00ff9d" strokeWidth="1.2" strokeLinecap="round" />
+        <circle cx="9" cy="0" r="0.8" fill="#ffffff" style={{ filter: 'drop-shadow(0 0 3px #00ff9d)' }} />
       </svg>
     </div>
   );
 }
 
-function LaserBeam() {
-
+/**
+ * 2. HudClientNodeIcon — Tactical Octagonal Node with Cyan Beacon
+ */
+function HudClientNodeIcon() {
   return (
-    <div style={{ width:'26px', height:'14px', display:'flex', alignItems:'center', flexShrink:0 }}>
-      <svg width="26" height="10" viewBox="0 0 26 10" fill="none" style={{ overflow:'visible' }}>
-        <line x1="1" y1="5" x2="20" y2="5"
-          stroke="#00f3ff" strokeWidth="1.6" strokeDasharray="4 3" strokeLinecap="round"
-          style={{ animation:'hudLaserFlow 1.0s linear infinite', filter:'drop-shadow(0 0 3px #00f3ff)' }}
+    <div style={{ position: 'relative', width: '18px', height: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+      <span style={{
+        position: 'absolute',
+        width: '14px',
+        height: '14px',
+        borderRadius: '50%',
+        border: '1.2px solid #00f3ff',
+        animation: 'hudSonarWave 2.0s cubic-bezier(0,0.2,0.8,1) infinite 0.4s',
+        pointerEvents: 'none',
+      }} />
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ position: 'relative', overflow: 'visible' }}>
+        {/* Tactical Outer Reticle */}
+        <circle cx="8" cy="8" r="6.5" stroke="#00f3ff" strokeWidth="0.9" strokeDasharray="3 2" opacity="0.85" />
+        {/* Diamond Core */}
+        <polygon points="8,4 12,8 8,12 4,8" fill="rgba(0,243,255,0.25)" stroke="#00f3ff" strokeWidth="1.1" strokeLinejoin="round" />
+        {/* Center Glowing Dot */}
+        <circle cx="8" cy="8" r="1.4" fill="#ffffff" style={{ filter: 'drop-shadow(0 0 4px #00f3ff)' }} />
+      </svg>
+    </div>
+  );
+}
+
+/**
+ * 3. HudIslandDiamondIcon — Dual Concentric Diamond Sovereignty Emblem
+ */
+function HudIslandDiamondIcon() {
+  return (
+    <div style={{ position: 'relative', width: '16px', height: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ overflow: 'visible' }}>
+        {/* Outer Pulsing Diamond */}
+        <g style={{ animation: 'hudDiamondPulse 2.6s ease-in-out infinite', transformOrigin: '8px 8px' }}>
+          <polygon points="8,1 15,8 8,15 1,8" stroke="#00ff9d" strokeWidth="1.1" fill="rgba(0,255,157,0.12)" strokeLinejoin="round" />
+          {/* Inner Diamond */}
+          <polygon points="8,4 12,8 8,12 4,8" stroke="#00ff9d" strokeWidth="0.8" fill="rgba(0,255,157,0.35)" />
+          {/* Center Point */}
+          <circle cx="8" cy="8" r="1.2" fill="#ffffff" style={{ filter: 'drop-shadow(0 0 3px #00ff9d)' }} />
+        </g>
+      </svg>
+    </div>
+  );
+}
+
+/**
+ * 4. HudSatelliteIcon — NASA-Grade 3D Spacecraft Vector Icon
+ * Hand-crafted with Golden Kapton Bus, Blue Multi-Junction Solar Wings with Wafer Grids,
+ * Nadir Parabolic Downlink Dish, Feed Horn, and Zenith Communication Mast.
+ */
+function HudSatelliteIcon() {
+  return (
+    <div style={{ position: 'relative', width: '22px', height: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+      <svg width="22" height="16" viewBox="0 0 22 16" fill="none" style={{ overflow: 'visible' }}>
+        {/* ── Left Solar Wing (Multi-Junction Solar Array) ── */}
+        <g>
+          {/* Left Wing Frame */}
+          <rect x="0.5" y="4" width="6.2" height="8" rx="0.6" fill="rgba(0,243,255,0.18)" stroke="#00f3ff" strokeWidth="0.9" />
+          {/* Grid lines (Solar Cell Busbars) */}
+          <line x1="3.6" y1="4" x2="3.6" y2="12" stroke="#00f3ff" strokeWidth="0.6" strokeOpacity="0.5" />
+          <line x1="0.5" y1="8" x2="6.7" y2="8" stroke="#00f3ff" strokeWidth="0.6" strokeOpacity="0.5" />
+          {/* Wing Yoke / Hinge Connection */}
+          <line x1="6.7" y1="8" x2="8" y2="8" stroke="#ffffff" strokeWidth="1.2" strokeLinecap="round" />
+        </g>
+
+        {/* ── Right Solar Wing (Multi-Junction Solar Array) ── */}
+        <g>
+          {/* Right Wing Frame */}
+          <rect x="15.3" y="4" width="6.2" height="8" rx="0.6" fill="rgba(0,243,255,0.18)" stroke="#00f3ff" strokeWidth="0.9" />
+          {/* Grid lines (Solar Cell Busbars) */}
+          <line x1="18.4" y1="4" x2="18.4" y2="12" stroke="#00f3ff" strokeWidth="0.6" strokeOpacity="0.5" />
+          <line x1="15.3" y1="8" x2="21.5" y2="8" stroke="#00f3ff" strokeWidth="0.6" strokeOpacity="0.5" />
+          {/* Wing Yoke / Hinge Connection */}
+          <line x1="14" y1="8" x2="15.3" y2="8" stroke="#ffffff" strokeWidth="1.2" strokeLinecap="round" />
+        </g>
+
+        {/* ── Central Golden Avionics Bus (Hexagonal Prism) ── */}
+        <polygon
+          points="11,3 14,5.2 14,10.8 11,13 8,10.8 8,5.2"
+          fill="rgba(255,230,0,0.3)"
+          stroke="#ffe600"
+          strokeWidth="1.1"
+          strokeLinejoin="round"
+          style={{ filter: 'drop-shadow(0 0 2px rgba(255,230,0,0.5))' }}
         />
-        <line x1="1" y1="5" x2="20" y2="5"
-          stroke="#ffffff" strokeWidth="0.6" strokeDasharray="4 3" strokeLinecap="round"
-          style={{ animation:'hudLaserFlow 1.0s linear infinite' }}
+        {/* Core Circuit / Star Tracker Sensor */}
+        <circle cx="11" cy="8" r="1.2" fill="#ffffff" />
+
+        {/* ── Zenith Mast & Transponder Beacon ── */}
+        <line x1="11" y1="3" x2="11" y2="0.8" stroke="#ffe600" strokeWidth="1" strokeLinecap="round" />
+        <circle cx="11" cy="0.8" r="0.7" fill="#ffffff" style={{ filter: 'drop-shadow(0 0 3px #ffe600)' }} />
+
+        {/* ── Nadir Parabolic Communication Dish & Feed Horn ── */}
+        <path d="M8.5 13.5 C9.5 15.5 12.5 15.5 13.5 13.5" stroke="#ffe600" strokeWidth="1.1" strokeLinecap="round" fill="none" />
+        <line x1="11" y1="12.5" x2="11" y2="14.8" stroke="#ffffff" strokeWidth="0.8" strokeLinecap="round" />
+      </svg>
+    </div>
+  );
+}
+
+/**
+ * 5. HudLaserBeamIcon — Coherent Photon Stream with Diamond Arrowhead
+ */
+function HudLaserBeamIcon() {
+  return (
+    <div style={{ width: '26px', height: '14px', display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+      <svg width="26" height="12" viewBox="0 0 26 12" fill="none" style={{ overflow: 'visible' }}>
+        {/* Outer Glow Laser */}
+        <line x1="1" y1="6" x2="19" y2="6"
+          stroke="#00f3ff" strokeWidth="2" strokeDasharray="5 3" strokeLinecap="round"
+          style={{ animation: 'hudLaserFlow 1.0s linear infinite', filter: 'drop-shadow(0 0 4px #00f3ff)' }}
         />
-        <polygon points="20,2.5 26,5 20,7.5" fill="#00f3ff"
-          style={{ filter:'drop-shadow(0 0 2px #00f3ff)' }}
+        {/* Inner High-Energy Core */}
+        <line x1="1" y1="6" x2="19" y2="6"
+          stroke="#ffffff" strokeWidth="0.8" strokeDasharray="5 3" strokeLinecap="round"
+          style={{ animation: 'hudLaserFlow 1.0s linear infinite' }}
         />
+        {/* Diamond Arrowhead */}
+        <polygon points="19,3 25,6 19,9 20.5,6" fill="#00f3ff"
+          style={{ filter: 'drop-shadow(0 0 3px #00f3ff)' }}
+        />
+        <circle cx="21" cy="6" r="0.8" fill="#ffffff" />
       </svg>
     </div>
   );
@@ -188,18 +280,18 @@ function LaserBeam() {
 
 function LabelGroup({ label, badge, badgeColor }) {
   const isGreen = badgeColor === '#00ff9d';
-  const bg = isGreen ? 'rgba(0,255,157,0.1)' : 'rgba(0,243,255,0.1)';
-  const bd = isGreen ? 'rgba(0,255,157,0.3)' : 'rgba(0,243,255,0.3)';
+  const bg = isGreen ? 'rgba(0,255,157,0.1)' : badgeColor === '#ffe600' ? 'rgba(255,230,0,0.1)' : 'rgba(0,243,255,0.1)';
+  const bd = isGreen ? 'rgba(0,255,157,0.3)' : badgeColor === '#ffe600' ? 'rgba(255,230,0,0.3)' : 'rgba(0,243,255,0.3)';
   return (
-    <div style={{ display:'flex', alignItems:'baseline', gap:'3px', whiteSpace:'nowrap' }}>
-      <span style={{ fontSize:'0.65rem', fontWeight:700, color:'#fff', letterSpacing:'0.6px', fontFamily:"'Share Tech Mono',monospace" }}>
+    <div style={{ display: 'flex', alignItems: 'baseline', gap: '3px', whiteSpace: 'nowrap' }}>
+      <span style={{ fontSize: '0.65rem', fontWeight: 700, color: '#fff', letterSpacing: '0.6px', fontFamily: "'Share Tech Mono',monospace" }}>
         {label}
       </span>
       <span style={{
-        fontSize:'0.52rem', color: badgeColor,
+        fontSize: '0.52rem', color: badgeColor,
         background: bg, border: `1px solid ${bd}`,
-        padding:'0 2px', borderRadius:'2px', lineHeight:'1.3',
-        fontFamily:"'Share Tech Mono',monospace", letterSpacing:'0.3px',
+        padding: '0 2px', borderRadius: '2px', lineHeight: '1.3',
+        fontFamily: "'Share Tech Mono',monospace", letterSpacing: '0.3px',
       }}>
         [{badge}]
       </span>
@@ -208,3 +300,4 @@ function LabelGroup({ label, badge, badgeColor }) {
 }
 
 export default GlobeHudLegend;
+

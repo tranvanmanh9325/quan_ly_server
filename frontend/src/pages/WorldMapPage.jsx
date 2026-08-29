@@ -49,10 +49,9 @@ export default function WorldMapPage() {
   const [showSatellites, setShowSatellites] = useState(true);
   const [showOrbits, setShowOrbits] = useState(true);
   const [selectedSatellite, setSelectedSatellite] = useState(null);
-  const [epochSec, setEpochSec] = useState(() => Date.now() / 1000);
-
 
   // useDeferredValue: pass borders to Globe at low priority so first paint isn't blocked
+
   const deferredBorders = useDeferredValue(bordersData);
   const [, startBordersTransition] = useTransition();
 
@@ -172,13 +171,9 @@ export default function WorldMapPage() {
     ctrl.autoRotateSpeed = rotationSpeed;
   }, [autoRotate, rotationSpeed]);
 
-  // Real-time satellite animation ticker (smooth 10Hz updates)
-  useEffect(() => {
-    if (!showSatellites) return;
-    const timer = setInterval(() => {
-      setEpochSec(Date.now() / 1000);
-    }, 100);
-    return () => clearInterval(timer);
+  // Static Satellite Dataset — passed as static reference, 0 React re-renders
+  const staticSatellitesData = useMemo(() => {
+    return showSatellites ? SATELLITE_CATALOG : [];
   }, [showSatellites]);
 
   // Combined laser arcs: Client connections + Satellite C2 Downlink Lasers
@@ -209,7 +204,8 @@ export default function WorldMapPage() {
     if (showSatellites) {
       const activeSat = selectedSatellite || SATELLITE_CATALOG[0]; // VINASAT-1
       if (activeSat) {
-        const satPos = getSatellitePosition(activeSat, epochSec);
+        const nowSec = Date.now() / 1000;
+        const satPos = getSatellitePosition(activeSat, nowSec);
         arcs.push({
           id: `sat-downlink-${activeSat.id}`,
           startLat: satPos.lat,
@@ -224,23 +220,10 @@ export default function WorldMapPage() {
     }
 
     return arcs;
-  }, [geoData, showSatellites, selectedSatellite, epochSec]);
-
-  // Real-time calculated satellite positions for objectsData
-  const satelliteObjectsData = useMemo(() => {
-    if (!showSatellites) return [];
-    return SATELLITE_CATALOG.map(sat => {
-      const pos = getSatellitePosition(sat, epochSec);
-      return {
-        ...sat,
-        lat: pos.lat,
-        lng: pos.lng,
-        altitude: pos.altitude,
-      };
-    });
-  }, [showSatellites, epochSec]);
+  }, [geoData, showSatellites, selectedSatellite]);
 
   const pointsData = useMemo(() => {
+
     const points = [];
     const sLat = parseFloat(geoData.server?.lat) || 20.98;
     const sLon = parseFloat(geoData.server?.lon) || 105.83;
@@ -488,8 +471,38 @@ export default function WorldMapPage() {
 
   // 3D Procedural Satellite Object Factory for react-globe.gl
   const renderSatelliteObject = useCallback((sat) => {
-    return createSatellite3DObject(sat, 1.2);
+    return createSatellite3DObject(sat, 1.4);
   }, []);
+
+  // In-Place 3D Coordinate Mutator for Three.js (Zero React Re-render overhead)
+  const updateSatelliteObject = useCallback((obj, sat) => {
+    if (!globeRef.current || !obj) return;
+    const nowSec = Date.now() / 1000;
+    const pos = getSatellitePosition(sat, nowSec);
+    if (!pos) return;
+
+    const coords = globeRef.current.getCoords(pos.lat, pos.lng, pos.altitude);
+    if (coords) {
+      obj.position.set(coords.x, coords.y, coords.z);
+      // Point satellite dish & instruments towards Earth center (0,0,0)
+      obj.lookAt(0, 0, 0);
+    }
+  }, []);
+
+  // Zero-Re-render High-Performance Animation Loop for 60 FPS on Intel HD 4400
+  useEffect(() => {
+    if (!showSatellites) return;
+    let animFrameId;
+    const frameTicker = () => {
+      if (globeRef.current) {
+        // Triggers in-place update for customThreeObject without recreating mesh
+        globeRef.current.customLayerData(staticSatellitesData);
+      }
+      animFrameId = requestAnimationFrame(frameTicker);
+    };
+    animFrameId = requestAnimationFrame(frameTicker);
+    return () => cancelAnimationFrame(animFrameId);
+  }, [showSatellites, staticSatellitesData]);
 
   // Smooth camera tracking to satellite sub-point
   const handleTrackSatellite = useCallback((sat) => {
@@ -501,6 +514,7 @@ export default function WorldMapPage() {
   }, []);
 
   const handleGlobeReady = useCallback(() => {
+
     setLoading(false);
 
     globeRef.current?.pointOfView({ lat: 16.0, lng: 105.85, altitude: 2.2 }, 0);
@@ -689,20 +703,18 @@ export default function WorldMapPage() {
               arcDashGap={0.65}
               arcDashAnimateTime={1800}
 
-              // ── 3D Procedural Satellites Layer ──
-              objectsData={satelliteObjectsData}
-              objectLat={d => d.lat}
-              objectLng={d => d.lng}
-              objectAltitude={d => d.altitude}
-              objectThreeObject={renderSatelliteObject}
-              objectFacesSurfaces={true}
-              onObjectClick={(sat) => {
+              // ── 3D Photorealistic Satellites Custom Layer (Zero Re-render 60 FPS) ──
+              customLayerData={staticSatellitesData}
+              customThreeObject={renderSatelliteObject}
+              customThreeObjectUpdate={updateSatelliteObject}
+              onCustomLayerClick={(sat) => {
                 setSelectedSatellite(sat);
                 handleTrackSatellite(sat);
               }}
 
               // Throttle raycasting — only raycast 'point' and 'custom' objects
-              pointerEventsFilter={obj => obj.__globeObjType === 'point' || obj.__globeObjType === 'object'}
+              pointerEventsFilter={obj => obj.__globeObjType === 'point' || obj.__globeObjType === 'custom'}
+
 
               pointsData={pointsData}
               pointLat={d => d.lat}

@@ -55,15 +55,15 @@ const GlobeHudLegend = memo(function GlobeHudLegend({
       <div style={{ position:'absolute', bottom:0, right:0, width:'7px', height:'7px', borderBottom:'1.5px solid #00f3ff', borderRight:'1.5px solid #00f3ff', pointerEvents:'none' }} />
 
       {/* Header badge */}
-      <div style={{ padding:'8px 12px', borderRight:'1px solid rgba(0,243,255,0.15)', display:'flex', alignItems:'center', gap:'6px', flexShrink:0 }}>
+      <div style={{ padding:'6px 9px', borderRight:'1px solid rgba(0,243,255,0.15)', display:'flex', alignItems:'center', gap:'5px', flexShrink:0 }}>
         <div style={{
-          width:'6px', height:'6px', borderRadius:'50%',
+          width:'5px', height:'5px', borderRadius:'50%',
           background: isLive ? '#00ff9d' : '#ff0055',
           boxShadow: isLive ? '0 0 6px #00ff9d' : '0 0 6px #ff0055',
           animation: isLive ? 'hudStatusBlink 1.8s ease-in-out infinite' : 'none',
           flexShrink:0,
         }} />
-        <span style={{ fontSize:'0.58rem', letterSpacing:'1.5px', color:'rgba(0,243,255,0.55)', fontWeight:'bold' }}>
+        <span style={{ fontSize:'0.56rem', letterSpacing:'1.2px', color:'rgba(0,243,255,0.5)', fontWeight:'bold', whiteSpace:'nowrap' }}>
           HUD // TELEMETRY
         </span>
       </div>
@@ -142,17 +142,17 @@ function DiamondMarker() {
 
 function LaserBeam() {
   return (
-    <div style={{ width:'32px', height:'16px', display:'flex', alignItems:'center', flexShrink:0 }}>
-      <svg width="32" height="12" viewBox="0 0 32 12" fill="none" style={{ overflow:'visible' }}>
-        <line x1="1" y1="6" x2="25" y2="6"
-          stroke="#00f3ff" strokeWidth="1.8" strokeDasharray="4 3" strokeLinecap="round"
+    <div style={{ width:'26px', height:'14px', display:'flex', alignItems:'center', flexShrink:0 }}>
+      <svg width="26" height="10" viewBox="0 0 26 10" fill="none" style={{ overflow:'visible' }}>
+        <line x1="1" y1="5" x2="20" y2="5"
+          stroke="#00f3ff" strokeWidth="1.6" strokeDasharray="4 3" strokeLinecap="round"
           style={{ animation:'hudLaserFlow 1.0s linear infinite', filter:'drop-shadow(0 0 3px #00f3ff)' }}
         />
-        <line x1="1" y1="6" x2="25" y2="6"
-          stroke="#ffffff" strokeWidth="0.7" strokeDasharray="4 3" strokeLinecap="round"
+        <line x1="1" y1="5" x2="20" y2="5"
+          stroke="#ffffff" strokeWidth="0.6" strokeDasharray="4 3" strokeLinecap="round"
           style={{ animation:'hudLaserFlow 1.0s linear infinite' }}
         />
-        <polygon points="25,3.2 32,6 25,8.8" fill="#00f3ff"
+        <polygon points="20,2.5 26,5 20,7.5" fill="#00f3ff"
           style={{ filter:'drop-shadow(0 0 2px #00f3ff)' }}
         />
       </svg>
@@ -165,15 +165,15 @@ function LabelGroup({ label, badge, badgeColor }) {
   const bg = isGreen ? 'rgba(0,255,157,0.1)' : 'rgba(0,243,255,0.1)';
   const bd = isGreen ? 'rgba(0,255,157,0.3)' : 'rgba(0,243,255,0.3)';
   return (
-    <div style={{ display:'flex', alignItems:'baseline', gap:'4px' }}>
-      <span style={{ fontSize:'0.68rem', fontWeight:700, color:'#fff', letterSpacing:'0.8px', fontFamily:"'Share Tech Mono',monospace" }}>
+    <div style={{ display:'flex', alignItems:'baseline', gap:'3px', whiteSpace:'nowrap' }}>
+      <span style={{ fontSize:'0.65rem', fontWeight:700, color:'#fff', letterSpacing:'0.6px', fontFamily:"'Share Tech Mono',monospace" }}>
         {label}
       </span>
       <span style={{
-        fontSize:'0.55rem', color: badgeColor,
+        fontSize:'0.52rem', color: badgeColor,
         background: bg, border: `1px solid ${bd}`,
-        padding:'0 3px', borderRadius:'2px', lineHeight:'1.3',
-        fontFamily:"'Share Tech Mono',monospace", letterSpacing:'0.5px',
+        padding:'0 2px', borderRadius:'2px', lineHeight:'1.3',
+        fontFamily:"'Share Tech Mono',monospace", letterSpacing:'0.3px',
       }}>
         [{badge}]
       </span>

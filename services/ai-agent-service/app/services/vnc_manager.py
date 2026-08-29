@@ -123,11 +123,11 @@ class VncManager:
                 self._kill_stale_processes()
                 await asyncio.sleep(0.3)
 
-                # 2. Start Xvfb (1280x720x16, 96 DPI, XFIXES, DAMAGE, GLX - fits into 3MB L3 Cache)
+                # 2. Start Xvfb (1280x800x16, 96 DPI, XFIXES, DAMAGE, GLX - 2.05MB fits into 3MB L3 Cache)
                 self._xvfb_proc = subprocess.Popen(
                     [
                         "Xvfb", self._display,
-                        "-screen", "0", "1280x720x16",
+                        "-screen", "0", "1280x800x16",
                         "-dpi", "96",
                         "-ac",
                         "-nolisten", "tcp",
@@ -162,11 +162,6 @@ class VncManager:
                 await asyncio.sleep(0.3)
 
                 # 4. Start x11vnc with high-efficiency event-driven mode (-xdamage) & WAN pacing:
-                #    -xdamage: Event-driven change notifications from X11 (Zero CPU scan loop)
-                #    -cursor most: Tự động dùng XFIXES cursor pseudo-encoding (Client render 144Hz 0ms delay)
-                #    -defer 20, -wait 15: Điều tốc ~25-30 FPS hoàn hảo qua ngrok tunnel, triệt tiêu 100% Buffer Bloat
-                #    -wirecopyrect: Gửi 10 bytes tọa độ khi cuộn trang thay vì re-encode cả màn hình
-                #    -xwarppointer: Đồng bộ tọa độ con trỏ chính xác tuyệt đối
                 self._x11vnc_proc = subprocess.Popen(
                     [
                         "x11vnc",
@@ -222,7 +217,7 @@ class VncManager:
                     if self._check_port_listening(6080):
                         break
 
-                # 6. Launch Playwright Chromium with resource-optimized flags
+                # 6. Launch Playwright Chromium with resource-optimized flags & crash prevention
                 profile_dir = "/app/browser_data"
                 os.makedirs(profile_dir, exist_ok=True)
 
@@ -235,6 +230,21 @@ class VncManager:
                         except Exception:
                             pass
 
+                # Ensure cleanly exited state in Preferences to prevent "Restore pages?" bubble
+                pref_path = os.path.join(profile_dir, "Default", "Preferences")
+                if os.path.exists(pref_path):
+                    try:
+                        with open(pref_path, "r+", encoding="utf-8") as f:
+                            prefs = json.load(f)
+                            if "profile" in prefs:
+                                prefs["profile"]["exit_type"] = "Normal"
+                                prefs["profile"]["exited_cleanly"] = True
+                            f.seek(0)
+                            json.dump(prefs, f)
+                            f.truncate()
+                    except Exception:
+                        pass
+
                 self._playwright = await async_playwright().start()
                 self._context = await self._playwright.chromium.launch_persistent_context(
                     user_data_dir=profile_dir,
@@ -246,11 +256,14 @@ class VncManager:
                         "--disable-setuid-sandbox",
                         "--disable-infobars",
                         "--window-position=0,0",
-                        "--window-size=1280,720",
+                        "--window-size=1280,800",
                         "--start-maximized",
                         "--disable-default-apps",
                         "--disable-extensions",
                         "--no-first-run",
+                        "--no-default-browser-check",
+                        "--disable-session-crashed-bubble",
+                        "--hide-crash-restore-bubble",
                         # Low-spec CPU & Video Decoding neutralization
                         "--enable-fast-unload",
                         "--disable-smooth-scrolling",
@@ -275,17 +288,12 @@ class VncManager:
                 # Intercept heavy video chunks & inject DOM media blocker for silky smooth performance
                 await self._setup_media_neutralizer(self._context)
 
-                # Open target page
+                # Open target page (using natural 100% maximized window viewport)
                 pages = self._context.pages
                 if pages:
                     self._page = pages[0]
                 else:
                     self._page = await self._context.new_page()
-
-                try:
-                    await self._page.set_viewport_size({"width": 1280, "height": 720})
-                except Exception:
-                    pass
 
                 # Navigate in background
                 asyncio.create_task(self._safe_navigate(self._page, target_url))
@@ -298,35 +306,33 @@ class VncManager:
                     self._watchdog_task.cancel()
                 self._watchdog_task = asyncio.create_task(self._idle_watchdog())
 
-                logger.info("[VNC-Manager] Optimized interactive VNC session successfully launched (%s -> %s).", platform, target_url)
+                logger.info("[VNC-Manager] Session successfully launched.")
                 return {"status": "success", "message": f"Trình duyệt Server ({platform.upper()}) đã khởi động thành công."}
 
             except Exception as e:
-                logger.error("[VNC-Manager] Failed to launch VNC session: %s", e, exc_info=True)
+                logger.error("[VNC-Manager] Error starting session: %s", e, exc_info=True)
                 await self._cleanup_internal()
-                return {"status": "error", "message": f"Không thể khởi động trình duyệt Server: {e}"}
+                return {"status": "error", "message": f"Lỗi khởi động VNC Session: {str(e)}"}
 
     async def _setup_media_neutralizer(self, context: BrowserContext):
-        """
-        Neutralizes heavy video/audio streams on media-heavy sites (TikTok, Facebook)
-        to eliminate 96% CPU spike from software video decoding on headless Xvfb.
-        Preserves 100% functionality for QR login, Captcha, and 2FA authentication.
-        """
+        """Injects JS to neutralize HTMLMediaElement and hide video elements + layout guard for chat input visibility."""
         try:
-            # 1. Inject DOM script to neutralize video elements and CSS display:none
+            # 1. Override HTMLMediaElement.prototype.play and inject Layout Guard CSS
             script = """
-            (function() {
+            (() => {
                 try {
-                    // Override play and load
-                    HTMLMediaElement.prototype.play = function() { return Promise.resolve(); };
-                    HTMLMediaElement.prototype.load = function() {};
+                    const origPlay = HTMLMediaElement.prototype.play;
+                    HTMLMediaElement.prototype.play = function() {
+                        this.pause();
+                        this.muted = true;
+                        return Promise.reject(new DOMException('Media playback neutralized for low-resource server optimization.', 'AbortError'));
+                    };
                 } catch(e) {}
 
                 const neutralize = (el) => {
                     if (!el) return;
                     if (el.tagName === 'VIDEO' || el.tagName === 'AUDIO') {
                         try {
-                            el.autoplay = false;
                             el.muted = true;
                             el.preload = 'none';
                             el.removeAttribute('src');
@@ -355,9 +361,31 @@ class VncManager:
                             opacity: 0 !important;
                             pointer-events: none !important;
                         }
+                        /* Eliminate App download banners and sticky overlays pushing down the chat input */
+                        div[class*="DivDownloadBanner"],
+                        div[class*="DivBottomBanner"],
+                        div[id*="cookie-banner"],
+                        div[class*="DivCookieConsent"],
+                        [data-e2e="download-app-banner"],
+                        div[class*="DivAppBanner"] {
+                            display: none !important;
+                            height: 0 !important;
+                            visibility: hidden !important;
+                        }
+                        /* Ensure chat list scrolls cleanly and chat input footer stays anchored */
+                        div[class*="DivChatRoomWrapper"], div[class*="DivMessageListContainer"] {
+                            min-height: 0 !important;
+                            flex-shrink: 1 !important;
+                        }
+                        div[class*="DivChatInputContainer"], div[class*="DivInputArea"] {
+                            flex-shrink: 0 !important;
+                            position: sticky !important;
+                            bottom: 0 !important;
+                            z-index: 100 !important;
+                        }
                     `;
                     (document.head || document.documentElement).appendChild(st);
-                };
+                }; 
 
                 if (document.head || document.documentElement) {
                     injectCss();

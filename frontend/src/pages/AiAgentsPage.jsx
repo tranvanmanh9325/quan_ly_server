@@ -2490,9 +2490,10 @@ export default function AiAgentsPage() {
           animation: 'fadeIn 0.2s ease-out',
         }}>
           <div style={{
-            width: '100%',
-            maxWidth: '1280px',
-            height: '92vh',
+            width: 'min(96vw, calc((96vh - 84px) * (16 / 10)))',
+            maxWidth: '1440px',
+            height: 'min(94vh, calc(96vw * (10 / 16) + 84px))',
+            maxHeight: '96vh',
             background: '#0a0d14',
             border: '1px solid var(--accent-purple)',
             borderRadius: '6px',

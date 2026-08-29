@@ -450,16 +450,16 @@ export default function ServicesPage() {
             ) : dockerData.status === 'ERROR' ? (
               <div style={{ color: 'var(--accent-pink)' }}>Error fetching Docker status.</div>
             ) : (
-              <table className="glass-table docker-table" style={{ width: '100%', minWidth: '500px', fontSize: '0.75rem', tableLayout: 'fixed' }}>
+              <table className="glass-table docker-table" style={{ width: '100%', fontSize: '0.75rem' }}>
                 <thead>
                   <tr>
-                    <th style={{ width: '20%' }}>Container</th>
-                    <th style={{ width: '16%' }}>Image</th>
-                    <th style={{ width: '14%' }}>Status</th>
-                    <th style={{ width: '9%' }}>CPU %</th>
-                    <th style={{ width: '11%' }}>Memory</th>
-                    <th style={{ width: '9%' }}>Ports</th>
-                    <th style={{ width: '21%', textAlign: 'right' }}>Actions</th>
+                    <th style={{ textAlign: 'left' }}>Container</th>
+                    <th style={{ textAlign: 'left' }}>Image</th>
+                    <th style={{ textAlign: 'left' }}>Status</th>
+                    <th style={{ textAlign: 'center' }}>CPU</th>
+                    <th style={{ textAlign: 'center' }}>Memory</th>
+                    <th style={{ textAlign: 'center' }}>Ports</th>
+                    <th style={{ textAlign: 'right' }}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -475,9 +475,9 @@ export default function ServicesPage() {
                         <td style={{ fontWeight: 'bold', color: 'var(--accent-cyan)', fontFamily: 'Share Tech Mono', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.name}>{c.name}</td>
                         <td style={{ color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.image}>{c.image}</td>
                         <td className={isUp ? 'docker-status-up' : 'docker-status-exited'} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.status}>{c.status}</td>
-                        <td style={{ color: 'var(--accent-green)', fontFamily: 'Share Tech Mono', fontWeight: 'bold', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cpuVal}</td>
-                        <td style={{ color: 'var(--accent-cyan)', fontFamily: 'Share Tech Mono', fontSize: '0.65rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={memVal}>{memVal}</td>
-                        <td style={{ fontSize: '0.65rem', fontFamily: 'Share Tech Mono', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.ports}>
+                        <td style={{ textAlign: 'center', color: 'var(--accent-green)', fontFamily: 'Share Tech Mono', fontWeight: 'bold', whiteSpace: 'nowrap' }}>{cpuVal}</td>
+                        <td style={{ textAlign: 'center', color: 'var(--accent-cyan)', fontFamily: 'Share Tech Mono', fontSize: '0.65rem', whiteSpace: 'nowrap' }} title={memVal}>{memVal}</td>
+                        <td style={{ textAlign: 'center', fontSize: '0.65rem', fontFamily: 'Share Tech Mono', color: 'var(--text-secondary)', maxWidth: '90px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.ports}>
                           {c.ports || '-'}
                         </td>
                         <td style={{ textAlign: 'right' }}>

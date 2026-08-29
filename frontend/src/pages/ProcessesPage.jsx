@@ -1,7 +1,10 @@
 import React, { useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import axios from 'axios';
-import { SciFiPulseIcon, SciFiSearchIcon, SciFiKillIcon, SciFiDownloadIcon } from '../components/SciFiIcons';
+import { 
+  SciFiPulseIcon, SciFiSearchIcon, SciFiKillIcon, SciFiDownloadIcon,
+  SciFiEnergyBoltIcon, SciFiCloseIcon, SciFiWarningIcon 
+} from '../components/SciFiIcons';
 
 export default function ProcessesPage() {
   const { processes } = useOutletContext();
@@ -119,7 +122,6 @@ export default function ProcessesPage() {
       {toast && (
         <div style={{
           padding: '10px 16px',
-          marginBottom: '15px',
           borderRadius: '4px',
           background: toast.isError ? 'rgba(255, 0, 85, 0.2)' : 'rgba(0, 243, 255, 0.2)',
           border: toast.isError ? '1px solid var(--accent-pink)' : '1px solid var(--accent-cyan)',
@@ -130,8 +132,13 @@ export default function ProcessesPage() {
           justifyContent: 'space-between',
           alignItems: 'center'
         }}>
-          <span>⚡ {toast.message}</span>
-          <button onClick={() => setToast(null)} style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', fontWeight: 'bold' }}>✕</button>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+            <SciFiEnergyBoltIcon size={14} color="currentColor" />
+            <span>{toast.message}</span>
+          </span>
+          <button onClick={() => setToast(null)} style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', display: 'inline-flex', alignItems: 'center' }} title="Dismiss">
+            <SciFiCloseIcon size={12} color="inherit" />
+          </button>
         </div>
       )}
 
@@ -165,8 +172,9 @@ export default function ProcessesPage() {
               Are you sure you want to force kill process <strong style={{ color: 'var(--accent-pink)', fontFamily: 'Share Tech Mono' }}>{confirmModal.name}</strong> (PID: <span style={{ color: 'var(--accent-cyan)' }}>{confirmModal.pid}</span>)?
             </p>
             
-            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', background: 'rgba(255,0,85,0.08)', padding: '8px 12px', borderLeft: '3px solid var(--accent-pink)' }}>
-              ⚠️ Warning: Terminating system or user processes may result in unsaved data loss or process instability.
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', background: 'rgba(255,0,85,0.08)', padding: '8px 12px', borderLeft: '3px solid var(--accent-pink)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <SciFiWarningIcon size={14} color="var(--accent-pink)" />
+              <span>Warning: Terminating system or user processes may result in unsaved data loss or process instability.</span>
             </div>
 
             <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '10px' }}>

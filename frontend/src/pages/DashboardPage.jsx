@@ -7,6 +7,7 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Legend
 } from 'recharts';
 import { Search, Zap, Server, Activity, HardDrive, Wifi } from 'lucide-react';
+import { SciFiEnergyBoltIcon, SciFiCloseIcon } from '../components/SciFiIcons';
 import { lttbDownsample } from '../utils/lttb';
 
 /** Custom tooltip for the 24H Metric History chart */
@@ -223,8 +224,13 @@ export default function DashboardPage() {
           justifyContent: 'space-between',
           alignItems: 'center'
         }}>
-          <span>⚡ {toast.message}</span>
-          <button onClick={() => setToast(null)} style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', fontWeight: 'bold' }}>✕</button>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+            <SciFiEnergyBoltIcon size={14} color="currentColor" />
+            <span>{toast.message}</span>
+          </span>
+          <button onClick={() => setToast(null)} style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', display: 'inline-flex', alignItems: 'center' }} title="Dismiss">
+            <SciFiCloseIcon size={12} color="inherit" />
+          </button>
         </div>
       )}
       <div className="dashboard-grid">

@@ -1018,4 +1018,138 @@ export const SciFiCameraResetIcon = ({ size = 20, color = 'currentColor', classN
   </svg>
 );
 
+// 57. CPU MICROPROCESSOR CHIP — Quad-flange silicon die with circuit trace buses & pin 1 indicator
+export const SciFiCpuChipIcon = ({ size = 12, color = 'currentColor', className = '', ...props }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    className={className}
+    style={{ display: 'inline-block', verticalAlign: 'middle' }}
+    {...props}
+  >
+    <rect x="5" y="5" width="14" height="14" rx="2" stroke={color} strokeWidth="1.3" fill={color} fillOpacity="0.1" />
+    <rect x="8.5" y="8.5" width="7" height="7" rx="1" stroke={color} strokeWidth="1" fill={color} fillOpacity="0.25" />
+    <circle cx="12" cy="12" r="1.2" fill={color} />
+    <line x1="8.5" y1="2" x2="8.5" y2="5" stroke={color} strokeWidth="1.2" strokeLinecap="round" />
+    <line x1="12" y1="2" x2="12" y2="5" stroke={color} strokeWidth="1.2" strokeLinecap="round" />
+    <line x1="15.5" y1="2" x2="15.5" y2="5" stroke={color} strokeWidth="1.2" strokeLinecap="round" />
+    <line x1="8.5" y1="19" x2="8.5" y2="22" stroke={color} strokeWidth="1.2" strokeLinecap="round" />
+    <line x1="12" y1="19" x2="12" y2="22" stroke={color} strokeWidth="1.2" strokeLinecap="round" />
+    <line x1="15.5" y1="19" x2="15.5" y2="22" stroke={color} strokeWidth="1.2" strokeLinecap="round" />
+    <line x1="2" y1="8.5" x2="5" y2="8.5" stroke={color} strokeWidth="1.2" strokeLinecap="round" />
+    <line x1="2" y1="12" x2="5" y2="12" stroke={color} strokeWidth="1.2" strokeLinecap="round" />
+    <line x1="2" y1="15.5" x2="5" y2="15.5" stroke={color} strokeWidth="1.2" strokeLinecap="round" />
+    <line x1="19" y1="8.5" x2="22" y2="8.5" stroke={color} strokeWidth="1.2" strokeLinecap="round" />
+    <line x1="19" y1="12" x2="22" y2="12" stroke={color} strokeWidth="1.2" strokeLinecap="round" />
+    <line x1="19" y1="15.5" x2="22" y2="15.5" stroke={color} strokeWidth="1.2" strokeLinecap="round" />
+  </svg>
+);
+
+// 58. RAM MEMORY MODULE — DDR5/HBM circuit stick with BGA chips & edge connector bus
+export const SciFiRamMemoryIcon = ({ size = 12, color = 'currentColor', className = '', ...props }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    className={className}
+    style={{ display: 'inline-block', verticalAlign: 'middle' }}
+    {...props}
+  >
+    <rect x="2" y="6" width="20" height="12" rx="1.5" stroke={color} strokeWidth="1.3" fill={color} fillOpacity="0.08" />
+    <rect x="4.5" y="8" width="3.5" height="5.5" rx="0.5" stroke={color} strokeWidth="0.9" fill={color} fillOpacity="0.25" />
+    <rect x="10.25" y="8" width="3.5" height="5.5" rx="0.5" stroke={color} strokeWidth="0.9" fill={color} fillOpacity="0.25" />
+    <rect x="16" y="8" width="3.5" height="5.5" rx="0.5" stroke={color} strokeWidth="0.9" fill={color} fillOpacity="0.25" />
+    <line x1="4.5" y1="15.5" x2="4.5" y2="18" stroke={color} strokeWidth="1" strokeLinecap="round" />
+    <line x1="7" y1="15.5" x2="7" y2="18" stroke={color} strokeWidth="1" strokeLinecap="round" />
+    <line x1="9.5" y1="15.5" x2="9.5" y2="18" stroke={color} strokeWidth="1" strokeLinecap="round" />
+    <line x1="12" y1="16.5" x2="12" y2="18" stroke={color} strokeWidth="1" strokeLinecap="round" />
+    <line x1="14.5" y1="15.5" x2="14.5" y2="18" stroke={color} strokeWidth="1" strokeLinecap="round" />
+    <line x1="17" y1="15.5" x2="17" y2="18" stroke={color} strokeWidth="1" strokeLinecap="round" />
+    <line x1="19.5" y1="15.5" x2="19.5" y2="18" stroke={color} strokeWidth="1" strokeLinecap="round" />
+  </svg>
+);
+
+// 59. NETWORK PORT RJ45 / FIBER — Shielded socket with activity LED & pin connectors
+export const SciFiNetworkPortIcon = ({ size = 12, color = 'currentColor', className = '', ...props }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    className={className}
+    style={{ display: 'inline-block', verticalAlign: 'middle' }}
+    {...props}
+  >
+    <path d="M4 5C4 3.9 4.9 3 6 3H18C19.1 3 20 3.9 20 5V19C20 20.1 19.1 21 18 21H6C4.9 21 4 20.1 4 19V5Z" stroke={color} strokeWidth="1.3" fill={color} fillOpacity="0.08" />
+    <path d="M7 8H17V17H14V19H10V17H7V8Z" stroke={color} strokeWidth="1" fill={color} fillOpacity="0.2" />
+    <line x1="9" y1="9.5" x2="9" y2="13" stroke={color} strokeWidth="0.9" strokeLinecap="round" />
+    <line x1="11" y1="9.5" x2="11" y2="13" stroke={color} strokeWidth="0.9" strokeLinecap="round" />
+    <line x1="13" y1="9.5" x2="13" y2="13" stroke={color} strokeWidth="0.9" strokeLinecap="round" />
+    <line x1="15" y1="9.5" x2="15" y2="13" stroke={color} strokeWidth="0.9" strokeLinecap="round" />
+    <circle cx="6.5" cy="5.5" r="0.9" fill={color} />
+    <circle cx="17.5" cy="5.5" r="0.9" fill={color} />
+  </svg>
+);
+
+// 60. CONTAINER IMAGE LAYERS — 3D Isometric OCI container filesystem layer stack
+export const SciFiImageLayerIcon = ({ size = 12, color = 'currentColor', className = '', ...props }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    className={className}
+    style={{ display: 'inline-block', verticalAlign: 'middle' }}
+    {...props}
+  >
+    <polygon points="12,2 21,6.5 12,11 3,6.5" stroke={color} strokeWidth="1.3" fill={color} fillOpacity="0.35" />
+    <path d="M3 11.5L12 16L21 11.5" stroke={color} strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+    <path d="M3 16.5L12 21L21 16.5" stroke={color} strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+  </svg>
+);
+
+// 61. HUD EXTERNAL LAUNCH LINK — Tactical target expansion bracket with 45-deg vector arrow
+export const SciFiExternalLinkIcon = ({ size = 11, color = 'currentColor', className = '', ...props }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    className={className}
+    style={{ display: 'inline-block', verticalAlign: 'middle' }}
+    {...props}
+  >
+    <path d="M11 4H5C3.9 4 3 4.9 3 6V19C3 20.1 3.9 21 5 21H18C19.1 21 20 20.1 20 19V13" stroke={color} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+    <line x1="12" y1="12" x2="21" y2="3" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
+    <polyline points="15,3 21,3 21,9" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+// 62. SCI-FI WARNING ALERT — Cyberpunk caution triangle with segmented exclamation core
+export const SciFiWarningIcon = ({ size = 14, color = 'var(--accent-pink)', className = '', ...props }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    className={className}
+    style={{ display: 'inline-block', verticalAlign: 'middle' }}
+    {...props}
+  >
+    <path d="M12 2L2 20H22L12 2Z" stroke={color} strokeWidth="1.4" strokeLinejoin="round" fill={color} fillOpacity="0.12" />
+    <line x1="12" y1="8" x2="12" y2="14" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
+    <circle cx="12" cy="17.5" r="1.2" fill={color} />
+  </svg>
+);
+
+
 

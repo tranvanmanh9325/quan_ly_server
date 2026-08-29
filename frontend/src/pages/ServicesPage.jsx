@@ -3,7 +3,9 @@ import { useOutletContext } from 'react-router-dom';
 import axios from 'axios';
 import { 
   SciFiShieldIcon, SciFiContainerIcon, SciFiChronoIcon, SciFiQuantumIcon,
-  SciFiTerminalIcon, SciFiRefreshIcon, SciFiStopIcon, SciFiPlayIcon, SciFiChronoSpinnerIcon
+  SciFiTerminalIcon, SciFiRefreshIcon, SciFiStopIcon, SciFiPlayIcon, SciFiChronoSpinnerIcon,
+  SciFiEnergyBoltIcon, SciFiCloseIcon, SciFiCpuChipIcon, SciFiRamMemoryIcon,
+  SciFiNetworkPortIcon, SciFiImageLayerIcon, SciFiExternalLinkIcon, SciFiWarningIcon
 } from '../components/SciFiIcons';
 import { parseDockerStats, formatDockerStatus, formatDockerPorts } from '../utils/parsers';
 import LogViewer from '../components/LogViewer';
@@ -211,10 +213,9 @@ export default function ServicesPage() {
     <main className="main-content" style={{ overflowY: 'auto', overflowX: 'hidden', display: 'flex', flexDirection: 'column', gap: '20px', minWidth: 0 }}>
       
       {/* Action Toast Alert */}
-      {actionMessage && (
-        <div style={{
+      {actionMessage && (        <div style={{
           padding: '10px 16px',
-          borderRadius: '4px',
+          marginBottom: '20px',
           background: actionMessage.isError ? 'rgba(255, 0, 85, 0.2)' : 'rgba(0, 243, 255, 0.2)',
           border: actionMessage.isError ? '1px solid var(--accent-pink)' : '1px solid var(--accent-cyan)',
           color: actionMessage.isError ? 'var(--accent-pink)' : 'var(--accent-cyan)',
@@ -224,12 +225,16 @@ export default function ServicesPage() {
           justifyContent: 'space-between',
           alignItems: 'center'
         }}>
-          <span>⚡ {actionMessage.text}</span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+            <SciFiEnergyBoltIcon size={14} color="currentColor" />
+            <span>{actionMessage.text}</span>
+          </span>
           <button 
             onClick={() => setActionMessage(null)}
-            style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', fontWeight: 'bold' }}
+            style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', display: 'inline-flex', alignItems: 'center' }}
+            title="Dismiss"
           >
-            ✕
+            <SciFiCloseIcon size={12} color="inherit" />
           </button>
         </div>
       )}
@@ -415,13 +420,14 @@ export default function ServicesPage() {
                   padding: '2px 6px',
                   borderRadius: '2px',
                   background: 'rgba(0, 243, 255, 0.1)',
-                  display: 'flex',
+                  display: 'inline-flex',
                   alignItems: 'center',
-                  gap: '3px'
+                  gap: '4px'
                 }}
                 title="Open Full Container Management Console (9 Columns & Extended Tools)"
               >
-                FULL ↗
+                <span>FULL</span>
+                <SciFiExternalLinkIcon size={10} color="var(--accent-cyan)" />
               </a>
             </div>
           </div>
@@ -668,36 +674,63 @@ export default function ServicesPage() {
                             color: 'rgba(224, 242, 254, 0.65)',
                             whiteSpace: 'nowrap',
                             overflow: 'hidden',
-                            textOverflow: 'ellipsis'
+                            textOverflow: 'ellipsis',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px'
                           }}
                           title={c.image}
                         >
-                          {c.image}
+                          <SciFiImageLayerIcon size={11} color="rgba(224, 242, 254, 0.65)" />
+                          <span>{c.image}</span>
                         </span>
                         {portDisplay && (
                           <span
                             style={{
                               color: 'var(--accent-cyan)',
                               background: 'rgba(0, 243, 255, 0.08)',
-                              padding: '0 4px',
+                              padding: '1px 4px',
                               borderRadius: '2px',
                               whiteSpace: 'nowrap',
-                              flexShrink: 0
+                              flexShrink: 0,
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '3px'
                             }}
                             title={c.ports}
                           >
-                            {portDisplay}
+                            <SciFiNetworkPortIcon size={10} color="var(--accent-cyan)" />
+                            <span>{portDisplay}</span>
                           </span>
                         )}
                       </div>
 
                       <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
-                        <span style={{ color: 'var(--accent-yellow)', fontWeight: 'bold' }} title={`CPU: ${cpuVal}`}>
-                          ⚡ {cpuVal}
+                        <span
+                          style={{
+                            color: 'var(--accent-yellow)',
+                            fontWeight: 'bold',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '3px'
+                          }}
+                          title={`CPU: ${cpuVal}`}
+                        >
+                          <SciFiCpuChipIcon size={10} color="var(--accent-yellow)" />
+                          <span>{cpuVal}</span>
                         </span>
                         <span style={{ color: 'rgba(255, 255, 255, 0.2)' }}>/</span>
-                        <span style={{ color: 'var(--accent-cyan)' }} title={`Memory: ${stats.mem || memVal}`}>
-                          💾 {memVal}
+                        <span
+                          style={{
+                            color: 'var(--accent-cyan)',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '3px'
+                          }}
+                          title={`Memory: ${stats.mem || memVal}`}
+                        >
+                          <SciFiRamMemoryIcon size={10} color="var(--accent-cyan)" />
+                          <span>{memVal}</span>
                         </span>
                       </div>
                     </div>

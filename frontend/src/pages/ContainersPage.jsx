@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { 
   SciFiContainerIcon, SciFiSearchIcon, SciFiRefreshIcon, 
-  SciFiPlayIcon, SciFiStopIcon, SciFiPulseBadge
+  SciFiPlayIcon, SciFiStopIcon, SciFiPulseBadge, SciFiWarningIcon
 } from '../components/SciFiIcons';
 import { parseDockerStats } from '../utils/parsers';
 import LogViewer from '../components/LogViewer';
@@ -309,8 +309,9 @@ export default function ContainersPage() {
       <div className="glass-panel" style={{ flex: 1, padding: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
         
         {dockerStatus === 'NOT_INSTALLED' ? (
-          <div style={{ padding: '40px', textAlign: 'center', color: 'var(--accent-pink)', fontFamily: 'Share Tech Mono' }}>
-            ⚠️ DOCKER IS NOT INSTALLED OR DAEMON IS NOT RUNNING ON SSH HOST
+          <div style={{ padding: '40px', textAlign: 'center', color: 'var(--accent-pink)', fontFamily: 'Share Tech Mono', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+            <SciFiWarningIcon size={16} color="var(--accent-pink)" />
+            <span>DOCKER IS NOT INSTALLED OR DAEMON IS NOT RUNNING ON SSH HOST</span>
           </div>
         ) : loading && containers.length === 0 ? (
           <div style={{ padding: '40px', textAlign: 'center', color: 'var(--accent-green)', fontFamily: 'Share Tech Mono' }}>

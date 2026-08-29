@@ -855,8 +855,66 @@ export default function WorldMapPage() {
             </div>
           </div>
 
+          {/* Satellite Constellation Quick Selector Panel */}
+          <div className="glass-panel" style={{ flex: 1, padding: '12px', display: 'flex', flexDirection: 'column', gap: '8px', overflow: 'hidden', minHeight: '160px' }}>
+            <div style={{ fontSize: '0.78rem', color: '#ffe600', fontFamily: 'Share Tech Mono', fontWeight: 'bold', borderBottom: '1px solid rgba(255, 230, 0, 0.2)', paddingBottom: '5px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span>🛰 SATELLITES ({SATELLITE_CATALOG.length})</span>
+              <span style={{ fontSize: '0.62rem', color: 'rgba(255,255,255,0.5)' }}>C2 TRACKING</span>
+            </div>
+            <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              {SATELLITE_CATALOG.map((sat) => {
+                const isSelected = selectedSatellite?.id === sat.id;
+                const satColor = sat.color || '#00ff9d';
+                return (
+                  <div
+                    key={sat.id}
+                    onClick={() => {
+                      setSelectedSatellite(sat);
+                      handleTrackSatellite(sat);
+                    }}
+                    style={{
+                      background: isSelected ? 'rgba(255, 230, 0, 0.12)' : 'rgba(0,0,0,0.35)',
+                      border: isSelected ? `1px solid ${satColor}` : '1px solid rgba(255,255,255,0.08)',
+                      borderLeft: `2.5px solid ${satColor}`,
+                      padding: '5px 8px',
+                      borderRadius: '3px',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      fontSize: '0.7rem',
+                      fontFamily: 'Share Tech Mono',
+                      transition: 'all 0.2s',
+                    }}
+                  >
+                    <div>
+                      <div style={{ color: '#fff', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                        <span style={{ width: '4px', height: '4px', borderRadius: '50%', background: satColor, boxShadow: `0 0 4px ${satColor}` }} />
+                        {sat.name}
+                      </div>
+                      <div style={{ fontSize: '0.62rem', color: 'rgba(255,255,255,0.5)', marginTop: '1px' }}>
+                        {sat.type} · {sat.altitudeKm.toLocaleString()} km · {sat.country.split(' ')[0]}
+                      </div>
+                    </div>
+                    <span style={{
+                      fontSize: '0.58rem',
+                      color: isSelected ? '#020d1a' : satColor,
+                      background: isSelected ? satColor : 'rgba(255,255,255,0.05)',
+                      padding: '1px 5px',
+                      borderRadius: '2px',
+                      fontWeight: 'bold',
+                    }}>
+                      {isSelected ? 'TRACKED' : sat.type}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
         </div>
       </div>
+
     </div>
   );
 }

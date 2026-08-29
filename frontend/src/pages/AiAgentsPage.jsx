@@ -2613,7 +2613,9 @@ export default function AiAgentsPage() {
               fontFamily: 'Share Tech Mono',
             }}>
               <span>
-                {t('aiAgents.facebook.vncFooterTip') || '💡 Once logged into Facebook successfully, click [SAVE SESSION & CLOSE] to automatically extract and store session cookies.'}
+                {vncPlatform === 'tiktok'
+                  ? (t('aiAgents.tiktok.vncFooterTip') || '💡 Once logged into TikTok successfully, click [SAVE SESSION & CLOSE] to automatically extract and store session cookies.')
+                  : (t('aiAgents.facebook.vncFooterTip') || '💡 Once logged into Facebook successfully, click [SAVE SESSION & CLOSE] to automatically extract and store session cookies.')}
               </span>
               {vncStatusMsg && (
                 <span style={{ color: 'var(--accent-cyan)' }}>

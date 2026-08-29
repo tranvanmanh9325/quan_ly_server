@@ -204,27 +204,28 @@ export default function WorldMapPage() {
   }, [geoData]);
 
   // htmlElementsData: DOM overlay markers (CSS-styleable) — replaces plain WebGL labelsData
-  // Each item: { lat, lng, type, label, sublabel, color }
+  // Uses geoData.server directly (not serverInfo) to avoid temporal dead zone
   const htmlMarkersData = useMemo(() => {
     const markers = [];
-    const sLat = parseFloat(geoData.server?.lat) || 20.98;
-    const sLon = parseFloat(geoData.server?.lon) || 105.83;
+    const srv = geoData.server;
+    if (!srv) return markers;
+
+    const sLat = parseFloat(srv.lat) || 20.98;
+    const sLon = parseFloat(srv.lon) || 105.83;
 
     // Server HQ callout
-    if (geoData.server) {
-      markers.push({
-        id: 'hq',
-        lat: sLat, lng: sLon,
-        type: 'server',
-        label: 'SERVER HQ',
-        sublabel: serverInfo.city ? `${serverInfo.city}, ${serverInfo.country || 'VN'}` : 'Phường Định Công, VN',
-        color: '#00ff9d',
-        borderColor: 'rgba(0,255,157,0.65)',
-        glowColor: 'rgba(0,255,157,0.25)',
-      });
-    }
+    markers.push({
+      id: 'hq',
+      lat: sLat, lng: sLon,
+      type: 'server',
+      label: 'SERVER HQ',
+      sublabel: srv.city ? `${srv.city}, ${srv.country || 'VN'}` : 'Phường Định Công, VN',
+      color: '#00ff9d',
+      borderColor: 'rgba(0,255,157,0.65)',
+      glowColor: 'rgba(0,255,157,0.25)',
+    });
 
-    // Client callout markers
+    // Client callout markers (only those with valid GPS)
     (geoData.connections || []).forEach((client, idx) => {
       const parsedLat = parseFloat(client.lat);
       const parsedLon = parseFloat(client.lon);
@@ -246,7 +247,9 @@ export default function WorldMapPage() {
     });
 
     return markers;
-  }, [geoData, serverInfo]);
+  }, [geoData]);
+
+
 
 
   const ringsData = useMemo(() => {

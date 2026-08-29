@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo, useDeferredValue, useTransition } from 'react';
 import axios from 'axios';
 import Globe from 'react-globe.gl';
+import * as THREE from 'three';
 import { mesh } from 'topojson-client';
 import { SciFiGlobeIcon, SciFiRefreshIcon, SciFiPulseBadge, SciFiPlayIcon, SciFiStopIcon } from '../components/SciFiIcons';
 import { VIETNAM_MARITIME_ISLANDS, VIETNAM_MARITIME_BOUNDARIES } from '../data/vietnamIslandsGeo';
 import { SATELLITE_CATALOG, getSatellitePosition, getSatelliteOrbitPath } from '../data/satellitesData';
-import { createSatellite3DObject } from '../utils/satelliteModelGenerator';
+import { createSatellite3DObject, updateSatellite3DTransform } from '../utils/satelliteModelGenerator';
 import GlobeHudLegend from '../components/GlobeHudLegend';
 import SatelliteTelemetryCard from '../components/SatelliteTelemetryCard';
 
@@ -15,6 +16,38 @@ const CDN_WORLD_ATLAS_URL = 'https://cdn.jsdelivr.net/npm/world-atlas@2/countrie
 
 // Resized 1024x512 local texture: 35KB vs 698KB — fits 600x440px canvas pixel-perfect
 const EARTH_TEXTURE_URL = '/textures/earth-night-1024.jpg';
+
+/**
+ * Sets up Photorealistic NASA 3-Point Space Lighting in Three.js Scene.
+ * Pure sunlight with specular highlights on Kapton foil + Earthshine albedo + Deep space ambient.
+ */
+function setupSpaceLighting(scene) {
+  if (!scene) return null;
+
+  // 1. PRIMARY SUNLIGHT (DirectionalLight 2.8 - Pure White Sunlight in Vacuum)
+  const sunLight = new THREE.DirectionalLight(0xffffff, 2.8);
+  sunLight.position.set(140, 70, 100);
+  sunLight.userData = { isCustomSpaceLight: true };
+  scene.add(sunLight);
+
+  // 2. EARTHSHINE (DirectionalLight 0.85 - Ocean Blue Albedo reflected from Earth)
+  const earthshineLight = new THREE.DirectionalLight(0x336699, 0.85);
+  earthshineLight.position.set(-60, -80, -50);
+  earthshineLight.userData = { isCustomSpaceLight: true };
+  scene.add(earthshineLight);
+
+  // 3. DEEP SPACE AMBIENT (AmbientLight 0.4 - Deep Space Navy base)
+  const spaceAmbient = new THREE.AmbientLight(0x0f172a, 0.4);
+  spaceAmbient.userData = { isCustomSpaceLight: true };
+  scene.add(spaceAmbient);
+
+  // 4. SELECTED TARGET POINTLIGHT (Spotlight for active tracked satellite)
+  const targetPointLight = new THREE.PointLight(0x00f3ff, 0, 30, 2);
+  targetPointLight.userData = { isCustomSpaceLight: true };
+  scene.add(targetPointLight);
+
+  return { sunLight, earthshineLight, spaceAmbient, targetPointLight };
+}
 
 /**
  * Calculates dynamic arc altitude based on Great-Circle chord distance
@@ -51,7 +84,6 @@ export default function WorldMapPage() {
   const [selectedSatellite, setSelectedSatellite] = useState(null);
 
   // useDeferredValue: pass borders to Globe at low priority so first paint isn't blocked
-
   const deferredBorders = useDeferredValue(bordersData);
   const [, startBordersTransition] = useTransition();
 
@@ -60,6 +92,8 @@ export default function WorldMapPage() {
 
   const globeRef = useRef();
   const globeContainerRef = useRef();
+  const lightingRefs = useRef(null);
+
 
   // ResizeObserver: measure container and feed exact width/height to Globe
   // This fixes the "globe shifted right" bug caused by Globe auto-measuring window.innerWidth
@@ -483,11 +517,10 @@ export default function WorldMapPage() {
 
     const coords = globeRef.current.getCoords(pos.lat, pos.lng, pos.altitude);
     if (coords) {
-      obj.position.set(coords.x, coords.y, coords.z);
-      // Point satellite dish & instruments towards Earth center (0,0,0)
-      obj.lookAt(0, 0, 0);
+      const isSelected = selectedSatellite?.id === sat.id;
+      updateSatellite3DTransform(obj, sat, coords, isSelected, lightingRefs.current?.targetPointLight);
     }
-  }, []);
+  }, [selectedSatellite]);
 
   // Zero-Re-render High-Performance Animation Loop for 60 FPS on Intel HD 4400
   useEffect(() => {
@@ -514,7 +547,6 @@ export default function WorldMapPage() {
   }, []);
 
   const handleGlobeReady = useCallback(() => {
-
     setLoading(false);
 
     globeRef.current?.pointOfView({ lat: 16.0, lng: 105.85, altitude: 2.2 }, 0);
@@ -540,11 +572,15 @@ export default function WorldMapPage() {
     const scene = globeRef.current?.scene();
     if (scene) {
       scene.traverse(obj => {
-        if (obj.isLight) obj.castShadow = false;
+        if (obj.isLight && !obj.userData?.isCustomSpaceLight) obj.castShadow = false;
         if (obj.isMesh) { obj.castShadow = false; obj.receiveShadow = false; }
       });
+
+      // Initialize Photorealistic NASA 3-Point Space Lighting
+      lightingRefs.current = setupSpaceLighting(scene);
     }
   }, []);
+
 
 
   return (

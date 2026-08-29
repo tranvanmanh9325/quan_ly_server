@@ -163,10 +163,10 @@ class VncManager:
 
                 # 4. Start x11vnc with high-efficiency event-driven mode (-xdamage) & WAN pacing:
                 #    -xdamage: Event-driven change notifications from X11 (Zero CPU scan loop)
-                #    -cursor xfixes: Gửi hình dạng chuột qua XFixes cho Client render cục bộ (0ms latency, 144Hz)
+                #    -cursor most: Tự động dùng XFIXES cursor pseudo-encoding (Client render 144Hz 0ms delay)
                 #    -defer 20, -wait 15: Điều tốc ~25-30 FPS hoàn hảo qua ngrok tunnel, triệt tiêu 100% Buffer Bloat
                 #    -wirecopyrect: Gửi 10 bytes tọa độ khi cuộn trang thay vì re-encode cả màn hình
-                #    -extra_fbufs 2: Triple Buffering song song giúp render mượt mà không block capture
+                #    -xwarppointer: Đồng bộ tọa độ con trỏ chính xác tuyệt đối
                 self._x11vnc_proc = subprocess.Popen(
                     [
                         "x11vnc",
@@ -177,14 +177,12 @@ class VncManager:
                         "-rfbport", "5900",
                         "-listen", "127.0.0.1",
                         "-xdamage",
-                        "-cursor", "xfixes",
+                        "-cursor", "most",
                         "-repeat",
                         "-defer", "20",
                         "-wait", "15",
                         "-wirecopyrect",
-                        "-pointer_mode", "1",
                         "-xwarppointer",
-                        "-extra_fbufs", "2",
                         "-noxrecord",
                         "-capslock",
                         "-nowf",

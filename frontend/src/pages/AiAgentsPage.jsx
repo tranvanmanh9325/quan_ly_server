@@ -11,7 +11,7 @@ import {
   SciFiTerminalPromptIcon, SciFiInfoIcon,
   SciFiFlameStreakIcon, SciFiVideoClipIcon, SciFiMessageStreakIcon, SciFiAddFriendIcon,
   SciFiTrashIcon, SciFiRadarScanIcon, SciFiAiChatBubbleIcon, SciFiVerifiedCheckIcon,
-  SciFiUsersGroupIcon, SciFiPlayPulseIcon,
+  SciFiUsersGroupIcon,
 } from '../components/SciFiIcons';
 import { useTranslation } from '../i18n/index.jsx';
 
@@ -556,10 +556,6 @@ export default function AiAgentsPage() {
   const [ttNewFriendUsername, setTtNewFriendUsername] = useState('');
   const [ttNewFriendNickname, setTtNewFriendNickname] = useState('');
   const [ttInstantSending, setTtInstantSending] = useState('');
-  const [ttTestSender, setTtTestSender] = useState('Bạn Thân TikTok');
-  const [ttTestMessage, setTtTestMessage] = useState('Alo Mạnh ơi, có video gì hay chưa gửi xem với!');
-  const [ttAiTestResult, setTtAiTestResult] = useState('');
-  const [ttAiTesting, setTtAiTesting] = useState(false);
 
   const fetchTtConfig = useCallback(() => {
     setTtLoading(true);
@@ -726,22 +722,6 @@ export default function AiAgentsPage() {
       return t;
     });
     handleTtConfigChange('streakTargets', updated);
-  };
-
-  const handleTestAiChat = async () => {
-    setTtAiTesting(true);
-    setTtAiTestResult('');
-    try {
-      const res = await axios.post('/api/tiktok/test-ai-chat', {
-        sender_name: ttTestSender,
-        message: ttTestMessage,
-      });
-      setTtAiTestResult(res.data.reply || '');
-    } catch (e) {
-      setTtAiTestResult('Lỗi khi sinh câu trả lời AI: ' + (e.response?.data?.message || e.message));
-    } finally {
-      setTtAiTesting(false);
-    }
   };
 
   const handleClearTikTokLogs = async () => {
@@ -1919,107 +1899,36 @@ export default function AiAgentsPage() {
                 )}
               </div>
 
-              {/* ── SECTION 3: SESSION COOKIES & AI SIMULATION SANDBOX ── */}
+              {/* ── SECTION 3: SESSION COOKIES CONFIGURATION ── */}
               <div style={{
                 marginTop: '24px',
-                display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))',
-                gap: '16px',
+                padding: '16px 20px',
+                background: 'rgba(0, 0, 0, 0.3)',
+                border: '1px solid rgba(0, 242, 254, 0.25)',
+                borderRadius: '4px',
               }}>
-                {/* Cookies Editor */}
-                <div style={{ padding: '16px', background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '3px' }}>
-                  <div style={{ fontSize: '0.78rem', color: 'var(--text-primary)', fontFamily: 'Share Tech Mono', marginBottom: '8px' }}>
-                    TIKTOK SESSION COOKIES (JSON)
-                  </div>
-                  <textarea
-                    value={ttConfig.cookiesJson}
-                    onChange={e => handleTtConfigChange('cookiesJson', e.target.value)}
-                    placeholder='[{"name":"sessionid","value":"..."},{"name":"tt_chain_token","value":"..."}]'
-                    rows={4}
-                    style={{
-                      width: '100%',
-                      boxSizing: 'border-box',
-                      background: 'rgba(0,0,0,0.5)',
-                      border: '1px solid rgba(0, 242, 254, 0.2)',
-                      borderRadius: '2px',
-                      color: '#fff',
-                      fontFamily: 'Share Tech Mono',
-                      fontSize: '0.72rem',
-                      padding: '8px',
-                      resize: 'vertical',
-                      outline: 'none',
-                    }}
-                  />
+                <div style={{ fontSize: '0.78rem', color: '#00F2FE', fontFamily: 'Share Tech Mono', letterSpacing: '1px', fontWeight: 'bold', marginBottom: '8px' }}>
+                  TIKTOK SESSION COOKIES (JSON)
                 </div>
-
-                {/* AI Chat Sandbox */}
-                <div style={{ padding: '16px', background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '3px' }}>
-                  <div style={{ fontSize: '0.78rem', color: '#00F2FE', fontFamily: 'Share Tech Mono', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <SciFiAiChatBubbleIcon size={14} color="#00F2FE" />
-                    <span>THỬ NGHIỆM SINH CÂU TRẢ LỜI AI 9ROUTER</span>
-                  </div>
-                  <div style={{ display: 'flex', gap: '6px', marginBottom: '8px' }}>
-                    <input
-                      type="text"
-                      value={ttTestSender}
-                      onChange={e => setTtTestSender(e.target.value)}
-                      placeholder="Tên người gửi"
-                      style={{
-                        width: '120px',
-                        background: 'rgba(0,0,0,0.5)',
-                        border: '1px solid rgba(255,255,255,0.15)',
-                        color: '#fff',
-                        padding: '4px 8px',
-                        fontFamily: 'Share Tech Mono',
-                        fontSize: '0.72rem',
-                      }}
-                    />
-                    <input
-                      type="text"
-                      value={ttTestMessage}
-                      onChange={e => setTtTestMessage(e.target.value)}
-                      placeholder="Nội dung tin nhắn thử nghiệm"
-                      style={{
-                        flex: 1,
-                        background: 'rgba(0,0,0,0.5)',
-                        border: '1px solid rgba(255,255,255,0.15)',
-                        color: '#fff',
-                        padding: '4px 8px',
-                        fontFamily: 'Share Tech Mono',
-                        fontSize: '0.72rem',
-                      }}
-                    />
-                  </div>
-                  <button
-                    type="button"
-                    onClick={handleTestAiChat}
-                    disabled={ttAiTesting}
-                    style={{
-                      padding: '5px 12px',
-                      background: 'rgba(0, 242, 254, 0.15)',
-                      border: '1px solid #00F2FE',
-                      color: '#00F2FE',
-                      fontFamily: 'Share Tech Mono',
-                      fontSize: '0.72rem',
-                      cursor: 'pointer',
-                      borderRadius: '2px',
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: '6px',
-                    }}
-                  >
-                    {ttAiTesting ? <SciFiChronoSpinnerIcon size={13} color="#00F2FE" /> : <SciFiPlayPulseIcon size={13} color="#00F2FE" />}
-                    <span>{ttAiTesting ? 'ĐANG SINH CÂU TRẢ LỜI...' : 'CHẠY THỬ NGHIỆM AI'}</span>
-                  </button>
-                  {ttAiTestResult && (
-                    <div style={{ marginTop: '8px', padding: '8px 10px', background: 'rgba(0, 242, 254, 0.06)', border: '1px solid rgba(0, 242, 254, 0.25)', fontSize: '0.74rem', color: '#fff', borderRadius: '2px', display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
-                      <SciFiAiChatBubbleIcon size={14} color="#00F2FE" style={{ marginTop: '2px', flexShrink: 0 }} />
-                      <div>
-                        <strong style={{ color: '#00F2FE' }}>AI Trả lời:</strong> {ttAiTestResult}
-                      </div>
-                    </div>
-                  )}
-                </div>
+                <textarea
+                  value={ttConfig.cookiesJson}
+                  onChange={e => handleTtConfigChange('cookiesJson', e.target.value)}
+                  placeholder='[{"name":"sessionid","value":"..."},{"name":"tt_chain_token","value":"..."}]'
+                  rows={4}
+                  style={{
+                    width: '100%',
+                    boxSizing: 'border-box',
+                    background: 'rgba(0,0,0,0.5)',
+                    border: '1px solid rgba(0, 242, 254, 0.2)',
+                    borderRadius: '2px',
+                    color: '#fff',
+                    fontFamily: 'Share Tech Mono',
+                    fontSize: '0.72rem',
+                    padding: '8px',
+                    resize: 'vertical',
+                    outline: 'none',
+                  }}
+                />
               </div>
 
               {/* ── SECTION 4: RECENT ACTIVITY & STREAK DISPATCHES FEED ── */}

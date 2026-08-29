@@ -35,11 +35,6 @@ class CookieInput(BaseModel):
     cookiesJson: str
 
 
-class ChatTestInput(BaseModel):
-    sender_name: str = "Bạn Thân TikTok"
-    message: str = "Alo Mạnh ơi, có video mới chưa gửi xem với!"
-
-
 class InstantStreakInput(BaseModel):
     username: str
 
@@ -147,18 +142,6 @@ async def get_scan_status(tt: TikTokService = Depends(get_tiktok_service)):
         "is_scanning": tt._is_scanning,
         "last_scan_at": tt._last_scan_at,
         "recentReplies": replies,
-    }
-
-
-@router.post("/test-ai-chat")
-async def test_ai_chat(
-    input_data: ChatTestInput, tt: TikTokService = Depends(get_tiktok_service)
-):
-    reply = await tt.generate_ai_reply(input_data.sender_name, input_data.message)
-    return {
-        "sender_name": input_data.sender_name,
-        "message": input_data.message,
-        "reply": reply,
     }
 
 

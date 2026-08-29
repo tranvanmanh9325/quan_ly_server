@@ -1,4 +1,5 @@
 import React from 'react';
+import { SciFiCloseIcon, SciFiTargetLockIcon } from './SciFiIcons';
 
 /**
  * SatelliteTelemetryCard - Cyberpunk / NORAD Mission Control HUD Card
@@ -57,14 +58,15 @@ export default function SatelliteTelemetryCard({ satellite, onClose, onTrackCame
             border: '1px solid rgba(255,255,255,0.2)',
             color: '#fff',
             cursor: 'pointer',
-            fontSize: '0.7rem',
-            padding: '1px 6px',
+            padding: '2px 4px',
             borderRadius: '2px',
-            fontFamily: "'Share Tech Mono', monospace",
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
           }}
           title="Close telemetry card"
         >
-          ✕
+          <SciFiCloseIcon size={11} color="rgba(255,255,255,0.8)" />
         </button>
       </div>
 
@@ -146,7 +148,7 @@ export default function SatelliteTelemetryCard({ satellite, onClose, onTrackCame
           background: 'linear-gradient(90deg, rgba(0,255,157,0.15) 0%, rgba(0,243,255,0.15) 100%)',
           border: `1px solid ${color}`,
           color: '#fff',
-          padding: '4px 8px',
+          padding: '5px 8px',
           fontSize: '0.68rem',
           fontWeight: 'bold',
           letterSpacing: '0.8px',
@@ -156,11 +158,13 @@ export default function SatelliteTelemetryCard({ satellite, onClose, onTrackCame
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          gap: '6px',
+          gap: '7px',
         }}
       >
-        <span>🎯</span> TRACK SATELLITE CAMERA
+        <SciFiTargetLockIcon size={14} color={color} />
+        <span>TRACK SATELLITE CAMERA</span>
       </button>
     </div>
   );
 }
+

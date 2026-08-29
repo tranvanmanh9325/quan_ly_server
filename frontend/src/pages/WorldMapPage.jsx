@@ -3,7 +3,11 @@ import axios from 'axios';
 import Globe from 'react-globe.gl';
 import * as THREE from 'three';
 import { mesh } from 'topojson-client';
-import { SciFiGlobeIcon, SciFiRefreshIcon, SciFiPulseBadge, SciFiPlayIcon, SciFiStopIcon } from '../components/SciFiIcons';
+import { 
+  SciFiGlobeIcon, SciFiRefreshIcon, SciFiPulseBadge, SciFiPlayIcon, SciFiStopIcon,
+  SciFiSatelliteIcon, SciFiOrbitRingIcon, SciFiTargetLockIcon, SciFiServerNodeIcon, 
+  SciFiUserNodesIcon, SciFiSpeedGaugeIcon, SciFiCameraResetIcon, SciFiCloseIcon
+} from '../components/SciFiIcons';
 import { VIETNAM_MARITIME_ISLANDS, VIETNAM_MARITIME_BOUNDARIES } from '../data/vietnamIslandsGeo';
 import { SATELLITE_CATALOG, getSatellitePosition, getSatelliteOrbitPath } from '../data/satellitesData';
 import { createSatellite3DObject, updateSatellite3DTransform } from '../utils/satelliteModelGenerator';
@@ -93,6 +97,7 @@ export default function WorldMapPage() {
   const globeRef = useRef();
   const globeContainerRef = useRef();
   const lightingRefs = useRef(null);
+
 
 
   // ResizeObserver: measure container and feed exact width/height to Globe
@@ -593,8 +598,10 @@ export default function WorldMapPage() {
           fontFamily: 'Share Tech Mono', fontSize: '0.8rem', fontWeight: 'bold',
           display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0,
         }}>
-          <span>⚠️ {errorMsg}</span>
-          <button onClick={() => setErrorMsg(null)} style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer' }}>✕</button>
+          <span>[ALERT] {errorMsg}</span>
+          <button onClick={() => setErrorMsg(null)} style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
+            <SciFiCloseIcon size={13} color="var(--accent-pink)" />
+          </button>
         </div>
       )}
 
@@ -617,18 +624,20 @@ export default function WorldMapPage() {
             border: showSatellites ? '1px solid #ffe600' : '1px solid rgba(255,255,255,0.2)',
             color: showSatellites ? '#ffe600' : '#ccc', padding: '4px 9px',
             fontFamily: 'Share Tech Mono', fontSize: '0.72rem', fontWeight: 'bold',
-            cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', borderRadius: '3px',
+            cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', borderRadius: '3px',
           }}>
-            🛰 SATS: {showSatellites ? 'ON' : 'OFF'}
+            <SciFiSatelliteIcon size={14} color={showSatellites ? '#ffe600' : '#ccc'} />
+            <span>SATS: {showSatellites ? 'ON' : 'OFF'}</span>
           </button>
           <button onClick={() => setShowOrbits(prev => !prev)} style={{
             background: showOrbits ? 'rgba(0, 243, 255, 0.15)' : 'rgba(255,255,255,0.08)',
             border: showOrbits ? '1px solid var(--accent-cyan)' : '1px solid rgba(255,255,255,0.2)',
             color: showOrbits ? 'var(--accent-cyan)' : '#ccc', padding: '4px 9px',
             fontFamily: 'Share Tech Mono', fontSize: '0.72rem', fontWeight: 'bold',
-            cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', borderRadius: '3px',
+            cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', borderRadius: '3px',
           }}>
-            ⬡ ORBITS: {showOrbits ? 'ON' : 'OFF'}
+            <SciFiOrbitRingIcon size={14} color={showOrbits ? 'var(--accent-cyan)' : '#ccc'} />
+            <span>ORBITS: {showOrbits ? 'ON' : 'OFF'}</span>
           </button>
           <button onClick={() => setAutoRotate(!autoRotate)} style={{
             background: autoRotate ? 'rgba(0, 255, 157, 0.15)' : 'rgba(255,255,255,0.08)',
@@ -638,31 +647,38 @@ export default function WorldMapPage() {
             cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px', borderRadius: '3px',
           }}>
             {autoRotate ? <SciFiStopIcon size={9} color="var(--accent-green)" /> : <SciFiPlayIcon size={9} color="#ccc" />}
-            ROTATE: {autoRotate ? 'ON' : 'OFF'}
+            <span>ROTATE: {autoRotate ? 'ON' : 'OFF'}</span>
           </button>
           <button onClick={() => setRotationSpeed(prev => prev === 0.5 ? 1.0 : prev === 1.0 ? 2.0 : 0.5)} style={{
             background: 'rgba(0, 243, 255, 0.08)', border: '1px solid var(--accent-cyan)',
             color: 'var(--accent-cyan)', padding: '4px 9px', fontFamily: 'Share Tech Mono',
             fontSize: '0.72rem', fontWeight: 'bold', cursor: 'pointer', borderRadius: '3px',
+            display: 'flex', alignItems: 'center', gap: '5px',
           }}>
-            SPD: {rotationSpeed === 0.5 ? '1X' : rotationSpeed === 1.0 ? '2X' : '3X'}
+            <SciFiSpeedGaugeIcon size={13} color="var(--accent-cyan)" />
+            <span>SPD: {rotationSpeed === 0.5 ? '1X' : rotationSpeed === 1.0 ? '2X' : '3X'}</span>
           </button>
           <button onClick={resetCamera} style={{
             background: 'rgba(0, 243, 255, 0.08)', border: '1px solid var(--accent-cyan)',
             color: 'var(--accent-cyan)', padding: '4px 9px', fontFamily: 'Share Tech Mono',
             fontSize: '0.72rem', fontWeight: 'bold', cursor: 'pointer', borderRadius: '3px',
-          }}>RESET</button>
+            display: 'flex', alignItems: 'center', gap: '5px',
+          }}>
+            <SciFiCameraResetIcon size={13} color="var(--accent-cyan)" />
+            <span>RESET</span>
+          </button>
           <button onClick={fetchGeolocationData} disabled={loading} style={{
             background: 'rgba(0, 243, 255, 0.08)', border: '1px solid var(--accent-cyan)',
             color: 'var(--accent-cyan)', padding: '4px 10px', fontFamily: 'Share Tech Mono',
             fontSize: '0.72rem', fontWeight: 'bold', cursor: 'pointer',
-            display: 'flex', alignItems: 'center', gap: '4px', borderRadius: '3px',
+            display: 'flex', alignItems: 'center', gap: '5px', borderRadius: '3px',
           }}>
             <SciFiRefreshIcon size={11} color="var(--accent-cyan)" />
-            {loading ? 'SCANNING...' : 'RE-SCAN'}
+            <span>{loading ? 'SCANNING...' : 'RE-SCAN'}</span>
           </button>
         </div>
       </div>
+
 
       {/* Main grid — stretch to fill remaining height */}
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 290px', gap: '10px', flex: 1, minHeight: 0 }}>
@@ -817,7 +833,7 @@ export default function WorldMapPage() {
             )}
 
             <div style={{ position: 'absolute', bottom: '8px', left: '12px', fontFamily: 'Share Tech Mono', fontSize: '0.65rem', color: 'rgba(255,255,255,0.35)', pointerEvents: 'none' }}>
-              ✦ Drag to rotate · Scroll to zoom · Click pins
+              DRAG: ROTATE · SCROLL: ZOOM · CLICK: TARGET
             </div>
           </div>
 
@@ -835,8 +851,9 @@ export default function WorldMapPage() {
 
           {/* Server Telemetry */}
           <div className="glass-panel" style={{ padding: '12px', display: 'flex', flexDirection: 'column', gap: '9px', flexShrink: 0 }}>
-            <div style={{ fontSize: '0.78rem', color: 'var(--accent-green)', fontFamily: 'Share Tech Mono', fontWeight: 'bold', borderBottom: '1px solid rgba(0, 255, 157, 0.2)', paddingBottom: '5px' }}>
-              ✦ SERVER HQ TELEMETRY
+            <div style={{ fontSize: '0.78rem', color: 'var(--accent-green)', fontFamily: 'Share Tech Mono', fontWeight: 'bold', borderBottom: '1px solid rgba(0, 255, 157, 0.2)', paddingBottom: '5px', display: 'flex', alignItems: 'center', gap: '7px' }}>
+              <SciFiServerNodeIcon size={14} color="var(--accent-green)" />
+              <span>SERVER HQ TELEMETRY</span>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.75rem', fontFamily: 'Share Tech Mono' }}>
               {[
@@ -857,7 +874,10 @@ export default function WorldMapPage() {
           {/* Connected Clients */}
           <div className="glass-panel" style={{ flex: 1, padding: '12px', display: 'flex', flexDirection: 'column', gap: '9px', overflow: 'hidden' }}>
             <div style={{ fontSize: '0.78rem', color: 'var(--accent-cyan)', fontFamily: 'Share Tech Mono', fontWeight: 'bold', borderBottom: '1px solid rgba(0, 243, 255, 0.2)', paddingBottom: '5px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span>✦ CONNECTED NODES ({connections.length})</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
+                <SciFiUserNodesIcon size={14} color="var(--accent-cyan)" />
+                <span>CONNECTED NODES ({connections.length})</span>
+              </div>
               <SciFiPulseBadge size={13} color="var(--accent-cyan)" />
             </div>
             <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '7px' }}>
@@ -906,7 +926,10 @@ export default function WorldMapPage() {
           {/* Satellite Constellation Quick Selector Panel */}
           <div className="glass-panel" style={{ flex: 1, padding: '12px', display: 'flex', flexDirection: 'column', gap: '8px', overflow: 'hidden', minHeight: '160px' }}>
             <div style={{ fontSize: '0.78rem', color: '#ffe600', fontFamily: 'Share Tech Mono', fontWeight: 'bold', borderBottom: '1px solid rgba(255, 230, 0, 0.2)', paddingBottom: '5px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span>🛰 SATELLITES ({SATELLITE_CATALOG.length})</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
+                <SciFiSatelliteIcon size={14} color="#ffe600" />
+                <span>SATELLITES ({SATELLITE_CATALOG.length})</span>
+              </div>
               <span style={{ fontSize: '0.62rem', color: 'rgba(255,255,255,0.5)' }}>C2 TRACKING</span>
             </div>
             <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '6px' }}>

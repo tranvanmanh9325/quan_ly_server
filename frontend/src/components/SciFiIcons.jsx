@@ -511,15 +511,26 @@ export const SciFiCheckCircleIcon = ({ size = 18, color = 'var(--accent-green)' 
 );
 
 // 34. CLOSE ICON — Cyber Bracket Reticle Cancel Cross
-export const SciFiCloseIcon = ({ size = 18, color = 'var(--accent-pink)' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
-    {/* Corner Bracket Frame */}
-    <path d="M4 8V4H8M16 4H20V8M20 16V20H16M8 20H4V16" stroke={color} strokeWidth="1" strokeOpacity="0.6" />
-    {/* Cross Lines */}
-    <line x1="7" y1="7" x2="17" y2="17" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
-    <line x1="17" y1="7" x2="7" y2="17" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
+export const SciFiCloseIcon = ({ size = 16, color = 'var(--accent-pink)', className = '', ...props }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    className={className}
+    style={{ display: 'inline-block', verticalAlign: 'middle' }}
+    {...props}
+  >
+    <path d="M3 7V4H7" stroke={color} strokeWidth="1.1" strokeOpacity="0.6" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M17 4H21V7" stroke={color} strokeWidth="1.1" strokeOpacity="0.6" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M21 17V21H17" stroke={color} strokeWidth="1.1" strokeOpacity="0.6" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M7 21H3V17" stroke={color} strokeWidth="1.1" strokeOpacity="0.6" strokeLinecap="round" strokeLinejoin="round" />
+    <line x1="7.5" y1="7.5" x2="16.5" y2="16.5" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
+    <line x1="16.5" y1="7.5" x2="7.5" y2="16.5" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
   </svg>
 );
+
 
 // 35. FACEBOOK — Cyberpunk Facebook emblem with reticle ring
 export const SciFiFacebookIcon = ({ size = 18, color = 'var(--accent-purple)' }) => (
@@ -742,4 +753,269 @@ export const SciFiAddFriendIcon = ({ size = 13, color = '#FE2C55' }) => (
     <line x1="15.8" y1="14.5" x2="16.5" y2="14.5" stroke={color} strokeWidth="0.8" strokeOpacity="0.5" />
     <line x1="15.8" y1="14.5" x2="15.8" y2="15.2" stroke={color} strokeWidth="0.8" strokeOpacity="0.5" />
   </svg>
-);
+);
+
+// 50. SATELLITE SPACECRAFT — Hexagonal bus core, dual solar wings with cell grids, parabolic downlink dish & microwave signal waves
+export const SciFiSatelliteIcon = ({ size = 20, color = 'currentColor', className = '', ...props }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    className={className}
+    style={{ display: 'inline-block', verticalAlign: 'middle' }}
+    {...props}
+  >
+    {/* Left Solar Wing */}
+    <rect x="2" y="7.5" width="6" height="5" rx="0.5" stroke={color} strokeWidth="1.2" fill={color} fillOpacity="0.12" />
+    <line x1="5" y1="7.5" x2="5" y2="12.5" stroke={color} strokeWidth="0.8" strokeOpacity="0.45" />
+    <line x1="2" y1="10" x2="8" y2="10" stroke={color} strokeWidth="0.8" strokeOpacity="0.45" />
+
+    {/* Right Solar Wing */}
+    <rect x="16" y="7.5" width="6" height="5" rx="0.5" stroke={color} strokeWidth="1.2" fill={color} fillOpacity="0.12" />
+    <line x1="19" y1="7.5" x2="19" y2="12.5" stroke={color} strokeWidth="0.8" strokeOpacity="0.45" />
+    <line x1="16" y1="10" x2="22" y2="10" stroke={color} strokeWidth="0.8" strokeOpacity="0.45" />
+
+    {/* Boom Struts connecting wings */}
+    <line x1="8" y1="10" x2="9.5" y2="10" stroke={color} strokeWidth="1.4" strokeLinecap="round" />
+    <line x1="14.5" y1="10" x2="16" y2="10" stroke={color} strokeWidth="1.4" strokeLinecap="round" />
+
+    {/* Hexagonal Bus Core */}
+    <polygon
+      points="12,6 14.5,8 14.5,12 12,14 9.5,12 9.5,8"
+      stroke={color}
+      strokeWidth="1.3"
+      fill={color}
+      fillOpacity="0.22"
+      strokeLinejoin="round"
+    />
+    <circle cx="12" cy="10" r="1.2" fill={color} />
+
+    {/* Zenith Mast & Beacon */}
+    <line x1="12" y1="6" x2="12" y2="2.5" stroke={color} strokeWidth="1.2" strokeLinecap="round" />
+    <circle cx="12" cy="2.5" r="0.9" fill={color} />
+
+    {/* Nadir Parabolic Dish */}
+    <path d="M8.5 15.5 C9.5 18 14.5 18 15.5 15.5" stroke={color} strokeWidth="1.4" strokeLinecap="round" fill="none" />
+    <line x1="12" y1="14" x2="12" y2="17.2" stroke={color} strokeWidth="1.1" strokeLinecap="round" />
+    <circle cx="12" cy="17.2" r="0.6" fill={color} />
+
+    {/* Signal Microwave Waves */}
+    <path d="M9.5 19.8 C10.5 21.2 13.5 21.2 14.5 19.8" stroke={color} strokeWidth="1" strokeLinecap="round" strokeOpacity="0.75" />
+    <path d="M7.8 22.2 C9.8 24.2 14.2 24.2 16.2 22.2" stroke={color} strokeWidth="0.8" strokeDasharray="1.5 1" strokeLinecap="round" strokeOpacity="0.45" />
+  </svg>
+);
+
+// 51. 3D ORBIT RINGS — Central Earth globe with dual intersecting elliptical orbital planes & active satellite beacons
+export const SciFiOrbitRingIcon = ({ size = 20, color = 'currentColor', className = '', ...props }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    className={className}
+    style={{ display: 'inline-block', verticalAlign: 'middle' }}
+    {...props}
+  >
+    {/* Inclined Orbit Ellipse 1 (-35deg) */}
+    <g transform="rotate(-35 12 12)">
+      <ellipse cx="12" cy="12" rx="9.8" ry="3.8" stroke={color} strokeWidth="1.2" strokeDasharray="4 2" fill="none" />
+      <circle cx="21.5" cy="12" r="1.5" fill={color} />
+      <polygon points="21.5,9.5 22.8,12 21.5,14.5 20.2,12" fill={color} fillOpacity="0.5" />
+    </g>
+
+    {/* Inclined Orbit Ellipse 2 (+45deg) */}
+    <g transform="rotate(45 12 12)">
+      <ellipse cx="12" cy="12" rx="9.5" ry="3.4" stroke={color} strokeWidth="1" strokeOpacity="0.8" fill="none" />
+      <circle cx="2.8" cy="12" r="1.4" fill={color} />
+      <polygon points="2.8,10 4,12 2.8,14 1.6,12" fill={color} fillOpacity="0.5" />
+    </g>
+
+    {/* Central Earth Globe */}
+    <circle cx="12" cy="12" r="4.8" stroke={color} strokeWidth="1.3" fill={color} fillOpacity="0.15" />
+    <ellipse cx="12" cy="12" rx="4.8" ry="1.8" stroke={color} strokeWidth="0.7" strokeDasharray="1.8 1.2" strokeOpacity="0.6" />
+    <ellipse cx="12" cy="12" rx="1.8" ry="4.8" stroke={color} strokeWidth="0.7" strokeDasharray="1.8 1.2" strokeOpacity="0.6" />
+    <circle cx="12" cy="12" r="1" fill={color} />
+  </svg>
+);
+
+// 52. TACTICAL TARGET LOCK / CROSSHAIR — Corner brackets, segmented radar reticle, diamond lock core
+export const SciFiTargetLockIcon = ({ size = 20, color = 'currentColor', className = '', ...props }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    className={className}
+    style={{ display: 'inline-block', verticalAlign: 'middle' }}
+    {...props}
+  >
+    {/* 4 Tactical Corner Brackets */}
+    <path d="M3 8V5L5 3H8" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M16 3H19L21 5V8" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M21 16V19L19 21H16" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M8 21H5L3 19V16" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+
+    {/* Segmented Radar Reticle */}
+    <circle cx="12" cy="12" r="6.2" stroke={color} strokeWidth="1.1" strokeDasharray="3.2 2" fill="none" />
+
+    {/* Diamond Reticle Core */}
+    <polygon points="12,9.2 14.8,12 12,14.8 9.2,12" stroke={color} strokeWidth="1.2" fill={color} fillOpacity="0.2" strokeLinejoin="round" />
+    <circle cx="12" cy="12" r="1" fill={color} />
+
+    {/* Crosshair Ticks */}
+    <line x1="12" y1="2" x2="12" y2="5.2" stroke={color} strokeWidth="1.4" strokeLinecap="round" />
+    <line x1="12" y1="18.8" x2="12" y2="22" stroke={color} strokeWidth="1.4" strokeLinecap="round" />
+    <line x1="2" y1="12" x2="5.2" y2="12" stroke={color} strokeWidth="1.4" strokeLinecap="round" />
+    <line x1="18.8" y1="12" x2="22" y2="12" stroke={color} strokeWidth="1.4" strokeLinecap="round" />
+  </svg>
+);
+
+// 53. SERVER HQ NODE — Command C2 tower with server chassis, dome sensor and microwave mast
+export const SciFiServerNodeIcon = ({ size = 20, color = 'currentColor', className = '', ...props }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    className={className}
+    style={{ display: 'inline-block', verticalAlign: 'middle' }}
+    {...props}
+  >
+    {/* Base Server Rack Chassis */}
+    <rect x="5" y="14" width="14" height="6.5" rx="1" stroke={color} strokeWidth="1.3" fill={color} fillOpacity="0.1" />
+    <line x1="8" y1="17.2" x2="16" y2="17.2" stroke={color} strokeWidth="1" strokeLinecap="round" strokeOpacity="0.6" />
+    <circle cx="7" cy="17.2" r="0.9" fill={color} />
+    <circle cx="17" cy="17.2" r="0.9" fill={color} fillOpacity="0.5" />
+
+    {/* Mid C2 Processing Unit */}
+    <rect x="7" y="8" width="10" height="5" rx="0.8" stroke={color} strokeWidth="1.2" fill={color} fillOpacity="0.18" />
+    <line x1="9.5" y1="10.5" x2="14.5" y2="10.5" stroke={color} strokeWidth="1" strokeLinecap="round" />
+
+    {/* Command Sensor Dome */}
+    <polygon points="12,3.5 15.5,7.5 8.5,7.5" stroke={color} strokeWidth="1.2" fill={color} fillOpacity="0.25" strokeLinejoin="round" />
+
+    {/* Microwave Mast & Waves */}
+    <line x1="12" y1="1.5" x2="12" y2="3.5" stroke={color} strokeWidth="1.4" strokeLinecap="round" />
+    <circle cx="12" cy="1.5" r="1" fill={color} />
+    <path d="M8.5 3 C9.6 1.6 14.4 1.6 15.5 3" stroke={color} strokeWidth="0.9" strokeLinecap="round" strokeOpacity="0.75" />
+    <path d="M6.5 1 C8.5 -0.6 15.5 -0.6 17.5 1" stroke={color} strokeWidth="0.7" strokeDasharray="1.5 1" strokeOpacity="0.4" />
+
+    {/* Ground Foundation */}
+    <line x1="3" y1="21.5" x2="21" y2="21.5" stroke={color} strokeWidth="1.3" strokeLinecap="round" />
+  </svg>
+);
+
+// 54. CONNECTED USER NODES — Mesh network topology with central hub and telemetry client endpoints
+export const SciFiUserNodesIcon = ({ size = 20, color = 'currentColor', className = '', ...props }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    className={className}
+    style={{ display: 'inline-block', verticalAlign: 'middle' }}
+    {...props}
+  >
+    {/* Master Hub Node */}
+    <polygon
+      points="12,8.5 15,10.2 15,13.8 12,15.5 9,13.8 9,10.2"
+      stroke={color}
+      strokeWidth="1.3"
+      fill={color}
+      fillOpacity="0.25"
+      strokeLinejoin="round"
+    />
+    <circle cx="12" cy="12" r="1.3" fill={color} />
+
+    {/* 4 Client Nodes */}
+    <circle cx="5" cy="6" r="2.2" stroke={color} strokeWidth="1.2" fill={color} fillOpacity="0.12" />
+    <circle cx="5" cy="6" r="0.9" fill={color} />
+
+    <circle cx="19" cy="6" r="2.2" stroke={color} strokeWidth="1.2" fill={color} fillOpacity="0.12" />
+    <circle cx="19" cy="6" r="0.9" fill={color} />
+
+    <circle cx="4.5" cy="18" r="2.2" stroke={color} strokeWidth="1.2" fill={color} fillOpacity="0.12" />
+    <circle cx="4.5" cy="18" r="0.9" fill={color} />
+
+    <circle cx="19.5" cy="18" r="2.2" stroke={color} strokeWidth="1.2" fill={color} fillOpacity="0.12" />
+    <circle cx="19.5" cy="18" r="0.9" fill={color} />
+
+    {/* Data Transmission Links */}
+    <line x1="9.5" y1="10.5" x2="6.8" y2="7.5" stroke={color} strokeWidth="1.1" strokeDasharray="1.8 1.2" strokeLinecap="round" />
+    <line x1="14.5" y1="10.5" x2="17.2" y2="7.5" stroke={color} strokeWidth="1.1" strokeDasharray="1.8 1.2" strokeLinecap="round" />
+    <line x1="9.5" y1="13.5" x2="6.3" y2="16.5" stroke={color} strokeWidth="1.1" strokeDasharray="1.8 1.2" strokeLinecap="round" />
+    <line x1="14.5" y1="13.5" x2="17.7" y2="16.5" stroke={color} strokeWidth="1.1" strokeDasharray="1.8 1.2" strokeLinecap="round" />
+  </svg>
+);
+
+// 55. SPEED GAUGE TACHOMETER — HUD 220° arc with needle pointer and multiplier bars
+export const SciFiSpeedGaugeIcon = ({ size = 20, color = 'currentColor', className = '', ...props }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    className={className}
+    style={{ display: 'inline-block', verticalAlign: 'middle' }}
+    {...props}
+  >
+    <path
+      d="M4.5 17.5 A 8.5 8.5 0 1 1 19.5 17.5"
+      stroke={color}
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      fill="none"
+    />
+    <path
+      d="M6.2 15.8 A 6.5 6.5 0 1 1 17.8 15.8"
+      stroke={color}
+      strokeWidth="0.9"
+      strokeDasharray="2 3"
+      strokeOpacity="0.5"
+      fill="none"
+    />
+    <line x1="12" y1="13" x2="17" y2="7.5" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
+    <circle cx="12" cy="13" r="2.2" stroke={color} strokeWidth="1.2" fill={color} fillOpacity="0.3" />
+    <circle cx="12" cy="13" r="0.9" fill="#ffffff" />
+    <rect x="5.5" y="19" width="3.2" height="2" rx="0.5" fill={color} fillOpacity="0.9" />
+    <rect x="10.4" y="19" width="3.2" height="2" rx="0.5" fill={color} fillOpacity="0.6" />
+    <rect x="15.3" y="19" width="3.2" height="2" rx="0.5" fill={color} fillOpacity="0.3" />
+  </svg>
+);
+
+// 56. CAMERA RECALIBRATE / RESET — 3D Viewport brackets with 360-degree recalibration loop arrow & coordinate trihedron
+export const SciFiCameraResetIcon = ({ size = 20, color = 'currentColor', className = '', ...props }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    className={className}
+    style={{ display: 'inline-block', verticalAlign: 'middle' }}
+    {...props}
+  >
+    <path d="M4 7V4H7" stroke={color} strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" strokeOpacity="0.65" />
+    <path d="M17 4H20V7" stroke={color} strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" strokeOpacity="0.65" />
+    <path d="M20 17V20H17" stroke={color} strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" strokeOpacity="0.65" />
+    <path d="M7 20H4V17" stroke={color} strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" strokeOpacity="0.65" />
+    <path
+      d="M12 6.5 A 5.5 5.5 0 1 1 6.5 12"
+      stroke={color}
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      fill="none"
+    />
+    <polygon points="12,3.5 12,9.5 7.8,6.5" fill={color} />
+    <circle cx="12" cy="12" r="1.3" fill={color} />
+  </svg>
+);
+
+

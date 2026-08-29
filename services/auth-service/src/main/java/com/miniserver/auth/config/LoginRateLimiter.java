@@ -1,13 +1,14 @@
 package com.miniserver.auth.config;
 
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import java.time.Duration;
 import java.util.ArrayDeque;
 import java.util.Deque;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
 @Component
 public class LoginRateLimiter {
@@ -17,11 +18,15 @@ public class LoginRateLimiter {
     static final int MAX_ATTEMPTS = 5;
     static final long WINDOW_MS = 60_000L;
 
-    private final Map<String, Deque<Long>> attempts = new ConcurrentHashMap<>();
+    // Auto-evicts inactive IPs after 2 minutes to prevent unbounded memory growth / OOM from scanners
+    private final Cache<String, Deque<Long>> attemptsCache = Caffeine.newBuilder()
+            .maximumSize(50_000)
+            .expireAfterAccess(Duration.ofMinutes(2))
+            .build();
 
     public boolean tryConsume(String ip) {
         long now = System.currentTimeMillis();
-        Deque<Long> window = attempts.computeIfAbsent(ip, k -> new ArrayDeque<>());
+        Deque<Long> window = attemptsCache.get(ip, k -> new ArrayDeque<>());
 
         synchronized (window) {
             while (!window.isEmpty() && now - window.peekFirst() > WINDOW_MS) {
@@ -42,7 +47,7 @@ public class LoginRateLimiter {
 
     public long retryAfterSeconds(String ip) {
         long now = System.currentTimeMillis();
-        Deque<Long> window = attempts.get(ip);
+        Deque<Long> window = attemptsCache.getIfPresent(ip);
         if (window == null) return 0;
 
         synchronized (window) {

@@ -1,11 +1,10 @@
-import { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { formatLogLineTimestamp } from '../utils/parsers';
 import { SciFiSortDescIcon, SciFiSortAscIcon } from './SciFiIcons';
 import { useTranslation } from '../i18n/index.jsx';
 
 /**
- * Debounce hook — prevents the expensive useMemo from re-running on every single
- * keystroke when the user is typing a log search query.
+ * Debounce hook — prevents expensive filtering on every keystroke.
  */
 function useDebounce(value, delayMs) {
   const [debounced, setDebounced] = useState(value);
@@ -16,22 +15,9 @@ function useDebounce(value, delayMs) {
   return debounced;
 }
 
-/**
- * Shared log viewer component used by ServicesPage and ContainersPage.
- *
- * Centralises:
- *  - Sort order toggle (newest/oldest first)
- *  - Keyword filter input (debounced)
- *  - Coloured log line rendering (error / warn / default)
- *  - Timestamp reformatting via formatLogLineTimestamp
- *
- * @param {object}   props
- * @param {string}   props.logContent     - Raw log string (newline-separated)
- * @param {string}   props.accentColor    - CSS colour string for the search border / icon
- * @param {boolean}  props.isLoading      - Shows a loading message when true
- * @param {string}   props.loadingText    - Custom loading label (optional)
- * @param {string}   props.background     - Background colour of the scroll container (optional)
- */
+const ITEM_HEIGHT = 38; // Fixed row height (px)
+const OVERSCAN = 12;    // Safety buffer lines above/below viewport
+
 export default function LogViewer({
   logContent,
   accentColor = 'var(--accent-cyan)',
@@ -44,65 +30,47 @@ export default function LogViewer({
   const [rawSearch, setRawSearch] = useState('');
   const displayLoadingText = loadingText || t('logViewer.loading');
 
-  // Debounce search to avoid re-filtering on every keystroke
   const logSearchQuery = useDebounce(rawSearch, 200);
 
-  // Recomputes only when content, sort order, or debounced search query changes
-  const renderedLines = useMemo(() => {
+  // Parse and filter lines
+  const filteredLines = useMemo(() => {
     const rawLines = (logContent || '').split('\n').filter(l => l.trim() !== '');
     const sortedLines = logOrderDesc ? [...rawLines].reverse() : rawLines;
-    const filteredLines = logSearchQuery
-      ? sortedLines.filter(l => l.toLowerCase().includes(logSearchQuery.toLowerCase()))
-      : sortedLines;
-
-    if (filteredLines.length === 0) {
-      return (
-        <div style={{ color: 'var(--text-secondary)', textAlign: 'center', padding: '30px' }}>
-          No log entries matching search filter.
-        </div>
-      );
-    }
-
-    return filteredLines.map((line, idx) => {
-      const formattedLine = formatLogLineTimestamp(line);
-      const isErr  = /error|fail|exception|fatal|denied/i.test(line);
-      const isWarn = /warn|warning/i.test(line);
-
-      const borderColor = isErr  ? 'var(--accent-pink)'          : isWarn ? '#f0b429'                    : 'rgba(0, 243, 255, 0.2)';
-      const bg          = isErr  ? 'rgba(255, 0, 85, 0.12)'      : isWarn ? 'rgba(240, 180, 41, 0.08)'   : 'rgba(0, 243, 255, 0.03)';
-      const textColor   = isErr  ? 'var(--accent-pink)'          : isWarn ? '#f0b429'                    : 'rgba(255, 255, 255, 0.9)';
-
-      return (
-        <div
-          key={idx}
-          style={{
-            display: 'flex',
-            alignItems: 'flex-start',
-            gap: '10px',
-            padding: '7px 10px',
-            marginBottom: '4px',
-            background: bg,
-            borderLeft: `4px solid ${borderColor}`,
-            borderBottom: '1px solid rgba(255, 255, 255, 0.06)',
-            borderRadius: '3px',
-            lineHeight: '1.45',
-            wordBreak: 'break-all',
-          }}
-        >
-          <span style={{ opacity: 0.4, userSelect: 'none', minWidth: '32px', textAlign: 'right', flexShrink: 0, fontSize: '0.72rem' }}>
-            {idx + 1}
-          </span>
-          <div style={{ flex: 1, color: textColor, whiteSpace: 'pre-wrap' }}>
-            {formattedLine}
-          </div>
-        </div>
-      );
-    });
+    if (!logSearchQuery) return sortedLines;
+    const query = logSearchQuery.toLowerCase();
+    return sortedLines.filter(l => l.toLowerCase().includes(query));
   }, [logContent, logOrderDesc, logSearchQuery]);
+
+  // Virtual Scrolling State
+  const scrollContainerRef = useRef(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [containerHeight, setContainerHeight] = useState(500);
+
+  useEffect(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(entries => {
+      if (entries[0]) {
+        setContainerHeight(entries[0].contentRect.height);
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const handleScroll = useCallback((e) => {
+    setScrollTop(e.currentTarget.scrollTop);
+  }, []);
+
+  // Compute visible slice indices
+  const totalCount = filteredLines.length;
+  const totalHeight = totalCount * ITEM_HEIGHT;
+  const startIndex = Math.max(0, Math.floor(scrollTop / ITEM_HEIGHT) - OVERSCAN);
+  const endIndex = Math.min(totalCount, Math.ceil((scrollTop + containerHeight) / ITEM_HEIGHT) + OVERSCAN);
+  const visibleLines = filteredLines.slice(startIndex, endIndex);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
-
       {/* ─── Toolbar: search + sort toggle ──────────────────────────────────── */}
       <div style={{
         display: 'flex',
@@ -110,7 +78,7 @@ export default function LogViewer({
         gap: '8px',
         padding: '6px 12px',
         background: 'rgba(0,0,0,0.3)',
-        borderBottom: `1px solid rgba(0, 243, 255, 0.15)`,
+        borderBottom: '1px solid rgba(0, 243, 255, 0.15)',
         flexShrink: 0,
       }}>
         <input
@@ -121,7 +89,7 @@ export default function LogViewer({
           style={{
             flex: 1,
             background: 'rgba(0,0,0,0.5)',
-            border: `1px solid rgba(0, 243, 255, 0.25)`,
+            border: '1px solid rgba(0, 243, 255, 0.25)',
             color: '#fff',
             padding: '4px 10px',
             fontSize: '0.78rem',
@@ -155,20 +123,78 @@ export default function LogViewer({
         </button>
       </div>
 
-      {/* ─── Log content area ────────────────────────────────────────────────── */}
-      <div style={{
-        flex: 1,
-        overflowY: 'auto',
-        background,
-        fontFamily: 'Share Tech Mono, monospace',
-        fontSize: '0.8rem',
-        padding: '12px',
-      }}>
-        {isLoading
-          ? <div style={{ color: accentColor, textAlign: 'center', padding: '40px' }}>{displayLoadingText}</div>
-          : renderedLines}
-      </div>
+      {/* ─── Virtualized Log Container ────────────────────────────────────────── */}
+      <div
+        ref={scrollContainerRef}
+        onScroll={handleScroll}
+        style={{
+          flex: 1,
+          overflowY: 'auto',
+          background,
+          fontFamily: 'Share Tech Mono, monospace',
+          fontSize: '0.8rem',
+          position: 'relative',
+          padding: '8px 12px',
+        }}
+      >
+        {isLoading ? (
+          <div style={{ color: accentColor, textAlign: 'center', padding: '40px' }}>{displayLoadingText}</div>
+        ) : totalCount === 0 ? (
+          <div style={{ color: 'var(--text-secondary)', textAlign: 'center', padding: '30px' }}>
+            No log entries matching search filter.
+          </div>
+        ) : (
+          <div style={{ height: `${totalHeight}px`, position: 'relative', width: '100%' }}>
+            <div style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              right: 0,
+              transform: `translateY(${startIndex * ITEM_HEIGHT}px)`,
+            }}>
+              {visibleLines.map((line, relativeIdx) => {
+                const absoluteIdx = startIndex + relativeIdx;
+                const formattedLine = formatLogLineTimestamp(line);
+                const isErr  = /error|fail|exception|fatal|denied/i.test(line);
+                const isWarn = /warn|warning/i.test(line);
 
+                const borderColor = isErr  ? 'var(--accent-pink)' : isWarn ? '#f0b429' : 'rgba(0, 243, 255, 0.2)';
+                const bg          = isErr  ? 'rgba(255, 0, 85, 0.12)' : isWarn ? 'rgba(240, 180, 41, 0.08)' : 'rgba(0, 243, 255, 0.03)';
+                const textColor   = isErr  ? 'var(--accent-pink)' : isWarn ? '#f0b429' : 'rgba(255, 255, 255, 0.9)';
+
+                return (
+                  <div
+                    key={absoluteIdx}
+                    style={{
+                      height: `${ITEM_HEIGHT}px`,
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '10px',
+                      padding: '0 10px',
+                      marginBottom: '2px',
+                      boxSizing: 'border-box',
+                      background: bg,
+                      borderLeft: `4px solid ${borderColor}`,
+                      borderBottom: '1px solid rgba(255, 255, 255, 0.06)',
+                      borderRadius: '3px',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    <span style={{ opacity: 0.4, userSelect: 'none', minWidth: '36px', textAlign: 'right', flexShrink: 0, fontSize: '0.72rem' }}>
+                      {absoluteIdx + 1}
+                    </span>
+                    <div style={{ flex: 1, color: textColor, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={line}>
+                      {formattedLine}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

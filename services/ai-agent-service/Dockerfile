@@ -37,4 +37,4 @@ COPY app/ ./app/
 
 EXPOSE 8084 6080
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8084"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8084", "--loop", "uvloop", "--http", "httptools", "--lifespan", "on", "--timeout-keep-alive", "65", "--backlog", "2048", "--limit-concurrency", "500"]

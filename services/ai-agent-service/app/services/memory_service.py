@@ -28,6 +28,7 @@ import httpx
 import psycopg
 
 from app.config import settings
+from app.core.db import get_db_connection
 
 logger = logging.getLogger(__name__)
 VN_TZ = timezone(timedelta(hours=7))
@@ -218,7 +219,7 @@ class AgentMemoryService:
     async def list_lessons_for_display(self, limit: int = 10) -> List[Dict[str, Any]]:
         """Returns raw lesson list for Telegram /lessons command display."""
         try:
-            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+            async with get_db_connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(
                         """
@@ -242,7 +243,7 @@ class AgentMemoryService:
     async def delete_lesson(self, lesson_id: int) -> bool:
         """Soft-delete: sets is_active=FALSE rather than hard-deleting."""
         try:
-            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+            async with get_db_connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(
                         "UPDATE agent_lessons SET is_active = FALSE WHERE id = %s",
@@ -279,7 +280,7 @@ class AgentMemoryService:
     async def get_memory_stats(self) -> Dict[str, Any]:
         """Returns memory statistics for /memory_stats command."""
         try:
-            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+            async with get_db_connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(
                         """
@@ -733,7 +734,7 @@ Bài học:"""
         context_snapshot: Optional[str],
     ) -> Optional[int]:
         try:
-            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+            async with get_db_connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(
                         """
@@ -756,7 +757,7 @@ Bài học:"""
     ) -> None:
         """Saves the search query and results back to the episodic memory row."""
         try:
-            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+            async with get_db_connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(
                         "UPDATE agent_memories SET search_query = %s, search_results = %s WHERE id = %s",
@@ -781,7 +782,7 @@ Bài học:"""
         - Pruned:  lessons soft-deleted (is_active=FALSE) due to very low confidence + long disuse.
         """
         try:
-            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+            async with get_db_connection() as conn:
                 async with conn.cursor() as cur:
                     # Apply Ebbinghaus decay: confidence × e^(-decay_rate × days_unused)
                     # Uses last_used_at if available, else created_at as fallback.
@@ -875,7 +876,7 @@ Bài học:"""
         Called when a new lesson is semantically similar to an old one (labile window).
         """
         try:
-            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+            async with get_db_connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(
                         """
@@ -984,7 +985,7 @@ Bài học:"""
         search_query: Optional[str],
     ) -> Optional[int]:
         try:
-            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+            async with get_db_connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(
                         """
@@ -1006,7 +1007,7 @@ Bài học:"""
 
     async def _link_memory_to_lesson(self, memory_id: int, lesson_id: int) -> None:
         try:
-            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+            async with get_db_connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(
                         "UPDATE agent_memories SET lesson_id = %s WHERE id = %s",
@@ -1018,7 +1019,7 @@ Bài học:"""
 
     async def _refresh_lesson_cache(self, limit: int) -> None:
         try:
-            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+            async with get_db_connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(
                         """
@@ -1050,7 +1051,7 @@ Bài học:"""
 
     async def _increment_usage(self, lesson_id: int) -> None:
         try:
-            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+            async with get_db_connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(
                         "UPDATE agent_lessons SET usage_count = usage_count + 1, last_used_at = NOW() WHERE id = %s",
@@ -1063,7 +1064,7 @@ Bài học:"""
     async def ensure_tables(self) -> None:
         """Creates/verifies memory tables (idempotent safety net for startup)."""
         try:
-            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+            async with get_db_connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute("SELECT 1 FROM agent_lessons LIMIT 1")
                     await cur.execute("SELECT 1 FROM agent_episodes LIMIT 1")
@@ -1104,7 +1105,7 @@ Bài học:"""
             expires_at_sql = None
 
         try:
-            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+            async with get_db_connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(
                         """
@@ -1137,7 +1138,7 @@ Bài học:"""
         Called from AiAgentService._build_system_prompt() for episodic recall.
         """
         try:
-            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+            async with get_db_connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(
                         """
@@ -1172,7 +1173,7 @@ Bài học:"""
     async def expire_old_episodes(self) -> int:
         """Soft-deletes episodes past their expiry date. Called during nightly consolidation."""
         try:
-            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+            async with get_db_connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(
                         """
@@ -1208,7 +1209,7 @@ Bài học:"""
         The task gets injected into system prompt every `remind_turns` conversation turns.
         """
         try:
-            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+            async with get_db_connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(
                         """
@@ -1232,7 +1233,7 @@ Bài học:"""
     async def complete_pending_task(self, task_id: int) -> bool:
         """Marks a pending task as done."""
         try:
-            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+            async with get_db_connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(
                         """
@@ -1254,7 +1255,7 @@ Bài học:"""
         Increments turns_elapsed; auto-completes tasks older than 7 days with no action.
         """
         try:
-            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+            async with get_db_connection() as conn:
                 async with conn.cursor() as cur:
                     # Auto-expire tasks older than 7 days
                     await cur.execute(
@@ -1299,7 +1300,7 @@ Bài học:"""
     async def list_pending_tasks(self) -> List[Dict[str, Any]]:
         """Returns raw list of pending tasks for /tasks Telegram command."""
         try:
-            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+            async with get_db_connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(
                         """
@@ -1333,7 +1334,7 @@ Bài học:"""
         Sets last_alerted timestamp when an alert is sent (for cooldown logic).
         """
         try:
-            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+            async with get_db_connection() as conn:
                 async with conn.cursor() as cur:
                     if send_alert:
                         await cur.execute(
@@ -1375,7 +1376,7 @@ Bài học:"""
         Prevents alert spam with configurable cooldown.
         """
         try:
-            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+            async with get_db_connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(
                         """
@@ -1412,7 +1413,7 @@ Bài học:"""
             return
         try:
             col = "success_count" if success else "fail_count"
-            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+            async with get_db_connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(
                         f"""INSERT INTO agent_causal_chains (tool_a, tool_b, {col}, last_seen_at)
@@ -1429,7 +1430,7 @@ Bài học:"""
     async def get_all_causal_hints_prompt(self, min_weight: float = 0.6) -> str:
         """Returns high-confidence causal chains for system prompt injection (Section 11)."""
         try:
-            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+            async with get_db_connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(
                         """SELECT tool_a, tool_b,
@@ -1463,7 +1464,7 @@ Bài học:"""
             return
         try:
             col = "success_count" if success else "fail_count"
-            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+            async with get_db_connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(
                         f"""INSERT INTO agent_causal_chains (tool_a, tool_b, {col}, last_seen_at)
@@ -1485,7 +1486,7 @@ Bài học:"""
     async def get_active_schemas_prompt(self) -> str:
         """Returns top-3 active schemas formatted for system prompt Section 7 injection."""
         try:
-            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+            async with get_db_connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(
                         """SELECT schema_name, pattern_text, occurrence_count
@@ -1513,7 +1514,7 @@ Bài học:"""
         if not self._http or not settings.groq_keys:
             return 0
         try:
-            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+            async with get_db_connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(
                         """SELECT event_summary, salience_score
@@ -1560,7 +1561,7 @@ Bài học:"""
             schemas = _json.loads(json_match.group())
             count = 0
 
-            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+            async with get_db_connection() as conn:
                 async with conn.cursor() as cur:
                     for s in schemas:
                         name = str(s.get("name", ""))[:200].strip()

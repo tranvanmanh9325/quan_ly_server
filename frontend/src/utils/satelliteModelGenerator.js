@@ -26,6 +26,7 @@ let sharedPlateGeo = null;
 let sharedYokeGeo = null;
 let sharedFrameGeo = null;
 let sharedCellGeo = null;
+let sharedCellEdgeGeo = null;
 let sharedGimbalGeo = null;
 let sharedDishGeo = null;
 let sharedFeedGeo = null;
@@ -33,6 +34,31 @@ let sharedBaffleGeo = null;
 let sharedNozzleGeo = null;
 let sharedMastGeo = null;
 let sharedMagHeadGeo = null;
+
+// Reusable Material Caches by Hex Color
+const beaconMaterialCache = new Map();
+const lineMaterialCache = new Map();
+
+function getOrCreateBeaconMaterial(hexColor) {
+  if (!beaconMaterialCache.has(hexColor)) {
+    beaconMaterialCache.set(hexColor, new THREE.MeshBasicMaterial({ color: new THREE.Color(hexColor) }));
+  }
+  return beaconMaterialCache.get(hexColor);
+}
+
+function getOrCreateLineMaterial(hexColor) {
+  if (!lineMaterialCache.has(hexColor)) {
+    lineMaterialCache.set(
+      hexColor,
+      new THREE.LineBasicMaterial({
+        color: new THREE.Color(hexColor),
+        transparent: true,
+        opacity: 0.75,
+      })
+    );
+  }
+  return lineMaterialCache.get(hexColor);
+}
 
 // Pre-allocated Vector3 / Matrix4 / Quaternion buffers for ZERO Garbage Collection
 const _satPos = new THREE.Vector3();
@@ -224,6 +250,7 @@ function initPhotorealisticResources() {
   sharedYokeGeo = new THREE.CylinderGeometry(0.04, 0.04, 0.5, 8);
   sharedFrameGeo = new THREE.BoxGeometry(1.6, 0.7, 0.03);
   sharedCellGeo = new THREE.PlaneGeometry(1.54, 0.66);
+  sharedCellEdgeGeo = new THREE.EdgesGeometry(sharedCellGeo);
   sharedGimbalGeo = new THREE.CylinderGeometry(0.08, 0.12, 0.16, 12);
 
   // Parabolic dish curve
@@ -255,8 +282,9 @@ export function createSatellite3DObject(sat, scale = 1.4) {
   const satellite = new THREE.Group();
   satellite.name = `PhotorealisticSat_${sat.id}`;
 
-  const satColor = new THREE.Color(sat.color || '#00ff9d');
-  const beaconMat = new THREE.MeshBasicMaterial({ color: satColor });
+  const hexColor = sat.color || '#00ff9d';
+  const beaconMat = getOrCreateBeaconMaterial(hexColor);
+  const neonLineMat = getOrCreateLineMaterial(hexColor);
 
   // 1. MAIN CHASSIS (Hexagonal Prism in Gold Kapton MLI Foil)
   const bodyMesh = new THREE.Mesh(sharedBodyGeo, sharedKaptonMaterial);
@@ -298,11 +326,8 @@ export function createSatellite3DObject(sat, scale = 1.4) {
     cellBack.position.z = -0.017;
     wingGroup.add(cellBack);
 
-    // Neon Frame Accent on outer perimeter
-    const neonFrame = new THREE.LineSegments(
-      new THREE.EdgesGeometry(sharedCellGeo),
-      new THREE.LineBasicMaterial({ color: satColor, transparent: true, opacity: 0.75 })
-    );
+    // Neon Frame Accent on outer perimeter (Shared Geometry & Material)
+    const neonFrame = new THREE.LineSegments(sharedCellEdgeGeo, neonLineMat);
     neonFrame.position.copy(cellFront.position);
     wingGroup.add(neonFrame);
 

@@ -194,7 +194,13 @@ async def weekly_schema_extraction_loop(memory_service):
 async def lifespan(app: FastAPI):
     logger.info("Starting up AI Agent & 9Router Service (Python)...")
 
-    # 1. Initialize core 9Router Engine & Infrastructure
+    # 1. Initialize DB Connection Pool & Shared HTTP Client
+    from app.core.db import db_manager
+    from app.core.http_client import http_client_manager
+    await db_manager.initialize()
+    shared_http = http_client_manager.get_client()
+
+    # 2. Initialize core 9Router Engine & Infrastructure
     llm_router = LlmRouter()
     ssh_client = SshClient()
     message_cache = FacebookMessageCache()
@@ -202,7 +208,7 @@ async def lifespan(app: FastAPI):
     # Load persisted RTK stats from DB so the counter survives container restarts
     await llm_router.load_stats_from_db()
 
-    # 2. Initialize domain services with bidirectional wiring
+    # 3. Initialize domain services with bidirectional wiring
     appointment_service = AppointmentService(llm_router)
     fb_service = FacebookService(message_cache, appointment_service=appointment_service)
     tiktok_service = TikTokService(llm_router=llm_router)
@@ -219,7 +225,7 @@ async def lifespan(app: FastAPI):
 
     # Initialize AgentMemoryService (self-improving brain)
     memory_service = AgentMemoryService()
-    memory_service.set_http_client(llm_router._http_client)
+    memory_service.set_http_client(shared_http)
     await memory_service.ensure_tables()
     ai_agent.set_memory_service(memory_service)
     telegram_bot.set_memory_service(memory_service)
@@ -235,7 +241,7 @@ async def lifespan(app: FastAPI):
     logger.info("[Proactive] Curiosity-Driven Health Scanner initialized ✓ (interval=%ds)",
                 getattr(settings, "PROACTIVE_SCAN_INTERVAL_SECONDS", 21600))
 
-    # 3. Attach to app state for dependency injection in routers
+    # 4. Attach to app state for dependency injection in routers
     app.state.llm_router = llm_router
     app.state.ssh_client = ssh_client
     app.state.message_cache = message_cache
@@ -246,7 +252,7 @@ async def lifespan(app: FastAPI):
     app.state.telegram_bot = telegram_bot
     app.state.appointment_service = appointment_service
 
-    # 4. Start background workers
+    # 5. Start background workers
     telegram_task        = asyncio.create_task(telegram_bot.start_polling())
     fb_scan_task         = asyncio.create_task(facebook_periodic_scan_loop(fb_service))
     tiktok_scan_task     = asyncio.create_task(tiktok_periodic_scan_loop(tiktok_service))
@@ -280,8 +286,17 @@ async def lifespan(app: FastAPI):
     # Persist any remaining RTK delta before shutdown
     await llm_router.save_stats_to_db()
     logger.info("[RTK-Persist] Final RTK stats flushed to DB on shutdown.")
-    # Gracefully close the autonomous browser context
+    # Gracefully close the autonomous browser context & VNC session
     await browser_agent.close()
+    try:
+        from app.services.vnc_manager import vnc_manager
+        await vnc_manager.close_session()
+    except Exception:
+        pass
+    # Close HTTP & DB Pools
+    await http_client_manager.close()
+    await db_manager.close()
+    logger.info("AI Agent Service shutdown completed cleanly ✓")
 
 
 app = FastAPI(

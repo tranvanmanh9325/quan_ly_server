@@ -4,7 +4,7 @@ services:
     container_name: dashboard_db
     restart: unless-stopped
     stop_grace_period: 15s
-    shm_size: '256m'
+    shm_size: '512m'
     command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]
     environment:
       POSTGRES_USER: dashboard_user
@@ -16,6 +16,11 @@ services:
       - ./db/postgresql.conf:/etc/postgresql/postgresql.conf:ro
     networks:
       - dashboard-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U dashboard_user -d quan_ly_server"]
       interval: 20s
@@ -33,11 +38,16 @@ services:
     env_file:
       - .env
     environment:
-      JAVA_TOOL_OPTIONS: "-XX:+UseSerialGC -XX:MaxRAMPercentage=70.0 -XX:+ExitOnOutOfMemoryError -XX:+TieredCompilation -XX:TieredStopAtLevel=1"
+      JAVA_TOOL_OPTIONS: "-XX:+UseSerialGC -XX:MaxRAMPercentage=70.0 -XX:+UseStringDeduplication -XX:+ExitOnOutOfMemoryError -XX:+TieredCompilation -XX:TieredStopAtLevel=1"
     restart: unless-stopped
     stop_grace_period: 15s
     networks:
       - dashboard-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8081/actuator/health"]
       interval: 25s
@@ -62,7 +72,7 @@ services:
     env_file:
       - .env
     environment:
-      JAVA_TOOL_OPTIONS: "-XX:+UseG1GC -XX:MaxRAMPercentage=60.0 -XX:ParallelGCThreads=2 -XX:ConcGCThreads=1 -XX:+ExitOnOutOfMemoryError"
+      JAVA_TOOL_OPTIONS: "-XX:+UseG1GC -XX:MaxRAMPercentage=60.0 -XX:+UseStringDeduplication -XX:ParallelGCThreads=2 -XX:ConcGCThreads=1 -XX:+ExitOnOutOfMemoryError"
       TELEGRAM_POLLING_ENABLED: "false"
     restart: unless-stopped
     stop_grace_period: 15s
@@ -71,6 +81,11 @@ services:
         condition: service_healthy
     networks:
       - dashboard-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8082/actuator/health"]
       interval: 25s
@@ -110,8 +125,12 @@ services:
       # Mount application source code for instant updates without rebuilding container
       - ./services/ai-agent-service/app:/app/app
       # Persistent Chromium profile: preserves E2EE IndexedDB keys across restarts
-      # Without this, Facebook E2EE Messenger sidebar never loads in headless mode
       - browser_data:/app/browser_data
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     healthcheck:
       test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8084/health')\""]
       interval: 25s
@@ -137,11 +156,16 @@ services:
     env_file:
       - .env
     environment:
-      JAVA_TOOL_OPTIONS: "-XX:+UseSerialGC -XX:MaxRAMPercentage=70.0 -XX:+ExitOnOutOfMemoryError -XX:+TieredCompilation -XX:TieredStopAtLevel=1"
+      JAVA_TOOL_OPTIONS: "-XX:+UseSerialGC -XX:MaxRAMPercentage=70.0 -XX:+UseStringDeduplication -XX:+ExitOnOutOfMemoryError -XX:+TieredCompilation -XX:TieredStopAtLevel=1"
     restart: unless-stopped
     stop_grace_period: 15s
     networks:
       - dashboard-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8083/actuator/health"]
       interval: 25s
@@ -174,6 +198,11 @@ services:
     stop_grace_period: 15s
     networks:
       - dashboard-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:80"]
       interval: 30s

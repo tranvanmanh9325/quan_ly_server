@@ -10,6 +10,7 @@ import psycopg
 from psycopg.rows import dict_row
 
 from app.config import settings
+from app.core.db import get_db_connection, get_db_dict_cursor
 from app.core.llm_router import LlmRouter
 
 logger = logging.getLogger(__name__)
@@ -242,7 +243,7 @@ class AppointmentService:
     ) -> Optional[int]:
         """Saves a detected appointment if it doesn't already exist. Returns record ID or None."""
         try:
-            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+            async with get_db_connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(
                         "SELECT id FROM facebook_appointments WHERE msg_hash = %s LIMIT 1",
@@ -263,7 +264,6 @@ class AppointmentService:
                         (thread_href, sender_name, original_message, msg_hash, summary, proposed_time, location, confidence, scheduled_at)
                     )
                     row = await cur.fetchone()
-                    await conn.commit()
                     return row[0] if row else None
         except Exception as e:
             logger.error("[AppointmentService] DB error saving appointment: %s", e)
@@ -277,7 +277,7 @@ class AppointmentService:
     ) -> bool:
         """Updates the status and optional telegram message ID of an appointment."""
         try:
-            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+            async with get_db_connection() as conn:
                 async with conn.cursor() as cur:
                     if telegram_message_id:
                         await cur.execute(
@@ -289,7 +289,6 @@ class AppointmentService:
                             "UPDATE facebook_appointments SET status = %s, updated_at = NOW() WHERE id = %s",
                             (status, appointment_id)
                         )
-                    await conn.commit()
                     return cur.rowcount > 0
         except Exception as e:
             logger.error("[AppointmentService] DB error updating appointment #%d: %s", appointment_id, e)
@@ -298,14 +297,13 @@ class AppointmentService:
     async def get_appointment_by_id(self, appointment_id: int) -> Optional[Dict[str, Any]]:
         """Fetches single appointment record by ID."""
         try:
-            async with await psycopg.AsyncConnection.connect(settings.database_url, row_factory=dict_row) as conn:
-                async with conn.cursor() as cur:
-                    await cur.execute(
-                        "SELECT * FROM facebook_appointments WHERE id = %s LIMIT 1",
-                        (appointment_id,)
-                    )
-                    row = await cur.fetchone()
-                    return dict(row) if row else None
+            async with get_db_dict_cursor() as cur:
+                await cur.execute(
+                    "SELECT * FROM facebook_appointments WHERE id = %s LIMIT 1",
+                    (appointment_id,)
+                )
+                row = await cur.fetchone()
+                return dict(row) if row else None
         except Exception as e:
             logger.error("[AppointmentService] DB error fetching appointment #%d: %s", appointment_id, e)
             return None
@@ -313,20 +311,19 @@ class AppointmentService:
     async def get_upcoming_appointments(self, limit: int = 10) -> List[Dict[str, Any]]:
         """Retrieves list of upcoming and confirmed/pending appointments."""
         try:
-            async with await psycopg.AsyncConnection.connect(settings.database_url, row_factory=dict_row) as conn:
-                async with conn.cursor() as cur:
-                    await cur.execute(
-                        """
-                        SELECT id, sender_name, summary, proposed_time, location, status, original_message, scheduled_at, reminder_sent, created_at
-                        FROM facebook_appointments
-                        WHERE status IN ('confirmed', 'pending')
-                        ORDER BY COALESCE(scheduled_at, created_at) ASC, created_at DESC
-                        LIMIT %s
-                        """,
-                        (limit,)
-                    )
-                    rows = await cur.fetchall()
-                    return [dict(r) for r in rows]
+            async with get_db_dict_cursor() as cur:
+                await cur.execute(
+                    """
+                    SELECT id, sender_name, summary, proposed_time, location, status, original_message, scheduled_at, reminder_sent, created_at
+                    FROM facebook_appointments
+                    WHERE status IN ('confirmed', 'pending')
+                    ORDER BY COALESCE(scheduled_at, created_at) ASC, created_at DESC
+                    LIMIT %s
+                    """,
+                    (limit,)
+                )
+                rows = await cur.fetchall()
+                return [dict(r) for r in rows]
         except Exception as e:
             logger.error("[AppointmentService] DB error fetching upcoming appointments: %s", e)
             return []
@@ -342,7 +339,7 @@ class AppointmentService:
 
         dispatched_count = 0
         try:
-            async with await psycopg.AsyncConnection.connect(settings.database_url, row_factory=dict_row) as conn:
+            async with get_db_dict_cursor() as cur:
                 async with conn.cursor() as cur:
                     # Select confirmed appointments due within next 60 minutes (and not older than 30 mins in past)
                     await cur.execute(
@@ -398,7 +395,6 @@ class AppointmentService:
                                 "UPDATE facebook_appointments SET reminder_sent = TRUE, reminder_sent_at = NOW(), updated_at = NOW() WHERE id = %s",
                                 (apt_id,)
                             )
-                            await conn.commit()
                             logger.info(
                                 "[AppointmentService] Proactive 1-hour reminder dispatched for appointment #%d ('%s')",
                                 apt_id, sender

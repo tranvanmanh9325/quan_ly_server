@@ -7,6 +7,7 @@ import psycopg
 from psycopg.rows import dict_row
 
 from app.config import settings
+from app.core.db import get_db_connection, get_db_dict_cursor
 
 logger = logging.getLogger(__name__)
 VN_TZ = timezone(timedelta(hours=7))
@@ -38,7 +39,7 @@ class TikTokService:
     async def _ensure_db_tables(self):
         """Creates tiktok_config and tiktok_replies tables if they do not exist."""
         try:
-            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+            async with get_db_connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute("""
                         CREATE TABLE IF NOT EXISTS tiktok_config (
@@ -77,7 +78,6 @@ class TikTokService:
                         );
                         CREATE INDEX IF NOT EXISTS idx_tiktok_replies_created_at ON tiktok_replies (created_at DESC);
                     """)
-                    await conn.commit()
         except Exception as e:
             logger.error("[TikTokService] Failed to ensure DB tables: %s", e)
 
@@ -104,36 +104,35 @@ class TikTokService:
             "last_streak_run_at": None,
         }
         try:
-            async with await psycopg.AsyncConnection.connect(settings.database_url, row_factory=dict_row) as conn:
-                async with conn.cursor() as cur:
-                    await cur.execute("SELECT * FROM tiktok_config WHERE id = 1 LIMIT 1")
-                    row = await cur.fetchone()
-                    if row:
-                        targets = row.get("streak_targets", "[]")
-                        try:
-                            targets_list = json.loads(targets) if isinstance(targets, str) else (targets or [])
-                        except Exception:
-                            targets_list = []
+            async with get_db_dict_cursor() as cur:
+                await cur.execute("SELECT * FROM tiktok_config WHERE id = 1 LIMIT 1")
+                row = await cur.fetchone()
+                if row:
+                    targets = row.get("streak_targets", "[]")
+                    try:
+                        targets_list = json.loads(targets) if isinstance(targets, str) else (targets or [])
+                    except Exception:
+                        targets_list = []
 
-                        return {
-                            "id": row.get("id", 1),
-                            "enabled": bool(row.get("enabled", False)),
-                            "streak_enabled": bool(row.get("streak_enabled", True)),
-                            "streak_schedule_hour": int(row.get("streak_schedule_hour", 9)),
-                            "streak_targets": targets_list,
-                            "streak_message_template": row.get("streak_message_template") or default_cfg["streak_message_template"],
-                            "streak_send_type": row.get("streak_send_type") or "video",
-                            "threshold": int(row.get("threshold", 3)),
-                            "scan_interval_minutes": int(row.get("scan_interval_minutes", 3)),
-                            "idle_timeout_minutes": int(row.get("idle_timeout_minutes", 1)),
-                            "human_session_minutes": int(row.get("human_session_minutes", 5)),
-                            "cooldown_minutes": int(row.get("cooldown_minutes", 60)),
-                            "cookies_json": row.get("cookies_json", ""),
-                            "custom_message": row.get("custom_message", ""),
-                            "last_status": row.get("last_status", "Tắt"),
-                            "last_check_at": row.get("last_check_at"),
-                            "last_streak_run_at": row.get("last_streak_run_at"),
-                        }
+                    return {
+                        "id": row.get("id", 1),
+                        "enabled": bool(row.get("enabled", False)),
+                        "streak_enabled": bool(row.get("streak_enabled", True)),
+                        "streak_schedule_hour": int(row.get("streak_schedule_hour", 9)),
+                        "streak_targets": targets_list,
+                        "streak_message_template": row.get("streak_message_template") or default_cfg["streak_message_template"],
+                        "streak_send_type": row.get("streak_send_type") or "video",
+                        "threshold": int(row.get("threshold", 3)),
+                        "scan_interval_minutes": int(row.get("scan_interval_minutes", 3)),
+                        "idle_timeout_minutes": int(row.get("idle_timeout_minutes", 1)),
+                        "human_session_minutes": int(row.get("human_session_minutes", 5)),
+                        "cooldown_minutes": int(row.get("cooldown_minutes", 60)),
+                        "cookies_json": row.get("cookies_json", ""),
+                        "custom_message": row.get("custom_message", ""),
+                        "last_status": row.get("last_status", "Tắt"),
+                        "last_check_at": row.get("last_check_at"),
+                        "last_streak_run_at": row.get("last_streak_run_at"),
+                    }
         except Exception as e:
             logger.error("[TikTokService] Error reading tiktok_config from DB: %s", e)
         return default_cfg
@@ -146,7 +145,7 @@ class TikTokService:
             if not isinstance(targets_val, str):
                 targets_val = json.dumps(targets_val, ensure_ascii=False)
 
-            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+            async with get_db_connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute("""
                         INSERT INTO tiktok_config (
@@ -161,22 +160,22 @@ class TikTokService:
                             %s, %s, %s,
                             %s, %s, %s, NOW()
                         )
-                        ON CONFLICT (id) DO UPDATE
-                        SET enabled = EXCLUDED.enabled,
-                            streak_enabled = EXCLUDED.streak_enabled,
-                            streak_schedule_hour = EXCLUDED.streak_schedule_hour,
-                            streak_targets = EXCLUDED.streak_targets,
+                        ON CONFLICT (id) DO UPDATE SET
+                            enabled                 = EXCLUDED.enabled,
+                            streak_enabled          = EXCLUDED.streak_enabled,
+                            streak_schedule_hour    = EXCLUDED.streak_schedule_hour,
+                            streak_targets          = EXCLUDED.streak_targets,
                             streak_message_template = EXCLUDED.streak_message_template,
-                            streak_send_type = EXCLUDED.streak_send_type,
-                            threshold = EXCLUDED.threshold,
-                            scan_interval_minutes = EXCLUDED.scan_interval_minutes,
-                            idle_timeout_minutes = EXCLUDED.idle_timeout_minutes,
-                            human_session_minutes = EXCLUDED.human_session_minutes,
-                            cooldown_minutes = EXCLUDED.cooldown_minutes,
-                            cookies_json = EXCLUDED.cookies_json,
-                            custom_message = EXCLUDED.custom_message,
-                            last_status = EXCLUDED.last_status,
-                            updated_at = NOW()
+                            streak_send_type        = EXCLUDED.streak_send_type,
+                            threshold               = EXCLUDED.threshold,
+                            scan_interval_minutes   = EXCLUDED.scan_interval_minutes,
+                            idle_timeout_minutes    = EXCLUDED.idle_timeout_minutes,
+                            human_session_minutes   = EXCLUDED.human_session_minutes,
+                            cooldown_minutes        = EXCLUDED.cooldown_minutes,
+                            cookies_json            = EXCLUDED.cookies_json,
+                            custom_message          = EXCLUDED.custom_message,
+                            last_status             = EXCLUDED.last_status,
+                            updated_at              = NOW();
                     """, (
                         bool(cfg.get("enabled", False)),
                         bool(cfg.get("streak_enabled", True)),
@@ -193,7 +192,6 @@ class TikTokService:
                         str(cfg.get("custom_message", "")),
                         str(cfg.get("last_status", "Hoạt động")),
                     ))
-                    await conn.commit()
             logger.info("[TikTokService] Successfully saved configuration to DB.")
         except Exception as e:
             logger.error("[TikTokService] Failed to save tiktok_config to DB: %s", e)
@@ -202,34 +200,33 @@ class TikTokService:
         """Fetches recent auto-replies and streak dispatches from PostgreSQL."""
         await self._ensure_db_tables()
         try:
-            async with await psycopg.AsyncConnection.connect(settings.database_url, row_factory=dict_row) as conn:
-                async with conn.cursor() as cur:
-                    await cur.execute("""
-                        SELECT id, target_type, recipient_name, recipient_id, received_text, reply_text, video_url, status, created_at
-                        FROM tiktok_replies
-                        ORDER BY created_at DESC
-                        LIMIT %s
-                    """, (limit,))
-                    rows = await cur.fetchall()
-                    result = []
-                    for r in rows:
-                        created = r.get("created_at")
-                        if isinstance(created, datetime):
-                            created_str = created.astimezone(VN_TZ).strftime("%H:%M:%S %d/%m/%Y")
-                        else:
-                            created_str = str(created or "")
-                        result.append({
-                            "id": r.get("id"),
-                            "targetType": r.get("target_type", "dm"),
-                            "recipientName": r.get("recipient_name", ""),
-                            "recipientId": r.get("recipient_id", ""),
-                            "receivedText": r.get("received_text", ""),
-                            "replyText": r.get("reply_text", ""),
-                            "videoUrl": r.get("video_url", ""),
-                            "status": r.get("status", "sent"),
-                            "createdAt": created_str,
-                        })
-                    return result
+            async with get_db_dict_cursor() as cur:
+                await cur.execute("""
+                    SELECT id, target_type, recipient_name, recipient_id, received_text, reply_text, video_url, status, created_at
+                    FROM tiktok_replies
+                    ORDER BY created_at DESC
+                    LIMIT %s
+                """, (limit,))
+                rows = await cur.fetchall()
+                result = []
+                for r in rows:
+                    created = r.get("created_at")
+                    if isinstance(created, datetime):
+                        created_str = created.astimezone(VN_TZ).strftime("%H:%M:%S %d/%m/%Y")
+                    else:
+                        created_str = str(created or "")
+                    result.append({
+                        "id": r.get("id"),
+                        "targetType": r.get("target_type", "dm"),
+                        "recipientName": r.get("recipient_name", ""),
+                        "recipientId": r.get("recipient_id", ""),
+                        "receivedText": r.get("received_text", ""),
+                        "replyText": r.get("reply_text", ""),
+                        "videoUrl": r.get("video_url", ""),
+                        "status": r.get("status", "sent"),
+                        "createdAt": created_str,
+                    })
+                return result
         except Exception as e:
             logger.error("[TikTokService] Failed to get recent replies: %s", e)
             return []
@@ -247,13 +244,12 @@ class TikTokService:
         """Records an activity or streak log into tiktok_replies table."""
         await self._ensure_db_tables()
         try:
-            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+            async with get_db_connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute("""
                         INSERT INTO tiktok_replies (target_type, recipient_name, recipient_id, received_text, reply_text, video_url, status, created_at)
                         VALUES (%s, %s, %s, %s, %s, %s, %s, NOW())
                     """, (target_type, recipient_name, recipient_id, received_text, reply_text, video_url, status))
-                    await conn.commit()
         except Exception as e:
             logger.error("[TikTokService] Failed to log activity: %s", e)
 

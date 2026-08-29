@@ -5,12 +5,14 @@ import logging
 import random
 import re
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
 
 import httpx
 import psycopg
 
 from app.config import settings
+from app.core.db import get_db_connection
+from app.core.http_client import http_client_manager
 
 logger = logging.getLogger(__name__)
 
@@ -291,15 +293,8 @@ class LlmRouter:
     def __init__(self):
         self.rtk = RtkCompressor()
         self.providers: Dict[str, Provider] = {}
-        # High-performance HTTP client with persistent keepalive connection pool
-        self._http_client = httpx.AsyncClient(
-            timeout=120.0,
-            limits=httpx.Limits(
-                max_keepalive_connections=20,
-                max_connections=50,
-                keepalive_expiry=60.0,
-            ),
-        )
+        # Shared high-performance HTTP client with persistent keepalive connection pool
+        self._http_client = http_client_manager.get_client()
         self.total_routed: int = 0
         self.total_failovers: int = 0
 
@@ -588,6 +583,83 @@ class LlmRouter:
 
         return None
 
+    async def complete_stream(
+        self,
+        messages: List[Dict[str, Any]],
+        temperature: float = 0.1,
+        max_tokens: int = 1024,
+        requested_model: Optional[str] = None,
+    ) -> AsyncIterator[str]:
+        """
+        Streams OpenAI-compatible ChatCompletionChunk SSE payloads without buffering.
+        Format: 'data: {...}\n\n' ending with 'data: [DONE]\n\n'
+        """
+        sorted_providers = sorted(self.providers.values(), key=lambda p: p.tier)
+        client = self._http_client
+
+        for provider in sorted_providers:
+            if not provider.has_keys:
+                continue
+
+            model_to_use = requested_model or provider.default_model
+            _STRIP_FIELDS = {"reasoning_details", "refusal"}
+            clean_messages = []
+            for m in messages:
+                if isinstance(m, dict):
+                    clean_messages.append({k: v for k, v in m.items() if k not in _STRIP_FIELDS})
+                else:
+                    clean_messages.append(m)
+
+            payload = {
+                "model": model_to_use,
+                "messages": clean_messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "stream": True,
+            }
+
+            for key_entry in list(provider.keys):
+                if not key_entry.is_active:
+                    continue
+
+                headers = {
+                    "Authorization": f"Bearer {key_entry.api_key}",
+                    "Content-Type": "application/json",
+                    **provider.extra_headers,
+                }
+
+                try:
+                    async with client.stream("POST", provider.base_url, json=payload, headers=headers, timeout=60.0) as resp:
+                        if resp.status_code == 200:
+                            await provider.mark_success(key_entry)
+                            async for line in resp.aiter_lines():
+                                if not line:
+                                    continue
+                                if line.startswith("data: "):
+                                    yield f"{line}\n\n"
+                                    if line.strip() == "data: [DONE]":
+                                        return
+                            yield "data: [DONE]\n\n"
+                            return
+                        elif resp.status_code == 429:
+                            await provider.mark_rate_limited(key_entry, cooldown_seconds=60.0)
+                            continue
+                        elif resp.status_code == 401:
+                            await provider.mark_dead(key_entry)
+                            continue
+                except Exception as e:
+                    logger.warning("[9Router-Stream] Provider '%s' stream error: %s", provider.name, e)
+                    continue
+
+        err_chunk = {
+            "id": f"chatcmpl-err-{int(time.time())}",
+            "object": "chat.completion.chunk",
+            "created": int(time.time()),
+            "model": "error",
+            "choices": [{"index": 0, "delta": {"content": "\n[9Router: Tất cả provider AI đang bận hoặc hết hạn ngạch]"}, "finish_reason": "error"}],
+        }
+        yield f"data: {json.dumps(err_chunk)}\n\ndata: [DONE]\n\n"
+
     def get_status(self) -> Dict[str, Any]:
         """Returns live 9Router telemetry and health statistics."""
         now = time.time()
@@ -623,9 +695,9 @@ class LlmRouter:
             "status": "online" if self.has_active_providers else "degraded",
             "total_routed": self.total_routed,
             "total_failovers": self.total_failovers,
-            "rtk": {
+            "rtk_compression": {
                 "total_compressions": self.rtk.total_compressions,
-                "chars_saved": self.rtk.total_chars_saved,
+                "total_chars_saved": self.rtk.total_chars_saved,
                 "estimated_tokens_saved": self.rtk.estimated_tokens_saved,
             },
             "providers": providers_info,
@@ -634,7 +706,7 @@ class LlmRouter:
     async def load_stats_from_db(self) -> None:
         """Loads persisted RTK stats from DB into the in-memory compressor at startup."""
         try:
-            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+            async with get_db_connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(
                         "SELECT total_chars_saved, total_compressions FROM rtk_stats WHERE id = 1"
@@ -663,7 +735,7 @@ class LlmRouter:
         if delta_chars == 0 and delta_compressions == 0:
             return
         try:
-            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+            async with get_db_connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(
                         """

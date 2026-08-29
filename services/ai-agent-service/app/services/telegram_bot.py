@@ -6,6 +6,8 @@ import httpx
 import psycopg
 
 from app.config import settings
+from app.core.db import get_db_connection
+from app.core.http_client import http_client_manager
 from app.core.ssh_client import SshClient
 from app.core.telegram_formatter import TelegramFormatter
 from app.services.ai_agent import AiAgentService
@@ -240,13 +242,12 @@ class TelegramBot:
     async def _claim_update(self, update_id: int) -> bool:
         """Ensures at-most-once processing using PostgreSQL unique index."""
         try:
-            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+            async with get_db_connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(
                         "INSERT INTO processed_telegram_updates (update_id) VALUES (%s) ON CONFLICT (update_id) DO NOTHING",
                         (update_id,),
                     )
-                    await conn.commit()
                     return cur.rowcount > 0
         except Exception as e:
             logger.warning("[TelegramBot] Error claiming update %d: %s", update_id, e)
@@ -713,7 +714,7 @@ class TelegramBot:
     async def _load_offset_from_db(self) -> int:
         """Recover the highest claimed update_id from DB to resume after restart."""
         try:
-            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+            async with get_db_connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute("SELECT MAX(update_id) FROM processed_telegram_updates")
                     row = await cur.fetchone()

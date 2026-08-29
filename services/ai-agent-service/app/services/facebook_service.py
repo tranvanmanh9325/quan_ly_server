@@ -13,6 +13,7 @@ from psycopg.rows import dict_row
 from playwright.async_api import async_playwright, BrowserContext, Page
 
 from app.config import settings
+from app.core.db import get_db_connection, get_db_dict_cursor
 from app.services.message_cache import FacebookMessageCache
 
 logger = logging.getLogger(__name__)
@@ -183,15 +184,14 @@ class FacebookService:
 
     async def get_config_from_db(self) -> Dict[str, Any]:
         try:
-            async with await psycopg.AsyncConnection.connect(settings.database_url, row_factory=cast(Any, dict_row)) as conn:
-                async with conn.cursor() as cur:
-                    await cur.execute(
-                        "SELECT id, cookies_json, cooldown_minutes, custom_message, enabled, "
-                        "last_status, threshold, scan_interval_minutes, idle_timeout_minutes, human_session_minutes FROM facebook_config LIMIT 1"
-                    )
-                    row = await cur.fetchone()
-                    if row:
-                        return dict(row)
+            async with get_db_dict_cursor() as cur:
+                await cur.execute(
+                    "SELECT id, cookies_json, cooldown_minutes, custom_message, enabled, "
+                    "last_status, threshold, scan_interval_minutes, idle_timeout_minutes, human_session_minutes FROM facebook_config LIMIT 1"
+                )
+                row = await cur.fetchone()
+                if row:
+                    return dict(row)
         except Exception as e:
             logger.error("[FB-Service] Error fetching config from DB: %s", e)
         return {
@@ -204,7 +204,7 @@ class FacebookService:
 
     async def save_config_to_db(self, cfg: Dict[str, Any]) -> None:
         try:
-            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+            async with get_db_connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(
                         """
@@ -230,13 +230,12 @@ class FacebookService:
                             cfg.get("human_session_minutes", 10),
                         ),
                     )
-                    await conn.commit()
         except Exception as e:
             logger.error("[FB-Service] Error saving config to DB: %s", e)
 
     async def is_sender_in_cooldown(self, sender_key: str, cooldown_minutes: int = 15) -> bool:
         try:
-            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+            async with get_db_connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(
                         "SELECT replied_at FROM facebook_cooldown WHERE sender_key = %s",
@@ -253,7 +252,7 @@ class FacebookService:
 
     async def record_sender_cooldown(self, sender_key: str) -> None:
         try:
-            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+            async with get_db_connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(
                         """
@@ -263,25 +262,23 @@ class FacebookService:
                         """,
                         (sender_key,),
                     )
-                    await conn.commit()
         except Exception as e:
             logger.warning("[FB-Service] Cooldown record error: %s", e)
 
     async def get_known_threads_from_db(self) -> List[Dict[str, str]]:
         """Returns all known thread URLs with their last message hash and profile_url."""
         try:
-            async with await psycopg.AsyncConnection.connect(settings.database_url, row_factory=cast(Any, dict_row)) as conn:
-                async with conn.cursor() as cur:
-                    await cur.execute(
-                        "SELECT thread_href, sender_name, last_msg_hash, profile_url FROM facebook_known_threads ORDER BY discovered_at DESC LIMIT 30"
-                    )
-                    rows = await cur.fetchall()
-                    return [{
-                        "href": row["thread_href"],
-                        "text": row["sender_name"],
-                        "last_msg_hash": row["last_msg_hash"] or "",
-                        "profile_url": row.get("profile_url") or "",
-                    } for row in rows]
+            async with get_db_dict_cursor() as cur:
+                await cur.execute(
+                    "SELECT thread_href, sender_name, last_msg_hash, profile_url FROM facebook_known_threads ORDER BY discovered_at DESC LIMIT 30"
+                )
+                rows = await cur.fetchall()
+                return [{
+                    "href": row["thread_href"],
+                    "text": row["sender_name"],
+                    "last_msg_hash": row["last_msg_hash"] or "",
+                    "profile_url": row.get("profile_url") or "",
+                } for row in rows]
         except Exception as e:
             logger.warning("[FB-Service] Error fetching known threads: %s", e)
         return []
@@ -292,7 +289,7 @@ class FacebookService:
             return
         try:
             clean_href = href.split("?")[0]
-            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+            async with get_db_connection() as conn:
                 async with conn.cursor() as cur:
                     if auto_reply_text:
                         await cur.execute(
@@ -322,14 +319,13 @@ class FacebookService:
                             """,
                             (clean_href, sender_name, msg_hash, profile_url or None),
                         )
-                    await conn.commit()
         except Exception as e:
             logger.warning("[FB-Service] Error saving known thread: %s", e)
 
     async def get_thread_auto_reply(self, href: str) -> str:
         """Returns the pending auto-reply text for a thread, or '' if none / already unsent."""
         try:
-            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+            async with get_db_connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(
                         "SELECT auto_reply_text FROM facebook_known_threads WHERE thread_href = %s AND auto_reply_unsent = FALSE AND auto_reply_text != ''",
@@ -344,13 +340,12 @@ class FacebookService:
     async def mark_thread_auto_reply_unsent(self, href: str) -> None:
         """Marks the auto-reply for a thread as successfully unsent in the DB."""
         try:
-            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+            async with get_db_connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(
                         "UPDATE facebook_known_threads SET auto_reply_unsent = TRUE, auto_reply_text = '' WHERE thread_href = %s",
                         (href.split("?")[0],),
                     )
-                    await conn.commit()
         except Exception as e:
             logger.warning("[FB-Service] Error marking auto-reply unsent: %s", e)
 
@@ -1476,7 +1471,7 @@ class FacebookService:
     async def save_group_to_db(self, thread_href: str, group_info: Dict[str, Any]) -> None:
         """Upserts group metadata and member list into messenger_groups table."""
         try:
-            async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+            async with get_db_connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(
                         """
@@ -1492,12 +1487,11 @@ class FacebookService:
                         """,
                         (
                             thread_href,
-                            group_info.get("group_name") or "Nh\u00f3m kh\u00f4ng t\u00ean",
+                            group_info.get("group_name") or "Nhóm không tên",
                             group_info.get("member_count", 0),
                             json.dumps(group_info.get("members", []), ensure_ascii=False),
                         ),
                     )
-                    await conn.commit()
             logger.info(
                 "[FB-Service] Saved group '%s' (%d members) to DB.",
                 group_info.get("group_name"), group_info.get("member_count", 0),
@@ -1508,19 +1502,16 @@ class FacebookService:
     async def get_all_groups(self) -> List[Dict[str, Any]]:
         """Returns all known Messenger groups from DB, ordered by last scanned."""
         try:
-            async with await psycopg.AsyncConnection.connect(
-                settings.database_url, row_factory=cast(Any, dict_row)
-            ) as conn:
-                async with conn.cursor() as cur:
-                    await cur.execute(
-                        """
-                        SELECT thread_href, group_name, member_count, last_scanned_at
-                        FROM messenger_groups
-                        ORDER BY last_scanned_at DESC
-                        """
-                    )
-                    rows = await cur.fetchall()
-                    return [dict(r) for r in rows]
+            async with get_db_dict_cursor() as cur:
+                await cur.execute(
+                    """
+                    SELECT thread_href, group_name, member_count, last_scanned_at
+                    FROM messenger_groups
+                    ORDER BY last_scanned_at DESC
+                    """
+                )
+                rows = await cur.fetchall()
+                return [dict(r) for r in rows]
         except Exception as e:
             logger.warning("[FB-Service] Failed to get groups from DB: %s", e)
         return []
@@ -1528,20 +1519,17 @@ class FacebookService:
     async def get_group_members(self, group_name_query: str) -> Optional[Dict[str, Any]]:
         """Finds a group by name (fuzzy token match) and returns full member list."""
         try:
-            async with await psycopg.AsyncConnection.connect(
-                settings.database_url, row_factory=cast(Any, dict_row)
-            ) as conn:
-                async with conn.cursor() as cur:
-                    await cur.execute(
-                        """
-                        SELECT thread_href, group_name, member_count, members, last_scanned_at
-                        FROM messenger_groups
-                        ORDER BY last_scanned_at DESC
-                        """
-                    )
-                    rows = await cur.fetchall()
-                    if not rows:
-                        return None
+            async with get_db_dict_cursor() as cur:
+                await cur.execute(
+                    """
+                    SELECT thread_href, group_name, member_count, members, last_scanned_at
+                    FROM messenger_groups
+                    ORDER BY last_scanned_at DESC
+                    """
+                )
+                rows = await cur.fetchall()
+                if not rows:
+                    return None
 
                     # 1. Exact or substring match on group_name
                     q_lower = group_name_query.strip().lower()

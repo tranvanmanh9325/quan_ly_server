@@ -11,6 +11,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["9Router OpenAI Gateway"])
 
 
+from fastapi.responses import StreamingResponse
+
 class ChatCompletionRequest(BaseModel):
     model: Optional[str] = Field(default=None, description="Requested model ID or alias")
     messages: List[Dict[str, Any]] = Field(..., description="OpenAI chat messages list")
@@ -18,7 +20,7 @@ class ChatCompletionRequest(BaseModel):
     max_tokens: Optional[int] = Field(default=1024, description="Max tokens for completion")
     tools: Optional[List[Dict[str, Any]]] = Field(default=None, description="List of available tools")
     tool_choice: Optional[Any] = Field(default="auto", description="Tool choice mode")
-    stream: Optional[bool] = Field(default=False, description="Stream mode (not yet supported)")
+    stream: Optional[bool] = Field(default=False, description="Stream mode (SSE chunk streaming)")
 
 
 @router.post("/v1/chat/completions")
@@ -31,6 +33,7 @@ async def openai_chat_completions(
     """
     Unified 9Router OpenAI-compatible chat completion gateway.
     Accepts standard OpenAI payloads and routes through Smart 3-Tier Fallback Pool.
+    Supports both JSON response and real-time SSE chunk streaming.
     """
     llm_router: LlmRouter = getattr(request.app.state, "llm_router", None)
     if not llm_router or not llm_router.has_active_providers:
@@ -51,6 +54,25 @@ async def openai_chat_completions(
         else:
             compressed_messages.append(m)
 
+    # Handle SSE Streaming Mode
+    if req.stream:
+        return StreamingResponse(
+            llm_router.complete_stream(
+                messages=compressed_messages,
+                temperature=req.temperature or 0.1,
+                max_tokens=req.max_tokens or 1024,
+                requested_model=req.model,
+            ),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache, no-transform",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+                "Content-Type": "text/event-stream; charset=utf-8",
+            },
+        )
+
+    # Standard JSON Completion Mode
     result = await llm_router.complete(
         messages=compressed_messages,
         tools=req.tools,

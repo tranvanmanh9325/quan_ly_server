@@ -237,12 +237,26 @@ export default function WorldMapPage() {
 
   useEffect(() => { fetchGeolocationData(); }, []);
 
-  // Sync autoRotate + speed to OrbitControls
+  // Sync autoRotate + speed to OrbitControls & Pause 100% when tab is hidden
   useEffect(() => {
     const ctrl = globeRef.current?.controls();
     if (!ctrl) return;
-    ctrl.autoRotate = autoRotate;
+
+    const handleVisibility = () => {
+      if (document.hidden) {
+        ctrl.autoRotate = false;
+      } else {
+        ctrl.autoRotate = autoRotate;
+      }
+    };
+
+    ctrl.autoRotate = !document.hidden && autoRotate;
     ctrl.autoRotateSpeed = rotationSpeed;
+
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
   }, [autoRotate, rotationSpeed]);
 
   // Static Satellite Dataset — passed as static reference, 0 React re-renders

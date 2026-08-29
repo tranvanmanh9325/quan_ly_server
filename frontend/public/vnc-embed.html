@@ -119,10 +119,11 @@
         rfb = new RFB(screen, wsUrl);
         rfb.viewOnly         = false;
         rfb.scaleViewport    = true;   // noVNC manages canvas size — DO NOT override via CSS
-        rfb.resizeSession    = false;  // Keep server resolution fixed at 1280x800
+        rfb.resizeSession    = false;  // Keep server resolution fixed at 1280x720 (optimized for L3 Cache)
         rfb.clipViewport     = false;  // Scaling handles fit
-        rfb.qualityLevel     = 7;      // High visual quality with efficient bandwidth
-        rfb.compressionLevel = 3;      // Low latency ZRLE compression
+        rfb.qualityLevel     = 7;      // High visual quality with sharp text / QR codes
+        rfb.compressionLevel = 2;      // Low CPU overhead ZRLE compression for dual-core host
+        rfb.showDotCursor    = false;  // Server-rendered hardware cursor
         rfb.background       = '#000000';
 
         rfb.addEventListener('connect', () => {

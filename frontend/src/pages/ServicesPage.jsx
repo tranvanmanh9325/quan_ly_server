@@ -100,12 +100,12 @@ export default function ServicesPage() {
         const parsedTimers = lines.map(line => {
           const parts = line.split('|');
           return {
-            next: parts[0] || 'N/A',
-            left: parts[1] || 'N/A',
-            unit: parts[2] || 'N/A',
+            unit: parts[0] || 'N/A',
+            next: parts[1] || 'N/A',
+            left: parts[2] || 'N/A',
             activates: parts[3] || 'N/A'
           };
-        }).filter(t => t.unit !== 'N/A');
+        }).filter(t => t.unit !== 'N/A' && t.unit !== '');
         setTimers(parsedTimers);
       }
 
@@ -450,16 +450,16 @@ export default function ServicesPage() {
             ) : dockerData.status === 'ERROR' ? (
               <div style={{ color: 'var(--accent-pink)' }}>Error fetching Docker status.</div>
             ) : (
-              <table className="glass-table docker-table" style={{ width: '100%', minWidth: '460px', fontSize: '0.75rem', tableLayout: 'fixed' }}>
+              <table className="glass-table docker-table" style={{ width: '100%', minWidth: '500px', fontSize: '0.75rem', tableLayout: 'fixed' }}>
                 <thead>
                   <tr>
-                    <th style={{ width: '22%' }}>Container</th>
-                    <th style={{ width: '17%' }}>Image</th>
-                    <th style={{ width: '16%' }}>Status</th>
+                    <th style={{ width: '20%' }}>Container</th>
+                    <th style={{ width: '16%' }}>Image</th>
+                    <th style={{ width: '14%' }}>Status</th>
                     <th style={{ width: '9%' }}>CPU %</th>
                     <th style={{ width: '11%' }}>Memory</th>
                     <th style={{ width: '9%' }}>Ports</th>
-                    <th style={{ width: '16%', textAlign: 'right' }}>Actions</th>
+                    <th style={{ width: '21%', textAlign: 'right' }}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>

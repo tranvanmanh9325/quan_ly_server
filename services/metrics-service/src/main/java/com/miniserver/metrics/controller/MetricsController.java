@@ -980,7 +980,7 @@ public class MetricsController {
 
     @GetMapping("/timers")
     public Map<String, String> getTimers() {
-        String cmd = "systemctl list-timers --no-pager --no-legend 2>/dev/null | awk '{if (NF>=6) print $1\" \"$2\"|\"$3\" \"$4\"|\"$6\"|\"$7}' | head -n 25";
+        String cmd = "systemctl list-timers --no-pager --no-legend 2>/dev/null | awk '{print $(NF-1)\"|\"$1\" \"$2\" \"$3\" \"$4\"|\"$5\"|\"$NF}' | head -n 25";
         return safeData(sshService.executeCommand(cmd));
     }
 

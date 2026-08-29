@@ -63,8 +63,15 @@
       padding: 10px 20px;
       border: 1px solid rgba(0, 243, 255, 0.3);
       border-radius: 4px;
+      backdrop-filter: blur(4px);
+      letter-spacing: 1px;
     }
   </style>
+</head>
+<body>
+  <div id="screen" tabindex="0"></div>
+  <div id="status">⟳ Đang kết nối VNC Server...</div>
+
   <script type="module">
     import RFB from '/fb-vnc/core/rfb.js';
 

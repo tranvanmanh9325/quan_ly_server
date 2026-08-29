@@ -205,7 +205,7 @@ export default function ServicesPage() {
   const docExitedCount = containers.filter(c => !(c.status || '').startsWith('Up')).length;
 
   return (
-    <main className="main-content" style={{ overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+    <main className="main-content" style={{ overflowY: 'auto', overflowX: 'hidden', display: 'flex', flexDirection: 'column', gap: '20px', minWidth: 0 }}>
       
       {/* Action Toast Alert */}
       {actionMessage && (
@@ -232,10 +232,10 @@ export default function ServicesPage() {
       )}
 
       {/* TOP ROW: Systemd Services & Docker Containers */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))', gap: '20px', minWidth: 0 }}>
         
         {/* Panel 1: Systemd Services */}
-        <section className="glass-panel" style={{ display: 'flex', flexDirection: 'column', height: '380px' }}>
+        <section className="glass-panel" style={{ display: 'flex', flexDirection: 'column', height: '380px', minWidth: 0 }}>
           <div className="section-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
             <h2 style={{ margin: 0, fontSize: '1rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
               <SciFiShieldIcon size={20} color="var(--accent-cyan)" /> System Services (Systemd)
@@ -295,15 +295,15 @@ export default function ServicesPage() {
             </div>
           </div>
 
-          <div style={{ overflowY: 'auto', flex: 1, paddingRight: '6px' }}>
+          <div style={{ overflow: 'auto', flex: 1, paddingRight: '6px', minWidth: 0 }}>
             {loading ? <div style={{color: 'var(--text-secondary)'}}>Loading services...</div> : (
-              <table className="glass-table" style={{width: '100%', fontSize: '0.75rem'}}>
+              <table className="glass-table" style={{width: '100%', fontSize: '0.75rem', tableLayout: 'fixed'}}>
                 <thead>
                   <tr>
-                    <th>Service Unit</th>
-                    <th>Status</th>
-                    <th>Sub</th>
-                    <th style={{ textAlign: 'right' }}>Actions</th>
+                    <th style={{ width: '42%' }}>Service Unit</th>
+                    <th style={{ width: '20%' }}>Status</th>
+                    <th style={{ width: '16%' }}>Sub</th>
+                    <th style={{ width: '22%', textAlign: 'right' }}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -311,11 +311,11 @@ export default function ServicesPage() {
                     const isRunning = s.status.toLowerCase() === 'active';
                     return (
                       <tr key={i}>
-                        <td style={{fontWeight: 'bold', color: 'var(--accent-cyan)', fontFamily: 'Share Tech Mono'}}>{s.name}</td>
-                        <td style={{color: isRunning ? 'var(--accent-green)' : 'var(--accent-pink)', fontWeight: 'bold'}}>
+                        <td style={{fontWeight: 'bold', color: 'var(--accent-cyan)', fontFamily: 'Share Tech Mono', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'}} title={s.name}>{s.name}</td>
+                        <td style={{color: isRunning ? 'var(--accent-green)' : 'var(--accent-pink)', fontWeight: 'bold', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'}}>
                           {s.status.toUpperCase()}
                         </td>
-                        <td style={{color: 'var(--text-secondary)'}}>{s.subStatus}</td>
+                        <td style={{color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'}}>{s.subStatus}</td>
                         <td style={{ textAlign: 'right' }}>
                           <div style={{ display: 'flex', gap: '4px', justifyContent: 'flex-end' }}>
                             <button
@@ -384,7 +384,7 @@ export default function ServicesPage() {
         </section>
 
         {/* Panel 2: Docker Containers */}
-        <section className="glass-panel" style={{ display: 'flex', flexDirection: 'column', height: '380px' }}>
+        <section className="glass-panel" style={{ display: 'flex', flexDirection: 'column', height: '380px', minWidth: 0 }}>
           <div className="section-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
             <h2 style={{ margin: 0, fontSize: '1rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
               <SciFiContainerIcon size={20} color="var(--accent-green)" /> Docker Containers
@@ -444,22 +444,22 @@ export default function ServicesPage() {
             </div>
           </div>
 
-          <div style={{ overflowY: 'auto', flex: 1, paddingRight: '6px' }}>
+          <div style={{ overflow: 'auto', flex: 1, paddingRight: '6px', minWidth: 0 }}>
             {dockerData.status === 'NOT_INSTALLED' ? (
               <div style={{ color: 'var(--text-secondary)' }}>Docker is not installed on this host.</div>
             ) : dockerData.status === 'ERROR' ? (
               <div style={{ color: 'var(--accent-pink)' }}>Error fetching Docker status.</div>
             ) : (
-              <table className="glass-table docker-table" style={{ width: '100%', fontSize: '0.75rem' }}>
+              <table className="glass-table docker-table" style={{ width: '100%', minWidth: '460px', fontSize: '0.75rem', tableLayout: 'fixed' }}>
                 <thead>
                   <tr>
-                    <th>Container</th>
-                    <th>Image</th>
-                    <th>Status</th>
-                    <th>CPU %</th>
-                    <th>Memory</th>
-                    <th>Ports</th>
-                    <th style={{ textAlign: 'right' }}>Actions</th>
+                    <th style={{ width: '22%' }}>Container</th>
+                    <th style={{ width: '17%' }}>Image</th>
+                    <th style={{ width: '16%' }}>Status</th>
+                    <th style={{ width: '9%' }}>CPU %</th>
+                    <th style={{ width: '11%' }}>Memory</th>
+                    <th style={{ width: '9%' }}>Ports</th>
+                    <th style={{ width: '16%', textAlign: 'right' }}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -472,24 +472,24 @@ export default function ServicesPage() {
 
                     return (
                       <tr key={i}>
-                        <td style={{ fontWeight: 'bold', color: 'var(--accent-cyan)', fontFamily: 'Share Tech Mono' }}>{c.name}</td>
-                        <td style={{ color: 'var(--text-secondary)', maxWidth: '100px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.image}>{c.image}</td>
-                        <td className={isUp ? 'docker-status-up' : 'docker-status-exited'}>{c.status}</td>
-                        <td style={{ color: 'var(--accent-green)', fontFamily: 'Share Tech Mono', fontWeight: 'bold' }}>{cpuVal}</td>
-                        <td style={{ color: 'var(--accent-cyan)', fontFamily: 'Share Tech Mono', fontSize: '0.65rem' }} title={memVal}>{memVal}</td>
-                        <td style={{ fontSize: '0.65rem', fontFamily: 'Share Tech Mono', color: 'var(--text-secondary)', maxWidth: '80px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.ports}>
+                        <td style={{ fontWeight: 'bold', color: 'var(--accent-cyan)', fontFamily: 'Share Tech Mono', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.name}>{c.name}</td>
+                        <td style={{ color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.image}>{c.image}</td>
+                        <td className={isUp ? 'docker-status-up' : 'docker-status-exited'} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.status}>{c.status}</td>
+                        <td style={{ color: 'var(--accent-green)', fontFamily: 'Share Tech Mono', fontWeight: 'bold', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cpuVal}</td>
+                        <td style={{ color: 'var(--accent-cyan)', fontFamily: 'Share Tech Mono', fontSize: '0.65rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={memVal}>{memVal}</td>
+                        <td style={{ fontSize: '0.65rem', fontFamily: 'Share Tech Mono', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.ports}>
                           {c.ports || '-'}
                         </td>
                         <td style={{ textAlign: 'right' }}>
-                          <div style={{ display: 'flex', gap: '4px', justifyContent: 'flex-end' }}>
+                          <div style={{ display: 'flex', gap: '3px', justifyContent: 'flex-end' }}>
                             <button
                               onClick={() => openContainerLogs(cId, c.name)}
                               style={{
                                 background: 'rgba(0, 255, 157, 0.1)',
                                 border: '1px solid var(--accent-green)',
                                 color: 'var(--accent-green)',
-                                padding: '1px 5px',
-                                fontSize: '0.6rem',
+                                padding: '1px 4px',
+                                fontSize: '0.58rem',
                                 cursor: 'pointer',
                                 fontFamily: 'Share Tech Mono'
                               }}
@@ -504,8 +504,8 @@ export default function ServicesPage() {
                                 background: 'rgba(0, 243, 255, 0.1)',
                                 border: '1px solid var(--accent-cyan)',
                                 color: 'var(--accent-cyan)',
-                                padding: '1px 5px',
-                                fontSize: '0.6rem',
+                                padding: '1px 4px',
+                                fontSize: '0.58rem',
                                 cursor: 'pointer',
                                 fontFamily: 'Share Tech Mono'
                               }}
@@ -521,8 +521,8 @@ export default function ServicesPage() {
                                   background: 'rgba(255, 0, 85, 0.1)',
                                   border: '1px solid var(--accent-pink)',
                                   color: 'var(--accent-pink)',
-                                  padding: '1px 5px',
-                                  fontSize: '0.6rem',
+                                  padding: '1px 4px',
+                                  fontSize: '0.58rem',
                                   cursor: 'pointer',
                                   fontFamily: 'Share Tech Mono'
                                 }}
@@ -538,8 +538,8 @@ export default function ServicesPage() {
                                   background: 'rgba(0, 255, 157, 0.1)',
                                   border: '1px solid var(--accent-green)',
                                   color: 'var(--accent-green)',
-                                  padding: '1px 5px',
-                                  fontSize: '0.6rem',
+                                  padding: '1px 4px',
+                                  fontSize: '0.58rem',
                                   cursor: 'pointer',
                                   fontFamily: 'Share Tech Mono'
                                 }}
@@ -554,7 +554,7 @@ export default function ServicesPage() {
                     );
                   })}
                   {filteredContainers.length === 0 && (
-                    <tr><td colSpan="5" style={{textAlign: 'center', color: 'var(--text-secondary)'}}>No matching containers found.</td></tr>
+                    <tr><td colSpan="7" style={{textAlign: 'center', color: 'var(--text-secondary)'}}>No matching containers found.</td></tr>
                   )}
                 </tbody>
               </table>
@@ -565,10 +565,10 @@ export default function ServicesPage() {
       </div>
 
       {/* BOTTOM ROW: Systemd Timers & Host Runtimes */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))', gap: '20px', minWidth: 0 }}>
         
         {/* Panel 3: Systemd Timers & Scheduled Jobs */}
-        <section className="glass-panel" style={{ display: 'flex', flexDirection: 'column', height: '340px' }}>
+        <section className="glass-panel" style={{ display: 'flex', flexDirection: 'column', height: '340px', minWidth: 0 }}>
           <div className="section-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
             <h2 style={{ margin: 0, fontSize: '1rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
               <SciFiChronoIcon size={20} color="var(--accent-cyan)" /> Systemd Timers & Scheduled Jobs
@@ -578,21 +578,21 @@ export default function ServicesPage() {
             </span>
           </div>
 
-          <div style={{ overflowY: 'auto', flex: 1, paddingRight: '6px' }}>
-            <table className="glass-table" style={{ width: '100%', fontSize: '0.75rem' }}>
+          <div style={{ overflow: 'auto', flex: 1, paddingRight: '6px', minWidth: 0 }}>
+            <table className="glass-table" style={{ width: '100%', fontSize: '0.75rem', tableLayout: 'fixed' }}>
               <thead>
                 <tr>
-                  <th>Timer Unit</th>
-                  <th>Next Execution</th>
-                  <th>Countdown / Left</th>
-                  <th>Activates Target</th>
+                  <th style={{ width: '32%' }}>Timer Unit</th>
+                  <th style={{ width: '28%' }}>Next Execution</th>
+                  <th style={{ width: '16%' }}>Countdown / Left</th>
+                  <th style={{ width: '24%' }}>Activates Target</th>
                 </tr>
               </thead>
               <tbody>
                 {timers.map((t, i) => (
                   <tr key={i}>
-                    <td style={{ fontWeight: 'bold', color: 'var(--accent-cyan)', fontFamily: 'Share Tech Mono' }}>{t.unit}</td>
-                    <td style={{ fontFamily: 'Share Tech Mono' }}>{formatTimerDate(t.next)}</td>
+                    <td style={{ fontWeight: 'bold', color: 'var(--accent-cyan)', fontFamily: 'Share Tech Mono', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={t.unit}>{t.unit}</td>
+                    <td style={{ fontFamily: 'Share Tech Mono', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={formatTimerDate(t.next)}>{formatTimerDate(t.next)}</td>
                     <td>
                       <span style={{
                         background: 'rgba(0, 255, 157, 0.1)',
@@ -601,12 +601,13 @@ export default function ServicesPage() {
                         padding: '1px 6px',
                         fontSize: '0.65rem',
                         fontFamily: 'Share Tech Mono',
-                        borderRadius: '2px'
+                        borderRadius: '2px',
+                        whiteSpace: 'nowrap'
                       }}>
                         {t.left}
                       </span>
                     </td>
-                    <td style={{ color: 'var(--text-secondary)', fontFamily: 'Share Tech Mono' }}>{formatTimerDate(t.activates)}</td>
+                    <td style={{ color: 'var(--text-secondary)', fontFamily: 'Share Tech Mono', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={formatTimerDate(t.activates)}>{formatTimerDate(t.activates)}</td>
                   </tr>
                 ))}
                 {timers.length === 0 && (
@@ -618,7 +619,7 @@ export default function ServicesPage() {
         </section>
 
         {/* Panel 4: Host Runtimes & Daemons */}
-        <section className="glass-panel" style={{ display: 'flex', flexDirection: 'column', height: '340px' }}>
+        <section className="glass-panel" style={{ display: 'flex', flexDirection: 'column', height: '340px', minWidth: 0 }}>
           <div className="section-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
             <h2 style={{ margin: 0, fontSize: '1rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
               <SciFiQuantumIcon size={20} color="var(--accent-pink)" /> Host Runtimes & Application Servers
@@ -628,8 +629,8 @@ export default function ServicesPage() {
             </span>
           </div>
 
-          <div style={{ overflowY: 'auto', flex: 1, paddingRight: '6px' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+          <div style={{ overflow: 'auto', flex: 1, paddingRight: '6px', minWidth: 0 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '10px', minWidth: 0 }}>
               {Object.entries(runtimes).map(([name, val], idx) => {
                 const lowerVal = (val || '').toLowerCase();
                 const isInstalled = val
@@ -649,10 +650,12 @@ export default function ServicesPage() {
                     display: 'flex',
                     flexDirection: 'column',
                     justifyContent: 'space-between',
-                    gap: '6px'
+                    gap: '6px',
+                    minWidth: 0,
+                    overflow: 'hidden'
                   }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span style={{ fontWeight: 'bold', fontSize: '0.8rem', color: isInstalled ? 'var(--accent-cyan)' : 'var(--text-secondary)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', minWidth: 0 }}>
+                      <span style={{ fontWeight: 'bold', fontSize: '0.8rem', color: isInstalled ? 'var(--accent-cyan)' : 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {name}
                       </span>
                       <span style={{
@@ -662,7 +665,8 @@ export default function ServicesPage() {
                         borderRadius: '2px',
                         background: isInstalled ? 'rgba(0, 255, 157, 0.15)' : 'rgba(255, 255, 255, 0.08)',
                         color: isInstalled ? 'var(--accent-green)' : 'var(--text-secondary)',
-                        border: isInstalled ? '1px solid var(--accent-green)' : '1px solid rgba(255, 255, 255, 0.2)'
+                        border: isInstalled ? '1px solid var(--accent-green)' : '1px solid rgba(255, 255, 255, 0.2)',
+                        flexShrink: 0
                       }}>
                         {isInstalled ? (isService ? 'ACTIVE' : 'INSTALLED') : 'INACTIVE'}
                       </span>

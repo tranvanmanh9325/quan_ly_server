@@ -405,7 +405,7 @@ export default function Layout({ isAlerting, context }) {
       </aside>
 
       {/* Main Container Area with Top Header Bar */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
         
         {/* Sci-Fi Top Operational Header Bar */}
         <header style={{
@@ -531,7 +531,7 @@ export default function Layout({ isAlerting, context }) {
         </header>
 
         {/* Page Content */}
-        <div className="page-content" style={{ flex: 1, overflow: 'hidden' }}>
+        <div className="page-content" style={{ flex: 1, overflow: 'hidden', minWidth: 0 }}>
           <Outlet context={{ ...context, refreshSpeed }} />
         </div>
       </div>

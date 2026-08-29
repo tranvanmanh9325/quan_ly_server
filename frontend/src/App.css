@@ -3,9 +3,11 @@
   display: flex;
   flex-direction: column;
   gap: 20px;
-  padding: 24px 0 24px 24px;
+  padding: 24px;
   overflow-y: auto;
+  overflow-x: hidden;
   min-height: 0;
+  min-width: 0;
 }
 
 .top-header {
@@ -52,8 +54,9 @@ h2.title-glow::after {
   grid-template-rows: min-content min-content;
   gap: 20px;
   flex-shrink: 0;
-  padding-right: 24px;
+  padding-right: 0;
   margin-right: 0;
+  min-width: 0;
 }
 
 .analytics-section {
@@ -577,9 +580,17 @@ h2.title-glow::after {
   background: rgba(0, 255, 102, 0.5);
 }
 
+.docker-table {
+  table-layout: fixed;
+  width: 100%;
+}
+
 .docker-table td, .docker-table th {
   padding: 8px 10px;
   border-bottom: 1px solid rgba(0, 243, 255, 0.1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .docker-status-up { color: var(--accent-green); }
 .docker-status-exited { color: var(--accent-pink); }

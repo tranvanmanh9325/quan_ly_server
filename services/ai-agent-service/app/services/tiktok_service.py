@@ -48,7 +48,7 @@ class TikTokService:
                             streak_enabled          BOOLEAN NOT NULL DEFAULT true,
                             streak_schedule_hour    INTEGER NOT NULL DEFAULT 9,
                             streak_targets          TEXT NOT NULL DEFAULT '[]',
-                            streak_message_template TEXT NOT NULL DEFAULT 'Video giữ chuỗi hôm nay nè! 🔥',
+                            streak_message_template TEXT NOT NULL DEFAULT 'Video giữ chuỗi hôm nay nè!',
                             streak_send_type        TEXT NOT NULL DEFAULT 'video',
                             threshold               INTEGER NOT NULL DEFAULT 3,
                             scan_interval_minutes   INTEGER NOT NULL DEFAULT 3,
@@ -90,7 +90,7 @@ class TikTokService:
             "streak_enabled": True,
             "streak_schedule_hour": 9,
             "streak_targets": [],
-            "streak_message_template": "Video giữ chuỗi hôm nay nè! Chúc bạn ngày mới vui vẻ nha 🔥✨",
+            "streak_message_template": "Video giữ chuỗi hôm nay nè! Chúc bạn ngày mới vui vẻ nha",
             "streak_send_type": "video",
             "threshold": 3,
             "scan_interval_minutes": 3,
@@ -181,7 +181,7 @@ class TikTokService:
                         bool(cfg.get("streak_enabled", True)),
                         int(cfg.get("streak_schedule_hour", 9)),
                         targets_val,
-                        str(cfg.get("streak_message_template", "Video giữ chuỗi hôm nay nè! 🔥")),
+                        str(cfg.get("streak_message_template", "Video giữ chuỗi hôm nay nè!")),
                         str(cfg.get("streak_send_type", "video")),
                         int(cfg.get("threshold", 3)),
                         int(cfg.get("scan_interval_minutes", 3)),
@@ -352,7 +352,7 @@ class TikTokService:
                 logger.info("[TikTokStreak] No streak targets configured.")
                 return {"status": "no_targets", "message": "No streak targets in list."}
 
-            template = cfg.get("streak_message_template") or "Video giữ chuỗi hôm nay nè! Chúc bạn ngày mới vui vẻ nha 🔥✨"
+            template = cfg.get("streak_message_template") or "Video giữ chuỗi hôm nay nè! Chúc bạn ngày mới vui vẻ nha"
             send_type = cfg.get("streak_send_type") or "video"
             dispatched_count = 0
             updated_targets = []
@@ -376,7 +376,7 @@ class TikTokService:
 
                 # Perform streak message dispatch
                 streak_days += 1
-                msg_content = f"{template} (🔥 Ngày {streak_days})"
+                msg_content = f"{template} (Ngày {streak_days})"
                 video_url = "https://www.tiktok.com/@trending" if send_type == "video" else ""
 
                 # Log to DB
@@ -399,9 +399,9 @@ class TikTokService:
                 if self.telegram_bot:
                     try:
                         tg_text = (
-                            f"🔥 <b>[TikTok Streak Keeper]</b>\n"
+                            f"<b>[TikTok Streak Keeper]</b>\n"
                             f"Đã tự động gửi video giữ chuỗi cho <b>{nickname}</b> (<code>{username}</code>)!\n"
-                            f"• Chuỗi hiện tại: <b>{streak_days} ngày 🔥</b>\n"
+                            f"• Chuỗi hiện tại: <b>{streak_days} ngày</b>\n"
                             f"• Thời gian: {now_vn.strftime('%H:%M:%S %d/%m/%Y')}\n"
                             f"• Lời nhắn: <i>{msg_content}</i>"
                         )
@@ -426,13 +426,13 @@ class TikTokService:
 
         now_vn = datetime.now(VN_TZ)
         today_str = now_vn.strftime("%Y-%m-%d")
-        template = cfg.get("streak_message_template") or "Video giữ chuỗi hôm nay nè! Chúc bạn ngày mới vui vẻ nha 🔥✨"
+        template = cfg.get("streak_message_template") or "Video giữ chuỗi hôm nay nè! Chúc bạn ngày mới vui vẻ nha"
         send_type = cfg.get("streak_send_type") or "video"
 
         nickname = target.get("nickname") if target else username
         streak_days = (int(target.get("streak_days", 0)) + 1) if target else 1
 
-        msg_content = f"{template} (🔥 Ngày {streak_days})"
+        msg_content = f"{template} (Ngày {streak_days})"
         video_url = "https://www.tiktok.com/@trending" if send_type == "video" else ""
 
         await self.log_activity(

@@ -369,7 +369,7 @@ class VncManager:
                 try {
                     const obs = new MutationObserver((muts) => {
                         for (const m of muts) {
-                            m.addedNodes.forEach(neutralize);
+                        m.addedNodes.forEach(neutralize);
                         }
                     });
                     obs.observe(document.documentElement, { childList: true, subtree: true });
@@ -378,41 +378,29 @@ class VncManager:
             """
             await context.add_init_script(script)
 
-            # 2. Intercept video chunk requests at network layer
-            media_exts = (".mp4", ".m4s", ".webm", ".ts", ".m3u8", ".mpd", ".flv", ".avi", ".mov")
-            blocked_video_hosts = ("byteoversea.com", "ibyteimg.com", "tiktokcdn.com/obj/", "video.xx.fbcdn.net")
+            # 2. Intercept video chunk requests at native pattern level (Zero async Python IPC overhead)
+            media_patterns = [
+                "**/*.mp4*", "**/*.m4s*", "**/*.webm*", "**/*.ts*",
+                "**/*.m3u8*", "**/*.mpd*", "**/*.flv*",
+                "*://*.byteoversea.com/*video*", "*://*.tiktokcdn.com/*video*",
+                "*://video.*.fbcdn.net/*"
+            ]
 
-            async def route_interceptor(route):
-                req = route.request
-                res_type = req.resource_type
-                url = req.url.lower()
+            for pattern in media_patterns:
+                try:
+                    await context.route(pattern, lambda route: route.abort("blockedbyclient"))
+                except Exception:
+                    pass
 
-                # Block media and eventsource streams
-                if res_type in ("media", "eventsource"):
-                    await route.abort("blockedbyclient")
-                    return
-
-                # Block video extensions
-                clean_url = url.split("?")[0]
-                if any(clean_url.endswith(ext) for ext in media_exts):
-                    await route.abort("blockedbyclient")
-                    return
-
-                # Block video CDN URLs
-                if any(host in url for host in blocked_video_hosts) and ("/video/" in url or "mime_type=video" in url or "vod" in url):
-                    await route.abort("blockedbyclient")
-                    return
-
-                await route.continue_()
-
-            await context.route("**/*", route_interceptor)
-            logger.info("[VNC-Manager] Video neutralization layer active (CPU optimization).")
+            logger.info("[VNC-Manager] Native video neutralization layer active (CPU optimization).")
         except Exception as e:
             logger.warning("[VNC-Manager] Could not setup media neutralizer: %s", e)
 
     async def _safe_navigate(self, page: Page, url: str):
         try:
-            await page.goto(url, wait_until="domcontentloaded", timeout=60000)
+            logger.info("[VNC-Manager] Navigating to %s...", url)
+            await page.goto(url, wait_until="commit", timeout=45000)
+            logger.info("[VNC-Manager] Navigation committed to %s.", url)
         except Exception as e:
             logger.warning("[VNC-Manager] Navigation to %s finished with note: %s", url, e)
 

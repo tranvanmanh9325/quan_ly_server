@@ -354,34 +354,16 @@ class VncManager:
                     if (document.getElementById('__vnc_perf_guard')) return;
                     const st = document.createElement('style');
                     st.id = '__vnc_perf_guard';
-                    st.textContent = `
-                        video, audio, [data-e2e="feed-video"], .tiktok-video, .video-player, div[class*="DivVideoContainer"] {
+                        video, audio {
                             display: none !important;
                             visibility: hidden !important;
                             opacity: 0 !important;
                             pointer-events: none !important;
                         }
-                        /* Eliminate App download banners and sticky overlays pushing down the chat input */
-                        div[class*="DivDownloadBanner"],
-                        div[class*="DivBottomBanner"],
-                        div[id*="cookie-banner"],
-                        div[class*="DivCookieConsent"],
-                        [data-e2e="download-app-banner"],
-                        div[class*="DivAppBanner"] {
+                        [data-e2e="download-app-banner"] {
                             display: none !important;
                             height: 0 !important;
                             visibility: hidden !important;
-                        }
-                        /* Ensure chat list scrolls cleanly and chat input footer stays anchored */
-                        div[class*="DivChatRoomWrapper"], div[class*="DivMessageListContainer"] {
-                            min-height: 0 !important;
-                            flex-shrink: 1 !important;
-                        }
-                        div[class*="DivChatInputContainer"], div[class*="DivInputArea"] {
-                            flex-shrink: 0 !important;
-                            position: sticky !important;
-                            bottom: 0 !important;
-                            z-index: 100 !important;
                         }
                     `;
                     (document.head || document.documentElement).appendChild(st);

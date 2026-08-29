@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 
 # ─── Constants ────────────────────────────────────────────────────────────────
 
-BROWSER_DATA_DIR = "/app/browser_data"       # Shared (FacebookService)
+BROWSER_DATA_DIR = "/app/browser_data/facebook"       # Shared (FacebookService)
 BROWSER_AGENT_DATA_DIR = "/app/browser_agent_data"  # Exclusive to BrowserAgentService
 SCREENSHOT_DIR = Path("/tmp/browser_agent")
 SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)

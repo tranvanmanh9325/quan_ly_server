@@ -22,7 +22,7 @@ VN_TZ = timezone(timedelta(hours=7))
 # Persistent browser context directory — mounted as a Docker volume so E2EE keys
 # survive container restarts. Without persistence, the sidebar never renders in
 # headless mode because Facebook's E2EE requires local IndexedDB encryption keys.
-BROWSER_DATA_DIR = "/app/browser_data"
+BROWSER_DATA_DIR = "/app/browser_data/facebook"
 
 # Marker strings uniquely identifying the bot's auto-reply (away message).
 # Used both to detect "this is a bot message" in DOM and to skip scan logic.

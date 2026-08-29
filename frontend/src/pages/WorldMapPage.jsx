@@ -274,22 +274,57 @@ export default function WorldMapPage() {
       };
     });
 
-    // 2. Downlink laser from selected satellite (or VINASAT-1 by default when satellites shown)
+    // 2. Downlink lasers from Vietnamese satellites and selected satellite
     if (showSatellites) {
-      const activeSat = selectedSatellite || SATELLITE_CATALOG[0]; // VINASAT-1
-      if (activeSat) {
-        const nowSec = Date.now() / 1000;
-        const satPos = getSatellitePosition(activeSat, nowSec);
+      const nowSec = Date.now() / 1000;
+      
+      // If a specific satellite is selected, prioritize its dedicated C2 downlink
+      if (selectedSatellite) {
+        const satPos = getSatellitePosition(selectedSatellite, nowSec);
+        const targetLat = selectedSatellite.groundStation?.lat || sLat;
+        const targetLng = selectedSatellite.groundStation?.lng || sLon;
         arcs.push({
-          id: `sat-downlink-${activeSat.id}`,
+          id: `sat-downlink-${selectedSatellite.id}`,
           startLat: satPos.lat,
           startLng: satPos.lng,
-          endLat: sLat,
-          endLng: sLon,
-          dynamicAltitude: 0.22,
-          color: ['rgba(0,243,255,0.1)', activeSat.color || '#00ff9d', 'rgba(0,255,157,0.95)'],
+          endLat: targetLat,
+          endLng: targetLng,
+          dynamicAltitude: selectedSatellite.globeAlt ? selectedSatellite.globeAlt * 0.7 : 0.25,
+          color: ['rgba(0,243,255,0.1)', selectedSatellite.color || '#00ff9d', 'rgba(0,255,157,0.95)'],
           isSatelliteDownlink: true,
         });
+      } else {
+        // Default C2 Telemetry Links: Both VINASAT-1 and VINASAT-2 active downlinks to show both spacecraft
+        const v1 = SATELLITE_CATALOG.find(s => s.id === 'vinasat-1');
+        const v2 = SATELLITE_CATALOG.find(s => s.id === 'vinasat-2');
+
+        if (v1) {
+          const pos1 = getSatellitePosition(v1, nowSec);
+          arcs.push({
+            id: 'downlink-vinasat-1',
+            startLat: pos1.lat,
+            startLng: pos1.lng,
+            endLat: v1.groundStation?.lat || sLat,
+            endLng: v1.groundStation?.lng || sLon,
+            dynamicAltitude: 0.24,
+            color: ['rgba(0,255,157,0.1)', '#00ff9d', 'rgba(0,255,157,0.95)'],
+            isSatelliteDownlink: true,
+          });
+        }
+
+        if (v2) {
+          const pos2 = getSatellitePosition(v2, nowSec);
+          arcs.push({
+            id: 'downlink-vinasat-2',
+            startLat: pos2.lat,
+            startLng: pos2.lng,
+            endLat: v2.groundStation?.lat || 20.42,
+            endLng: v2.groundStation?.lng || 106.17,
+            dynamicAltitude: 0.28,
+            color: ['rgba(0,243,255,0.1)', '#00f3ff', 'rgba(0,243,255,0.95)'],
+            isSatelliteDownlink: true,
+          });
+        }
       }
     }
 

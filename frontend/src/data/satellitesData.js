@@ -16,7 +16,7 @@ export const SATELLITE_CATALOG = [
     type: 'GEO',
     regime: 'Geostationary Orbit (Địa tĩnh 132.0°E)',
     altitudeKm: 35786,
-    globeAlt: 0.38,
+    globeAlt: 0.35, // Visual Staggering Level 1 (Inner GEO ring)
     inclination: 0.06,
     periodMin: 1436.07,
     velocity: '11,052 km/h (3.07 km/s)',
@@ -38,7 +38,7 @@ export const SATELLITE_CATALOG = [
     type: 'GEO',
     regime: 'Geostationary Orbit (Địa tĩnh 131.8°E)',
     altitudeKm: 35786,
-    globeAlt: 0.38,
+    globeAlt: 0.42, // Visual Staggering Level 2 (Outer GEO ring)
     inclination: 0.02,
     periodMin: 1436.07,
     velocity: '11,052 km/h (3.07 km/s)',
@@ -49,6 +49,7 @@ export const SATELLITE_CATALOG = [
     tleLine1: '1 38332U 12023B   26240.42863029  .00000000  00000+0  00000+0 0  9993',
     tleLine2: '2 38332   0.0171 248.7080 0002195 263.1335 110.9767  1.00270500 47387',
   },
+
   {
     id: 'vnredsat-1',
     name: 'VNREDSat-1',

@@ -4,6 +4,7 @@ import Globe from 'react-globe.gl';
 import { mesh } from 'topojson-client';
 import { SciFiGlobeIcon, SciFiRefreshIcon, SciFiPulseBadge, SciFiPlayIcon, SciFiStopIcon } from '../components/SciFiIcons';
 import { VIETNAM_MARITIME_ISLANDS } from '../data/vietnamIslandsGeo';
+import GlobeHudLegend from '../components/GlobeHudLegend';
 
 // 110m resolution: 105KB vs 756KB (50m) — 90% fewer border vertices, imperceptible at 600px canvas
 const LOCAL_WORLD_ATLAS_URL = '/data/countries-110m.json';
@@ -251,11 +252,6 @@ export default function WorldMapPage() {
     }
   }, []);
 
-  const LEGEND_ITEMS = [
-    { color: 'var(--accent-green)', label: 'SERVER HQ' },
-    { color: 'var(--accent-cyan)', label: 'CLIENT DEVICE' },
-    { color: '#00ff9d', label: 'VN ISLANDS' },
-  ];
 
   return (
     <div style={{ padding: '12px', height: '100%', display: 'flex', flexDirection: 'column', gap: '10px', overflowY: 'auto', boxSizing: 'border-box' }}>
@@ -455,20 +451,14 @@ export default function WorldMapPage() {
             </div>
           </div>
 
-          {/* Legend — compact, no wasted vertical space */}
-          <div style={{ display: 'flex', gap: '14px', fontSize: '0.7rem', fontFamily: 'Share Tech Mono', color: 'var(--text-secondary)', flexShrink: 0, paddingTop: '2px' }}>
-            {LEGEND_ITEMS.map(({ color, label }) => (
-              <div key={label} style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: color, display: 'inline-block', boxShadow: `0 0 3px ${color}` }} />
-                <span>{label}</span>
-              </div>
-            ))}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-              <span style={{ width: '14px', height: '2px', background: 'var(--accent-cyan)', display: 'inline-block' }} />
-              <span>LASER ARC</span>
-            </div>
-          </div>
+          {/* HUD Legend Bar — Military / Palantir mission control style */}
+          <GlobeHudLegend
+            serverCount={geoData.server ? 1 : 0}
+            clientCount={connections.length}
+            isLive={!loading}
+          />
         </div>
+
 
         {/* Right HUD column */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', overflow: 'hidden' }}>

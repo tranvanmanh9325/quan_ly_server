@@ -55,7 +55,7 @@ const GlobeHudLegend = memo(function GlobeHudLegend({
       <div style={{ position:'absolute', bottom:0, right:0, width:'7px', height:'7px', borderBottom:'1.5px solid #00f3ff', borderRight:'1.5px solid #00f3ff', pointerEvents:'none' }} />
 
       {/* Header badge */}
-      <div style={{ padding:'6px 9px', borderRight:'1px solid rgba(0,243,255,0.15)', display:'flex', alignItems:'center', gap:'5px', flexShrink:0 }}>
+      <div style={{ padding:'6px 8px', borderRight:'1px solid rgba(0,243,255,0.15)', display:'flex', alignItems:'center', gap:'5px', flexShrink:0 }}>
         <div style={{
           width:'5px', height:'5px', borderRadius:'50%',
           background: isLive ? '#00ff9d' : '#ff0055',
@@ -63,8 +63,8 @@ const GlobeHudLegend = memo(function GlobeHudLegend({
           animation: isLive ? 'hudStatusBlink 1.8s ease-in-out infinite' : 'none',
           flexShrink:0,
         }} />
-        <span style={{ fontSize:'0.56rem', letterSpacing:'1.2px', color:'rgba(0,243,255,0.5)', fontWeight:'bold', whiteSpace:'nowrap' }}>
-          HUD // TELEMETRY
+        <span style={{ fontSize:'0.56rem', letterSpacing:'1.5px', color:'rgba(0,243,255,0.5)', fontWeight:'bold', whiteSpace:'nowrap' }}>
+          TELEMETRY
         </span>
       </div>
 
@@ -89,7 +89,7 @@ const GlobeHudLegend = memo(function GlobeHudLegend({
       {/* LASER ARC */}
       <LegendItem>
         <LaserBeam />
-        <LabelGroup label="LASER ARC" badge="STREAM" badgeColor="#00f3ff" />
+        <LabelGroup label="LASER ARC" badge="TX" badgeColor="#00f3ff" />
       </LegendItem>
     </div>
   );

@@ -14,8 +14,11 @@ import io
 import json
 import logging
 import os
+import shutil
+import subprocess
+import tempfile
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import httpx
 from PIL import Image
@@ -63,6 +66,55 @@ _VISION_ARCHIVE_PROMPT = (
     "3. Trình bày bằng các gạch đầu dòng súc tích, ngắn gọn, đi thẳng vào các số liệu và sự thật kỹ thuật. "
     "4. Viết 100% bằng tiếng Việt."
 )
+
+
+class ArchivePasswordRequiredError(ValueError):
+    """Raised when an archive is encrypted and requires a password to extract."""
+    pass
+
+
+class ArchiveInvalidPasswordError(ValueError):
+    """Raised when the provided password fails to decrypt the archive."""
+    pass
+
+
+class ArchiveCorruptedError(ValueError):
+    """Raised when an archive file is malformed or corrupted."""
+    pass
+
+
+def extract_password_from_text(text: str) -> Optional[str]:
+    """
+    Extracts archive password from user caption or message using smart patterns.
+    Examples:
+      - 'pass: 123456' -> '123456'
+      - 'mật khẩu là: Abc@123' -> 'Abc@123'
+      - 'mk: test123' -> 'test123'
+      - 'password = mypass' -> 'mypass'
+      - 'pass là "secret key"' -> 'secret key'
+    """
+    if not text:
+        return None
+    import re
+    # Match patterns with quotes: pass: "my secret password"
+    quoted_match = re.search(
+        r'(?:pass(?:word)?|mật\s*khẩu|mk)\s*(?:là|is|:|=|:)?\s*["\']([^"\']+)["\']',
+        text,
+        re.IGNORECASE
+    )
+    if quoted_match:
+        return quoted_match.group(1).strip()
+
+    # Match patterns without quotes: pass: 123456, mk abc, mật khẩu là 123
+    unquoted_match = re.search(
+        r'(?:pass(?:word)?|mật\s*khẩu|mk)\s*(?:là|is|:|=|:)\s*([^\s\n,;]+)',
+        text,
+        re.IGNORECASE
+    )
+    if unquoted_match:
+        return unquoted_match.group(1).strip()
+
+    return None
 
 
 class MediaProcessor:
@@ -521,15 +573,107 @@ class MediaProcessor:
         return "unknown"
 
     @classmethod
-    def _unpack_archive_members(
-        cls, file_bytes: bytes, filename: str, mime_type: Optional[str]
+    def _unpack_via_7z(
+        cls,
+        file_bytes: bytes,
+        filename: str,
+        password: Optional[str] = None,
     ) -> list[tuple[str, int, bytes]]:
         """
-        Safely unpacks all members of an archive in memory.
-        Enforces security bounds:
-        - Zip Slip guard (path traversal)
-        - Zip Bomb guard (< 50MB uncompressed, max 200 files)
-        Returns: list of (member_name, file_size, raw_bytes)
+        High-performance extraction using 7-Zip CLI (p7zip-full).
+        Supports ZIP (ZipCrypto, WinZip AES-256), RAR4, RAR5, 7Z, TAR, GZ, BZ2, XZ.
+        """
+        seven_zip = shutil.which("7z") or shutil.which("7za")
+        if not seven_zip:
+            raise FileNotFoundError("7z binary not found on host system")
+
+        _MAX_TOTAL_BYTES = 50 * 1024 * 1024
+        _MAX_FILES = 200
+        _MAX_SINGLE_FILE = 10 * 1024 * 1024
+
+        with tempfile.TemporaryDirectory(prefix="tbb_archive_") as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            ext = Path(filename).suffix or ".zip"
+            archive_file = tmp_path / f"archive{ext}"
+            archive_file.write_bytes(file_bytes)
+            extract_dir = tmp_path / "extracted"
+            extract_dir.mkdir(parents=True, exist_ok=True)
+
+            cmd = [seven_zip, "x", "-y", f"-o{extract_dir}"]
+            if password is not None:
+                cmd.append(f"-p{password}")
+            else:
+                cmd.append("-p-")  # Do not prompt interactively if password-protected
+
+            cmd.append(str(archive_file))
+
+            proc = subprocess.run(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=30,
+            )
+
+            out = (proc.stdout or "") + "\n" + (proc.stderr or "")
+            out_lower = out.lower()
+
+            if proc.returncode != 0:
+                if (
+                    "wrong password" in out_lower
+                    or "data error in encrypted file" in out_lower
+                    or "cannot open encrypted" in out_lower
+                    or "unsupported method" in out_lower
+                ):
+                    if password:
+                        raise ArchiveInvalidPasswordError(f"Mật khẩu '{password}' không chính xác cho tệp `{filename}`.")
+                    raise ArchivePasswordRequiredError(f"Tệp nén `{filename}` được đặt mật khẩu bảo vệ.")
+
+                if "enter password" in out_lower or "encrypted" in out_lower:
+                    if password:
+                        raise ArchiveInvalidPasswordError(f"Mật khẩu '{password}' không chính xác cho tệp `{filename}`.")
+                    raise ArchivePasswordRequiredError(f"Tệp nén `{filename}` được đặt mật khẩu bảo vệ.")
+
+                raise ArchiveCorruptedError(f"Lỗi khi đọc tệp nén `{filename}`: {out.strip()[:180]}")
+
+            members_data: list[tuple[str, int, bytes]] = []
+            total_bytes = 0
+
+            for root, _, files in os.walk(extract_dir):
+                for f in files:
+                    full_path = Path(root) / f
+                    rel_name = str(full_path.relative_to(extract_dir)).replace("\\", "/")
+
+                    # Strict Zip Slip guard
+                    resolved = (extract_dir / rel_name).resolve()
+                    if not str(resolved).startswith(str(extract_dir.resolve())):
+                        continue
+
+                    f_size = full_path.stat().st_size
+                    if f_size > _MAX_SINGLE_FILE:
+                        continue
+
+                    total_bytes += f_size
+                    if total_bytes > _MAX_TOTAL_BYTES:
+                        raise ValueError(f"Dung lượng giải nén quá lớn ({total_bytes // 1048576} MB > 50 MB)")
+                    if len(members_data) >= _MAX_FILES:
+                        raise ValueError(f"Số lượng file trong tệp nén vượt quá giới hạn ({_MAX_FILES})")
+
+                    raw_data = full_path.read_bytes()
+                    members_data.append((rel_name, f_size, raw_data))
+
+            return members_data
+
+    @classmethod
+    def _unpack_via_python_libs(
+        cls,
+        file_bytes: bytes,
+        filename: str,
+        mime_type: Optional[str] = None,
+        password: Optional[str] = None,
+    ) -> list[tuple[str, int, bytes]]:
+        """
+        Pure Python fallback extraction using pyzipper/zipfile, rarfile, py7zr, tarfile.
         """
         ext = Path(filename).suffix.lower()
         mime = (mime_type or "").lower()
@@ -542,52 +686,144 @@ class MediaProcessor:
         members_data: list[tuple[str, int, bytes]] = []
 
         if fmt == "zip":
-            import zipfile
-            with zipfile.ZipFile(io.BytesIO(file_bytes)) as zf:
-                infolist = zf.infolist()
-                total_uncompressed = sum(m.file_size for m in infolist)
-                if total_uncompressed > _MAX_TOTAL_BYTES:
-                    raise ValueError(f"Dung lượng giải nén ZIP quá lớn ({total_uncompressed // 1048576} MB > 50 MB)")
-                if len(infolist) > _MAX_FILES:
-                    raise ValueError(f"Số lượng file trong ZIP vượt quá giới hạn ({len(infolist)} > {_MAX_FILES})")
+            zip_cls = None
+            try:
+                import pyzipper
+                zip_cls = pyzipper.AESZipFile
+            except ImportError:
+                import zipfile
+                zip_cls = zipfile.ZipFile
 
-                for info in infolist:
-                    name = info.filename
-                    if name.endswith("/"):
-                        continue
-                    resolved = os.path.normpath(os.path.join("/", name))
-                    if not resolved.startswith("/"):
-                        continue
-                    if info.file_size > _MAX_SINGLE_FILE:
-                        continue
-                    raw = zf.read(name)
-                    members_data.append((name, info.file_size, raw))
+            try:
+                with zip_cls(io.BytesIO(file_bytes)) as zf:
+                    pwd_bytes = password.encode("utf-8") if password else None
+                    if pwd_bytes:
+                        zf.setpassword(pwd_bytes)
+
+                    infolist = zf.infolist()
+                    has_encrypted = any((m.flag_bits & 0x1) for m in infolist)
+                    if has_encrypted and not password:
+                        raise ArchivePasswordRequiredError(f"Tệp nén `{filename}` được đặt mật khẩu bảo vệ.")
+
+                    total_uncompressed = sum(m.file_size for m in infolist)
+                    if total_uncompressed > _MAX_TOTAL_BYTES:
+                        raise ValueError(f"Dung lượng giải nén ZIP quá lớn ({total_uncompressed // 1048576} MB > 50 MB)")
+                    if len(infolist) > _MAX_FILES:
+                        raise ValueError(f"Số lượng file trong ZIP vượt quá giới hạn ({len(infolist)} > {_MAX_FILES})")
+
+                    for info in infolist:
+                        name = info.filename
+                        if name.endswith("/"):
+                            continue
+                        resolved = os.path.normpath(os.path.join("/", name))
+                        if not resolved.startswith("/"):
+                            continue
+                        if info.file_size > _MAX_SINGLE_FILE:
+                            continue
+                        try:
+                            raw = zf.read(name, pwd=pwd_bytes)
+                        except (RuntimeError, Exception) as re:
+                            err_str = str(re).lower()
+                            if "password required" in err_str or "encrypted" in err_str:
+                                if not password:
+                                    raise ArchivePasswordRequiredError(f"Tệp nén `{filename}` được đặt mật khẩu bảo vệ.")
+                                raise ArchiveInvalidPasswordError(f"Mật khẩu '{password}' không chính xác cho tệp `{filename}`.")
+                            if "bad password" in err_str or "crc" in err_str or "bad crc" in err_str:
+                                raise ArchiveInvalidPasswordError(f"Mật khẩu '{password}' không chính xác cho tệp `{filename}`.")
+                            raise
+
+                        members_data.append((name, info.file_size, raw))
+            except (ArchivePasswordRequiredError, ArchiveInvalidPasswordError):
+                raise
+            except Exception as ze:
+                err_s = str(ze).lower()
+                if "password" in err_s or "encrypted" in err_s:
+                    if not password:
+                        raise ArchivePasswordRequiredError(f"Tệp nén `{filename}` được đặt mật khẩu bảo vệ.")
+                    raise ArchiveInvalidPasswordError(f"Mật khẩu '{password}' không chính xác cho tệp `{filename}`.")
+                raise ArchiveCorruptedError(f"Không thể đọc tệp ZIP `{filename}`: {ze}")
 
         elif fmt == "rar":
             try:
                 import rarfile
             except ImportError:
                 raise ImportError("Thư viện 'rarfile' chưa được cài đặt trong hệ thống")
-            with rarfile.RarFile(io.BytesIO(file_bytes)) as rf:
-                infolist = rf.infolist()
-                total_uncompressed = sum(getattr(m, "file_size", 0) for m in infolist)
-                if total_uncompressed > _MAX_TOTAL_BYTES:
-                    raise ValueError(f"Dung lượng giải nén RAR quá lớn ({total_uncompressed // 1048576} MB > 50 MB)")
-                if len(infolist) > _MAX_FILES:
-                    raise ValueError(f"Số lượng file trong RAR vượt quá giới hạn ({len(infolist)} > {_MAX_FILES})")
+            try:
+                with rarfile.RarFile(io.BytesIO(file_bytes)) as rf:
+                    if rf.needs_password() and not password:
+                        raise ArchivePasswordRequiredError(f"Tệp nén RAR `{filename}` được đặt mật khẩu bảo vệ.")
 
-                for info in infolist:
-                    name = info.filename
-                    if getattr(info, "is_dir", lambda: False)():
-                        continue
-                    resolved = os.path.normpath(os.path.join("/", name))
-                    if not resolved.startswith("/"):
-                        continue
-                    size = getattr(info, "file_size", 0)
-                    if size > _MAX_SINGLE_FILE:
-                        continue
-                    raw = rf.read(name)
-                    members_data.append((name, size, raw))
+                    if password:
+                        rf.setpassword(password)
+
+                    infolist = rf.infolist()
+                    total_uncompressed = sum(getattr(m, "file_size", 0) for m in infolist)
+                    if total_uncompressed > _MAX_TOTAL_BYTES:
+                        raise ValueError(f"Dung lượng giải nén RAR quá lớn ({total_uncompressed // 1048576} MB > 50 MB)")
+                    if len(infolist) > _MAX_FILES:
+                        raise ValueError(f"Số lượng file trong RAR vượt quá giới hạn ({len(infolist)} > {_MAX_FILES})")
+
+                    for info in infolist:
+                        name = info.filename
+                        if getattr(info, "is_dir", lambda: False)():
+                            continue
+                        resolved = os.path.normpath(os.path.join("/", name))
+                        if not resolved.startswith("/"):
+                            continue
+                        size = getattr(info, "file_size", 0)
+                        if size > _MAX_SINGLE_FILE:
+                            continue
+                        try:
+                            raw = rf.read(name, pwd=password)
+                        except rarfile.PasswordRequired:
+                            raise ArchivePasswordRequiredError(f"Tệp nén RAR `{filename}` được đặt mật khẩu bảo vệ.")
+                        except rarfile.BadRarFile as bre:
+                            if password:
+                                raise ArchiveInvalidPasswordError(f"Mật khẩu '{password}' không chính xác cho tệp `{filename}`.")
+                            raise ArchiveCorruptedError(f"Lỗi đọc RAR: {bre}")
+                        members_data.append((name, size, raw))
+            except (ArchivePasswordRequiredError, ArchiveInvalidPasswordError, ArchiveCorruptedError):
+                raise
+            except Exception as re:
+                err_s = str(re).lower()
+                if "password" in err_s:
+                    if not password:
+                        raise ArchivePasswordRequiredError(f"Tệp nén RAR `{filename}` được đặt mật khẩu bảo vệ.")
+                    raise ArchiveInvalidPasswordError(f"Mật khẩu '{password}' không chính xác.")
+                raise ArchiveCorruptedError(f"Lỗi đọc tệp RAR: {re}")
+
+        elif fmt == "7z":
+            try:
+                import py7zr
+            except ImportError:
+                raise ImportError("Thư viện 'py7zr' chưa được cài đặt trong hệ thống")
+            try:
+                with py7zr.SevenZipFile(io.BytesIO(file_bytes), mode="r", password=password) as sz:
+                    if sz.needs_password() and not password:
+                        raise ArchivePasswordRequiredError(f"Tệp nén 7Z `{filename}` được đặt mật khẩu bảo vệ.")
+
+                    archive_dict = sz.readall()
+                    for name, bio in archive_dict.items():
+                        resolved = os.path.normpath(os.path.join("/", name))
+                        if not resolved.startswith("/"):
+                            continue
+                        raw = bio.getvalue() if hasattr(bio, "getvalue") else bio.read()
+                        members_data.append((name, len(raw), raw))
+            except (ArchivePasswordRequiredError, ArchiveInvalidPasswordError):
+                raise
+            except py7zr.exceptions.PasswordRequired:
+                raise ArchivePasswordRequiredError(f"Tệp nén 7Z `{filename}` được đặt mật khẩu bảo vệ.")
+            except py7zr.exceptions.Bad7zFile:
+                if password:
+                    raise ArchiveInvalidPasswordError(f"Mật khẩu '{password}' không chính xác cho tệp `{filename}`.")
+                raise ArchiveCorruptedError(f"Tệp 7Z `{filename}` bị lỗi hoặc yêu cầu mật khẩu.")
+            except Exception as se:
+                err_s = str(se).lower()
+                if "password" in err_s:
+                    if not password:
+                        raise ArchivePasswordRequiredError(f"Tệp nén 7Z `{filename}` được đặt mật khẩu bảo vệ.")
+                    raise ArchiveInvalidPasswordError(f"Mật khẩu '{password}' không chính xác.")
+                raise ArchiveCorruptedError(f"Lỗi đọc 7Z: {se}")
 
         elif fmt == "tar":
             import tarfile
@@ -613,24 +849,36 @@ class MediaProcessor:
                         raw = extracted.read()
                         members_data.append((name, info.size, raw))
 
-        elif fmt == "7z":
-            try:
-                import py7zr
-            except ImportError:
-                raise ImportError("Thư viện 'py7zr' chưa được cài đặt trong hệ thống")
-            with py7zr.SevenZipFile(io.BytesIO(file_bytes), mode="r") as sz:
-                archive_dict = sz.readall()
-                for name, bio in archive_dict.items():
-                    resolved = os.path.normpath(os.path.join("/", name))
-                    if not resolved.startswith("/"):
-                        continue
-                    raw = bio.getvalue() if hasattr(bio, "getvalue") else bio.read()
-                    members_data.append((name, len(raw), raw))
-
         else:
             raise ValueError(f"Định dạng tệp nén không được hỗ trợ: {ext} (MIME: {mime})")
 
         return members_data
+
+    @classmethod
+    def _unpack_archive_members(
+        cls,
+        file_bytes: bytes,
+        filename: str,
+        mime_type: Optional[str] = None,
+        password: Optional[str] = None,
+    ) -> list[tuple[str, int, bytes]]:
+        """
+        Safely unpacks all members of an archive in memory.
+        Enforces security bounds:
+        - Zip Slip guard (path traversal)
+        - Zip Bomb guard (< 50MB uncompressed, max 200 files)
+        - Password support for encrypted archives
+        Returns: list of (member_name, file_size, raw_bytes)
+        """
+        if shutil.which("7z") or shutil.which("7za"):
+            try:
+                return cls._unpack_via_7z(file_bytes, filename, password=password)
+            except (ArchivePasswordRequiredError, ArchiveInvalidPasswordError):
+                raise
+            except Exception as e7z:
+                logger.warning("[MediaProcessor] 7z CLI extraction error (%s), falling back to Python libraries", e7z)
+
+        return cls._unpack_via_python_libs(file_bytes, filename, mime_type, password=password)
 
     async def process_archive(
         self,
@@ -638,20 +886,21 @@ class MediaProcessor:
         mime_type: Optional[str],
         filename: str,
         caption: str = "",
+        password: Optional[str] = None,
     ) -> str:
         """
-        Universal Multi-modal Archive Extractor.
+        Universal Multi-modal Archive Extractor with Password Support.
         Recursively extracts:
         - Documents (PDF, DOCX, XLSX, CSV, JSON)
         - Source code and plain text files
         - Images via concise Technical Vision API (is_archive=True)
         - Reports full inventory manifest
         """
-        try:
-            members = self._unpack_archive_members(file_bytes, filename, mime_type)
-        except Exception as exc:
-            logger.error("[MediaProcessor] Unpack error for %s: %s", filename, exc, exc_info=True)
-            return f"(Không thể giải nén tệp `{filename}`: {exc})"
+        # Auto-extract password from caption if not explicitly provided
+        effective_pwd = password or extract_password_from_text(caption)
+
+        # Let ArchivePasswordRequiredError and ArchiveInvalidPasswordError propagate to caller
+        members = self._unpack_archive_members(file_bytes, filename, mime_type, password=effective_pwd)
 
         if not members:
             return f"(Tệp nén `{filename}` trống hoặc không chứa file hợp lệ.)"

@@ -3,6 +3,7 @@ from datetime import datetime, timezone, timedelta
 import json
 import logging
 import re
+import shlex
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.config import settings
@@ -634,6 +635,59 @@ Bạn là "Tiểu Bảo Bảo" — Trợ lý AI Tự Hành cấp cao (Senior Aut
                     },
                 },
             },
+            {
+                "type": "function",
+                "function": {
+                    "name": "read_archive_file",
+                    "description": (
+                        "Đọc và liệt kê danh mục tệp bên trong tệp nén (ZIP, RAR, 7Z, TAR, GZ) trên máy chủ. "
+                        "Hỗ trợ giải mã các tệp nén có đặt mật khẩu bảo vệ (mã hóa ZIP AES-256, WinRAR, 7-Zip). "
+                        "Dùng khi: 'đọc file zip X', 'xem nội dung file rar Y với pass Z', 'kiểm tra tệp nén'."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "file_path": {
+                                "type": "string",
+                                "description": "Đường dẫn tuyệt đối hoặc tương đối tới tệp nén trên máy chủ (ví dụ: '/home/kirito/data.zip').",
+                            },
+                            "password": {
+                                "type": "string",
+                                "description": "Mật khẩu giải mã nếu tệp nén được đặt mật khẩu bảo vệ.",
+                            },
+                        },
+                        "required": ["file_path"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "extract_archive_file",
+                    "description": (
+                        "Giải nén an toàn tệp nén (ZIP, RAR, 7Z, TAR) ra thư mục chỉ định trên máy chủ, có hỗ trợ mật khẩu giải mã. "
+                        "Dùng khi: 'giải nén file zip X ra thư mục Y', 'unzip file rar với pass Z'."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "file_path": {
+                                "type": "string",
+                                "description": "Đường dẫn tới tệp nén cần giải nén trên máy chủ.",
+                            },
+                            "destination_dir": {
+                                "type": "string",
+                                "description": "Thư mục đích lưu các tệp sau khi giải nén (ví dụ: '/home/kirito/extracted').",
+                            },
+                            "password": {
+                                "type": "string",
+                                "description": "Mật khẩu giải mã tệp nén (nếu có).",
+                            },
+                        },
+                        "required": ["file_path", "destination_dir"],
+                    },
+                },
+            },
             # ── Facebook Messenger ──
             {
                 "type": "function",
@@ -1237,6 +1291,55 @@ Bạn là "Tiểu Bảo Bảo" — Trợ lý AI Tự Hành cấp cao (Senior Aut
                     return "Error: No command specified."
                 # Raw output; RTK compression applied at chat-loop level before inserting into history
                 return await self.ssh_client.execute_command(cmd)
+
+            if tool_name == "read_archive_file":
+                fpath = tool_args.get("file_path", "").strip()
+                pwd = tool_args.get("password")
+                if not fpath:
+                    return "Lỗi: Chưa cung cấp đường dẫn file nén (file_path)."
+
+                check_cmd = f"test -f {shlex.quote(fpath)} && echo 'EXISTS' || echo 'NOT_FOUND'"
+                check_res = await self.ssh_client.execute_command(check_cmd)
+                if "EXISTS" not in check_res:
+                    return f"Lỗi: Không tìm thấy tệp nén tại đường dẫn `{fpath}` trên máy chủ."
+
+                pwd_arg = f"-p{shlex.quote(pwd)}" if pwd else "-p-"
+                list_cmd = f"7z l {pwd_arg} {shlex.quote(fpath)} 2>&1"
+                list_output = await self.ssh_client.execute_command(list_cmd)
+                out_lower = list_output.lower()
+
+                if "wrong password" in out_lower or "data error in encrypted" in out_lower:
+                    if pwd:
+                        return f"❌ Mật khẩu '{pwd}' không chính xác cho tệp nén `{fpath}`."
+                    return f"🔒 Tệp nén `{fpath}` được đặt mật khẩu bảo vệ. Vui lòng cung cấp mật khẩu để giải nén và đọc nội dung."
+
+                if "enter password" in out_lower:
+                    if pwd:
+                        return f"❌ Mật khẩu '{pwd}' không chính xác cho tệp nén `{fpath}`."
+                    return f"🔒 Tệp nén `{fpath}` yêu cầu mật khẩu để xem danh mục tệp."
+
+                return f"📦 **DANH MỤC TỆP NÉN `{fpath}`**:\n```\n{list_output.strip()[:4000]}\n```"
+
+            if tool_name == "extract_archive_file":
+                fpath = tool_args.get("file_path", "").strip()
+                dest = tool_args.get("destination_dir", "").strip()
+                pwd = tool_args.get("password")
+                if not fpath or not dest:
+                    return "Lỗi: Cần cung cấp đầy đủ file_path và destination_dir."
+
+                pwd_arg = f"-p{shlex.quote(pwd)}" if pwd else "-p-"
+                extract_cmd = f"mkdir -p {shlex.quote(dest)} && 7z x -y {pwd_arg} -o{shlex.quote(dest)} {shlex.quote(fpath)} 2>&1"
+                res = await self.ssh_client.execute_command(extract_cmd)
+                out_lower = res.lower()
+
+                if "wrong password" in out_lower or "data error in encrypted" in out_lower:
+                    if pwd:
+                        return f"❌ Mật khẩu '{pwd}' không chính xác cho tệp nén `{fpath}`."
+                    return f"🔒 Tệp nén `{fpath}` được đặt mật khẩu bảo vệ. Vui lòng cung cấp mật khẩu để giải nén."
+
+                if "everything is ok" in out_lower:
+                    return f"✅ Đã giải nén thành công tệp `{fpath}` vào thư mục `{dest}`."
+                return f"Kết quả giải nén:\n```\n{res.strip()[:2000]}\n```"
 
             # ── Messenger ──
             if tool_name == "facebook_get_messages":

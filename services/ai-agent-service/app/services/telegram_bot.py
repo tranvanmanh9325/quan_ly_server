@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 import httpx
@@ -11,7 +12,12 @@ from app.core.http_client import http_client_manager
 from app.core.ssh_client import SshClient
 from app.core.telegram_formatter import TelegramFormatter
 from app.services.ai_agent import AiAgentService
-from app.services.media_processor import MediaProcessor
+from app.services.media_processor import (
+    ArchiveInvalidPasswordError,
+    ArchivePasswordRequiredError,
+    MediaProcessor,
+    extract_password_from_text,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +34,8 @@ class TelegramBot:
         self._http_client = httpx.AsyncClient(timeout=35.0)
         self._running = False
         self._last_offset = 0
+        # Pending encrypted archive sessions waiting for password: chat_id -> dict
+        self._pending_archives: Dict[str, Dict[str, Any]] = {}
         # Reuse the same http_client to avoid spawning extra connection pools
         self._media = MediaProcessor(http_client=self._http_client)
         if hasattr(self.ai_agent, "set_telegram_bot"):
@@ -660,7 +668,38 @@ class TelegramBot:
                 is_archive = ext in archive_exts or any(t in mime_lower for t in ("zip", "rar", "tar", "7z", "compressed", "archive", "x-rar"))
 
                 if is_archive:
-                    content = await self._media.process_archive(file_bytes, mime_type, filename, caption=caption)
+                    try:
+                        content = await self._media.process_archive(file_bytes, mime_type, filename, caption=caption)
+                        # Clear any previous pending archive for this chat_id upon success
+                        self._pending_archives.pop(chat_id, None)
+                    except ArchivePasswordRequiredError:
+                        self._pending_archives[chat_id] = {
+                            "file_bytes": file_bytes,
+                            "filename": filename,
+                            "mime_type": mime_type,
+                            "caption": caption,
+                            "timestamp": time.time(),
+                        }
+                        await self.send_message(
+                            chat_id,
+                            f"🔒 <b>Tệp nén <code>{filename}</code> đã được đặt mật khẩu bảo vệ.</b>\n\n"
+                            f"Anh Mạnh vui lòng nhắn mật khẩu cho em (ví dụ: <code>pass: 123456</code> hoặc <code>mật khẩu là abc</code>) để em mở khóa và đọc toàn bộ dữ liệu bên trong cho anh nhé! 🔓"
+                        )
+                        return
+                    except ArchiveInvalidPasswordError:
+                        self._pending_archives[chat_id] = {
+                            "file_bytes": file_bytes,
+                            "filename": filename,
+                            "mime_type": mime_type,
+                            "caption": caption,
+                            "timestamp": time.time(),
+                        }
+                        await self.send_message(
+                            chat_id,
+                            f"❌ <b>Mật khẩu mở tệp <code>{filename}</code> không chính xác!</b>\n\n"
+                            f"Anh vui lòng kiểm tra lại và gửi lại mật khẩu đúng giúp em nhé."
+                        )
+                        return
                 else:
                     content = self._media.extract_document_text(file_bytes, mime_type, filename)
 
@@ -673,7 +712,7 @@ class TelegramBot:
                 # Optional: If user explicitly requested extracting/sending child files directly
                 if is_archive and any(w in caption.lower() for w in ("trích xuất ra gửi", "tách file gửi", "gửi lại file", "extract and send", "gửi từng file")):
                     try:
-                        members = self._media._unpack_archive_members(file_bytes, filename, mime_type)
+                        members = self._media._unpack_archive_members(file_bytes, filename, mime_type, password=extract_password_from_text(caption))
                         sent_count = 0
                         for m_name, m_size, m_data in members[:5]:  # Send up to 5 individual extracted files
                             m_ext = Path(m_name).suffix.lower()
@@ -698,7 +737,50 @@ class TelegramBot:
         if not text:
             return
 
+        # Check for pending encrypted archive waiting for password (valid for 15 minutes)
+        if chat_id in self._pending_archives:
+            pending = self._pending_archives[chat_id]
+            if time.time() - pending.get("timestamp", 0) < 900 and not text.startswith("/"):
+                extracted_pwd = extract_password_from_text(text) or text.strip()
+                logger.info("[TelegramBot] Trying password for pending archive %s from %s", pending["filename"], chat_id)
+                try:
+                    content = await self._media.process_archive(
+                        pending["file_bytes"],
+                        pending["mime_type"],
+                        pending["filename"],
+                        caption=pending["caption"],
+                        password=extracted_pwd,
+                    )
+                    # Decryption succeeded! Clear pending session
+                    self._pending_archives.pop(chat_id, None)
+                    caption_part = f"\n[Yêu cầu từ anh Mạnh]: {pending['caption']}" if pending["caption"] else ""
+                    user_input = (
+                        f"[📄 TỆP ĐÍNH KÈM: {pending['filename']} (Đã mở khóa mật khẩu thành công)]{caption_part}\n"
+                        f"[Câu hỏi/Chỉ đạo từ anh Mạnh]: {text}\n\n"
+                        f"{content}"
+                    )
+                    logger.info("[TelegramBot] Decrypted document extracted: %d chars", len(content))
+                    reply = await self.ai_agent.chat(chat_id, user_input)
+                    await self.send_message(chat_id, f"🔓 <i>Đã mở khóa tệp <b>{pending['filename']}</b> thành công!</i>\n\n" + reply)
+                    return
+                except ArchiveInvalidPasswordError:
+                    await self.send_message(
+                        chat_id,
+                        f"❌ <b>Mật khẩu '<code>{extracted_pwd}</code>' không chính xác cho tệp <code>{pending['filename']}</code>!</b>\n\n"
+                        f"Anh vui lòng kiểm tra lại mật khẩu (hoặc gõ <code>/cancel</code> để hủy đọc tệp này nhé)."
+                    )
+                    return
+                except Exception as ex_dec:
+                    logger.warning("[TelegramBot] Decryption with provided text failed: %s, falling back to standard chat", ex_dec)
+            else:
+                self._pending_archives.pop(chat_id, None)
+
         if text.startswith("/"):
+            if text == "/cancel":
+                if chat_id in self._pending_archives:
+                    self._pending_archives.pop(chat_id, None)
+                    await self.send_message(chat_id, "✅ Đã hủy phiên chờ mở khóa tệp nén.")
+                    return
             await self._handle_command(text, chat_id)
         else:
             try:

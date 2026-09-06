@@ -48,6 +48,11 @@ class TunnelEndpoint:
         """Returns True if the tunnel is healthy and not in cooldown period."""
         return not self.is_dead and now >= self.available_at
 
+    @property
+    def is_active(self) -> bool:
+        """Returns True if the tunnel is healthy and currently outside cooldown."""
+        return self.is_available(time.time())
+
     def __repr__(self) -> str:
         return f"<TunnelEndpoint #{self.endpoint_id} {self.name} uses={self.usage_count} fails={self.fail_count}>"
 

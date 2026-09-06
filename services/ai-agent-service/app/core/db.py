@@ -1,6 +1,6 @@
 import logging
 from contextlib import asynccontextmanager
-from typing import Any, AsyncGenerator, Optional
+from typing import Any, AsyncGenerator, Dict, Optional
 import psycopg
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
@@ -56,7 +56,7 @@ class DatabasePoolManager:
             yield conn
 
     @asynccontextmanager
-    async def cursor(self, row_factory: Optional[Any] = None) -> AsyncGenerator[psycopg.AsyncCursor, None]:
+    async def cursor(self, row_factory: Optional[Any] = None) -> AsyncGenerator[psycopg.AsyncCursor[Any], None]:
         async with self.connection() as conn:
             if row_factory:
                 conn.row_factory = row_factory
@@ -75,7 +75,7 @@ async def get_db_connection() -> AsyncGenerator[psycopg.AsyncConnection, None]:
 
 
 @asynccontextmanager
-async def get_db_dict_cursor() -> AsyncGenerator[psycopg.AsyncCursor, None]:
+async def get_db_dict_cursor() -> AsyncGenerator[psycopg.AsyncCursor[Dict[str, Any]], None]:
     """Context manager for acquiring a cursor returning dictionary rows."""
     async with db_manager.cursor(row_factory=dict_row) as cur:
         yield cur

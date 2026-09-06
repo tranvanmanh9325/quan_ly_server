@@ -188,6 +188,11 @@ class KeyEntry:
     def is_available(self, now: float) -> bool:
         return not self.is_dead and now >= self.available_at
 
+    @property
+    def is_active(self) -> bool:
+        """Returns True if the key is healthy and currently outside cooldown."""
+        return self.is_available(time.time())
+
     def __lt__(self, other: "KeyEntry") -> bool:
         if self.available_at != other.available_at:
             return self.available_at < other.available_at

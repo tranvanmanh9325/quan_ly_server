@@ -88,26 +88,30 @@ def extract_password_from_text(text: str) -> Optional[str]:
     Extracts archive password from user caption or message using smart patterns.
     Examples:
       - 'pass: 123456' -> '123456'
+      - 'pass 123456' -> '123456'
       - 'mật khẩu là: Abc@123' -> 'Abc@123'
+      - 'mật khẩu là 123' -> '123'
+      - 'mật khẩu 123' -> '123'
       - 'mk: test123' -> 'test123'
+      - 'mk 123' -> '123'
       - 'password = mypass' -> 'mypass'
       - 'pass là "secret key"' -> 'secret key'
     """
     if not text:
         return None
     import re
-    # Match patterns with quotes: pass: "my secret password"
+    # 1. Match patterns with quotes: pass: "my secret password", pass là '123 456'
     quoted_match = re.search(
-        r'(?:pass(?:word)?|mật\s*khẩu|mk)\s*(?:là|is|:|=|:)?\s*["\']([^"\']+)["\']',
+        r'(?:pass(?:word)?|mật\s*khẩu|mk)\s*(?:là|is|:|=|:|\s)?\s*["\']([^"\']+)["\']',
         text,
         re.IGNORECASE
     )
     if quoted_match:
         return quoted_match.group(1).strip()
 
-    # Match patterns without quotes: pass: 123456, mk abc, mật khẩu là 123
+    # 2. Match patterns without quotes: pass: 123456, pass 123, mk abc, mk 123, mật khẩu là 123, mật khẩu 123
     unquoted_match = re.search(
-        r'(?:pass(?:word)?|mật\s*khẩu|mk)\s*(?:là|is|:|=|:)\s*([^\s\n,;]+)',
+        r'(?:pass(?:word)?|mật\s*khẩu|mk)\s*(?:là|is|:|=|:|\s)\s*([^\s\n,;]+)',
         text,
         re.IGNORECASE
     )
@@ -599,11 +603,35 @@ class MediaProcessor:
             extract_dir = tmp_path / "extracted"
             extract_dir.mkdir(parents=True, exist_ok=True)
 
+            # Step 1: Probe archive headers using `7z l -slt -p-` to detect encryption
+            probe_cmd = [seven_zip, "l", "-slt", "-p-", str(archive_file)]
+            probe_proc = subprocess.run(
+                probe_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=15,
+            )
+            probe_out = (probe_proc.stdout or "") + "\n" + (probe_proc.stderr or "")
+
+            is_encrypted = (
+                "Encrypted = +" in probe_out
+                or "7zAES" in probe_out
+                or "AES" in probe_out
+                or "ZipCrypto" in probe_out
+                or "Errors: 1" in probe_out
+                or probe_proc.returncode != 0
+            )
+
+            if is_encrypted and not password:
+                raise ArchivePasswordRequiredError(f"Tệp nén `{filename}` được đặt mật khẩu bảo vệ.")
+
+            # Step 2: Execute extraction with password or -p-
             cmd = [seven_zip, "x", "-y", f"-o{extract_dir}"]
             if password is not None:
                 cmd.append(f"-p{password}")
             else:
-                cmd.append("-p-")  # Do not prompt interactively if password-protected
+                cmd.append("-p-")  # Do not prompt interactively
 
             cmd.append(str(archive_file))
 
@@ -619,17 +647,7 @@ class MediaProcessor:
             out_lower = out.lower()
 
             if proc.returncode != 0:
-                if (
-                    "wrong password" in out_lower
-                    or "data error in encrypted file" in out_lower
-                    or "cannot open encrypted" in out_lower
-                    or "unsupported method" in out_lower
-                ):
-                    if password:
-                        raise ArchiveInvalidPasswordError(f"Mật khẩu '{password}' không chính xác cho tệp `{filename}`.")
-                    raise ArchivePasswordRequiredError(f"Tệp nén `{filename}` được đặt mật khẩu bảo vệ.")
-
-                if "enter password" in out_lower or "encrypted" in out_lower:
+                if is_encrypted or password:
                     if password:
                         raise ArchiveInvalidPasswordError(f"Mật khẩu '{password}' không chính xác cho tệp `{filename}`.")
                     raise ArchivePasswordRequiredError(f"Tệp nén `{filename}` được đặt mật khẩu bảo vệ.")

@@ -148,6 +148,10 @@ class TikTokService:
             logger.error("[TikTokService] Error reading tiktok_config from DB: %s", e)
         return default_cfg
 
+    async def load_configuration(self) -> Dict[str, Any]:
+        """Loads and returns current TikTok configuration from PostgreSQL."""
+        return await self.get_config_from_db()
+
     async def save_config_to_db(self, cfg: Dict[str, Any]) -> None:
         """Saves configuration to PostgreSQL tiktok_config table."""
         await self._ensure_db_tables()

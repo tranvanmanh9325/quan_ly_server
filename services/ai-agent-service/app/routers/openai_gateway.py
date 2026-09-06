@@ -35,7 +35,7 @@ async def openai_chat_completions(
     Accepts standard OpenAI payloads and routes through Smart 3-Tier Fallback Pool.
     Supports both JSON response and real-time SSE chunk streaming.
     """
-    llm_router: LlmRouter = getattr(request.app.state, "llm_router", None)
+    llm_router: Optional[LlmRouter] = getattr(request.app.state, "llm_router", None)
     if not llm_router or not llm_router.has_active_providers:
         raise HTTPException(
             status_code=503,
@@ -95,7 +95,7 @@ async def openai_chat_completions(
 @router.get("/api/ai/models")
 async def list_openai_models(request: Request):
     """Returns available models across active 9Router providers."""
-    llm_router: LlmRouter = getattr(request.app.state, "llm_router", None)
+    llm_router: Optional[LlmRouter] = getattr(request.app.state, "llm_router", None)
     model_entries = [
         {
             "id": "openai/gpt-oss-120b",
@@ -149,7 +149,7 @@ async def list_openai_models(request: Request):
 @router.get("/api/ai/router/status")
 async def get_router_status(request: Request):
     """Returns real-time 9Router metrics, pool health, and RTK token savings."""
-    llm_router: LlmRouter = getattr(request.app.state, "llm_router", None)
+    llm_router: Optional[LlmRouter] = getattr(request.app.state, "llm_router", None)
     if not llm_router:
         return {"status": "uninitialized", "providers": []}
     return llm_router.get_status()

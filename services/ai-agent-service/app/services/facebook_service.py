@@ -202,6 +202,10 @@ class FacebookService:
             "scan_interval_minutes": 5,
         }
 
+    async def load_configuration(self) -> Dict[str, Any]:
+        """Loads and returns current Facebook configuration from PostgreSQL."""
+        return await self.get_config_from_db()
+
     async def save_config_to_db(self, cfg: Dict[str, Any]) -> None:
         try:
             async with get_db_connection() as conn:

@@ -1,5 +1,5 @@
 import os
-from typing import List, Optional
+from typing import List, Optional, Tuple
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field
 
@@ -29,6 +29,11 @@ class Settings(BaseSettings):
     SSH_PASSWORD: str = Field(default="", alias="SSH_PASSWORD")
     SSH_FALLBACK_HOST: Optional[str] = Field(default=None, alias="SSH_FALLBACK_HOST")
     SSH_FALLBACK_PORT: int = Field(default=22, alias="SSH_FALLBACK_PORT")
+    SSH_FALLBACK_PORT_2: Optional[int] = Field(default=None, alias="SSH_FALLBACK_PORT_2")
+    SSH_FALLBACK_PORT_3: Optional[int] = Field(default=None, alias="SSH_FALLBACK_PORT_3")
+    SSH_FALLBACK_PORT_4: Optional[int] = Field(default=None, alias="SSH_FALLBACK_PORT_4")
+    SSH_FALLBACK_PORT_5: Optional[int] = Field(default=None, alias="SSH_FALLBACK_PORT_5")
+    NGROK_SSH_TUNNELS: Optional[str] = Field(default=None, alias="NGROK_SSH_TUNNELS")
 
     # Telegram Bot
     TELEGRAM_BOT_TOKEN: str = Field(default="", alias="TELEGRAM_BOT_TOKEN")
@@ -139,6 +144,61 @@ class Settings(BaseSettings):
             if clean and clean not in seen:
                 seen.add(clean)
                 result.append(clean)
+        return result
+
+    @property
+    def ssh_fallback_endpoints(self) -> List[Tuple[str, int]]:
+        """
+        Returns a deduplicated list of fallback SSH tunnel endpoints (host, port).
+        Parses NGROK_SSH_TUNNELS, discrete SSH_FALLBACK_PORT_*, and dynamic env vars.
+        """
+        endpoints: List[Tuple[str, int]] = []
+        default_host = (self.SSH_FALLBACK_HOST or "0.tcp.ap.ngrok.io").strip()
+
+        # 1. Parse NGROK_SSH_TUNNELS (e.g. "0.tcp.ap.ngrok.io:25823,0.tcp.ap.ngrok.io:18974")
+        if self.NGROK_SSH_TUNNELS:
+            for item in self.NGROK_SSH_TUNNELS.split(","):
+                item = item.strip()
+                if not item:
+                    continue
+                if ":" in item:
+                    parts = item.split(":", 1)
+                    h, p = parts[0].strip(), parts[1].strip()
+                    if p.isdigit():
+                        endpoints.append((h, int(p)))
+                elif item.isdigit():
+                    endpoints.append((default_host, int(item)))
+
+        # 2. Check discrete port fields
+        if self.SSH_FALLBACK_HOST:
+            discrete_ports = [
+                self.SSH_FALLBACK_PORT,
+                self.SSH_FALLBACK_PORT_2,
+                self.SSH_FALLBACK_PORT_3,
+                self.SSH_FALLBACK_PORT_4,
+                self.SSH_FALLBACK_PORT_5,
+            ]
+            for port in discrete_ports:
+                if port and port > 0:
+                    endpoints.append((self.SSH_FALLBACK_HOST.strip(), port))
+
+        # 3. Dynamic discovery of any extra SSH_FALLBACK_PORT_* env vars
+        if self.SSH_FALLBACK_HOST:
+            for env_k, env_v in os.environ.items():
+                if env_k.startswith("SSH_FALLBACK_PORT_") and env_v and env_v.strip().isdigit():
+                    p = int(env_v.strip())
+                    if p > 0:
+                        endpoints.append((self.SSH_FALLBACK_HOST.strip(), p))
+
+        # Deduplicate while preserving order and filtering out duplicate of primary (SSH_HOST, SSH_PORT)
+        seen = set()
+        result: List[Tuple[str, int]] = []
+        for host, port in endpoints:
+            if (host, port) == (self.SSH_HOST, self.SSH_PORT):
+                continue
+            if (host, port) not in seen:
+                seen.add((host, port))
+                result.append((host, port))
         return result
 
 

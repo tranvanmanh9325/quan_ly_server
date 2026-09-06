@@ -21,7 +21,10 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 
 import httpx
-from PIL import Image
+try:
+    from PIL import Image
+except ImportError:
+    Image = None  # type: ignore
 
 from app.config import settings
 
@@ -102,21 +105,23 @@ def extract_password_from_text(text: str) -> Optional[str]:
     import re
     # 1. Match patterns with quotes: pass: "my secret password", pass là '123 456'
     quoted_match = re.search(
-        r'(?:pass(?:word)?|mật\s*khẩu|mk)\s*(?:là|is|:|=|:|\s)?\s*["\']([^"\']+)["\']',
+        r'(?:pass(?:word)?|mật\s*khẩu|mk)(?:\s*(?:là|is))?\s*[:=]?\s*["\']([^"\']+)["\']',
         text,
         re.IGNORECASE
     )
     if quoted_match:
         return quoted_match.group(1).strip()
 
-    # 2. Match patterns without quotes: pass: 123456, pass 123, mk abc, mk 123, mật khẩu là 123, mật khẩu 123
+    # 2. Match patterns without quotes: pass: 123456, pass 123, mk abc, mk 123, mật khẩu là: 123, mật khẩu 123
     unquoted_match = re.search(
-        r'(?:pass(?:word)?|mật\s*khẩu|mk)\s*(?:là|is|:|=|:|\s)\s*([^\s\n,;]+)',
+        r'(?:pass(?:word)?|mật\s*khẩu|mk)(?:\s*(?:là|is))?\s*[:=]?\s*([^\s\n,;]+)',
         text,
         re.IGNORECASE
     )
     if unquoted_match:
-        return unquoted_match.group(1).strip()
+        val = unquoted_match.group(1).strip()
+        if val and val not in (":", "=", "là", "is"):
+            return val
 
     return None
 
@@ -303,12 +308,14 @@ class MediaProcessor:
     @staticmethod
     def _encode_image(image_bytes: bytes) -> str:
         """Resize to max 1024px JPEG and encode as base64 to keep payload < 4MB."""
-        with Image.open(io.BytesIO(image_bytes)) as img:
-            img = img.convert("RGB")
-            img.thumbnail((_MAX_IMG_DIMENSION, _MAX_IMG_DIMENSION), Image.LANCZOS)
-            buf = io.BytesIO()
-            img.save(buf, format="JPEG", quality=_IMG_QUALITY)
-            return base64.b64encode(buf.getvalue()).decode("utf-8")
+        if Image is not None:
+            with Image.open(io.BytesIO(image_bytes)) as img:
+                img = img.convert("RGB")
+                img.thumbnail((_MAX_IMG_DIMENSION, _MAX_IMG_DIMENSION), Image.LANCZOS)
+                buf = io.BytesIO()
+                img.save(buf, format="JPEG", quality=_IMG_QUALITY)
+                return base64.b64encode(buf.getvalue()).decode("utf-8")
+        return base64.b64encode(image_bytes).decode("utf-8")
 
     @staticmethod
     def _build_vision_messages(b64: str, caption: str, is_archive: bool = False) -> list:
@@ -682,6 +689,15 @@ class MediaProcessor:
 
             return members_data
 
+    @staticmethod
+    def _is_safe_path(name: str) -> bool:
+        """
+        Guards against Zip Slip (path traversal) vulnerabilities cross-platform.
+        Ensures the relative archive path does not escape using '..' or absolute paths.
+        """
+        p = Path(name)
+        return not p.is_absolute() and ".." not in p.parts and not name.startswith(("/", "\\"))
+
     @classmethod
     def _unpack_via_python_libs(
         cls,
@@ -733,8 +749,7 @@ class MediaProcessor:
                         name = info.filename
                         if name.endswith("/"):
                             continue
-                        resolved = os.path.normpath(os.path.join("/", name))
-                        if not resolved.startswith("/"):
+                        if not cls._is_safe_path(name):
                             continue
                         if info.file_size > _MAX_SINGLE_FILE:
                             continue
@@ -785,8 +800,7 @@ class MediaProcessor:
                         name = info.filename
                         if getattr(info, "is_dir", lambda: False)():
                             continue
-                        resolved = os.path.normpath(os.path.join("/", name))
-                        if not resolved.startswith("/"):
+                        if not cls._is_safe_path(name):
                             continue
                         size = getattr(info, "file_size", 0)
                         if size > _MAX_SINGLE_FILE:
@@ -822,8 +836,7 @@ class MediaProcessor:
 
                     archive_dict = sz.readall()
                     for name, bio in archive_dict.items():
-                        resolved = os.path.normpath(os.path.join("/", name))
-                        if not resolved.startswith("/"):
+                        if not cls._is_safe_path(name):
                             continue
                         raw = bio.getvalue() if hasattr(bio, "getvalue") else bio.read()
                         members_data.append((name, len(raw), raw))
@@ -857,8 +870,7 @@ class MediaProcessor:
                     if info.isdir():
                         continue
                     name = info.name
-                    resolved = os.path.normpath(os.path.join("/", name))
-                    if not resolved.startswith("/"):
+                    if not cls._is_safe_path(name):
                         continue
                     if info.size > _MAX_SINGLE_FILE:
                         continue

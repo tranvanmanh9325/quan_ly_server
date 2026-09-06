@@ -2,6 +2,7 @@
 Unit tests for MediaProcessor archive extraction, password detection, and decryption engine.
 """
 
+import base64
 import io
 import sys
 import unittest
@@ -16,6 +17,11 @@ from app.services.media_processor import (
     ArchivePasswordRequiredError,
     MediaProcessor,
     extract_password_from_text,
+)
+
+# Minimal encrypted ZIP (ZipCrypto, password="123456", contains "secret.txt")
+ENCRYPTED_ZIP_BYTES = base64.b64decode(
+    "UEsDBBQAAQAAAAAAIVwAFNVlNwAAACsAAAAKAAAAc2VjcmV0LnR4dIB+r0WaIqyk40puTZEvcsduVgCB1c2TzpJ+oZjv233Zza1nc8VOJMXZfVgGNZv1+DKiontu0URQSwECFAAUAAEAAAAAACFcABTVZTcAAAArAAAACgAAAAAAAAAAAAAAAAAAAAAAc2VjcmV0LnR4dFBLBQYAAAAAAQABADgAAABfAAAAAAA="
 )
 
 
@@ -44,35 +50,17 @@ class TestArchiveProcessor(unittest.TestCase):
         self.assertIn("code.py", names)
 
     def test_encrypted_zip_password_required(self):
-        buf = io.BytesIO()
-        with zipfile.ZipFile(buf, "w") as zf:
-            zf.setpassword(b"123456")
-            zf.writestr("secret.txt", "Tài liệu mật cần bảo vệ", compress_type=zipfile.ZIP_DEFLATED)
-        data = buf.getvalue()
-
         # Attempting without password must raise ArchivePasswordRequiredError
         with self.assertRaises(ArchivePasswordRequiredError):
-            MediaProcessor._unpack_archive_members(data, "protected.zip", password=None)
+            MediaProcessor._unpack_archive_members(ENCRYPTED_ZIP_BYTES, "protected.zip", password=None)
 
     def test_encrypted_zip_wrong_password(self):
-        buf = io.BytesIO()
-        with zipfile.ZipFile(buf, "w") as zf:
-            zf.setpassword(b"correct_pass")
-            zf.writestr("secret.txt", "Tài liệu mật", compress_type=zipfile.ZIP_DEFLATED)
-        data = buf.getvalue()
-
         # Attempting with wrong password must raise ArchiveInvalidPasswordError
         with self.assertRaises(ArchiveInvalidPasswordError):
-            MediaProcessor._unpack_archive_members(data, "protected.zip", password="wrong_pass")
+            MediaProcessor._unpack_archive_members(ENCRYPTED_ZIP_BYTES, "protected.zip", password="wrong_pass")
 
     def test_encrypted_zip_correct_password(self):
-        buf = io.BytesIO()
-        with zipfile.ZipFile(buf, "w") as zf:
-            zf.setpassword(b"my_secure_pass")
-            zf.writestr("secret.txt", "Dữ liệu mật đã được giải mã!", compress_type=zipfile.ZIP_DEFLATED)
-        data = buf.getvalue()
-
-        members = MediaProcessor._unpack_archive_members(data, "protected.zip", password="my_secure_pass")
+        members = MediaProcessor._unpack_archive_members(ENCRYPTED_ZIP_BYTES, "protected.zip", password="123456")
         self.assertEqual(len(members), 1)
         self.assertEqual(members[0][0], "secret.txt")
         self.assertEqual(members[0][2].decode("utf-8"), "Dữ liệu mật đã được giải mã!")

@@ -1176,7 +1176,12 @@ Khi nhận thấy đề xuất của anh Mạnh có nhược điểm lớn, rủ
                 },
             },
         ]
-        return [t for t in tools if t["function"]["name"] not in excluded]
+        filtered_tools: List[Dict[str, Any]] = []
+        for t in tools:
+            fn = t.get("function")
+            if isinstance(fn, dict) and fn.get("name") not in excluded:
+                filtered_tools.append(t)
+        return filtered_tools
 
     # ──────────────────────────────────────────────────────────────────────────
     # Tool Execution
@@ -1203,6 +1208,7 @@ Khi nhận thấy đề xuất của anh Mạnh có nhược điểm lớn, rủ
         tool_args: Dict[str, Any],
         chat_id: Optional[str] = None,
         pending_photos: Optional[list] = None,
+        user_message: Optional[str] = None,
     ) -> str:
         try:
             # ── Server ──
@@ -1631,7 +1637,7 @@ Khi nhận thấy đề xuất của anh Mạnh có nhược điểm lớn, rủ
                     return "Cần cung cấp nội dung việc cần nhớ."
                 task_id = await self.memory_service.add_pending_task(
                     task_summary=task,
-                    created_by_msg=user_message[:500],
+                    created_by_msg=(user_message or task)[:500],
                     remind_turns=remind_turns,
                 )
                 if task_id:
@@ -2335,12 +2341,12 @@ Khi nhận thấy đề xuất của anh Mạnh có nhược điểm lớn, rủ
                                 executed_commands.add(cmd_str)
                             logger.info("[AiAgent][iter=%d] Executing tool: %s(%s)", iteration, fn_name, fn_args)
                             tool_result = await self._execute_tool(
-                                fn_name, fn_args, chat_id=chat_id, pending_photos=pending_photos
+                                fn_name, fn_args, chat_id=chat_id, pending_photos=pending_photos, user_message=user_message
                             )
                     else:
                         logger.info("[AiAgent][iter=%d] Executing tool: %s(%s)", iteration, fn_name, fn_args)
                         tool_result = await self._execute_tool(
-                            fn_name, fn_args, chat_id=chat_id, pending_photos=pending_photos
+                            fn_name, fn_args, chat_id=chat_id, pending_photos=pending_photos, user_message=user_message
                         )
 
                     # Apply RTK compression to tool results before inserting into history.
@@ -2403,12 +2409,12 @@ Khi nhận thấy đề xuất của anh Mạnh có nhược điểm lớn, rủ
                     })
 
                     # P3 (Dopamine RPE): track all tool outputs for post-task salience scoring
-                    _all_tool_results.append(str(tool_result)[:400])
+                    _all_tool_results.append(tool_result[:400])
 
                     # P6 (v4.0) STDP + P8 EFE: record tool outcome for causal learning
                     if self.memory_service:
                         # Detect success/failure from tool output heuristically
-                        _result_str = str(tool_result).lower()
+                        _result_str = tool_result.lower()
                         _tool_ok = not any(
                             kw in _result_str for kw in
                             ("error", "fail", "exception", "traceback", "errno", "not found", "permission denied")
@@ -2468,7 +2474,7 @@ Khi nhận thấy đề xuất của anh Mạnh có nhược điểm lớn, rủ
                     fn_name = pc["name"]
                     fn_args = pc["args"]
                     tool_result = await self._execute_tool(
-                        fn_name, fn_args, chat_id=chat_id, pending_photos=pending_photos
+                        fn_name, fn_args, chat_id=chat_id, pending_photos=pending_photos, user_message=user_message
                     )
                     _NON_COMPRESS_TOOLS = {
                         "facebook_view_profile", "facebook_send_reply",

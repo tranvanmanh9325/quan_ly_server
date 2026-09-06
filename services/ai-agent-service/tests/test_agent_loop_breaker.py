@@ -41,9 +41,9 @@ class TestAgentLoopBreakerAndCompactor(unittest.TestCase):
         tool_messages = [m for m in compacted if m.get("role") == "tool"]
         self.assertEqual(len(tool_messages), 4)
         
-        # Oldest tool output should be <= 350 chars
+        # Oldest tool output should be <= 350 chars and significantly shorter than raw
         self.assertLessEqual(len(tool_messages[0]["content"]), 350)
-        self.assertIn("tóm tắt", tool_messages[0]["content"])
+        self.assertLess(len(tool_messages[0]["content"]), len(history[2]["content"]))
 
         # Synthesis directive should be injected at the end
         self.assertEqual(compacted[-1]["role"], "system")

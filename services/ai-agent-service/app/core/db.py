@@ -1,6 +1,6 @@
 import logging
 from contextlib import asynccontextmanager
-from typing import AsyncIterator, Optional, Any
+from typing import Any, AsyncGenerator, Optional
 import psycopg
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
@@ -48,7 +48,7 @@ class DatabasePoolManager:
             logger.info("[DB-Pool] AsyncConnectionPool closed cleanly")
 
     @asynccontextmanager
-    async def connection(self) -> AsyncIterator[psycopg.AsyncConnection]:
+    async def connection(self) -> AsyncGenerator[psycopg.AsyncConnection, None]:
         if self._pool is None:
             await self.initialize()
         assert self._pool is not None
@@ -56,7 +56,7 @@ class DatabasePoolManager:
             yield conn
 
     @asynccontextmanager
-    async def cursor(self, row_factory: Optional[Any] = None) -> AsyncIterator[psycopg.AsyncCursor]:
+    async def cursor(self, row_factory: Optional[Any] = None) -> AsyncGenerator[psycopg.AsyncCursor, None]:
         async with self.connection() as conn:
             if row_factory:
                 conn.row_factory = row_factory
@@ -68,14 +68,14 @@ db_manager = DatabasePoolManager()
 
 
 @asynccontextmanager
-async def get_db_connection() -> AsyncIterator[psycopg.AsyncConnection]:
+async def get_db_connection() -> AsyncGenerator[psycopg.AsyncConnection, None]:
     """Context manager for acquiring a pooled DB connection."""
     async with db_manager.connection() as conn:
         yield conn
 
 
 @asynccontextmanager
-async def get_db_dict_cursor() -> AsyncIterator[psycopg.AsyncCursor]:
+async def get_db_dict_cursor() -> AsyncGenerator[psycopg.AsyncCursor, None]:
     """Context manager for acquiring a cursor returning dictionary rows."""
     async with db_manager.cursor(row_factory=dict_row) as cur:
         yield cur

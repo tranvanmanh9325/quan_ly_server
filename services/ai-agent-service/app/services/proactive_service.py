@@ -18,6 +18,7 @@ Anomalies checked:
   - OOM-killed processes in last 24h
 """
 import asyncio
+from datetime import datetime, timezone
 import logging
 import re
 from typing import Any, Optional
@@ -198,14 +199,13 @@ class ProactiveIntelligenceService:
                 if not cert_check or not cert_check.strip():
                     continue
 
-                # Parse expiry date
-                from datetime import datetime
+                # Parse expiry date (OpenSSL outputs GMT/UTC dates)
                 try:
-                    exp = datetime.strptime(cert_check.strip(), "%b %d %H:%M:%S %Y %Z")
-                    days_left = (exp - datetime.utcnow()).days
+                    exp = datetime.strptime(cert_check.strip(), "%b %d %H:%M:%S %Y %Z").replace(tzinfo=timezone.utc)
+                    days_left = (exp - datetime.now(timezone.utc)).days
                     if days_left <= _SSL_WARN_DAYS:
                         expiring.append(f"<code>{domain}</code>: còn <b>{days_left} ngày</b>")
-                except ValueError:
+                except (ValueError, TypeError):
                     pass
 
             if not expiring:

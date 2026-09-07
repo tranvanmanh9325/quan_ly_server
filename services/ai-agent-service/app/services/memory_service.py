@@ -234,7 +234,7 @@ class AgentMemoryService:
                         (limit,),
                     )
                     rows = await cur.fetchall()
-                    cols = [desc[0] for desc in cur.description]
+                    cols = [desc[0] for desc in cur.description] if cur.description else []
                     return [dict(zip(cols, row)) for row in rows]
         except Exception as e:
             logger.error("[MemoryService] list_lessons_for_display error: %s", e)
@@ -1313,7 +1313,7 @@ Bài học:"""
                         """
                     )
                     rows = await cur.fetchall()
-                    cols = [d[0] for d in cur.description]
+                    cols = [d[0] for d in cur.description] if cur.description else []
                     return [dict(zip(cols, r)) for r in rows]
         except Exception as e:
             logger.error("[MemoryService] list_pending_tasks error: %s", e)
@@ -1412,17 +1412,26 @@ Bài học:"""
         if not tool_a or not tool_b or tool_a == tool_b:
             return
         try:
-            col = "success_count" if success else "fail_count"
             async with get_db_connection() as conn:
                 async with conn.cursor() as cur:
-                    await cur.execute(
-                        f"""INSERT INTO agent_causal_chains (tool_a, tool_b, {col}, last_seen_at)
-                            VALUES (%s, %s, 1, NOW())
-                            ON CONFLICT (tool_a, tool_b) DO UPDATE
-                                SET {col}        = agent_causal_chains.{col} + 1,
-                                    last_seen_at = NOW()""",
-                        (tool_a, tool_b),
-                    )
+                    if success:
+                        await cur.execute(
+                            """INSERT INTO agent_causal_chains (tool_a, tool_b, success_count, last_seen_at)
+                               VALUES (%s, %s, 1, NOW())
+                               ON CONFLICT (tool_a, tool_b) DO UPDATE
+                                   SET success_count = agent_causal_chains.success_count + 1,
+                                       last_seen_at  = NOW()""",
+                            (tool_a, tool_b),
+                        )
+                    else:
+                        await cur.execute(
+                            """INSERT INTO agent_causal_chains (tool_a, tool_b, fail_count, last_seen_at)
+                               VALUES (%s, %s, 1, NOW())
+                               ON CONFLICT (tool_a, tool_b) DO UPDATE
+                                   SET fail_count    = agent_causal_chains.fail_count + 1,
+                                       last_seen_at  = NOW()""",
+                            (tool_a, tool_b),
+                        )
                     await conn.commit()
         except Exception as e:
             logger.debug("[MemoryService] record_causal_transition: %s", e)
@@ -1463,17 +1472,26 @@ Bài học:"""
         if not tool_name:
             return
         try:
-            col = "success_count" if success else "fail_count"
             async with get_db_connection() as conn:
                 async with conn.cursor() as cur:
-                    await cur.execute(
-                        f"""INSERT INTO agent_causal_chains (tool_a, tool_b, {col}, last_seen_at)
-                            VALUES (%s, %s, 1, NOW())
-                            ON CONFLICT (tool_a, tool_b) DO UPDATE
-                                SET {col}        = agent_causal_chains.{col} + 1,
-                                    last_seen_at = NOW()""",
-                        (tool_name, tool_name),
-                    )
+                    if success:
+                        await cur.execute(
+                            """INSERT INTO agent_causal_chains (tool_a, tool_b, success_count, last_seen_at)
+                               VALUES (%s, %s, 1, NOW())
+                               ON CONFLICT (tool_a, tool_b) DO UPDATE
+                                   SET success_count = agent_causal_chains.success_count + 1,
+                                       last_seen_at  = NOW()""",
+                            (tool_name, tool_name),
+                        )
+                    else:
+                        await cur.execute(
+                            """INSERT INTO agent_causal_chains (tool_a, tool_b, fail_count, last_seen_at)
+                               VALUES (%s, %s, 1, NOW())
+                               ON CONFLICT (tool_a, tool_b) DO UPDATE
+                                   SET fail_count    = agent_causal_chains.fail_count + 1,
+                                       last_seen_at  = NOW()""",
+                            (tool_name, tool_name),
+                        )
                     await conn.commit()
         except Exception as e:
             logger.debug("[MemoryService] record_tool_outcome: %s", e)

@@ -41,7 +41,7 @@ class AppointmentService:
     def __init__(self, llm_router: LlmRouter):
         self.llm_router = llm_router
 
-    def _fast_keyword_filter(self, text: str) -> bool:
+    def _fast_keyword_filter(self, text: Optional[str]) -> bool:
         """Fast O(N) substring / token check for scheduling intents."""
         if not text:
             return False

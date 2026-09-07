@@ -153,7 +153,7 @@ class VncManager:
                     else:
                         same_site = "Lax"
 
-                    cookie_entry = {
+                    cookie_entry: Dict[str, Any] = {
                         "name": str(name),
                         "value": str(value),
                         "domain": str(domain),

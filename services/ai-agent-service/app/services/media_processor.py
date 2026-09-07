@@ -13,6 +13,7 @@ import csv
 import io
 import json
 import logging
+import lzma
 import os
 import shutil
 import subprocess
@@ -311,7 +312,8 @@ class MediaProcessor:
         if Image is not None:
             with Image.open(io.BytesIO(image_bytes)) as img:
                 img = img.convert("RGB")
-                img.thumbnail((_MAX_IMG_DIMENSION, _MAX_IMG_DIMENSION), Image.LANCZOS)
+                resample = Image.Resampling.LANCZOS
+                img.thumbnail((_MAX_IMG_DIMENSION, _MAX_IMG_DIMENSION), resample)
                 buf = io.BytesIO()
                 img.save(buf, format="JPEG", quality=_IMG_QUALITY)
                 return base64.b64encode(buf.getvalue()).decode("utf-8")
@@ -460,9 +462,11 @@ class MediaProcessor:
         pages: List[str] = []
         with fitz.open(stream=data, filetype="pdf") as doc:
             for page_num in range(min(len(doc), 50)):
-                text = doc[page_num].get_text("text").strip()
-                if text:
-                    pages.append(f"--- [Trang {page_num + 1}] ---\n{text}")
+                raw_text = doc[page_num].get_text("text")
+                if isinstance(raw_text, str):
+                    text = raw_text.strip()
+                    if text:
+                        pages.append(f"--- [Trang {page_num + 1}] ---\n{text}")
         return "\n\n".join(pages)
 
     @staticmethod
@@ -830,21 +834,38 @@ class MediaProcessor:
             except ImportError:
                 raise ImportError("Thư viện 'py7zr' chưa được cài đặt trong hệ thống")
             try:
-                with py7zr.SevenZipFile(io.BytesIO(file_bytes), mode="r", password=password) as sz:
-                    if sz.needs_password() and not password:
-                        raise ArchivePasswordRequiredError(f"Tệp nén 7Z `{filename}` được đặt mật khẩu bảo vệ.")
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    with py7zr.SevenZipFile(io.BytesIO(file_bytes), mode="r", password=password) as sz:
+                        if sz.needs_password() and not password:
+                            raise ArchivePasswordRequiredError(f"Tệp nén 7Z `{filename}` được đặt mật khẩu bảo vệ.")
 
-                    archive_dict = sz.readall()
-                    for name, bio in archive_dict.items():
-                        if not cls._is_safe_path(name):
-                            continue
-                        raw = bio.getvalue() if hasattr(bio, "getvalue") else bio.read()
-                        members_data.append((name, len(raw), raw))
+                        # Guard against decompression bomb (size & file count)
+                        files_info = sz.list()
+                        total_uncompressed = sum(getattr(f, "uncompressed", 0) for f in files_info)
+                        if total_uncompressed > _MAX_TOTAL_BYTES:
+                            raise ValueError(f"Dung lượng giải nén 7Z quá lớn ({total_uncompressed // 1048576} MB > 50 MB)")
+                        if len(files_info) > _MAX_FILES:
+                            raise ValueError(f"Số lượng file trong 7Z vượt quá giới hạn ({len(files_info)} > {_MAX_FILES})")
+
+                        sz.extractall(path=tmpdir)
+
+                    tmp_path = Path(tmpdir)
+                    for root, _, files in os.walk(tmp_path):
+                        for f in files:
+                            full_path = Path(root) / f
+                            rel_name = str(full_path.relative_to(tmp_path)).replace("\\", "/")
+                            if not cls._is_safe_path(rel_name):
+                                continue
+                            f_size = full_path.stat().st_size
+                            if f_size > _MAX_SINGLE_FILE:
+                                continue
+                            raw_data = full_path.read_bytes()
+                            members_data.append((rel_name, f_size, raw_data))
             except (ArchivePasswordRequiredError, ArchiveInvalidPasswordError):
                 raise
-            except py7zr.exceptions.PasswordRequired:
+            except py7zr.PasswordRequired:
                 raise ArchivePasswordRequiredError(f"Tệp nén 7Z `{filename}` được đặt mật khẩu bảo vệ.")
-            except py7zr.exceptions.Bad7zFile:
+            except (py7zr.Bad7zFile, lzma.LZMAError):
                 if password:
                     raise ArchiveInvalidPasswordError(f"Mật khẩu '{password}' không chính xác cho tệp `{filename}`.")
                 raise ArchiveCorruptedError(f"Tệp 7Z `{filename}` bị lỗi hoặc yêu cầu mật khẩu.")

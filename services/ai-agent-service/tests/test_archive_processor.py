@@ -65,6 +65,39 @@ class TestArchiveProcessor(unittest.TestCase):
         self.assertEqual(members[0][0], "secret.txt")
         self.assertEqual(members[0][2].decode("utf-8"), "Dữ liệu mật đã được giải mã!")
 
+    def test_7z_extraction_and_password(self):
+        try:
+            import py7zr
+        except ImportError:
+            self.skipTest("py7zr is not installed")
+
+        # Create encrypted 7z archive in memory
+        buf = io.BytesIO()
+        with py7zr.SevenZipFile(buf, "w", password="7z_secret_pass") as sz:
+            sz.writestr(b"Noi dung 7z sieu bao mat", "deep/secret.txt")
+            sz.writestr(b"hello world", "readme.md")
+        data = buf.getvalue()
+
+        # 1. No password provided -> ArchivePasswordRequiredError
+        with self.assertRaises(ArchivePasswordRequiredError):
+            MediaProcessor._unpack_archive_members(data, "archive.7z", password=None)
+
+        # 2. Wrong password provided -> ArchiveInvalidPasswordError
+        with self.assertRaises(ArchiveInvalidPasswordError):
+            MediaProcessor._unpack_archive_members(data, "archive.7z", password="wrong_password_123")
+
+        # 3. Correct password provided -> extracts successfully
+        members = MediaProcessor._unpack_archive_members(data, "archive.7z", password="7z_secret_pass")
+        self.assertEqual(len(members), 2)
+        names = [m[0] for m in members]
+        self.assertIn("deep/secret.txt", names)
+        self.assertIn("readme.md", names)
+
+        # Check content
+        extracted_dict = {m[0]: m[2] for m in members}
+        self.assertEqual(extracted_dict["deep/secret.txt"], b"Noi dung 7z sieu bao mat")
+        self.assertEqual(extracted_dict["readme.md"], b"hello world")
+
 
 if __name__ == "__main__":
     unittest.main()

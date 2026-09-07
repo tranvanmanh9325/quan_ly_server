@@ -21,16 +21,21 @@ import logging
 import re
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, cast
+from typing import Any, Dict, List, Literal, Optional, Tuple, cast
 from urllib.parse import quote
 
-from PIL import Image
+try:
+    from PIL import Image
+except ImportError:
+    Image = None  # type: ignore
+
 from playwright.async_api import (
     async_playwright,
     Browser,
     BrowserContext,
     Page,
     Playwright,
+    ViewportSize,
 )
 
 from app.config import settings
@@ -45,7 +50,7 @@ SCREENSHOT_DIR = Path("/tmp/browser_agent")
 SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
 
 # Viewport that mimics a standard 16:9 laptop display
-VIEWPORT = {"width": 1366, "height": 768}
+VIEWPORT: ViewportSize = {"width": 1366, "height": 768}
 
 # Facebook People search URL template
 FB_PEOPLE_SEARCH = "https://www.facebook.com/search/people/?q={query}"
@@ -283,13 +288,6 @@ class BrowserAgentService:
         except Exception:
             pass
 
-    async def _screenshot(self, page: Page, name: str) -> str:
-        """Take a viewport screenshot and return its absolute path."""
-        path = str(SCREENSHOT_DIR / f"{name}_{_now_ms()}.png")
-        await page.screenshot(path=path, full_page=False)
-        logger.info("[BrowserAgent] Screenshot saved → %s", path)
-        return path
-
     async def _wait_for_profile_content(self, page: Page) -> None:
         """Wait until the Facebook profile page has rendered real content.
 
@@ -349,10 +347,16 @@ class BrowserAgentService:
                 return False
 
             # PIL pixel analysis — detect uniform/blank images
+            if Image is None:
+                return True
             with open(path, "rb") as f:
                 img = Image.open(io.BytesIO(f.read()))
             gray = img.convert("L")
-            pixels = list(gray.getdata())
+            if hasattr(gray, "get_flattened_data"):
+                raw_data = gray.get_flattened_data()
+            else:
+                raw_data = cast(Any, gray.getdata())
+            pixels: List[float] = [float(p[0] if isinstance(p, tuple) else p) for p in raw_data]
             n = len(pixels)
             if n == 0:
                 return False
@@ -1102,7 +1106,7 @@ class BrowserAgentService:
                     return {"success": False, "error": f"Không tìm thấy input với selector: {selector}"}
 
                 if clear_first:
-                    await el.triple_click()
+                    await el.click(click_count=3)
                     await el.press("Control+a")
                     await el.press("Delete")
 
@@ -1297,16 +1301,25 @@ class BrowserAgentService:
             page = await self._get_or_create_active_page()
             try:
                 selected = None
-                for strategy in (
-                    {"value": value},
-                    {"label": value},
-                    *([{"index": int(value)}] if value.isdigit() else []),
-                ):
+                # Strategy 1: try by option value attribute
+                try:
+                    selected = await page.select_option(selector, value=value, timeout=5000)
+                except Exception:
+                    pass
+
+                # Strategy 2: try by option visible label text
+                if not selected:
                     try:
-                        selected = await page.select_option(selector, timeout=5000, **strategy)
-                        break
+                        selected = await page.select_option(selector, label=value, timeout=5000)
                     except Exception:
-                        continue
+                        pass
+
+                # Strategy 3: if numeric, try by 0-based index
+                if not selected and value.isdigit():
+                    try:
+                        selected = await page.select_option(selector, index=int(value), timeout=5000)
+                    except Exception:
+                        pass
 
                 if not selected:
                     return {"success": False, "error": f"Không tìm thấy option '{value}' trong {selector}"}
@@ -1374,7 +1387,7 @@ class BrowserAgentService:
                     try:
                         el = page.locator(selector).first
                         await el.wait_for(state="visible", timeout=8000)
-                        await el.triple_click()
+                        await el.click(click_count=3)
                         await el.fill(value)
                         filled.append(selector)
                         await asyncio.sleep(0.3)
@@ -1408,7 +1421,10 @@ class BrowserAgentService:
     # ──────────────────────────────────────────────────────────────────────────
 
     async def browser_wait_for(
-        self, selector: str, timeout_ms: int = 10000, state: str = "visible"
+        self,
+        selector: str,
+        timeout_ms: int = 10000,
+        state: Literal["attached", "detached", "hidden", "visible"] = "visible",
     ) -> Dict[str, Any]:
         """Wait for a specific DOM element to appear (or disappear) on the page.
 
@@ -1418,10 +1434,13 @@ class BrowserAgentService:
             state: 'visible', 'attached', 'hidden', or 'detached'.
         """
         logger.info("[BrowserAgent] browser_wait_for(selector=%s, timeout=%d, state=%s)", selector, timeout_ms, state)
+        target_state: Literal["attached", "detached", "hidden", "visible"] = (
+            state if state in ("attached", "detached", "hidden", "visible") else "visible"
+        )
         async with self._lock:
             page = await self._get_or_create_active_page()
             try:
-                await page.wait_for_selector(selector, state=state, timeout=timeout_ms)
+                await page.wait_for_selector(selector, state=target_state, timeout=timeout_ms)
                 img_path = await self._screenshot(page, f"wait_{_safe_filename(selector[:30])}")
                 return {
                     "success": True,

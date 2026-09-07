@@ -1055,8 +1055,8 @@ class FacebookService:
             for pattern in remove_patterns:
                 try:
                     item = page.get_by_role("menuitem", name=pattern)
-                    if await item.count() > 0 and await item.first().is_visible():
-                        await item.first().click()
+                    if await item.count() > 0 and await item.first.is_visible():
+                        await item.first.click()
                         removed = True
                         break
                 except Exception:
@@ -1067,8 +1067,8 @@ class FacebookService:
                 for label in ("Thu hồi", "Gỡ", "Remove", "Xóa", "Unsend"):
                     try:
                         item = page.get_by_text(label, exact=True)
-                        if await item.count() > 0 and await item.first().is_visible():
-                            await item.first().click()
+                        if await item.count() > 0 and await item.first.is_visible():
+                            await item.first.click()
                             removed = True
                             break
                     except Exception:
@@ -1125,8 +1125,8 @@ class FacebookService:
                 for rp in [re.compile(r"Thu hồi với mọi người", re.I), re.compile(r"Remove for everyone", re.I)]:
                     radio = page.get_by_label(rp)
                     if await radio.count() > 0:
-                        if not await radio.first().is_checked():
-                            await radio.first().click()
+                        if not await radio.first.is_checked():
+                            await radio.first.click()
                             await asyncio.sleep(0.3)
                         break
             except Exception:
@@ -1176,7 +1176,7 @@ class FacebookService:
                 try:
                     btn = page.locator('button, [role="button"]').filter(has_text=re.compile(r"^Gỡ$"))
                     if await btn.count() > 0:
-                        await btn.first().click()
+                        await btn.first.click()
                         confirmed = True
                 except Exception:
                     pass
@@ -1235,7 +1235,7 @@ class FacebookService:
         4. Right sidebar: multiple distinct profile-picture links (≥ 3 different hrefs)
         """
         try:
-            result = await page.evaluate("""
+            result = await page.evaluate(r"""
             () => {
                 // Signal 1: 'Thành viên' / 'Members' section in the right info panel
                 // This element only appears in group threads.
@@ -2308,5 +2308,3 @@ class FacebookService:
         except Exception as e:
             logger.error("[FB-Screenshot] Error capturing screenshot for '%s': %s", recipient_name, e, exc_info=True)
             return {"success": False, "error": str(e)}
-
-

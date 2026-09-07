@@ -340,65 +340,64 @@ class AppointmentService:
         dispatched_count = 0
         try:
             async with get_db_dict_cursor() as cur:
-                async with conn.cursor() as cur:
-                    # Select confirmed appointments due within next 60 minutes (and not older than 30 mins in past)
-                    await cur.execute(
-                        """
-                        SELECT id, thread_href, sender_name, summary, proposed_time, location, scheduled_at
-                        FROM facebook_appointments
-                        WHERE status = 'confirmed'
-                          AND reminder_sent = FALSE
-                          AND scheduled_at IS NOT NULL
-                          AND scheduled_at <= (NOW() + INTERVAL '60 minutes')
-                          AND scheduled_at >= (NOW() - INTERVAL '30 minutes')
-                        ORDER BY scheduled_at ASC
-                        """
+                # Select confirmed appointments due within next 60 minutes (and not older than 30 mins in past)
+                await cur.execute(
+                    """
+                    SELECT id, thread_href, sender_name, summary, proposed_time, location, scheduled_at
+                    FROM facebook_appointments
+                    WHERE status = 'confirmed'
+                      AND reminder_sent = FALSE
+                      AND scheduled_at IS NOT NULL
+                      AND scheduled_at <= (NOW() + INTERVAL '60 minutes')
+                      AND scheduled_at >= (NOW() - INTERVAL '30 minutes')
+                    ORDER BY scheduled_at ASC
+                    """
+                )
+                rows = await cur.fetchall()
+                if not rows:
+                    return 0
+
+                for apt in rows:
+                    apt_id = apt["id"]
+                    sender = apt["sender_name"] or "Liên hệ"
+                    summary = apt["summary"] or "Lịch hẹn"
+                    prop_time = apt["proposed_time"] or "Sắp diễn ra"
+                    loc = apt["location"] or "Chưa rõ địa điểm"
+
+                    reminder_text = (
+                        f"⏰ *[TIỂU BẢO BẢO] NHẮC NHỞ: ANH CÓ LỊCH HẸN SAU 1 TIẾNG NỮA!*\n\n"
+                        f"👤 *Người hẹn:* `{sender}`\n"
+                        f"⏰ *Thời gian:* *{prop_time}*\n"
+                        f"📍 *Địa điểm:* {loc}\n"
+                        f"📝 *Nội dung:* {summary}\n\n"
+                        f"👉 *Anh nhớ sắp xếp thời gian và chuẩn bị xuất phát nhé!*"
                     )
-                    rows = await cur.fetchall()
-                    if not rows:
-                        return 0
 
-                    for apt in rows:
-                        apt_id = apt["id"]
-                        sender = apt["sender_name"] or "Liên hệ"
-                        summary = apt["summary"] or "Lịch hẹn"
-                        prop_time = apt["proposed_time"] or "Sắp diễn ra"
-                        loc = apt["location"] or "Chưa rõ địa điểm"
-
-                        reminder_text = (
-                            f"⏰ *[TIỂU BẢO BẢO] NHẮC NHỞ: ANH CÓ LỊCH HẸN SAU 1 TIẾNG NỮA!*\n\n"
-                            f"👤 *Người hẹn:* `{sender}`\n"
-                            f"⏰ *Thời gian:* *{prop_time}*\n"
-                            f"📍 *Địa điểm:* {loc}\n"
-                            f"📝 *Nội dung:* {summary}\n\n"
-                            f"👉 *Anh nhớ sắp xếp thời gian và chuẩn bị xuất phát nhé!*"
-                        )
-
-                        reply_markup = {
-                            "inline_keyboard": [
-                                [
-                                    {"text": f"💬 Nhắn tin cho {sender}", "callback_data": f"apt_reply:{apt_id}"},
-                                    {"text": "✅ Đã chuẩn bị xong", "callback_data": f"apt_ready:{apt_id}"}
-                                ]
+                    reply_markup = {
+                        "inline_keyboard": [
+                            [
+                                {"text": f"💬 Nhắn tin cho {sender}", "callback_data": f"apt_reply:{apt_id}"},
+                                {"text": "✅ Đã chuẩn bị xong", "callback_data": f"apt_ready:{apt_id}"}
                             ]
-                        }
+                        ]
+                    }
 
-                        sent = await telegram_bot.send_message(
-                            chat_id=telegram_bot.chat_id,
-                            text=reminder_text,
-                            reply_markup=reply_markup
+                    sent = await telegram_bot.send_message(
+                        chat_id=telegram_bot.chat_id,
+                        text=reminder_text,
+                        reply_markup=reply_markup
+                    )
+
+                    if sent:
+                        dispatched_count += 1
+                        await cur.execute(
+                            "UPDATE facebook_appointments SET reminder_sent = TRUE, reminder_sent_at = NOW(), updated_at = NOW() WHERE id = %s",
+                            (apt_id,)
                         )
-
-                        if sent:
-                            dispatched_count += 1
-                            await cur.execute(
-                                "UPDATE facebook_appointments SET reminder_sent = TRUE, reminder_sent_at = NOW(), updated_at = NOW() WHERE id = %s",
-                                (apt_id,)
-                            )
-                            logger.info(
-                                "[AppointmentService] Proactive 1-hour reminder dispatched for appointment #%d ('%s')",
-                                apt_id, sender
-                            )
+                        logger.info(
+                            "[AppointmentService] Proactive 1-hour reminder dispatched for appointment #%d ('%s')",
+                            apt_id, sender
+                        )
 
         except Exception as e:
             logger.error("[AppointmentService] Error dispatching appointment reminders: %s", e)

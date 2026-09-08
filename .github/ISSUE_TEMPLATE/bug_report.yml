@@ -1,0 +1,66 @@
+name: 🐛 Bug Report
+description: Report a bug or unexpected behavior in the dashboard or microservices.
+title: "[BUG]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting an issue! Please provide as much detail as possible to help us diagnose and fix the problem quickly.
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: A clear and concise description of what the bug is.
+      placeholder: Describe the problem...
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      description: Steps to reproduce the behavior.
+      placeholder: |
+        1. Go to '...'
+        2. Click on '....'
+        3. Scroll down to '....'
+        4. See error
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: A clear description of what you expected to happen.
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Affected Component
+      options:
+        - AI Agent Service (Python / 9Router / Telegram / Social Bots)
+        - Auth Service (Java / JWT)
+        - Metrics Service (Java / Telemetry)
+        - File Service (Java / SFTP)
+        - Frontend (React 19 / Vite / Cyberpunk HUD)
+        - Database (PostgreSQL / Migrations)
+        - Docker / Infrastructure
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant Logs & Error Output
+      description: Paste any relevant logs or terminal output here.
+      render: shell
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment Info
+      description: OS, Docker version, browser, Python/Java versions.
+      placeholder: |
+        - OS: Ubuntu 24.04 LTS / Windows 11
+        - Docker Version: 27.x
+        - Browser: Chrome 131

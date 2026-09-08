@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 🔒 Security Vulnerability Reporting
+    url: https://github.com/tranvanmanh9325/quan_ly_server/security/advisories/new
+    about: Please report security vulnerabilities privately via GitHub Security Advisories.
+  - name: 📚 Project Documentation
+    url: https://github.com/tranvanmanh9325/quan_ly_server/tree/main/docs
+    about: Browse our extensive architecture, API, and setup guides.

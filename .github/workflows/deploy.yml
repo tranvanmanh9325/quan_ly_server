@@ -26,10 +26,24 @@ jobs:
           java-version: '21'
           distribution: 'temurin'
           cache: maven
+          cache-dependency-path: |
+            services/auth-service/pom.xml
+            services/file-service/pom.xml
+            services/metrics-service/pom.xml
 
       - name: Backend compile check
-        run: mvn clean compile -q
-        working-directory: backend
+        run: |
+          mvn clean compile -q -f services/auth-service/pom.xml
+          mvn clean compile -q -f services/file-service/pom.xml
+          mvn clean compile -q -f services/metrics-service/pom.xml
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: AI Agent syntax check
+        run: python -m compileall services/ai-agent-service/app
 
       - name: Frontend install + build check
         run: npm ci && npm run build

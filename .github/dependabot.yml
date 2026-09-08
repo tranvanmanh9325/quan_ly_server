@@ -10,12 +10,33 @@ updates:
       interval: "weekly"
     open-pull-requests-limit: 10
 
-  # Spring Boot backend (Maven)
+  # Spring Boot Auth Service (Maven)
   - package-ecosystem: "maven"
-    directory: "/backend"
+    directory: "/services/auth-service"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 10
+    open-pull-requests-limit: 5
+
+  # Spring Boot Metrics Service (Maven)
+  - package-ecosystem: "maven"
+    directory: "/services/metrics-service"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+
+  # Spring Boot File Service (Maven)
+  - package-ecosystem: "maven"
+    directory: "/services/file-service"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+
+  # Python AI Agent Service (pip)
+  - package-ecosystem: "pip"
+    directory: "/services/ai-agent-service"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
 
   # Docker images (Dockerfile + docker-compose.yml at root)
   - package-ecosystem: "docker"

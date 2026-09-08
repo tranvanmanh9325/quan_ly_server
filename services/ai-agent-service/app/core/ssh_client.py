@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import random
+import re
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -15,6 +16,28 @@ COMMAND_TIMEOUT_SEC = 15
 CONNECT_TIMEOUT_SEC = 6
 MAX_OUTPUT_CHARS = 1000
 DEFAULT_COOLDOWN_SEC = 60.0
+
+
+def mask_sensitive_command(cmd: str) -> str:
+    """
+    Masks credentials, passwords, tokens, and keys from shell command strings
+    to prevent clear-text logging of sensitive data in application logs.
+    """
+    if not cmd:
+        return ""
+    patterns = [
+        r"(-p\s+)(\S+)",
+        r"(--password[=\s]+)(\S+)",
+        r"(password\s*=\s*)(\S+)",
+        r"(token[=\s]+)(\S+)",
+        r"(key[=\s]+)(\S+)",
+        r"(secret[=\s]+)(\S+)",
+        r"(Bearer\s+)(\S+)",
+    ]
+    masked = cmd
+    for p in patterns:
+        masked = re.sub(p, r"\1******", masked, flags=re.IGNORECASE)
+    return masked
 
 
 class TunnelEndpoint:
@@ -198,7 +221,7 @@ class SshClient:
     async def _execute_on_host(self, host: str, port: int, command: str) -> str:
         """Helper to run a command on a specific host:port endpoint with timeout."""
         timed_cmd = f"timeout {COMMAND_TIMEOUT_SEC} {command}"
-        logger.info("[SSH] Executing on %s:%d: %s", host, port, timed_cmd)
+        logger.info("[SSH] Executing on %s:%d: %s", host, port, mask_sensitive_command(timed_cmd))
 
         async with asyncssh.connect(
             host,
@@ -238,7 +261,7 @@ class SshClient:
         """
         violation = find_security_violation(command)
         if violation:
-            logger.warning("[SSH] BLOCKED command '%s' — %s", command, violation)
+            logger.warning("[SSH] BLOCKED command '%s' — %s", mask_sensitive_command(command), violation)
             return (
                 f"BLOCKED: Lệnh bị từ chối vì lý do bảo mật ({violation}). "
                 "Chỉ được phép dùng các lệnh đọc (ps, docker ps, free, df, cat, date, v.v.)"
@@ -260,8 +283,7 @@ class SshClient:
 
         # Tier 2: Ngrok Multi-Tunnel Pool Failover Rotation
         if not self.pool.has_endpoints:
-            err_detail = f": {lan_error}" if lan_error else ""
-            return f"Không thể kết nối SSH tới máy chủ (LAN thất bại{err_detail}, không có fallback tunnel)."
+            return "Không thể kết nối SSH tới máy chủ (kết nối LAN thất bại và không có fallback tunnel khả dụng)."
 
         candidates = await self.pool.get_candidate_endpoints()
         last_error: Optional[Exception] = None
@@ -286,4 +308,4 @@ class SshClient:
                     str(e),
                 )
 
-        return f"Lỗi SSH khi thực thi lệnh: Tất cả {len(candidates)} tunnels trong bể chứa đều không thể kết nối ({last_error})."
+        return f"Lỗi SSH khi thực thi lệnh: Tất cả {len(candidates)} tunnels trong bể chứa đều không thể kết nối hoặc đã hết thời gian chờ."

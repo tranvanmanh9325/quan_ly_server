@@ -784,9 +784,9 @@ class TelegramBot:
             await self._handle_command(text, chat_id)
         else:
             try:
-                logger.info("[TelegramBot] Received message from %s: '%s'", chat_id, text[:60])
+                logger.info("[TelegramBot] Received message from %s (length=%d)", chat_id, len(text))
                 reply = await self.ai_agent.chat(chat_id, text)
-                logger.info("[TelegramBot] AI reply for %s: '%s'", chat_id, reply[:60])
+                logger.info("[TelegramBot] AI reply for %s sent successfully (length=%d)", chat_id, len(reply))
                 await self.send_message(chat_id, reply)
             except Exception as err:
                 logger.error("[TelegramBot] Error processing message from %s: %s", chat_id, err, exc_info=True)

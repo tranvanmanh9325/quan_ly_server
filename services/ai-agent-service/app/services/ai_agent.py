@@ -75,6 +75,17 @@ _INTENT_QUERY = re.compile(
     re.IGNORECASE | re.UNICODE
 )
 
+# ── Pre-compiled regexes for high-performance, ReDoS-safe log parsing ────────
+_CRITICAL_LOG_PATTERN = re.compile(
+    r"\b(?:error|warn|crit|fatal|fail|oom|killed|panic|exception)\b"
+    r"|exit\s+\d+"
+    r"|\d+%"
+    r"|\b\d+(?:[.,]\d+)?\s*(?:gb|mb|g|m)\b",
+    re.IGNORECASE,
+)
+_OK_LOG_PATTERN = re.compile(r"\b(?:ok|healthy|running|active|up|online|pass)\b", re.IGNORECASE)
+_TIMESTAMP_LOG_PATTERN = re.compile(r"\b\d{2}:\d{2}(?::\d{2})?\b")
+
 # ── Phase 7 (v4.0): Global Workspace Theory Broadcast Size ───────────────────
 # Only top-K most relevant lessons are broadcast into the agent's "global workspace"
 # (injected into system prompt). Mimics Dehaene's 70-item global workspace limit.
@@ -234,26 +245,19 @@ class AiAgentService:
             return raw
 
         # Tier 1: Critical lines — keep all
-        tier1 = [
-            ln for ln in lines if re.search(
-                r"(error|warn|crit|fatal|fail|oom|killed|panic|"
-                r"exit\s+\d+|exception|\d+\s*%|\d+[\.,]\d+\s*(gb|mb|g|m)\b)",
-                ln, re.IGNORECASE
-            )
-        ]
+        tier1 = [ln for ln in lines if _CRITICAL_LOG_PATTERN.search(ln)]
 
         # Tier 2: OK/healthy lines — count and summarize
         ok_lines = [
-            ln for ln in lines if re.search(
-                r"\b(ok|healthy|running|active|up|online|pass)\b", ln, re.IGNORECASE
-            ) and ln not in tier1
+            ln for ln in lines
+            if _OK_LOG_PATTERN.search(ln) and ln not in tier1
         ]
         tier2 = ([f"[{len(ok_lines)}× OK/healthy — omitted]"] if len(ok_lines) > 2 else ok_lines)
 
         # Tier 3: Timestamp lines — keep first + last only
         ts_lines = [
             ln for ln in lines
-            if re.search(r"\d{2}:\d{2}(:\d{2})?", ln) and ln not in tier1
+            if _TIMESTAMP_LOG_PATTERN.search(ln) and ln not in tier1
         ]
         tier3 = ([ts_lines[0], "...", ts_lines[-1]] if len(ts_lines) > 2 else ts_lines)
 
@@ -1816,7 +1820,7 @@ Khi nhận thấy đề xuất của anh Mạnh có nhược điểm lớn, rủ
 
         except Exception as e:
             logger.error("[AiAgent] Tool '%s' error: %s", tool_name, e, exc_info=True)
-            return f"Lỗi khi thực thi công cụ `{tool_name}`: {e}"
+            return f"Lỗi khi thực thi công cụ `{tool_name}`. Vui lòng kiểm tra lại tham số hoặc liên hệ quản trị viên."
 
     async def _resolve_thread_info_for_profile(self, name_query: str) -> Tuple[Optional[str], Optional[str]]:
         """

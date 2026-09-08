@@ -266,7 +266,7 @@ class AppointmentService:
                     row = await cur.fetchone()
                     return row[0] if row else None
         except Exception as e:
-            logger.error("[AppointmentService] DB error saving appointment: %s", e)
+            logger.error("[AppointmentService] DB error saving appointment: %s", type(e).__name__)
             return None
 
     async def update_status(
@@ -291,7 +291,7 @@ class AppointmentService:
                         )
                     return cur.rowcount > 0
         except Exception as e:
-            logger.error("[AppointmentService] DB error updating appointment #%d: %s", appointment_id, e)
+            logger.error("[AppointmentService] DB error updating appointment #%d: %s", appointment_id, type(e).__name__)
             return False
 
     async def get_appointment_by_id(self, appointment_id: int) -> Optional[Dict[str, Any]]:
@@ -305,7 +305,7 @@ class AppointmentService:
                 row = await cur.fetchone()
                 return dict(row) if row else None
         except Exception as e:
-            logger.error("[AppointmentService] DB error fetching appointment #%d: %s", appointment_id, e)
+            logger.error("[AppointmentService] DB error fetching appointment #%d: %s", appointment_id, type(e).__name__)
             return None
 
     async def get_upcoming_appointments(self, limit: int = 10) -> List[Dict[str, Any]]:
@@ -325,7 +325,7 @@ class AppointmentService:
                 rows = await cur.fetchall()
                 return [dict(r) for r in rows]
         except Exception as e:
-            logger.error("[AppointmentService] DB error fetching upcoming appointments: %s", e)
+            logger.error("[AppointmentService] DB error fetching upcoming appointments: %s", type(e).__name__)
             return []
 
     async def check_and_dispatch_reminders(self, telegram_bot: Any) -> int:
@@ -400,7 +400,7 @@ class AppointmentService:
                         )
 
         except Exception as e:
-            logger.error("[AppointmentService] Error dispatching appointment reminders: %s", e)
+            logger.error("[AppointmentService] Error dispatching appointment reminders: %s", type(e).__name__)
 
         return dispatched_count
 

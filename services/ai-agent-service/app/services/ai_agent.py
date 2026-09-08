@@ -75,14 +75,11 @@ _INTENT_QUERY = re.compile(
     re.IGNORECASE | re.UNICODE
 )
 
-# ── Pre-compiled regexes for high-performance, ReDoS-safe log parsing ────────
-_CRITICAL_LOG_PATTERN = re.compile(
-    r"\b(?:error|warn|crit|fatal|fail|oom|killed|panic|exception)\b"
-    r"|exit\s+\d+"
-    r"|\d+%"
-    r"|\b\d+(?:[.,]\d+)?\s*(?:gb|mb|g|m)\b",
-    re.IGNORECASE,
+# ── Pre-compiled regexes & keywords for high-performance, ReDoS-safe log parsing ──
+_CRITICAL_LOG_KEYWORDS = (
+    "error", "warn", "crit", "fatal", "fail", "oom", "killed", "panic", "exception"
 )
+_CRITICAL_LOG_PATTERN = re.compile(r"\b(?:exit\s+\d+|\d+%|\d+\s*(?:gb|mb|g|m))\b", re.IGNORECASE)
 _OK_LOG_PATTERN = re.compile(r"\b(?:ok|healthy|running|active|up|online|pass)\b", re.IGNORECASE)
 _TIMESTAMP_LOG_PATTERN = re.compile(r"\b\d{2}:\d{2}(?::\d{2})?\b")
 
@@ -245,7 +242,10 @@ class AiAgentService:
             return raw
 
         # Tier 1: Critical lines — keep all
-        tier1 = [ln for ln in lines if _CRITICAL_LOG_PATTERN.search(ln)]
+        tier1 = [
+            ln for ln in lines
+            if any(kw in ln.lower() for kw in _CRITICAL_LOG_KEYWORDS) or _CRITICAL_LOG_PATTERN.search(ln)
+        ]
 
         # Tier 2: OK/healthy lines — count and summarize
         ok_lines = [

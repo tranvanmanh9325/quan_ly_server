@@ -221,7 +221,7 @@ class SshClient:
     async def _execute_on_host(self, host: str, port: int, command: str) -> str:
         """Helper to run a command on a specific host:port endpoint with timeout."""
         timed_cmd = f"timeout {COMMAND_TIMEOUT_SEC} {command}"
-        logger.info("[SSH] Executing on %s:%d: %s", host, port, mask_sensitive_command(timed_cmd))
+        logger.info("[SSH] Executing command on %s:%d (cmd_length=%d)", host, port, len(timed_cmd))
 
         async with asyncssh.connect(
             host,
@@ -261,7 +261,7 @@ class SshClient:
         """
         violation = find_security_violation(command)
         if violation:
-            logger.warning("[SSH] BLOCKED command '%s' — %s", mask_sensitive_command(command), violation)
+            logger.warning("[SSH] Security violation blocked: %s", violation)
             return (
                 f"BLOCKED: Lệnh bị từ chối vì lý do bảo mật ({violation}). "
                 "Chỉ được phép dùng các lệnh đọc (ps, docker ps, free, df, cat, date, v.v.)"

@@ -291,7 +291,7 @@ class AppointmentService:
                         )
                     return cur.rowcount > 0
         except Exception as e:
-            logger.error("[AppointmentService] DB error updating appointment #%d: %s", appointment_id, type(e).__name__)
+            logger.error("[AppointmentService] DB error updating appointment record: %s", type(e).__name__)
             return False
 
     async def get_appointment_by_id(self, appointment_id: int) -> Optional[Dict[str, Any]]:
@@ -305,7 +305,7 @@ class AppointmentService:
                 row = await cur.fetchone()
                 return dict(row) if row else None
         except Exception as e:
-            logger.error("[AppointmentService] DB error fetching appointment #%d: %s", appointment_id, type(e).__name__)
+            logger.error("[AppointmentService] DB error fetching appointment record: %s", type(e).__name__)
             return None
 
     async def get_upcoming_appointments(self, limit: int = 10) -> List[Dict[str, Any]]:

@@ -8,19 +8,68 @@ This document provides a comprehensive guide to our development workflow, coding
 
 ## 🧭 Table of Contents
 
-1. [Code of Conduct](#code-of-conduct)
-2. [Architecture Overview](#architecture-overview)
-3. [Prerequisites](#prerequisites)
-4. [Local Development Setup](#local-development-setup)
-5. [Branching & Git Workflow](#branching--git-workflow)
-6. [Commit Message Conventions](#commit-message-conventions)
-7. [Coding Standards](#coding-standards)
+1. [Project Leadership & Creator](#-project-leadership--creator)
+2. [Contributors & Community Hall of Fame](#-contributors--community-hall-of-fame)
+3. [Code of Conduct](#code-of-conduct)
+4. [Architecture Overview](#architecture-overview)
+5. [Prerequisites](#prerequisites)
+6. [Local Development Setup](#local-development-setup)
+7. [Branching & Git Workflow](#branching--git-workflow)
+8. [Commit Message Conventions](#commit-message-conventions)
+9. [Coding Standards](#coding-standards)
    - [Python (ai-agent-service)](#python-ai-agent-service)
    - [Java (Spring Boot Microservices)](#java-spring-boot-microservices)
    - [Frontend (React 19 + Vite)](#frontend-react-19--vite)
-8. [Testing & Quality Assurance](#testing--quality-assurance)
-9. [Submitting a Pull Request](#submitting-a-pull-request)
-10. [Reporting Issues & Feature Requests](#reporting-issues--feature-requests)
+10. [Testing & Quality Assurance](#testing--quality-assurance)
+11. [Submitting a Pull Request](#submitting-a-pull-request)
+12. [Reporting Issues & Feature Requests](#reporting-issues--feature-requests)
+
+---
+
+## 👑 Project Leadership & Creator
+
+The **Kirito Server Dashboard & Autonomous AI Agent Ecosystem** was originally designed, architected, and is maintained by **Trần Văn Mạnh (Kirito)**.
+
+<div align="center">
+
+<a href="https://github.com/tranvanmanh9325">
+  <img src="https://github.com/tranvanmanh9325.png" width="110" height="110" style="border-radius: 50%; border: 3px solid #00ffcc; box-shadow: 0 0 16px rgba(0, 255, 204, 0.4);" alt="Trần Văn Mạnh (Kirito)" />
+</a>
+
+### **Trần Văn Mạnh (Kirito)**
+*Project Founder, Core Maintainer & Lead Software Architect*
+
+[![GitHub](https://img.shields.io/badge/GitHub-@tranvanmanh9325-181717?style=flat-square&logo=github)](https://github.com/tranvanmanh9325)
+[![Email](https://img.shields.io/badge/Email-manhtrana1k45tl@gmail.com-EA4335?style=flat-square&logo=gmail&logoColor=white)](mailto:manhtrana1k45tl@gmail.com)
+[![HUST](https://img.shields.io/badge/Alma_Mater-HUST-B31B1B?style=flat-square&logo=renaissance&logoColor=white)](https://hust.edu.vn)
+[![Location](https://img.shields.io/badge/Location-Hanoi_%7C_Nghe_An,_Vietnam-0099FF?style=flat-square&logo=google-maps&logoColor=white)](https://maps.google.com)
+
+</div>
+
+As the lead maintainer and project creator, Trần Văn Mạnh oversees the architectural roadmap, code reviews, security hardening, and releases across all backend microservices, AI agents, and frontend modules.
+
+---
+
+## 👥 Contributors & Community Hall of Fame
+
+This project strictly adheres to the **[All-Contributors](https://allcontributors.org/)** specification. All contributions of any kind (code, bug reports, documentation, architecture, security, design) are recognized and celebrated.
+
+See the complete list of contributors and contribution badges in [**`CONTRIBUTORS.md`**](./CONTRIBUTORS.md).
+
+<!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
+<!-- prettier-ignore-start -->
+<!-- markdownlint-disable -->
+<table>
+  <tbody>
+    <tr>
+      <td align="center" valign="top" width="20%"><a href="https://github.com/tranvanmanh9325"><img src="https://github.com/tranvanmanh9325.png" width="90px;" alt="Trần Văn Mạnh"/><br /><sub><b>Trần Văn Mạnh (Kirito)</b></sub></a><br /><a href="#creator-tranvanmanh9325" title="Project Creator">👑</a> <a href="https://github.com/tranvanmanh9325/quan_ly_server/commits?author=tranvanmanh9325" title="Code">💻</a> <a href="#architecture-tranvanmanh9325" title="Architecture & System Design">🏗️</a> <a href="#maintenance-tranvanmanh9325" title="Maintenance & Operations">🚧</a> <a href="#ideas-tranvanmanh9325" title="Ideas & Conception">💡</a> <a href="#security-tranvanmanh9325" title="Security & Hardening">🛡️</a> <a href="https://github.com/tranvanmanh9325/quan_ly_server/commits?author=tranvanmanh9325" title="Documentation">📖</a> <a href="#design-tranvanmanh9325" title="Cyberpunk UI/UX Design">🎨</a></td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- markdownlint-restore -->
+<!-- prettier-ignore-end -->
+<!-- ALL-CONTRIBUTORS-LIST:END -->
 
 ---
 

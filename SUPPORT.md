@@ -32,3 +32,15 @@ Before asking for help, please review the extensive guides in our [`docs/`](./do
 
 Please do **NOT** report security vulnerabilities via public GitHub issues.
 Follow our [Security Policy](./SECURITY.md) to submit a confidential report through [GitHub Security Advisories](https://github.com/tranvanmanh9325/quan_ly_server/security/advisories/new).
+
+---
+
+## 👨‍💻 Lead Maintainer & Direct Contact
+
+For architectural discussions, system integration inquiries, or direct escalation:
+
+- **Project Lead**: Trần Văn Mạnh (Kirito)
+- **GitHub**: [@tranvanmanh9325](https://github.com/tranvanmanh9325)
+- **Email**: [manhtrana1k45tl@gmail.com](mailto:manhtrana1k45tl@gmail.com)
+- **GitHub Discussions**: [Join the Community Discussions](https://github.com/tranvanmanh9325/quan_ly_server/discussions)
+

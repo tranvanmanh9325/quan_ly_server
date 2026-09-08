@@ -31,6 +31,8 @@
   - [3. Local Development (Hot Reload)](#3-local-development-hot-reload)
   - [4. Running Unit Tests](#4-running-unit-tests)
 - [Documentation Index](#-documentation-index)
+- [Author & Core Architecture](#-author--core-architecture)
+- [Contributors & Community](#-contributors--community)
 - [License](#-license)
 
 ---
@@ -338,6 +340,53 @@ cd frontend && npm test
 | **Production Deployment Guide** | [docs/deployment.md](./docs/deployment.md) |
 | **Security Hardening & Sandboxing** | [docs/security.md](./docs/security.md) |
 | **Troubleshooting & Diagnostics** | [docs/troubleshooting.md](./docs/troubleshooting.md) |
+
+---
+
+## 👨‍💻 Author & Core Architecture
+
+The **Kirito Server Dashboard & Autonomous AI Agent Ecosystem** was conceptualized, designed, and developed by **Trần Văn Mạnh (Kirito)**.
+
+<div align="center">
+
+<a href="https://github.com/tranvanmanh9325">
+  <img src="https://github.com/tranvanmanh9325.png" width="120" height="120" style="border-radius: 50%; border: 3px solid #00ffcc; box-shadow: 0 0 20px rgba(0, 255, 204, 0.4);" alt="Trần Văn Mạnh (Kirito)" />
+</a>
+
+### **Trần Văn Mạnh (Kirito)**
+*Project Founder, Core Maintainer & Lead Software Architect*
+
+[![GitHub](https://img.shields.io/badge/GitHub-@tranvanmanh9325-181717?style=for-the-badge&logo=github)](https://github.com/tranvanmanh9325)
+[![Email](https://img.shields.io/badge/Email-manhtrana1k45tl@gmail.com-EA4335?style=for-the-badge&logo=gmail&logoColor=white)](mailto:manhtrana1k45tl@gmail.com)
+[![HUST](https://img.shields.io/badge/Alma_Mater-Hanoi_University_of_Science_%26_Technology-B31B1B?style=for-the-badge&logo=renaissance&logoColor=white)](https://hust.edu.vn)
+[![Location](https://img.shields.io/badge/Location-Hanoi_%7C_Nghe_An,_Vietnam-0099FF?style=for-the-badge&logo=google-maps&logoColor=white)](https://maps.google.com)
+
+</div>
+
+---
+
+## 👥 Contributors & Community
+
+We believe in open collaboration and recognize all community contributions following the **[All-Contributors](https://allcontributors.org/)** specification.
+
+See the complete list of contributors, emoji keys, and recognition badges in [**`CONTRIBUTORS.md`**](./CONTRIBUTORS.md).
+
+<!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
+<!-- prettier-ignore-start -->
+<!-- markdownlint-disable -->
+<table>
+  <tbody>
+    <tr>
+      <td align="center" valign="top" width="20%"><a href="https://github.com/tranvanmanh9325"><img src="https://github.com/tranvanmanh9325.png" width="90px;" alt="Trần Văn Mạnh"/><br /><sub><b>Trần Văn Mạnh (Kirito)</b></sub></a><br /><a href="#creator-tranvanmanh9325" title="Project Creator">👑</a> <a href="https://github.com/tranvanmanh9325/quan_ly_server/commits?author=tranvanmanh9325" title="Code">💻</a> <a href="#architecture-tranvanmanh9325" title="Architecture & System Design">🏗️</a> <a href="#maintenance-tranvanmanh9325" title="Maintenance & Operations">🚧</a> <a href="#ideas-tranvanmanh9325" title="Ideas & Conception">💡</a> <a href="#security-tranvanmanh9325" title="Security & Hardening">🛡️</a> <a href="https://github.com/tranvanmanh9325/quan_ly_server/commits?author=tranvanmanh9325" title="Documentation">📖</a> <a href="#design-tranvanmanh9325" title="Cyberpunk UI/UX Design">🎨</a></td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- markdownlint-restore -->
+<!-- prettier-ignore-end -->
+<!-- ALL-CONTRIBUTORS-LIST:END -->
+
+Interested in contributing? Check out our [**Contributing Guide (CONTRIBUTING.md)**](./CONTRIBUTING.md) to get started!
 
 ---
 

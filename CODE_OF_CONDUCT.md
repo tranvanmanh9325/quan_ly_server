@@ -59,9 +59,10 @@ representative at an online or offline event.
 ## Enforcement
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
-reported to the project maintainer via GitHub Security Advisories or privately
-through the maintainer profile. All complaints will be reviewed and investigated
-promptly and fairly.
+reported directly to the project lead maintainer, **Trần Văn Mạnh (Kirito)**, at
+[manhtrana1k45tl@gmail.com](mailto:manhtrana1k45tl@gmail.com) or via
+[GitHub Security Advisories](https://github.com/tranvanmanh9325/quan_ly_server/security/advisories/new).
+All complaints will be reviewed and investigated promptly and fairly.
 
 All community leaders are obligated to respect the privacy and security of the
 reporter of any incident.

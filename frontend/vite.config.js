@@ -27,63 +27,49 @@ export default defineConfig({
   },
   build: {
     chunkSizeWarningLimit: 600,
-    rollupOptions: {
+    rolldownOptions: {
       output: {
-        manualChunks(id) {
-          // 1. Phân tách WebGL Three.js, React Globe & Space Engine (Tải riêng cho /map)
-          if (
-            id.includes('node_modules/three') ||
-            id.includes('node_modules/react-globe.gl') ||
-            id.includes('node_modules/three-globe') ||
-            id.includes('node_modules/three-conic-polygon-geometry') ||
-            id.includes('node_modules/three-geojson-geometry') ||
-            id.includes('node_modules/kapsule') ||
-            id.includes('node_modules/accessor-fn') ||
-            id.includes('node_modules/satellite.js') ||
-            id.includes('node_modules/topojson-client') ||
-            id.includes('node_modules/d3-geo')
-          ) {
-            return 'globe-3d';
-          }
-
-          // 2. Biểu đồ Recharts & D3 Data Visualization (Tải riêng cho Dashboard)
-          if (
-            id.includes('node_modules/recharts') ||
-            id.includes('node_modules/victory-vendor') ||
-            id.includes('node_modules/d3-')
-          ) {
-            return 'charts';
-          }
-
-          // 3. Icon Pack Lucide
-          if (id.includes('node_modules/lucide-react')) {
-            return 'icons';
-          }
-
-          // 4. Web Terminal Emulator (Xterm.js)
-          if (id.includes('node_modules/@xterm') || id.includes('node_modules/xterm')) {
-            return 'terminal';
-          }
-
-          // 5. noVNC Canvas Client
-          if (id.includes('node_modules/@novnc') || id.includes('node_modules/novnc')) {
-            return 'vnc';
-          }
-
-          // 6. Core React, React-DOM, Router & Axios (Tải ban đầu siêu nhẹ)
-          if (
-            id.includes('node_modules/react/') ||
-            id.includes('node_modules/react-dom/') ||
-            id.includes('node_modules/react-router/') ||
-            id.includes('node_modules/react-router-dom/') ||
-            id.includes('node_modules/react-is/') ||
-            id.includes('node_modules/axios/') ||
-            id.includes('node_modules/scheduler/')
-          ) {
-            return 'react-core';
-          }
-        }
-      }
-    }
+        codeSplitting: {
+          groups: [
+            // 1. Phân tách WebGL Three.js, React Globe & Space Engine (Tải riêng cho /map)
+            {
+              name: 'globe-3d',
+              test: /node_modules[\\/](?:three|react-globe\.gl|three-globe|three-conic-polygon-geometry|three-geojson-geometry|kapsule|accessor-fn|satellite\.js|topojson-client|d3-geo)/,
+              priority: 50,
+            },
+            // 2. Biểu đồ Recharts & D3 Data Visualization (Tải riêng cho Dashboard)
+            {
+              name: 'charts',
+              test: /node_modules[\\/](?:recharts|victory-vendor|d3-)/,
+              priority: 40,
+            },
+            // 3. Icon Pack Lucide
+            {
+              name: 'icons',
+              test: /node_modules[\\/]lucide-react/,
+              priority: 30,
+            },
+            // 4. Web Terminal Emulator (Xterm.js)
+            {
+              name: 'terminal',
+              test: /node_modules[\\/](?:@xterm|xterm)/,
+              priority: 25,
+            },
+            // 5. noVNC Canvas Client
+            {
+              name: 'vnc',
+              test: /node_modules[\\/](?:@novnc|novnc)/,
+              priority: 25,
+            },
+            // 6. Core React, React-DOM, Router & Axios (Tải ban đầu siêu nhẹ)
+            {
+              name: 'react-core',
+              test: /node_modules[\\/](?:react|react-dom|react-router|react-router-dom|react-is|axios|scheduler)/,
+              priority: 20,
+            },
+          ],
+        },
+      },
+    },
   }
 })

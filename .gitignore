@@ -23,6 +23,7 @@ __pycache__/
 **/__pycache__/
 *.pyc
 *.pyo
+*_pb2.py
 .pytest_cache/
 .ruff_cache/
 

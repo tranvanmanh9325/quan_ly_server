@@ -103,10 +103,18 @@ def generate_candidate_passwords(
     clean_clues: List[str] = []
     extracted_years: List[str] = []
     extracted_digits: List[str] = []
+    extracted_symbols: List[str] = []
 
     if clues:
         for raw in clues:
-            parts = re.split(r"[\s,;:\-_/]+", str(raw).strip())
+            raw_str = str(raw).strip()
+            # Detect standalone symbols in clues
+            for ch in raw_str:
+                if ch in "!@#$%^&*()_+-=[]{}|;:,.<>?/":
+                    if ch not in extracted_symbols:
+                        extracted_symbols.append(ch)
+
+            parts = re.split(r"[\s,;:\-_/]+", raw_str)
             for part in parts:
                 p = part.strip()
                 if not p:
@@ -123,19 +131,26 @@ def generate_candidate_passwords(
         if add(word):
             return candidates
 
-    # Determine numeric tokens to append
-    target_numbers = list(set(extracted_digits + extracted_years + _COMMON_SUFFIX_NUMBERS))
-    # Sort shorter / more specific numbers first
-    target_numbers.sort(key=lambda x: (len(x) == 0, len(x), x))
+    # Determine numeric tokens: User-provided numbers/years have highest priority
+    user_numbers: List[str] = []
+    for num in (extracted_years + extracted_digits):
+        if num and num not in user_numbers:
+            user_numbers.append(num)
+
+    common_suffixes = [s for s in _COMMON_SUFFIX_NUMBERS if s not in user_numbers]
+    target_numbers = user_numbers + [""] + common_suffixes
+
+    # Determine symbol tokens: User-provided symbols have highest priority
+    target_symbols = extracted_symbols + [s for s in _COMMON_SYMBOLS if s not in extracted_symbols]
 
     # 3. Permute clues with case, leetspeak, and suffixes
     for word in clean_clues:
-        if word.isdigit():
+        if word.isdigit() or len(word) <= 1:
             continue
 
         base_variants = [
-            word.lower(),
             word.capitalize(),
+            word.lower(),
             word.upper(),
         ]
 
@@ -149,16 +164,16 @@ def generate_candidate_passwords(
             .replace("s", "$")
         )
         if leet != word.lower():
-            base_variants.append(leet)
             base_variants.append(leet.capitalize())
+            base_variants.append(leet)
 
         for base in base_variants:
             if add(base):
                 return candidates
 
             for num in target_numbers[:8]:
-                for sym in _COMMON_SYMBOLS[:4]:
-                    # Patterns: Base + Num + Sym (e.g. Kirito2005@, kirito123!)
+                for sym in target_symbols[:4]:
+                    # Patterns: Base + Num + Sym (e.g. Manh2005@, Kirito2005!, kirito123)
                     if add(f"{base}{num}{sym}"):
                         return candidates
                     if sym and num and add(f"{base}{sym}{num}"):

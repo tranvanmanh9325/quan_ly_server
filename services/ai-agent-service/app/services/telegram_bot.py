@@ -386,7 +386,150 @@ class TelegramBot:
             except Exception as e:
                 logger.error("[TelegramBot] Error processing apt_ready callback: %s", e)
 
-            await self.answer_callback_query(query_id)
+        # Handle Archive Password Recovery Callbacks
+        elif data.startswith("crack_archive:"):
+            action = data.split(":")[1]
+            if action == "cancel":
+                self._pending_archives.pop(chat_id, None)
+                await self.edit_message_text(chat_id, message_id, "✅ Đã hủy phiên mở khóa tệp nén.", reply_markup=None)
+                await self.answer_callback_query(query_id, text="Đã hủy.")
+                return
+
+            elif action == "clues":
+                await self.answer_callback_query(query_id)
+                await self.send_message(
+                    chat_id,
+                    "💡 <b>HƯỚNG DẪN DÒ PASS THEO MANH MỐI:</b>\n\n"
+                    "Anh Mạnh chỉ cần nhắn các từ gợi nhớ thường dùng, ví dụ:\n"
+                    "• <code>gợi ý: manh 2005 @</code>\n"
+                    "• <code>anh quên pass, hình như có Kirito và số đuôi 123</code>\n\n"
+                    "Em sẽ lập tức kết hợp đột biến chữ hoa/thường, năm sinh, leetspeak và ký tự đặc biệt để phá khóa cho anh ngay!"
+                )
+                return
+
+            elif action == "auto":
+                await self.answer_callback_query(query_id, text="⚡ Đang kích hoạt engine phá khóa...")
+                await self._trigger_archive_recovery(chat_id, message_id=message_id)
+                return
+
+        await self.answer_callback_query(query_id)
+
+    async def _trigger_archive_recovery(
+        self,
+        chat_id: str,
+        clues: Optional[List[str]] = None,
+        message_id: Optional[int] = None,
+    ) -> None:
+        """
+        Executes high-speed multi-threaded archive recovery on the pending archive session.
+        Auto-extracts and analyzes archive contents upon successful recovery.
+        """
+        pending = self._pending_archives.get(chat_id)
+        if not pending:
+            await self.send_message(
+                chat_id,
+                "⚠️ Không còn phiên mở khóa tệp nén nào đang chờ. Anh vui lòng gửi lại tệp nén giúp em nhé!"
+            )
+            return
+
+        filename = pending["filename"]
+        file_bytes = pending["file_bytes"]
+        mime_type = pending["mime_type"]
+        caption = pending["caption"]
+
+        status_text = (
+            f"⚡ <b>ĐANG PHÁ KHÓA TỆP NÉN 4 LUỒNG...</b>\n\n"
+            f"📁 <b>Tệp:</b> <code>{filename}</code>\n"
+            f"⏳ <i>Tiểu Bảo Bảo đang chạy engine song song 4 workers kiểm tra các mẫu mật khẩu tiềm năng nhất...</i>"
+        )
+        if message_id:
+            try:
+                await self.edit_message_text(chat_id, message_id, status_text, reply_markup=None)
+            except Exception:
+                await self.send_message(chat_id, status_text)
+        else:
+            await self.send_message(chat_id, status_text)
+
+        from app.services.archive_recovery import run_archive_recovery
+
+        try:
+            rec_res = await run_archive_recovery(
+                archive_path_or_bytes=file_bytes,
+                clues=clues or [],
+                filename=filename,
+                ssh_client=self.ssh_client,
+            )
+        except Exception as ex_run:
+            logger.error("[TelegramBot] Error running archive recovery: %s", ex_run, exc_info=True)
+            rec_res = {"success": False, "found": False, "message": str(ex_run)}
+
+        if rec_res.get("found"):
+            found_pwd = rec_res.get("password") or ""
+            elapsed = rec_res.get("elapsed_sec", 0.0)
+            tested = rec_res.get("tested_count", 0)
+
+            # Auto-decrypt and extract content using found password
+            try:
+                content = await self._media.process_archive(
+                    file_bytes,
+                    mime_type,
+                    filename,
+                    caption=caption,
+                    password=found_pwd if found_pwd else None,
+                )
+                self._pending_archives.pop(chat_id, None)
+
+                success_msg = (
+                    f"🎉 <b>PHÁ KHÓA TỆP NÉN THÀNH CÔNG!</b>\n\n"
+                    f"📁 <b>Tệp:</b> <code>{filename}</code>\n"
+                    f"🔑 <b>Mật khẩu:</b> <code>{found_pwd or '(Không có mật khẩu)'}</code>\n"
+                    f"⏱️ <b>Thời gian dò:</b> <code>{elapsed}s</code> (đã thử <code>{tested}</code> mật khẩu)\n\n"
+                    f"🔓 <i>Tiểu Bảo Bảo đã tự động giải nén và nạp dữ liệu vào phiên làm việc!</i>"
+                )
+                await self.send_message(chat_id, success_msg)
+
+                caption_part = f"\n[Yêu cầu từ anh Mạnh]: {caption}" if caption else ""
+                user_input = (
+                    f"[📄 TỆP ĐÍNH KÈM: {filename} (Đã phá khóa thành công, mật khẩu: {found_pwd})]{caption_part}\n\n"
+                    f"{content}"
+                )
+                reply = await self.ai_agent.chat(chat_id, user_input)
+                await self.send_message(chat_id, reply)
+                return
+
+            except Exception as ex_proc:
+                logger.error("[TelegramBot] Decryption after recovery failed: %s", ex_proc, exc_info=True)
+                await self.send_message(
+                    chat_id,
+                    f"🎉 <b>ĐÃ TÌM THẤY MẬT KHẨU:</b> <code>{found_pwd}</code>\n\n"
+                    f"Tuy nhiên có lỗi khi giải nén: {ex_proc}. Anh có thể dùng mật khẩu này để mở tệp thủ công nhé!"
+                )
+                return
+
+        # Not found with initial candidates
+        tested = rec_res.get("tested_count", 0)
+        elapsed = rec_res.get("elapsed_sec", 0.0)
+        fail_msg = (
+            f"⚠️ <b>CHƯA TÌM THẤY MẬT KHẨU CHO TỆP <code>{filename}</code></b>\n\n"
+            f"• Đã thử nghiệm: <b>{tested}</b> mẫu mật khẩu phổ biến trong {elapsed}s.\n"
+            f"• Tệp này có thể sử dụng mật khẩu cá nhân hóa riêng biệt.\n\n"
+            f"💡 <b>Gợi ý:</b> Anh Mạnh hãy nhắn cho em vài manh mối gợi nhớ (ví dụ: <code>gợi ý: manh 2005 @</code> hoặc 4 số cuối điện thoại), em sẽ lập tức sinh từ điển đột biến và dò sâu hơn cho anh nhé!"
+        )
+        retry_kb = {
+            "inline_keyboard": [
+                [
+                    {
+                        "text": "💡 Hướng Dẫn Nhập Gợi Ý",
+                        "callback_data": "crack_archive:clues",
+                    },
+                    {
+                        "text": "❌ Hủy Bỏ",
+                        "callback_data": "crack_archive:cancel",
+                    },
+                ]
+            ]
+        }
+        await self.send_message(chat_id, fail_msg, reply_markup=retry_kb)
 
     async def _handle_command(self, command: str, chat_id: str) -> None:
         parts = command.strip().split(maxsplit=1)
@@ -680,10 +823,35 @@ class TelegramBot:
                             "caption": caption,
                             "timestamp": time.time(),
                         }
+                        unlock_kb = {
+                            "inline_keyboard": [
+                                [
+                                    {
+                                        "text": "⚡ Phá Khóa Tự Động (Flash Crack)",
+                                        "callback_data": "crack_archive:auto",
+                                    }
+                                ],
+                                [
+                                    {
+                                        "text": "💡 Dò Mật Khẩu Theo Manh Mối",
+                                        "callback_data": "crack_archive:clues",
+                                    },
+                                    {
+                                        "text": "❌ Hủy Bỏ",
+                                        "callback_data": "crack_archive:cancel",
+                                    },
+                                ],
+                            ]
+                        }
                         await self.send_message(
                             chat_id,
-                            f"🔒 <b>Tệp nén <code>{filename}</code> đã được đặt mật khẩu bảo vệ.</b>\n\n"
-                            f"Anh Mạnh vui lòng nhắn mật khẩu cho em (ví dụ: <code>pass: 123456</code> hoặc <code>mật khẩu là abc</code>) để em mở khóa và đọc toàn bộ dữ liệu bên trong cho anh nhé! 🔓"
+                            f"🔒 <b>TỆP NÉN CÓ MẬT KHẨU BẢO VỆ</b>\n\n"
+                            f"📁 <b>Tệp:</b> <code>{filename}</code>\n\n"
+                            f"Anh Mạnh có thể:\n"
+                            f"1️⃣ Nhắn mật khẩu trực tiếp cho em (ví dụ: <code>pass: 123456</code>)\n"
+                            f"2️⃣ Bấm <b>[⚡ Phá Khóa Tự Động]</b> để Tiểu Bảo Bảo chạy engine 4 luồng mở khóa siêu tốc!\n"
+                            f"3️⃣ Hoặc nhắn manh mối gợi nhớ: <i>'anh quên pass rồi, gợi ý: manh 2005 @'</i> 🔓",
+                            reply_markup=unlock_kb,
                         )
                         return
                     except ArchiveInvalidPasswordError:
@@ -694,10 +862,27 @@ class TelegramBot:
                             "caption": caption,
                             "timestamp": time.time(),
                         }
+                        retry_kb = {
+                            "inline_keyboard": [
+                                [
+                                    {
+                                        "text": "⚡ Phá Khóa Tự Động (Flash Crack)",
+                                        "callback_data": "crack_archive:auto",
+                                    }
+                                ],
+                                [
+                                    {
+                                        "text": "❌ Hủy Bỏ",
+                                        "callback_data": "crack_archive:cancel",
+                                    },
+                                ],
+                            ]
+                        }
                         await self.send_message(
                             chat_id,
                             f"❌ <b>Mật khẩu mở tệp <code>{filename}</code> không chính xác!</b>\n\n"
-                            f"Anh vui lòng kiểm tra lại và gửi lại mật khẩu đúng giúp em nhé."
+                            f"Anh vui lòng kiểm tra lại mật khẩu đúng, hoặc bấm nút bên dưới để em tự động phá khóa giúp anh nhé!",
+                            reply_markup=retry_kb,
                         )
                         return
                 else:
@@ -741,6 +926,24 @@ class TelegramBot:
         if chat_id in self._pending_archives:
             pending = self._pending_archives[chat_id]
             if time.time() - pending.get("timestamp", 0) < 900 and not text.startswith("/"):
+                # Recovery intent detection: user forgot password or asks to crack/help
+                recovery_match = re.search(
+                    r"(quên|bẻ khóa|phá khóa|crack|dò pass|tìm pass|mở khóa giúp|không nhớ|quên mật khẩu|tool|thử pass|gợi ý|clue|manh mối)",
+                    text,
+                    re.IGNORECASE,
+                )
+                if recovery_match:
+                    logger.info("[TelegramBot] User requested password recovery for %s: '%s'", pending["filename"], text)
+                    clue_text = re.sub(
+                        r"\b(anh|em|quên|mật|khẩu|pass|rồi|giúp|phá|khóa|bẻ|crack|dò|tìm|mở|không|nhớ|tool|hộ|cho|file|tệp|nén|gợi|ý|hình|như|có|chữ|số|là|với|nhé|ơi)\b",
+                        " ",
+                        text,
+                        flags=re.IGNORECASE,
+                    )
+                    clues = [w.strip() for w in re.split(r"[\s,;:\-_/]+", clue_text) if w.strip()]
+                    await self._trigger_archive_recovery(chat_id, clues=clues)
+                    return
+
                 extracted_pwd = extract_password_from_text(text) or text.strip()
                 logger.info("[TelegramBot] Trying password for pending archive %s from %s", pending["filename"], chat_id)
                 try:
@@ -764,10 +967,31 @@ class TelegramBot:
                     await self.send_message(chat_id, f"🔓 <i>Đã mở khóa tệp <b>{pending['filename']}</b> thành công!</i>\n\n" + reply)
                     return
                 except ArchiveInvalidPasswordError:
+                    retry_kb = {
+                        "inline_keyboard": [
+                            [
+                                {
+                                    "text": "⚡ Phá Khóa Tự Động (Flash Crack)",
+                                    "callback_data": "crack_archive:auto",
+                                }
+                            ],
+                            [
+                                {
+                                    "text": "💡 Dò Mật Khẩu Theo Manh Mối",
+                                    "callback_data": "crack_archive:clues",
+                                },
+                                {
+                                    "text": "❌ Hủy Bỏ",
+                                    "callback_data": "crack_archive:cancel",
+                                },
+                            ],
+                        ]
+                    }
                     await self.send_message(
                         chat_id,
                         f"❌ <b>Mật khẩu '<code>{extracted_pwd}</code>' không chính xác cho tệp <code>{pending['filename']}</code>!</b>\n\n"
-                        f"Anh vui lòng kiểm tra lại mật khẩu (hoặc gõ <code>/cancel</code> để hủy đọc tệp này nhé)."
+                        f"Anh có thể nhập lại mật khẩu đúng, hoặc bấm nút dưới đây để em tự động phá khóa nhé!",
+                        reply_markup=retry_kb,
                     )
                     return
                 except Exception as ex_dec:

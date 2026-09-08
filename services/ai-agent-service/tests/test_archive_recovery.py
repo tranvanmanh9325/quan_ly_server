@@ -2,8 +2,12 @@
 Unit tests for Smart Archive Password Recovery Engine.
 """
 
+import shutil
 import unittest
-from app.services.archive_recovery import generate_candidate_passwords
+from app.services.archive_recovery import (
+    generate_candidate_passwords,
+    run_archive_recovery_local,
+)
 
 
 class TestArchiveRecovery(unittest.TestCase):
@@ -33,9 +37,27 @@ class TestArchiveRecovery(unittest.TestCase):
 
     def test_empty_clues_fallback(self):
         candidates = generate_candidate_passwords([])
-        # Should at least contain common default passwords
+        # Should at least contain common default passwords and PINs
         self.assertGreater(len(candidates), 10)
         self.assertIn("123456", candidates)
+        self.assertIn("1234", candidates)
+
+    def test_pin_sweep_included(self):
+        candidates = generate_candidate_passwords([], include_pin_sweep=True, max_candidates=1500)
+        # Should contain common 4-digit PIN patterns
+        self.assertIn("0000", candidates)
+        self.assertIn("0123", candidates)
+
+    @unittest.skipUnless(shutil.which("7z"), "7z binary required on PATH")
+    def test_run_archive_recovery_local_with_mock(self):
+        # Only runs when 7z is installed (e.g. inside Docker or Linux host)
+        res = run_archive_recovery_local(
+            archive_path_or_bytes=b"dummy_data",
+            candidates=["123456", "admin"],
+            filename="dummy.zip",
+        )
+        self.assertIsInstance(res, dict)
+        self.assertIn("found", res)
 
 
 if __name__ == "__main__":

@@ -728,16 +728,17 @@ Khi nhận thấy đề xuất của anh Mạnh có nhược điểm lớn, rủ
                 "function": {
                     "name": "recover_archive_password",
                     "description": (
-                        "Khôi phục mật khẩu tệp nén (RAR, ZIP, 7Z) khi người dùng quên mật khẩu, dựa trên các manh mối gợi nhớ "
-                        "(tên riêng, biệt danh, năm sinh, 4 số cuối điện thoại, ký tự đặc biệt...) hoặc danh sách mật khẩu nghi ngờ. "
-                        "Dùng khi: 'quên mật khẩu file rar X', 'tìm pass file zip với gợi ý Y', 'phá khóa tệp nén'."
+                        "Khôi phục mật khẩu tệp nén (RAR, ZIP, 7Z) siêu tốc bằng engine 4 luồng song song khi người dùng quên mật khẩu, "
+                        "dựa trên các manh mối gợi nhớ (tên riêng, biệt danh, năm sinh, 4 số cuối, ký tự đặc biệt...) hoặc dò tự động. "
+                        "Hỗ trợ cả tệp nén trên máy chủ lẫn tệp vừa gửi qua Telegram. "
+                        "Dùng khi: 'phá khóa tệp nén', 'quên mật khẩu file rar/zip', 'dò pass file', 'crack file'."
                     ),
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "file_path": {
                                 "type": "string",
-                                "description": "Đường dẫn tới tệp nén trên máy chủ (ví dụ: '/home/kirito/data.rar').",
+                                "description": "Đường dẫn tới tệp nén trên máy chủ (ví dụ: '/home/kirito/data.rar') hoặc để trống nếu là file vừa gửi qua Telegram.",
                             },
                             "clues": {
                                 "type": "array",
@@ -750,7 +751,6 @@ Khi nhận thấy đề xuất của anh Mạnh có nhược điểm lớn, rủ
                                 "description": "Danh sách các mật khẩu cụ thể người dùng muốn thử trực tiếp (nếu có).",
                             },
                         },
-                        "required": ["file_path"],
                     },
                 },
             },
@@ -1418,58 +1418,56 @@ Khi nhận thấy đề xuất của anh Mạnh có nhược điểm lớn, rủ
                 clues = tool_args.get("clues", [])
                 custom_passwords = tool_args.get("candidate_passwords", [])
 
-                if not fpath:
-                    return "Lỗi: Chưa cung cấp đường dẫn file nén (file_path)."
+                target_bytes: Optional[bytes] = None
+                display_name = fpath
 
-                # 1. Verify file exists on host
-                check_cmd = f"test -f {shlex.quote(fpath)} && echo 'EXISTS' || echo 'NOT_FOUND'"
-                check_res = await self.ssh_client.execute_command(check_cmd)
-                if "EXISTS" not in check_res:
-                    return f"Lỗi: Không tìm thấy tệp nén tại đường dẫn `{fpath}` trên máy chủ."
+                # Check if user refers to a recently uploaded file from Telegram
+                if (not fpath or any(w in fpath.lower() for w in ("gửi", "recent", "vừa", "telegram", "pending"))) and self.telegram_bot:
+                    pending_map = getattr(self.telegram_bot, "_pending_archives", {})
+                    # Look for pending archive for this chat_id or the single active pending archive
+                    pending_entry = pending_map.get(chat_id)
+                    if not pending_entry and len(pending_map) == 1:
+                        pending_entry = next(iter(pending_map.values()))
+                    if pending_entry:
+                        target_bytes = pending_entry["file_bytes"]
+                        display_name = pending_entry["filename"]
 
-                # 2. Check if file is encrypted
-                probe_cmd = f"7z t -p- -y {shlex.quote(fpath)} 2>&1"
-                probe_out = await self.ssh_client.execute_command(probe_cmd)
-                if "everything is ok" in probe_out.lower():
-                    return f"ℹ️ Tệp nén `{fpath}` hoàn toàn KHÔNG đặt mật khẩu bảo vệ! Anh có thể giải nén trực tiếp bằng lệnh `extract_archive_file` mà không cần pass."
+                if not target_bytes and not fpath:
+                    return (
+                        "Lỗi: Chưa cung cấp đường dẫn file nén (file_path) trên máy chủ, "
+                        "và hiện không có tệp nén nào đang chờ mở khóa từ Telegram."
+                    )
 
-                # 3. Synthesize candidate passwords using smart context engine
-                from app.services.archive_recovery import (
-                    generate_candidate_passwords,
-                    run_archive_recovery_on_host,
-                )
+                from app.services.archive_recovery import run_archive_recovery
 
-                candidates = generate_candidate_passwords(
+                recovery_res = await run_archive_recovery(
+                    archive_path_or_bytes=target_bytes if target_bytes is not None else fpath,
                     clues=clues,
                     custom_candidates=custom_passwords,
-                    max_candidates=1200,
-                )
-
-                if not candidates:
-                    return "Lỗi: Không thể sinh danh sách mật khẩu ứng viên. Vui lòng cung cấp thêm manh mối gợi nhớ."
-
-                # 4. Execute high-speed in-memory verification on host
-                recovery_res = await run_archive_recovery_on_host(
+                    filename=display_name,
                     ssh_client=self.ssh_client,
-                    archive_path=fpath,
-                    candidates=candidates,
                 )
 
                 if recovery_res.get("found"):
-                    found_pwd = recovery_res.get("password")
+                    found_pwd = recovery_res.get("password") or ""
                     elapsed = recovery_res.get("elapsed_sec", 0.0)
                     tested = recovery_res.get("tested_count", 0)
+                    already_unlocked = recovery_res.get("already_unlocked", False)
+
+                    if already_unlocked:
+                        return f"ℹ️ Tệp nén `{display_name}` hoàn toàn KHÔNG đặt mật khẩu bảo vệ! Anh có thể giải nén trực tiếp mà không cần pass."
+
                     return (
-                        f"🎉 **TÌM THẤY MẬT KHẨU TỆP NÉN `{fpath}` THÀNH CÔNG!**\n\n"
+                        f"🎉 **PHÁ KHÓA MẬT KHẨU TỆP NÉN `{display_name}` THÀNH CÔNG!**\n\n"
                         f"🔑 **Mật khẩu chính xác**: `{found_pwd}`\n"
-                        f"⏱️ **Thời gian tìm kiếm**: {elapsed}s (đã thử {tested} mật khẩu ứng viên)\n\n"
+                        f"⏱️ **Thời gian tìm kiếm**: {elapsed}s (đã kiểm tra {tested} mật khẩu ứng viên với 4 workers song song)\n\n"
                         f"💡 Anh có muốn em giải nén tệp này ngay bây giờ không? Hãy cho em biết thư mục đích anh muốn lưu nhé!"
                     )
 
-                tested = recovery_res.get("tested_count", len(candidates))
+                tested = recovery_res.get("tested_count", 0)
                 elapsed = recovery_res.get("elapsed_sec", 0.0)
                 return (
-                    f"⚠️ **CHƯA TÌM THẤY MẬT KHẨU CHO TỆP `{fpath}`**\n\n"
+                    f"⚠️ **CHƯA TÌM THẤY MẬT KHẨU CHO TỆP `{display_name}`**\n\n"
                     f"- Đã thử nghiệm: **{tested}** mật khẩu ứng viên trong {elapsed}s nhưng chưa khớp.\n"
                     f"- **Gợi ý**: Anh có nhớ thêm manh mối nào khác không? Ví dụ:\n"
                     f"  * Năm sinh hoặc 4 số cuối điện thoại hay dùng\n"

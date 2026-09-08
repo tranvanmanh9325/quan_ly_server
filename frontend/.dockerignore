@@ -1,0 +1,13 @@
+# Docker build context exclusion for frontend
+# NOTE: Do NOT add 'dist' here, as target 'ci' copies pre-built dist into the container.
+node_modules
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npm
+coverage
+.git
+.gitignore
+.vscode
+.idea
+*.md

@@ -184,6 +184,7 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      target: ${FRONTEND_BUILD_TARGET:-local}
     container_name: dashboard_frontend
     ports:
       - "5173:80"

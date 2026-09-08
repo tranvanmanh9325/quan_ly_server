@@ -45,9 +45,23 @@ jobs:
       - name: AI Agent syntax check
         run: python -m compileall services/ai-agent-service/app
 
-      - name: Frontend install + build check
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Frontend install + build
         run: npm ci && npm run build
         working-directory: frontend
+
+      - name: Upload Frontend Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+          retention-days: 1
 
   # ── Deploy (self-hosted runner ON the server) ─────────────────────────────
   deploy:
@@ -63,10 +77,23 @@ jobs:
           git fetch origin main
           git reset --hard origin/main
 
+      - name: Download Frontend Build Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend-dist-temp
+
+      - name: Sync Artifact to Frontend
+        run: |
+          rm -rf ~/quan_ly_server/frontend/dist
+          mkdir -p ~/quan_ly_server/frontend/dist
+          cp -r frontend-dist-temp/* ~/quan_ly_server/frontend/dist/
+          rm -rf frontend-dist-temp
+
       - name: Rebuild and restart containers
         run: |
           cd ~/quan_ly_server
-          docker compose up -d --build --remove-orphans
+          FRONTEND_BUILD_TARGET=ci docker compose up -d --build --remove-orphans
 
       - name: Verify all containers healthy
         run: |

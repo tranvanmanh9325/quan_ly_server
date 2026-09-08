@@ -1,0 +1,10 @@
+{
+  "default": true,
+  "MD013": false,
+  "ignores": [
+    "LICENSE",
+    "**/node_modules/**",
+    "**/target/**",
+    "**/.venv/**"
+  ]
+}

@@ -311,7 +311,7 @@ class LlmRouter:
         )
 
     def _init_providers(self):
-        # 1. Tier 1: Groq Multi-Key Pool
+        # 1. Tier 1A: Groq Primary Model
         groq_keys = settings.groq_keys
         if groq_keys:
             self.providers["groq"] = Provider(
@@ -321,6 +321,16 @@ class LlmRouter:
                 default_model=settings.GROQ_MODEL,
                 api_keys=groq_keys,
             )
+            # Tier 1B: Groq Fallback Model
+            fallback_groq = getattr(settings, "GROQ_MODEL_FALLBACK", "qwen/qwen3.8-27b")
+            if fallback_groq and fallback_groq != settings.GROQ_MODEL:
+                self.providers["groq_fallback"] = Provider(
+                    name="groq_fallback",
+                    tier=1,
+                    base_url="https://api.groq.com/openai/v1/chat/completions",
+                    default_model=fallback_groq,
+                    api_keys=groq_keys,
+                )
 
         or_extra = {
             "HTTP-Referer": "https://dashboard.kirito.server",

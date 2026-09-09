@@ -18,10 +18,12 @@ Anomalies checked:
   - OOM-killed processes in last 24h
 """
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import logging
 import re
 from typing import Any, Optional
+
+from app.core.brain_core import ArtificialBrain
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +94,27 @@ class ProactiveIntelligenceService:
         for result in [disk_alert, mem_alert, ssl_alert, oom_alert, restart_alert]:
             if isinstance(result, str) and result:
                 alerts.append(result)
+
+        # ── Autonomous Neuromorphic Brain Pulse & Sleep Consolidation ─────────
+        try:
+            brain = ArtificialBrain.get_instance()
+            ram_pct = 0.0
+            if isinstance(mem_alert, str) and mem_alert:
+                ram_match = re.search(r"(\d+)%", mem_alert)
+                if ram_match:
+                    ram_pct = float(ram_match.group(1))
+            winning_signal = brain.step_pulse({"ram_usage": ram_pct, "cpu_usage": 0.0})
+            if winning_signal:
+                logger.info("[Proactive] 🧠 Conscious Workspace Ignition: %s (salience=%.2f)", winning_signal.summary, winning_signal.salience)
+
+            # Sleep Consolidation: between 02:00 and 05:00 AM VN time, consolidate working memory into 32GB Virtual Cortex
+            now_vn = datetime.now(timezone(timedelta(hours=7)))
+            if 2 <= now_vn.hour <= 5:
+                consolidated = brain.consolidate_sleep_memories()
+                if consolidated > 0:
+                    logger.info("[Proactive] 🌙 Consolidated %d memories into 32GB Virtual Cortex during sleep.", consolidated)
+        except Exception as _b_err:
+            logger.debug("[Proactive] Brain cognitive pulse error: %s", _b_err)
 
         if not alerts:
             logger.info("[Proactive] ✅ All checks passed. No anomalies detected.")

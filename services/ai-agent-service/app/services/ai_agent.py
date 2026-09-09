@@ -7,6 +7,7 @@ import shlex
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.config import settings
+from app.core.brain_core import ArtificialBrain
 from app.core.llm_router import LlmRouter
 from app.core.ssh_client import SshClient
 from app.services.message_cache import FacebookMessageCache
@@ -112,6 +113,9 @@ class AiAgentService:
         self._cached_pending: str = ""   # Prospective memory — refreshed each chat() call
         self._cached_schemas: str = ""   # Schema memory (v4.0) — refreshed each chat() call
         self._cached_causal_hints: str = ""  # STDP causal hints (v4.0) — refreshed each chat() call
+        self._current_user_query: Optional[str] = None
+        # Phase 12 (v5.0): Autonomous Neuromorphic Brain Core (FEP, 32GB Virtual Cortex, Neurotransmitters)
+        self.brain: ArtificialBrain = ArtificialBrain.get_instance()
 
     def set_fb_service(self, fb_service: Any) -> None:
         self.fb_service = fb_service
@@ -615,6 +619,18 @@ Khi nhận thấy đề xuất của anh Mạnh có nhược điểm lớn, rủ
                 f"🔗 Dựa trên lịch sử, các chuỗi tool call sau có tỷ lệ thành công cao:\n"
                 f"{self._cached_causal_hints}"
             )
+
+        # Section 12: Autonomous Neuromorphic Brain Core (v5.0)
+        # Neurotransmitters, Variational Free Energy, 32GB Virtual Memory Cortex & Global Workspace
+        if hasattr(self, "brain") and self.brain:
+            try:
+                brain_ctx = self.brain.get_cognitive_prompt_context(
+                    user_query=getattr(self, "_current_user_query", None)
+                )
+                if brain_ctx:
+                    sections.append(f"\n{brain_ctx}")
+            except Exception as _b_err:
+                logger.debug("[AiAgent] Brain prompt context generation skipped: %s", _b_err)
 
         return "".join(sections)
 
@@ -2197,14 +2213,17 @@ Khi nhận thấy đề xuất của anh Mạnh có nhược điểm lớn, rủ
             except Exception as _mem_err:
                 logger.warning("[AiAgent] Failed to refresh memory caches: %s", _mem_err)
 
+        self._current_user_query = user_message
         history = self._history_map.setdefault(chat_id, [])
 
         # ── Correction detection: fire-and-forget lesson extraction ───────────
         # When the user signals the bot made a mistake, record the event and
         # asynchronously distill a lesson via LLM — never blocks the reply path.
+        is_user_correction = False
         if self.memory_service and history:
             from app.services.memory_service import AgentMemoryService
             if AgentMemoryService.is_correction(user_message):
+                is_user_correction = True
                 # Find the last assistant turn to use as the "wrong response"
                 last_ai_reply = next(
                     (m["content"] for m in reversed(history) if m.get("role") == "assistant"),
@@ -2219,6 +2238,17 @@ Khi nhận thấy đề xuất của anh Mạnh có nhược điểm lớn, rủ
                         )
                     )
                     logger.info("[AiAgent] 🧠 Correction detected — lesson extraction scheduled.")
+
+        # Trigger sensory perception in Autonomous Neuromorphic Brain Core
+        if hasattr(self, "brain") and self.brain:
+            try:
+                self.brain.perceive_user_interaction(
+                    user_message=user_message,
+                    is_correction=is_user_correction,
+                    task_success=True,
+                )
+            except Exception as _b_err:
+                logger.debug("[AiAgent] Brain sensory perception skipped: %s", _b_err)
 
         if self._is_greeting(user_message):
             greeting = (
@@ -2620,6 +2650,10 @@ Khi nhận thấy đề xuất của anh Mạnh có nhược điểm lớn, rủ
                         salience_score=salience,
                         tags=["auto", f"pe_{int(pe_score * 10)}", f"tools_{len(_all_tool_results)}"],
                     ))
+
+                # Neuromorphic Brain reward on successful completion
+                if hasattr(self, "brain") and self.brain:
+                    self.brain.neuro.stimulate("dopamine", 0.08)
 
                 return final
 

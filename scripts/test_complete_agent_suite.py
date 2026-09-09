@@ -105,17 +105,17 @@ def run_suite():
 
     print("\n[Test 6/6] Kiểm thử ngữ cảnh hội thoại nhiều lượt (Multi-turn Memory)...")
     chat_session = f"session-suite-{int(time.time())}"
-    res6_t1 = call_ai_chat("anh tên là gì em nhỉ", chat_id=chat_session)
+    res6_t1 = call_ai_chat("anh tên là Mạnh nhé", chat_id=chat_session)
     reply6_t1 = res6_t1.get("reply", "")
-    t1_knows_name = "mạnh" in reply6_t1.lower()
+    t1_knows_name = not is_raw_tool_leak(reply6_t1) and len(reply6_t1) > 0
 
-    res6_t2 = call_ai_chat("anh vừa hỏi em câu gì ở ngay trước đó thế", chat_id=chat_session)
+    res6_t2 = call_ai_chat("anh vừa nói anh tên là gì em nhỉ", chat_id=chat_session)
     reply6_t2 = res6_t2.get("reply", "")
     leak6 = is_raw_tool_leak(reply6_t2)
-    remembers_context = any(w in reply6_t2.lower() for w in ["tên", "anh tên là gì", "hỏi tên"])
+    remembers_context = "mạnh" in reply6_t2.lower()
     pass6 = (not leak6) and remembers_context
-    print(f"  Lượt 1 (Tên quản trị viên): {'✅ PASS' if t1_knows_name else '❌ FAIL'}")
-    print(f"  Lượt 2 (Nhớ câu hỏi trước): {'✅ PASS' if remembers_context else '❌ FAIL'}")
+    print(f"  Lượt 1 (Ghi nhận thông tin): {'✅ PASS' if t1_knows_name else '❌ FAIL'}")
+    print(f"  Lượt 2 (Truy hồi ngữ cảnh hội thoại): {'✅ PASS' if remembers_context else '❌ FAIL'}")
     print(f"  Trích dẫn câu trả lời Lượt 2: {reply6_t2[:120]}...")
     results.append(("6. Multi-Turn Memory", pass6))
 

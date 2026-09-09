@@ -468,6 +468,8 @@ class LlmRouter:
                 logger.debug("[9Router] CoT preamble stripped (%d paragraphs removed)", len(paragraphs) - len(real_paragraphs))
                 return stripped
 
+        return content
+
     @staticmethod
     def _rehydrate_failed_tool_call(raw: str) -> Optional[List[Dict[str, Any]]]:
         """

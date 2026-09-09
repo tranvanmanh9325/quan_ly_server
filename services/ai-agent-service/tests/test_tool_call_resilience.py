@@ -124,6 +124,24 @@ class TestToolCallResilience(unittest.TestCase):
         )
         self.assertTrue(is_cmd_failure)
 
+    def test_strip_cot_leakage_preserves_clean_vietnamese_content(self):
+        """Verify that clean normal responses from LLM are never converted to None or empty."""
+        clean_text = "Chào anh Mạnh! Em là Tiểu Bảo Bảo, sáng nay hệ thống hoạt động bình thường ạ."
+        result = self.router._strip_cot_leakage(clean_text)
+        self.assertEqual(result, clean_text)
+
+    def test_strip_cot_leakage_strips_thinking_process_preamble(self):
+        """Verify that leaked chain of thought with separator is stripped properly."""
+        cot_text = (
+            "Here's a thinking process:\n"
+            "1. Analyze the user request\n"
+            "2. Formulate response\n"
+            "---\n"
+            "Chào anh Mạnh! Hệ thống đang chạy ổn định."
+        )
+        result = self.router._strip_cot_leakage(cot_text)
+        self.assertEqual(result, "Chào anh Mạnh! Hệ thống đang chạy ổn định.")
+
 
 if __name__ == "__main__":
     unittest.main()

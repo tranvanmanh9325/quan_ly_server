@@ -438,7 +438,8 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
 ━━━ 4. CẨM NANG TRA CỨU LINUX & DEVOPS (QUAN TRỌNG) ━━━
 • Vị trí server: BẮT BUỘC gọi tool `get_server_location` để lấy GPS & địa danh thực tế từ phần cứng.
 • Phiên đăng nhập: BẮT BUỘC gọi tool `get_server_active_sessions` (báo cáo cả Web Dashboard & SSH Terminal).
-• Kiểm tra CPU/RAM/Docker/Logs: Gọi tool `run_command` với lệnh có `--no-pager`, `head`/`tail` ngắn gọn (vd: `free -h`, `df -h /`, `docker ps`, `top -b -n 1 | head -n 10`)."""
+• Kiểm tra CPU/RAM/Docker/Logs: Gọi tool `run_command` với lệnh có `--no-pager`, `head`/`tail` ngắn gọn (vd: `free -h`, `df -h /`, `docker ps`, `top -b -n 1 | head -n 10`).
+• Tra cứu log hệ thống bằng journalctl: Dùng định dạng thời gian chuẩn (vd: `journalctl --since "2026-09-09 06:00"` hoặc `journalctl --since "-4h" -u <service> -n 30 --no-pager`). Tuyệt đối không dùng cụm "today 06:00" vì systemd không hỗ trợ cú pháp này."""
 
     def _build_system_prompt(self) -> str:
         now_vn = datetime.now(VN_TZ).strftime("%H:%M:%S ngày %d/%m/%Y (Giờ Việt Nam - ICT/UTC+7)")
@@ -2398,11 +2399,7 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
             assistant_msg = choice.get("message", {})
             finish_reason = choice.get("finish_reason", "stop")
             raw_content = assistant_msg.get("content") or ""
-            has_tool_calls = (
-                tool_choice != "none"
-                and finish_reason == "tool_calls"
-                and bool(assistant_msg.get("tool_calls"))
-            )
+            has_tool_calls = bool(assistant_msg.get("tool_calls"))
 
             if has_tool_calls:
                 history.append(assistant_msg)
@@ -2564,7 +2561,7 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
                 continue  # Feed observation back into the next LLM call
 
             # ── Pseudo-XML tool call fallback (for models that don't support native function calling) ──
-            pseudo_calls = self._extract_pseudo_tool_calls(raw_content) if tool_choice != "none" else []
+            pseudo_calls = self._extract_pseudo_tool_calls(raw_content)
             if pseudo_calls:
                 assistant_msg["tool_calls"] = [
                     {
@@ -2676,6 +2673,13 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
             iteration=MAX_AGENT_ITERATIONS,
             force_synthesis=True,
         )
+        fallback_messages.append({
+            "role": "user",
+            "content": (
+                "Dựa vào các kết quả lệnh và dữ liệu hệ thống đã thu thập ở trên, "
+                "hãy tổng hợp câu trả lời chi tiết, dứt khoát và đầy đủ cho anh Mạnh bằng tiếng Việt."
+            ),
+        })
         fallback_result = await self.llm_router.complete(
             messages=fallback_messages,
             tools=None,

@@ -21,7 +21,7 @@ import asyncio
 import json
 import logging
 import re
-from datetime import timezone, timedelta
+from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -32,6 +32,22 @@ from app.core.db import get_db_connection
 
 logger = logging.getLogger(__name__)
 VN_TZ = timezone(timedelta(hours=7))
+
+
+def _to_vn_dt(val: Any) -> Optional[datetime]:
+    """Safely convert database timestamp (datetime or ISO string) to VN timezone datetime."""
+    if not val:
+        return None
+    if isinstance(val, str):
+        try:
+            val = datetime.fromisoformat(val)
+        except Exception:
+            return None
+    if isinstance(val, datetime):
+        if val.tzinfo is None:
+            val = val.replace(tzinfo=timezone.utc)
+        return val.astimezone(VN_TZ)
+    return None
 
 # Keywords that signal the user is correcting the bot
 CORRECTION_TRIGGERS = [
@@ -1165,7 +1181,8 @@ Bài học:"""
         lines = ["🗓️ *SỰ KIỆN GẦN ĐÂY (Episodic Memory):*"]
         for summary, etype, sev, salience, occurred_at, tags in rows:
             icon = severity_icon.get(sev, "⚪")
-            ts = occurred_at.astimezone(VN_TZ).strftime("%d/%m %H:%M") if occurred_at else "?"
+            dt = _to_vn_dt(occurred_at)
+            ts = dt.strftime("%d/%m %H:%M") if dt else "?"
             tag_str = f" [{', '.join(tags[:3])}]" if tags else ""
             lines.append(f"  {icon} [{ts}] {summary}{tag_str}")
         return "\n".join(lines)
@@ -1292,7 +1309,8 @@ Bài học:"""
 
         lines = ["📋 *VIỆC CÒN ĐANG CHỜ (Prospective Memory):*"]
         for task_id, summary, created_at in rows:
-            ts = created_at.astimezone(VN_TZ).strftime("%d/%m") if created_at else "?"
+            dt = _to_vn_dt(created_at)
+            ts = dt.strftime("%d/%m") if dt else "?"
             lines.append(f"  • [#{task_id} - {ts}] {summary}")
         lines.append("_(Gõ 'xong việc #ID' để đánh dấu hoàn thành)_")
         return "\n".join(lines)
@@ -1388,9 +1406,11 @@ Bài học:"""
                     row = await cur.fetchone()
                     if not row or row[0] is None:
                         return True
-                    from datetime import datetime
                     last = row[0]
-                    elapsed = datetime.now(VN_TZ) - last.astimezone(VN_TZ)
+                    last_dt = _to_vn_dt(last)
+                    if not last_dt:
+                        return True
+                    elapsed = datetime.now(VN_TZ) - last_dt
                     return elapsed.total_seconds() >= cooldown_hours * 3600
         except Exception as e:
             logger.warning("[MemoryService] should_send_proactive_alert error: %s", e)

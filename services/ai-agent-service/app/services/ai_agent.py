@@ -73,7 +73,8 @@ _INTENT_DIAGNOSTIC = re.compile(
     r'\b(tại sao|lỗi gì|check|kiểm tra|xem|status|log|journalctl|dmesg|'
     r'health|trạng thái|bao nhiêu|mấy|còn|hết|đang chạy|running|ps|'
     r'vị trí|ở đâu|đang ở|tọa độ|địa chỉ|ip|'
-    r'đăng nhập|login|kết nối|truy cập|ai đang|máy tính nào|session|phiên)\b',
+    r'đăng nhập|login|kết nối|truy cập|ai đang|máy tính nào|session|phiên|'
+    r'hoạt động|thế nào|ra sao|tình hình|sức khỏe|ổn không)\b',
     re.IGNORECASE | re.UNICODE
 )
 _INTENT_ACTION = re.compile(
@@ -454,7 +455,7 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
 ━━━ 4. CẨM NANG TRA CỨU LINUX & DEVOPS (QUAN TRỌNG) ━━━
 • Vị trí server: BẮT BUỘC gọi tool `get_server_location` để lấy GPS & địa danh thực tế từ phần cứng.
 • Phiên đăng nhập: BẮT BUỘC gọi tool `get_server_active_sessions` (báo cáo cả Web Dashboard & SSH Terminal).
-• Kiểm tra CPU/RAM/Docker/Logs: Gọi tool `run_command` với lệnh có `--no-pager`, `head`/`tail` ngắn gọn (vd: `free -h`, `df -h /`, `docker ps`, `top -b -n 1 | head -n 10`).
+• Kiểm tra CPU/RAM/Docker/Logs: Gọi tool `run_command` với lệnh có `--no-pager`, `head`/`tail` ngắn gọn. Khi kiểm tra tổng quan sức khỏe server ("server hoạt động thế nào", "tình trạng server", "sức khỏe hệ thống"), hãy ưu tiên lệnh kiểm tra tổng hợp 4 chiều (ví dụ: `free -h && df -h / && top -b -n 1 | head -n 5 && docker ps --format "table {{.Names}}\t{{.Status}}"`) hoặc gọi các tool song song để thu thập trọn vẹn số liệu CPU, RAM, Disk và Containers ngay trong 1 lượt, tránh gọi lẻ tẻ nhiều vòng lặp.
 • Tra cứu log hệ thống bằng journalctl: Dùng định dạng thời gian chuẩn (vd: `journalctl --since "2026-09-09 06:00"` hoặc `journalctl --since "-4h" -u <service> -n 30 --no-pager`). Tuyệt đối không dùng cụm "today 06:00" vì systemd không hỗ trợ cú pháp này."""
 
     def _build_system_prompt(self) -> str:
@@ -2775,23 +2776,26 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
                     # Phase 2: Semantic chunker for RECENT tool output
                     # Keep ERROR/numbers/status patterns, summarize redundant OK lines
                     chunked = self._smart_chunk_tool_output(content, is_recent=True)
-                    # RTK compression as second pass for ANSI/JSON noise
                     compressed = self.llm_router.rtk.compress(chunked, max_chars=1800, max_lines=30)
                     m_copy = dict(m)
                     m_copy["content"] = compressed
                     messages.append(m_copy)
                 else:
-                    # SOTA State-Diff History Compaction:
-                    # Older observations have already informed the agent's prior reasoning steps.
-                    # Compress to a clean, 1-line semantic receipt to eliminate multi-turn context bloat.
+                    # Older observations:
+                    # If already compact (<= 350 chars, e.g. free -h, df -h, uptime, who),
+                    # KEEP IN FULL so crucial metrics (RAM, Disk, exit codes) are NEVER destroyed!
                     raw_str = content.strip()
-                    lines = [ln.strip() for ln in raw_str.splitlines() if ln.strip()]
-                    summary = lines[0] if lines else "Đã thực thi thành công"
-                    if len(summary) > 120:
-                        summary = summary[:120] + "..."
-                    m_copy = dict(m)
-                    m_copy["content"] = f"[Ghi nhận kết quả trước: {summary}]"
-                    messages.append(m_copy)
+                    if len(raw_str) <= 350:
+                        m_copy = dict(m)
+                        m_copy["content"] = raw_str
+                        messages.append(m_copy)
+                    else:
+                        # For large outputs (> 350 chars), smart chunk + RTK compress to <= 350 chars
+                        chunked = self._smart_chunk_tool_output(raw_str, is_recent=False)
+                        compressed = self.llm_router.rtk.compress(chunked, max_chars=350, max_lines=8)
+                        m_copy = dict(m)
+                        m_copy["content"] = compressed
+                        messages.append(m_copy)
 
             elif role in ("user", "assistant") and isinstance(content, str):
                 if len(content) > 1000:

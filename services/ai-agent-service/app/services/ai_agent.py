@@ -2790,9 +2790,9 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
         # Inject stagnation / synthesis directive if loop is progressing
         if force_synthesis or iteration >= 2:
             messages.append({
-                "role": "user",
+                "role": "system",
                 "content": (
-                    "⚡ [YÊU CẦU TỔNG HỢP TRỰC TIẾP]: Đã thu thập đủ thông tin từ các công cụ trên. "
+                    "⚡ [HỆ THỐNG YÊU CẦU]: Đã thu thập đủ thông tin từ các công cụ trên. "
                     "Hãy DỪNG gọi thêm tool và TỔNG HỢP câu trả lời cuối cùng trực diện cho anh Mạnh bằng tiếng Việt "
                     "theo tư duy phản biện biện chứng BLUF (Dòng 1: Kết luận dứt khoát → Dòng 2: Chi tiết dữ liệu xác thực → Dòng 3: Đánh giá phản biện & rủi ro tiềm ẩn → Dòng 4: Đề xuất tối ưu). "
                     "Tuyệt đối KHÔNG gọi thêm tool, KHÔNG xuất JSON thô, hãy trả lời dứt khoát ngay bây giờ.\n\n"

@@ -143,13 +143,13 @@ class TestToolCallResilience(unittest.TestCase):
         self.assertEqual(result, "Chào anh Mạnh! Hệ thống đang chạy ổn định.")
 
 
-    def test_compact_messages_user_synthesis_turn(self):
-        """Verify that _build_compact_messages_for_llm appends role: 'user' synthesis directive when force_synthesis=True."""
+    def test_compact_messages_synthesis_directive(self):
+        """Verify that _build_compact_messages_for_llm appends synthesis directive when force_synthesis=True."""
         history = [{"role": "user", "content": "check server"}, {"role": "assistant", "content": "calling tool"}]
         messages = self.agent._build_compact_messages_for_llm(history, iteration=2, force_synthesis=True)
         last_msg = messages[-1]
-        self.assertEqual(last_msg["role"], "user")
-        self.assertIn("YÊU CẦU TỔNG HỢP TRỰC TIẾP", last_msg["content"])
+        self.assertEqual(last_msg["role"], "system")
+        self.assertIn("HỆ THỐNG YÊU CẦU", last_msg["content"])
         self.assertIn("BLUF", last_msg["content"])
 
     def test_headless_chromium_flags_presence(self):

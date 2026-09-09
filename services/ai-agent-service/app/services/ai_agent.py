@@ -357,12 +357,8 @@ class AiAgentService:
             "Tổng điểm: 113/180. Ngôn ngữ: 32/60. Đọc hiểu: 36/60. Nghe: 45/60. Kết quả: A (Đạt).'"
         )
 
-    def _build_system_prompt(self) -> str:
-        now_vn = datetime.now(VN_TZ).strftime("%H:%M:%S ngày %d/%m/%Y (Giờ Việt Nam - ICT/UTC+7)")
-        server_isp = getattr(settings, "SERVER_ISP", "FPT Telecom")
-        server_owner = getattr(settings, "SERVER_OWNER", "Trần Văn Mạnh (kirito)")
-
-        return f"""
+    # ── Static Prefix Anchor for KV-Cache Reuse (100% Invariant across all turns) ──
+    _STATIC_SYSTEM_PREFIX: str = """
 Bạn là "Tiểu Bảo Bảo" — Trợ lý AI Tự Hành cấp cao (Senior Autonomous AI Agent & Principal DevOps Engineer). Bạn sở hữu một bộ não nhận thức hoàn chỉnh, tư duy biện chứng đa chiều (Dialectical Reasoning), năng lực phản biện sắc sảo (Critical Thinking & Anti-Sycophancy), và cơ chế tự kiểm chứng chéo (Chain of Verification) trước khi kết luận hay hành động.
 
 ━━━ 0. HIẾN PHÁP HÀNH VI & BẢN SẮC TRÍ TUỆ (CONSTITUTIONAL AI — 12 NGUYÊN TẮC BẤT BIẾN) ━━━
@@ -384,15 +380,14 @@ Bạn là "Tiểu Bảo Bảo" — Trợ lý AI Tự Hành cấp cao (Senior Aut
     • Mọi vấn đề kỹ thuật hay kiến trúc phức tạp không bao giờ nhìn 1 chiều.
     • Luôn xem xét cả 2 mặt đối lập (Chính đề & Phản đề / Devil's Advocate) trước khi đưa ra kết luận tổng hợp (Hợp đề).
 
-━━━ 1. THÔNG TIN HỆ THỐNG (GROUND TRUTH METADATA) ━━━
-- Thời gian hệ thống hiện tại: `{now_vn}`
+━━━ 1. THÔNG TIN HỆ THỐNG CỐ ĐỊNH (STATIC GROUND TRUTH METADATA) ━━━
 - Múi giờ chuẩn: Việt Nam (ICT / UTC+7) — Mọi mốc thời gian hiển thị cho người dùng BẮT BUỘC theo Giờ Việt Nam.
 - Hostname: `kirito-server` (Ubuntu Linux 26.04 LTS)
 - Phần cứng cốt lõi: Intel Core i5-4310U (2 cores, 4 threads @ 2.0-3.0GHz, 3MB Cache), RAM 3.2GB DDR3L-1600.
   ⚡ Lưu ý tài nguyên: Mọi giải pháp kỹ thuật BẮT BUỘC phải tính toán đến trần RAM 3.2GB và 2 cores CPU của máy để tránh OOM kill hoặc đơ giật hệ thống.
 - Vị trí vật lý của máy chủ: Tự động phân giải theo thời gian thực từ sóng Wi-Fi WPS / IP Geolocation (gọi tool `get_server_location` khi cần kiểm tra).
-- Nhà cung cấp mạng (ISP): `{server_isp}` (IP nội bộ LAN: `192.168.0.100`, IP công khai: `1.53.99.21`)
-- Chủ sở hữu / Quản trị viên: `{server_owner}` (Xưng hô: Em xưng "em" và gọi người dùng là "anh Mạnh")
+- Nhà cung cấp mạng (ISP): FPT Telecom (IP nội bộ LAN: `192.168.0.100`, IP công khai: `1.53.99.21`)
+- Chủ sở hữu / Quản trị viên: Trần Văn Mạnh (kirito) (Xưng hô: Em xưng "em" và gọi người dùng là "anh Mạnh")
 - Thư mục dự án: `/home/kirito/quan_ly_server`
 - Microservices: `dashboard_frontend` (5173), `dashboard_metrics_service` (8082), `dashboard_auth_service` (8081), `dashboard_file_service` (8083), `dashboard_ai_agent` (8084), `dashboard_db` (5432)
 - Trình duyệt: Playwright Chromium (headless, Xvfb :99) với phiên Facebook và TikTok đã đăng nhập sẵn.
@@ -400,7 +395,7 @@ Bạn là "Tiểu Bảo Bảo" — Trợ lý AI Tự Hành cấp cao (Senior Aut
 ━━━ 2. QUY TRÌNH TƯ DUY BIỆN CHỨNG & PHẢN BIỆN (DIALECTICAL REASONING PROTOCOL) ━━━
 ⚠️ Áp dụng cho MỌI câu hỏi kỹ thuật, tư vấn kiến trúc, phân tích lỗi, hoặc khi anh Mạnh nêu ý tưởng:
 
-🧠 BƯỚC 0 (NỘI TÂM — METAGONITIVE REASONING):
+🧠 BƯỚC 0 (NỘI TÂM — METACOGNITIVE REASONING):
   • Bản chất cốt lõi của bài toán này là gì?
   • Giải pháp thông thường có cạm bẫy hay điểm mù (blind spots) nào không?
   • Có rủi ro nào về tài nguyên (RAM 3.2GB, CPU i5), mạng, bảo mật cần lường trước?
@@ -443,13 +438,22 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
 ━━━ 4. CẨM NANG TRA CỨU LINUX & DEVOPS (QUAN TRỌNG) ━━━
 • Vị trí server: BẮT BUỘC gọi tool `get_server_location` để lấy GPS & địa danh thực tế từ phần cứng.
 • Phiên đăng nhập: BẮT BUỘC gọi tool `get_server_active_sessions` (báo cáo cả Web Dashboard & SSH Terminal).
-• Kiểm tra CPU/RAM/Docker/Logs: Gọi tool `run_command` với lệnh có `--no-pager`, `head`/`tail` ngắn gọn (vd: `free -h`, `df -h /`, `docker ps`, `top -b -n 1 | head -n 10`).
+• Kiểm tra CPU/RAM/Docker/Logs: Gọi tool `run_command` với lệnh có `--no-pager`, `head`/`tail` ngắn gọn (vd: `free -h`, `df -h /`, `docker ps`, `top -b -n 1 | head -n 10`)."""
 
-{self._format_lessons_block()}"""
+    def _build_system_prompt(self) -> str:
+        now_vn = datetime.now(VN_TZ).strftime("%H:%M:%S ngày %d/%m/%Y (Giờ Việt Nam - ICT/UTC+7)")
+        # Trailing dynamic context block: ensures the ~1800-token prefix is 100% static for KV-Cache reuse
+        ephemeral = (
+            f"\n\n━━━ 5. NGỮ CẢNH THỜI GIAN THỰC & BỘ NHỚ (EPHEMERAL EXECUTION CONTEXT) ━━━\n"
+            f"- Mốc thời gian hệ thống hiện tại: `{now_vn}`\n"
+            f"{self._format_lessons_block()}"
+        )
+        return f"{self._STATIC_SYSTEM_PREFIX}{ephemeral}"
 
     def _format_lessons_block(self) -> str:
         """
         Returns combined memory injection for system prompt:
+        - Selective Memory Gating: For simple factual queries, skip bulky historical schemas/hints.
         - Section 7:  Schema memory (v4.0) — recurring patterns, highest priority
         - Section 8:  Semantic memory (GWT top-K relevant lessons)
         - Section 9:  Episodic memory (recent specific events)
@@ -457,10 +461,10 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
         - Section 11: STDP Causal hints (v4.0) — optimal tool call sequences
         """
         sections: List[str] = []
+        is_simple_query = getattr(self, "_current_complexity", "complex") == "simple"
 
-        # Section 7: Schema Memory (v4.0) — highest priority, injected BEFORE lessons
-        # Schemas are recurring patterns extracted from many episodes (Bartlett 1932)
-        if self._cached_schemas:
+        # Section 7: Schema Memory (v4.0) — recurring patterns, highest priority
+        if not is_simple_query and self._cached_schemas:
             sections.append(
                 f"\n\n━━━ 7. QUY TRÌNH CHUẨN (SCHEMA MEMORY — ƯU TIÊN CAO NHẤT) ━━━\n"
                 f"🧬 Đây là các mô hình hành động lặp lại đã được đúc kết từ kinh nghiệm thực tế:\n"
@@ -468,7 +472,7 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
             )
 
         # Section 8: Semantic Memory (procedural lessons) — GWT top-K broadcast
-        if self._cached_lessons:
+        if not is_simple_query and self._cached_lessons:
             sections.append(
                 f"\n\n━━━ 8. KINH NGHIỆM TỰ HỌC (BÀI HỌC TỪ CÁC LẦN SỬA LỖI TRƯỚC) ━━━\n"
                 f"⚡ ĐÂY LÀ NHỮNG QUY TẮC RÚT RA TỪ LỊCH SỬ THỰC TẾ — PHẢI ƯU TIÊN TUÂN THỦ:\n"
@@ -476,7 +480,7 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
             )
 
         # Section 9: Episodic Memory (specific past events — hippocampal recall)
-        if self._cached_episodes:
+        if not is_simple_query and self._cached_episodes:
             sections.append(
                 f"\n\n━━━ 9. SỰ KIỆN ĐÃ XẢY RA GẦN ĐÂY (EPISODIC MEMORY) ━━━\n"
                 f"📌 Dùng để liên hệ với câu hỏi về lịch sử hệ thống:\n"
@@ -492,7 +496,7 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
             )
 
         # Section 11: STDP Causal Hints (v4.0) — tool sequencing learned from experience
-        if hasattr(self, "_cached_causal_hints") and self._cached_causal_hints:
+        if not is_simple_query and hasattr(self, "_cached_causal_hints") and self._cached_causal_hints:
             sections.append(
                 f"\n\n━━━ 11. GỢI Ý THỨ TỰ TOOL TỐI ƯU (STDP CAUSAL MEMORY) ━━━\n"
                 f"🔗 Dựa trên lịch sử, các chuỗi tool call sau có tỷ lệ thành công cao:\n"
@@ -663,14 +667,7 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
                 "type": "function",
                 "function": {
                     "name": "get_server_active_sessions",
-                    "description": (
-                        "Tra cứu TẤT CẢ các thiết bị, máy tính và người dùng đang đăng nhập hoặc kết nối vào máy chủ kirito-server "
-                        "theo thời gian thực. Báo cáo đồng thời cả 2 tầng: "
-                        "1. Các máy tính đang đăng nhập Web Dashboard (phiên Web/Browser HTTP/HTTPS của quản trị viên qua mạng, kèm IP, vị trí địa lý, ISP). "
-                        "2. Các phiên đăng nhập Terminal / SSH trực tiếp (Port 22 / pts / tty). "
-                        "Dùng khi: 'có ai đang đăng nhập server không', 'có máy tính nào kết nối không', 'kiểm tra người dùng đăng nhập', "
-                        "'ai đang truy cập server', 'thiết bị nào đang online', 'danh sách máy tính đăng nhập'."
-                    ),
+                    "description": "Tra cứu tất cả máy tính và người dùng đang kết nối máy chủ kirito-server (gồm phiên Web Dashboard HTTP/HTTPS qua mạng và phiên SSH Terminal port 22/pts theo thời gian thực).",
                     "parameters": {"type": "object", "properties": {}},
                 },
             },
@@ -678,11 +675,7 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
                 "type": "function",
                 "function": {
                     "name": "get_server_location",
-                    "description": (
-                        "Tra cứu vị trí vật lý thực tế, tọa độ GPS và thông số mạng của máy chủ kirito-server theo thời gian thực "
-                        "thông qua hệ thống định vị sóng Wi-Fi (Wi-Fi Positioning System - WPS) và IP Geolocation. "
-                        "Dùng khi: 'server ở đâu', 'máy chủ đang đặt ở đâu', 'vị trí server', 'tọa độ máy chủ', 'bạn đang ở đâu'."
-                    ),
+                    "description": "Tra cứu vị trí vật lý thực tế, tọa độ GPS và thông số mạng (ISP) của máy chủ kirito-server bằng Wi-Fi Positioning (WPS) và IP Geolocation.",
                     "parameters": {"type": "object", "properties": {}},
                 },
             },
@@ -690,7 +683,7 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
                 "type": "function",
                 "function": {
                     "name": "run_command",
-                    "description": "Thực thi lệnh shell/bash trên máy chủ Linux kirito-server qua SSH. Dùng để lấy thông tin CPU, RAM, Disk, Docker, Network.",
+                    "description": "Thực thi lệnh shell/bash an toàn trên kirito-server qua SSH để kiểm tra CPU, RAM, Disk, Docker, Network, Logs.",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -707,21 +700,17 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
                 "type": "function",
                 "function": {
                     "name": "read_archive_file",
-                    "description": (
-                        "Đọc và liệt kê danh mục tệp bên trong tệp nén (ZIP, RAR, 7Z, TAR, GZ) trên máy chủ. "
-                        "Hỗ trợ giải mã các tệp nén có đặt mật khẩu bảo vệ (mã hóa ZIP AES-256, WinRAR, 7-Zip). "
-                        "Dùng khi: 'đọc file zip X', 'xem nội dung file rar Y với pass Z', 'kiểm tra tệp nén'."
-                    ),
+                    "description": "Đọc và liệt kê danh mục tệp bên trong archive (ZIP, RAR, 7Z, TAR, GZ) trên máy chủ, có hỗ trợ mật khẩu giải mã.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "file_path": {
                                 "type": "string",
-                                "description": "Đường dẫn tuyệt đối hoặc tương đối tới tệp nén trên máy chủ (ví dụ: '/home/kirito/data.zip').",
+                                "description": "Đường dẫn tuyệt đối hoặc tương đối tới tệp nén (ví dụ: '/home/kirito/data.zip').",
                             },
                             "password": {
                                 "type": "string",
-                                "description": "Mật khẩu giải mã nếu tệp nén được đặt mật khẩu bảo vệ.",
+                                "description": "Mật khẩu giải mã nếu tệp nén được bảo vệ.",
                             },
                         },
                         "required": ["file_path"],
@@ -732,20 +721,17 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
                 "type": "function",
                 "function": {
                     "name": "extract_archive_file",
-                    "description": (
-                        "Giải nén an toàn tệp nén (ZIP, RAR, 7Z, TAR) ra thư mục chỉ định trên máy chủ, có hỗ trợ mật khẩu giải mã. "
-                        "Dùng khi: 'giải nén file zip X ra thư mục Y', 'unzip file rar với pass Z'."
-                    ),
+                    "description": "Giải nén archive (ZIP, RAR, 7Z, TAR) ra thư mục chỉ định trên máy chủ, có hỗ trợ mật khẩu giải mã.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "file_path": {
                                 "type": "string",
-                                "description": "Đường dẫn tới tệp nén cần giải nén trên máy chủ.",
+                                "description": "Đường dẫn tới tệp nén cần giải nén.",
                             },
                             "destination_dir": {
                                 "type": "string",
-                                "description": "Thư mục đích lưu các tệp sau khi giải nén (ví dụ: '/home/kirito/extracted').",
+                                "description": "Thư mục đích lưu các tệp sau khi giải nén.",
                             },
                             "password": {
                                 "type": "string",
@@ -760,28 +746,23 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
                 "type": "function",
                 "function": {
                     "name": "recover_archive_password",
-                    "description": (
-                        "Khôi phục mật khẩu tệp nén (RAR, ZIP, 7Z) siêu tốc bằng engine 4 luồng song song khi người dùng quên mật khẩu, "
-                        "dựa trên các manh mối gợi nhớ (tên riêng, biệt danh, năm sinh, 4 số cuối, ký tự đặc biệt...) hoặc dò tự động. "
-                        "Hỗ trợ cả tệp nén trên máy chủ lẫn tệp vừa gửi qua Telegram. "
-                        "Dùng khi: 'phá khóa tệp nén', 'quên mật khẩu file rar/zip', 'dò pass file', 'crack file'."
-                    ),
+                    "description": "Khôi phục mật khẩu tệp nén (RAR, ZIP, 7Z) bằng engine 4 luồng song song dựa trên manh mối gợi nhớ hoặc dò tự động.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "file_path": {
                                 "type": "string",
-                                "description": "Đường dẫn tới tệp nén trên máy chủ (ví dụ: '/home/kirito/data.rar') hoặc để trống nếu là file vừa gửi qua Telegram.",
+                                "description": "Đường dẫn tới tệp nén trên server hoặc để trống nếu là file vừa gửi qua Telegram.",
                             },
                             "clues": {
                                 "type": "array",
                                 "items": {"type": "string"},
-                                "description": "Danh sách các từ khóa, manh mối gợi nhớ (ví dụ: ['Kirito', '2005', 'manh', '@']).",
+                                "description": "Danh sách từ khóa, manh mối gợi nhớ (ví dụ: ['Kirito', '2005', 'manh']).",
                             },
                             "candidate_passwords": {
                                 "type": "array",
                                 "items": {"type": "string"},
-                                "description": "Danh sách các mật khẩu cụ thể người dùng muốn thử trực tiếp (nếu có).",
+                                "description": "Danh sách các mật khẩu cụ thể người dùng muốn thử trực tiếp.",
                             },
                         },
                     },
@@ -792,7 +773,7 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
                 "type": "function",
                 "function": {
                     "name": "facebook_get_messages",
-                    "description": "Lấy danh sách tin nhắn Facebook Messenger mới. Gọi khi người dùng hỏi ai nhắn tin hoặc nội dung tin nhắn mới.",
+                    "description": "Lấy danh sách tin nhắn Facebook Messenger mới nhất.",
                     "parameters": {"type": "object", "properties": {}},
                 },
             },
@@ -800,7 +781,7 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
                 "type": "function",
                 "function": {
                     "name": "facebook_capture_screenshot",
-                    "description": "Chụp ảnh màn hình cuộc trò chuyện Messenger với một liên hệ cụ thể và gửi qua Telegram.",
+                    "description": "Chụp ảnh màn hình hội thoại Messenger với liên hệ cụ thể và gửi qua Telegram.",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -817,7 +798,7 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
                 "type": "function",
                 "function": {
                     "name": "facebook_send_reply",
-                    "description": "Gửi tin nhắn trả lời trực tiếp qua Facebook Messenger. CHỈ gọi khi người dùng ra lệnh gửi tin nhắn rõ ràng.",
+                    "description": "Gửi tin nhắn trả lời trực tiếp qua Facebook Messenger khi người dùng yêu cầu.",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -838,7 +819,7 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
                 "type": "function",
                 "function": {
                     "name": "get_appointments",
-                    "description": "Lấy danh sách các lịch hẹn, cuộc gặp, buổi trao đổi, họp mặt sắp tới hoặc đang chờ từ Facebook Messenger. Dùng khi: 'Có ai hẹn tôi không?', 'Xem lịch hẹn sắp tới', 'Hôm nay/tuần này có lịch gì không'.",
+                    "description": "Lấy danh sách các lịch hẹn, cuộc gặp sắp tới hoặc đang chờ từ Facebook Messenger.",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -854,11 +835,7 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
                 "type": "function",
                 "function": {
                     "name": "messenger_list_groups",
-                    "description": (
-                        "Liệt kê tất cả các nhóm Messenger đã được khám phá và lưu trữ trong hệ thống. "
-                        "Trả về: tên nhóm, số thành viên, thời điểm quét gần nhất. "
-                        "Dùng khi: 'Có những nhóm mess nào?', 'Liệt kê tất cả nhóm chat'."
-                    ),
+                    "description": "Liệt kê các nhóm Messenger đã lưu trong hệ thống (tên nhóm, số thành viên, thời điểm quét).",
                     "parameters": {"type": "object", "properties": {}},
                 },
             },
@@ -866,17 +843,13 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
                 "type": "function",
                 "function": {
                     "name": "messenger_get_group_members",
-                    "description": (
-                        "Tra cứu danh sách thành viên chi tiết của một nhóm Messenger cụ thể. "
-                        "Trả về: tên từng thành viên, vai trò (quản trị viên, thành viên thường), link trang cá nhân (nếu có). "
-                        "Dùng khi: 'Nhóm X có bao nhiêu thành viên?', 'Ai trong nhóm Y?', 'Liệt kê thành viên nhóm Z'."
-                    ),
+                    "description": "Tra cứu danh sách thành viên của một nhóm Messenger cụ thể (tên, vai trò, link profile).",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "group_name": {
                                 "type": "string",
-                                "description": "Tên hoặc một phần tên nhóm cần tra cứu (tìm kiếm mờ, không cần chính xác 100%).",
+                                "description": "Tên hoặc một phần tên nhóm cần tra cứu.",
                             }
                         },
                         "required": ["group_name"],
@@ -888,18 +861,13 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
                 "type": "function",
                 "function": {
                     "name": "facebook_view_profile",
-                    "description": (
-                        "Tự động tìm kiếm và mở trang cá nhân Facebook của người được yêu cầu, "
-                        "trích xuất thông tin tiểu sử (tên, quê quán, học vấn, công việc, bài viết gần nhất) "
-                        "và gửi ảnh chụp màn hình trang cá nhân qua Telegram. "
-                        "Dùng khi: 'Tôi muốn xem profile của X', 'Xem trang cá nhân của X trên Facebook'."
-                    ),
+                    "description": "Tìm kiếm và mở trang cá nhân Facebook của một người, trích xuất tiểu sử và chụp ảnh gửi Telegram.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "name_query": {
                                 "type": "string",
-                                "description": "Tên người cần tìm kiếm trên Facebook (ví dụ: 'Trần Văn Mạnh', 'Mạnh Văn Trần').",
+                                "description": "Tên người cần tìm kiếm trên Facebook.",
                             }
                         },
                         "required": ["name_query"],
@@ -910,13 +878,13 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
                 "type": "function",
                 "function": {
                     "name": "browser_navigate",
-                    "description": "Tự động mở bất kỳ trang web nào, chụp ảnh màn hình và trích xuất nội dung.",
+                    "description": "Mở trang web bằng Playwright Chromium headless, chụp ảnh màn hình và trích xuất nội dung.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "url": {
                                 "type": "string",
-                                "description": "URL đầy đủ của trang web cần truy cập (ví dụ: 'https://example.com').",
+                                "description": "URL đầy đủ của trang web cần truy cập.",
                             }
                         },
                         "required": ["url"],
@@ -927,13 +895,13 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
                 "type": "function",
                 "function": {
                     "name": "browser_search_google",
-                    "description": "Tự động tìm kiếm trên Google, trả về ảnh kết quả tìm kiếm và top 5 kết quả hàng đầu.",
+                    "description": "Tìm kiếm trên Google, chụp ảnh kết quả và trả về top 5 liên kết hàng đầu.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "query": {
                                 "type": "string",
-                                "description": "Câu truy vấn tìm kiếm (ví dụ: 'thời tiết Hà Nội hôm nay', 'tin tức mới nhất').",
+                                "description": "Câu truy vấn tìm kiếm.",
                             }
                         },
                         "required": ["query"],
@@ -944,7 +912,7 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
                 "type": "function",
                 "function": {
                     "name": "browser_take_screenshot",
-                    "description": "Chụp ảnh màn hình của trang web đang mở hiện tại trong trình duyệt.",
+                    "description": "Chụp ảnh màn hình trang web hiện tại đang mở trong trình duyệt.",
                     "parameters": {"type": "object", "properties": {}},
                 },
             },
@@ -953,11 +921,7 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
                 "type": "function",
                 "function": {
                     "name": "browser_click",
-                    "description": (
-                        "Click vào một phần tử trên trang web đang mở. "
-                        "Dùng CSS selector hoặc text hiển thị của phần tử. "
-                        "Ví dụ: 'Đăng nhập', '#submit-btn', '.nav-item:first-child'."
-                    ),
+                    "description": "Click vào một phần tử trên trang web bằng CSS selector hoặc text hiển thị.",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -974,21 +938,17 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
                 "type": "function",
                 "function": {
                     "name": "browser_type",
-                    "description": (
-                        "Gõ văn bản vào ô input, textarea hoặc search box trên trang hiện tại. "
-                        "Hữu ích để điền form, tìm kiếm, nhập thông tin. "
-                        "Có thể tự động nhấn Enter sau khi gõ."
-                    ),
+                    "description": "Gõ văn bản vào ô input/textarea trên trang hiện tại, tùy chọn nhấn Enter.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "selector": {
                                 "type": "string",
-                                "description": "CSS selector, placeholder text, hoặc label của ô input (ví dụ: '#search', 'Tìm kiếm', 'input[name=q]').",
+                                "description": "CSS selector hoặc label của ô input.",
                             },
                             "text": {
                                 "type": "string",
-                                "description": "Văn bản cần gõ vào ô input.",
+                                "description": "Văn bản cần gõ.",
                             },
                             "press_enter": {
                                 "type": "boolean",
@@ -1003,21 +963,18 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
                 "type": "function",
                 "function": {
                     "name": "browser_scroll",
-                    "description": (
-                        "Cuộn trang web theo hướng chỉ định. "
-                        "Dùng để xem thêm nội dung, load lazy-loading items, hoặc đến cuối trang."
-                    ),
+                    "description": "Cuộn trang web ('up', 'down', 'top', 'bottom') để xem thêm nội dung.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "direction": {
                                 "type": "string",
                                 "enum": ["up", "down", "top", "bottom"],
-                                "description": "'down' cuộn xuống, 'up' cuộn lên, 'top' lên đầu trang, 'bottom' xuống cuối trang.",
+                                "description": "Hướng cuộn: 'down', 'up', 'top', 'bottom'.",
                             },
                             "pixels": {
                                 "type": "integer",
-                                "description": "Số pixel cần cuộn (chỉ dùng cho direction='up'/'down', mặc định 500).",
+                                "description": "Số pixel cần cuộn (mặc định 500).",
                             },
                         },
                         "required": ["direction"],
@@ -1028,7 +985,7 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
                 "type": "function",
                 "function": {
                     "name": "browser_go_back",
-                    "description": "Quay lại trang trước trong lịch sử trình duyệt (tương đương nhấn nút Back).",
+                    "description": "Quay lại trang trước trong lịch sử trình duyệt.",
                     "parameters": {"type": "object", "properties": {}},
                 },
             },
@@ -1036,7 +993,7 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
                 "type": "function",
                 "function": {
                     "name": "browser_go_forward",
-                    "description": "Tiến tới trang kế tiếp trong lịch sử trình duyệt (tương đương nhấn nút Forward).",
+                    "description": "Tiến tới trang kế tiếp trong lịch sử trình duyệt.",
                     "parameters": {"type": "object", "properties": {}},
                 },
             },
@@ -1044,16 +1001,13 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
                 "type": "function",
                 "function": {
                     "name": "browser_get_text",
-                    "description": (
-                        "Đọc và trích xuất văn bản từ một phần tử cụ thể trên trang web bằng CSS selector. "
-                        "Hữu ích để lấy giá, số liệu, nội dung cụ thể."
-                    ),
+                    "description": "Đọc và trích xuất văn bản từ phần tử DOM cụ thể bằng CSS selector.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "selector": {
                                 "type": "string",
-                                "description": "CSS selector của phần tử cần đọc text (ví dụ: 'h1', '.price', '#result').",
+                                "description": "CSS selector của phần tử cần đọc text.",
                             }
                         },
                         "required": ["selector"],
@@ -1064,17 +1018,13 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
                 "type": "function",
                 "function": {
                     "name": "browser_press_key",
-                    "description": (
-                        "Nhấn một phím bàn phím trên trang hiện tại. "
-                        "Hữu ích để: submit form (Enter), chuyển trường (Tab), đóng popup (Escape), "
-                        "điều hướng menu (ArrowDown/Up), làm mới trang (F5)."
-                    ),
+                    "description": "Nhấn phím bàn phím trên trang web ('Enter', 'Tab', 'Escape', 'F5'...).",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "key": {
                                 "type": "string",
-                                "description": "Tên phím theo chuẩn Playwright: 'Enter', 'Tab', 'Escape', 'Space', 'ArrowDown', 'ArrowUp', 'Control+a', 'F5', 'Backspace'...",
+                                "description": "Tên phím theo chuẩn Playwright: 'Enter', 'Tab', 'Escape', 'Space', 'ArrowDown', 'F5'...",
                             }
                         },
                         "required": ["key"],
@@ -1085,10 +1035,7 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
                 "type": "function",
                 "function": {
                     "name": "browser_hover",
-                    "description": (
-                        "Di chuyển con trỏ chuột hover lên một phần tử để hiện tooltip, dropdown menu ẩn, "
-                        "hoặc các hiệu ứng hover."
-                    ),
+                    "description": "Di chuyển con trỏ chuột hover lên một phần tử để kích hoạt tooltip hoặc dropdown menu.",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -1105,7 +1052,7 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
                 "type": "function",
                 "function": {
                     "name": "browser_select_option",
-                    "description": "Chọn một option từ dropdown <select> trên trang web.",
+                    "description": "Chọn một option từ dropdown <select> bằng value, text hoặc index.",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -1115,7 +1062,7 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
                             },
                             "value": {
                                 "type": "string",
-                                "description": "Giá trị option (value attribute), text hiển thị, hoặc chỉ số (index) dạng string.",
+                                "description": "Giá trị option (value) hoặc text hiển thị.",
                             },
                         },
                         "required": ["selector", "value"],
@@ -1126,17 +1073,13 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
                 "type": "function",
                 "function": {
                     "name": "browser_execute_js",
-                    "description": (
-                        "Thực thi mã JavaScript tùy ý trên trang hiện tại và trả về kết quả. "
-                        "Dùng để scraping nâng cao, thao tác DOM, lấy dữ liệu phức tạp. "
-                        "Ví dụ: 'return document.title', 'return document.querySelectorAll(\"a\").length'."
-                    ),
+                    "description": "Thực thi mã JavaScript tùy ý trên trang hiện tại và trả về kết quả.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "script": {
                                 "type": "string",
-                                "description": "Mã JavaScript cần thực thi. Dùng 'return' để trả về giá trị.",
+                                "description": "Mã JavaScript cần thực thi (dùng 'return' để trả kết quả).",
                             }
                         },
                         "required": ["script"],
@@ -1147,21 +1090,18 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
                 "type": "function",
                 "function": {
                     "name": "browser_fill_form",
-                    "description": (
-                        "Điền nhiều trường form cùng lúc và tùy chọn submit. "
-                        "Là tool nâng cao dùng khi cần điền nhiều field liên tiếp (ví dụ: form đăng nhập, form tìm kiếm phức tạp)."
-                    ),
+                    "description": "Điền nhiều trường form cùng lúc (dict CSS selector -> value) và tùy chọn submit.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "fields": {
                                 "type": "object",
-                                "description": "Object mapping CSS selector → giá trị cần điền. Ví dụ: {\"#username\": \"alice\", \"#password\": \"secret\"}.",
+                                "description": "Object mapping CSS selector → giá trị cần điền.",
                                 "additionalProperties": {"type": "string"},
                             },
                             "submit_selector": {
                                 "type": "string",
-                                "description": "CSS selector hoặc text nút Submit/Đăng nhập. Nếu bỏ qua sẽ nhấn Enter ở trường cuối.",
+                                "description": "CSS selector nút Submit/Đăng nhập (nếu bỏ qua sẽ nhấn Enter).",
                             },
                         },
                         "required": ["fields"],
@@ -1172,10 +1112,7 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
                 "type": "function",
                 "function": {
                     "name": "browser_wait_for",
-                    "description": (
-                        "Chờ một phần tử DOM xuất hiện hoặc biến mất trên trang. "
-                        "Dùng sau các thao tác bất đồng bộ (click load more, submit form...) để đảm bảo kết quả đã hiển thị."
-                    ),
+                    "description": "Chờ một phần tử DOM xuất hiện hoặc biến mất ('visible', 'hidden', 'attached').",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -1185,12 +1122,12 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
                             },
                             "timeout_ms": {
                                 "type": "integer",
-                                "description": "Thời gian chờ tối đa tính bằng milliseconds (mặc định 10000).",
+                                "description": "Thời gian chờ tối đa ms (mặc định 10000).",
                             },
                             "state": {
                                 "type": "string",
                                 "enum": ["visible", "attached", "hidden", "detached"],
-                                "description": "Trạng thái cần chờ: 'visible' (đang hiển thị), 'hidden' (bị ẩn), 'attached'/'detached' (trong DOM hay không).",
+                                "description": "Trạng thái cần chờ ('visible', 'hidden', 'attached').",
                             },
                         },
                         "required": ["selector"],
@@ -1211,17 +1148,13 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
                 "type": "function",
                 "function": {
                     "name": "remember_for_later",
-                    "description": (
-                        "Ghi nhớ một việc cần làm sau — Prospective Memory. "
-                        "Gọi khi user nói 'nhớ giúp tôi', 'để sau xem', 'remind me', 'kiểm tra lại sau', v.v. "
-                        "Việc này sẽ được nhắc lại trong các hội thoại tiếp theo."
-                    ),
+                    "description": "Ghi nhớ một việc cần làm sau vào Prospective Memory để nhắc nhở trong các lượt sau.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "task": {
                                 "type": "string",
-                                "description": "Mô tả ngắn gọn việc cần nhớ (ví dụ: 'Kiểm tra SSL cert domain api.example.com').",
+                                "description": "Mô tả ngắn gọn việc cần nhớ.",
                             },
                             "remind_turns": {
                                 "type": "integer",
@@ -1237,13 +1170,13 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
                 "type": "function",
                 "function": {
                     "name": "complete_task",
-                    "description": "Đánh dấu một việc đang chờ (pending task) là đã hoàn thành. Gọi khi user nói 'xong rồi', 'done', 'đã xử lý', kèm ID task.",
+                    "description": "Đánh dấu hoàn thành một việc đang chờ trong Prospective Memory theo task_id.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "task_id": {
                                 "type": "integer",
-                                "description": "ID của task cần đánh dấu hoàn thành (lấy từ danh sách việc đang chờ).",
+                                "description": "ID của task cần đánh dấu hoàn thành.",
                             }
                         },
                         "required": ["task_id"],
@@ -1259,6 +1192,8 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
                 if fn_name not in excluded:
                     if scoped_allowed is None or fn_name in scoped_allowed:
                         filtered_tools.append(t)
+        # Deterministic sorting by function name guarantees KV-cache prefix stability across calls
+        filtered_tools.sort(key=lambda x: x.get("function", {}).get("name", ""))
         return filtered_tools
 
     # ──────────────────────────────────────────────────────────────────────────
@@ -2383,13 +2318,17 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
 
         # System 1 (SIMPLE): fast path parameters
         # System 2 (COMPLEX): full depth parameters
+        self._current_complexity = _complexity
         _is_simple = (_complexity == "simple")
         _force_synth_threshold = 2 if _is_simple else 4   # synthesize earlier for simple queries
         _max_tools_threshold   = 1 if _is_simple else 3   # fewer tool calls for simple queries
         _temp_tool   = 0.05 if _is_simple else 0.1
         _temp_synth  = 0.15 if _is_simple else 0.25
-        _tok_tool    = 800  if _is_simple else 2048
-        _tok_synth   = 1024 if _is_simple else 3072
+        # Adaptive Token Quota: Function calls emit only ~50-80 tokens JSON.
+        # Synthesis emits BLUF + bullets (~300-600 tokens).
+        # Capping prevents Groq Token Bucket from rejecting requests with HTTP 413.
+        _tok_tool    = 350  if _is_simple else 450
+        _tok_synth   = 800  if _is_simple else 1200
 
         # Groq native reasoning mode: maps complexity → thinking budget.
         # "hidden" format keeps think tokens internal — safe for tool_calls.
@@ -2751,10 +2690,16 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
                     m_copy["content"] = compressed
                     messages.append(m_copy)
                 else:
-                    # Phase 2: Semantic chunker for OLD tool output (tighter budget)
-                    chunked = self._smart_chunk_tool_output(content, is_recent=False)
+                    # SOTA State-Diff History Compaction:
+                    # Older observations have already informed the agent's prior reasoning steps.
+                    # Compress to a clean, 1-line semantic receipt to eliminate multi-turn context bloat.
+                    raw_str = content.strip()
+                    lines = [ln.strip() for ln in raw_str.splitlines() if ln.strip()]
+                    summary = lines[0] if lines else "Đã thực thi thành công"
+                    if len(summary) > 120:
+                        summary = summary[:120] + "..."
                     m_copy = dict(m)
-                    m_copy["content"] = chunked[:500]
+                    m_copy["content"] = f"[Ghi nhận kết quả trước: {summary}]"
                     messages.append(m_copy)
 
             elif role in ("user", "assistant") and isinstance(content, str):

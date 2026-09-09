@@ -46,6 +46,10 @@ class RtkCompressor:
     MULTI_NEWLINE_REGEX = re.compile(r"\n{3,}")
     # 5. Verbose microsecond timestamps in log streams
     TIMESTAMP_VERBOSE_REGEX = re.compile(r"\b(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2})\.\d+(?:Z|[+-]\d{2}:\d{2})?\b")
+    # 6. Invisible zero-width characters and formatting artifacts
+    ZERO_WIDTH_REGEX = re.compile(r"[\u200b\u200c\u200d\ufeff\u200e\u200f]")
+    # 7. Long 40-64 char hex hashes (e.g. SHA256 / git commit) compacted to 12...4 chars
+    LONG_HASH_REGEX = re.compile(r"\b([a-f0-9]{10})[a-f0-9]{22,50}([a-f0-9]{4})\b", re.IGNORECASE)
 
     def __init__(self):
         self.total_chars_saved: int = 0
@@ -69,6 +73,15 @@ class RtkCompressor:
         self._pending_chars_saved = 0
         self._pending_compressions = 0
         return delta
+
+    @staticmethod
+    def estimate_tokens(text: str) -> int:
+        """Heuristic BPE token estimator for mixed Vietnamese and English/Code text."""
+        if not text:
+            return 0
+        vn_chars = sum(1 for c in text if ord(c) > 127)
+        ascii_chars = len(text) - vn_chars
+        return int((vn_chars / 2.2) + (ascii_chars / 3.8))
 
     def _compact_json(self, text: str) -> str:
         """Minifies JSON strings if text is valid JSON without corrupting non-JSON text."""
@@ -96,15 +109,22 @@ class RtkCompressor:
         # 2. Strip ANSI terminal color & cursor escape codes
         cleaned = self.ANSI_REGEX.sub("", cleaned)
 
-        # 3. Compact verbose timestamps in log streams
+        # 3. Strip invisible zero-width unicode artifacts
+        cleaned = self.ZERO_WIDTH_REGEX.sub("", cleaned)
+
+        # 4. Compact verbose timestamps in log streams
         cleaned = self.TIMESTAMP_VERBOSE_REGEX.sub(r"\1", cleaned)
 
-        # 4. Compact repetitive divider lines (e.g. 80 dashes -> 6 dashes)
+        # 5. Compact repetitive divider lines (e.g. 80 dashes -> 6 dashes)
         cleaned = self.DIVIDER_REGEX.sub(r"\1\1\1\1\1\1", cleaned)
 
-        # 5. Trim trailing whitespaces on each line and compact excessive table gaps
+        # 6. Compact overly long commit / sha256 hashes (e.g. 64 chars -> 16 chars)
+        cleaned = self.LONG_HASH_REGEX.sub(r"\1...\2", cleaned)
+
+        # 7. Trim trailing whitespaces on each line and compact excessive table gaps
+        raw_lines = cleaned.splitlines()
         lines = []
-        for raw_line in cleaned.splitlines():
+        for raw_line in raw_lines:
             line = raw_line.rstrip()
             if not line:
                 lines.append("")
@@ -113,7 +133,25 @@ class RtkCompressor:
             compacted_line = self.TABLE_GAP_REGEX.sub("  ", line)
             lines.append(compacted_line)
 
-        # 6. Head-Tail Table & Process list sampling
+        # 8. Collapse consecutive duplicate lines in logs (e.g. heartbeat/polling spam)
+        if len(lines) > 5:
+            deduped: list[str] = []
+            repeat_count = 1
+            prev_line = None
+            for line in lines:
+                if line == prev_line and line.strip():
+                    repeat_count += 1
+                else:
+                    if repeat_count > 1:
+                        deduped.append(f"  ↳ [Lặp lại {repeat_count - 1} lần tương tự]")
+                        repeat_count = 1
+                    deduped.append(line)
+                    prev_line = line
+            if repeat_count > 1:
+                deduped.append(f"  ↳ [Lặp lại {repeat_count - 1} lần tương tự]")
+            lines = deduped
+
+        # 9. Head-Tail Table & Process list sampling
         if len(lines) > max_lines:
             header_count = min(3, len(lines))
             headers = lines[:header_count]
@@ -132,10 +170,10 @@ class RtkCompressor:
 
         cleaned = "\n".join(lines)
 
-        # 7. Collapse 3+ consecutive empty lines
+        # 10. Collapse 3+ consecutive empty lines
         cleaned = self.MULTI_NEWLINE_REGEX.sub("\n\n", cleaned).strip()
 
-        # 8. Hard cap character boundary
+        # 11. Hard cap character boundary
         if len(cleaned) > max_chars:
             cleaned = cleaned[:max_chars].rstrip() + "\n[... truncated by 9Router RTK ...]"
 
@@ -151,7 +189,7 @@ class RtkCompressor:
 
     @property
     def estimated_tokens_saved(self) -> int:
-        return self.total_chars_saved // 4
+        return self.total_chars_saved // 3
 
 
 # ─── Key Entry & Provider Pool ───────────────────────────────────────────────

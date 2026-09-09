@@ -36,3 +36,9 @@ Thumbs.db
 
 # Docker & Temp
 *.log
+cortex_storage/
+**/cortex_storage/
+cortex_data/
+**/cortex_data/
+*.bin
+*.meta.json

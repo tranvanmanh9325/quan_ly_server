@@ -4,7 +4,7 @@ import json
 import logging
 import re
 import shlex
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from app.config import settings
 from app.core.brain_core import ArtificialBrain

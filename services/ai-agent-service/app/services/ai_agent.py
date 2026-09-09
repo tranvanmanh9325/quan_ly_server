@@ -2684,7 +2684,8 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
             max_tokens=1536,
         )
         if fallback_result and fallback_result.get("choices"):
-            final_content = fallback_result["choices"][0].get("message", {}).get("content", "").strip()
+            fallback_msg = fallback_result["choices"][0].get("message", {})
+            final_content = (fallback_msg.get("content") or "").strip()
             if final_content and not self._is_raw_tool_leak(final_content):
                 await self._flush_pending_photos(pending_photos, chat_id)
                 history.append({"role": "assistant", "content": final_content})

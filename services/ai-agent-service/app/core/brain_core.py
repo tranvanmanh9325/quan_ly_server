@@ -318,7 +318,7 @@ class HyperdimensionalCortex:
         NUM_WORDS_64 = 157  # 156 * 64 + 16 = 10,000 bits
 
         if len(tokens) == 1:
-            state = int.from_bytes(hashlib.md5(tokens[0].encode("utf-8")).digest()[:8], "little")
+            state = int.from_bytes(hashlib.sha256(tokens[0].encode("utf-8")).digest()[:8], "little")
             res = bytearray(HV_DIM_BYTES)
             for i in range(156):
                 state ^= (state << 13) & 0xFFFFFFFFFFFFFFFF
@@ -332,7 +332,7 @@ class HyperdimensionalCortex:
         # Multi-token majority voting (Superposition / Bundling)
         token_streams = []
         for t in tokens:
-            state = int.from_bytes(hashlib.md5(t.encode("utf-8")).digest()[:8], "little")
+            state = int.from_bytes(hashlib.sha256(t.encode("utf-8")).digest()[:8], "little")
             stream = []
             for _ in range(NUM_WORDS_64):
                 state ^= (state << 13) & 0xFFFFFFFFFFFFFFFF
@@ -674,7 +674,7 @@ class ArtificialBrain:
         for item in list(self.working_memory):
             txt = item.get("text", "").strip()
             if len(txt) > 8:
-                cid = f"ep_{int(item['timestamp'])}_{hashlib.md5(txt.encode()).hexdigest()[:6]}"
+                cid = f"ep_{int(item['timestamp'])}_{hashlib.sha256(txt.encode()).hexdigest()[:6]}"
                 vec = self.cortex.encode_concept(txt)
                 self.cortex.store_vector(cid, vec, {
                     "text": txt,

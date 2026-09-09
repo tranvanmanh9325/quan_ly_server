@@ -15,6 +15,22 @@ from app.services.message_cache import FacebookMessageCache
 logger = logging.getLogger(__name__)
 VN_TZ = timezone(timedelta(hours=7))
 
+
+def _sanitize_for_log(data: Any) -> Any:
+    """
+    Sanitizes dictionary or nested structures before logging to prevent credential/token leaks (CWE-532).
+    """
+    if isinstance(data, dict):
+        sensitive_keywords = {"password", "token", "secret", "cookie", "api_key", "key", "auth"}
+        return {
+            k: ("***REDACTED***" if any(sk in str(k).lower() for sk in sensitive_keywords) else _sanitize_for_log(v))
+            for k, v in data.items()
+        }
+    if isinstance(data, list):
+        return [_sanitize_for_log(item) for item in data]
+    return data
+
+
 # How many ReAct loop iterations the agent may take before giving up
 MAX_AGENT_ITERATIONS = 8
 # How many messages to keep in the sliding conversation window
@@ -2298,8 +2314,8 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
         # Like the brain routing to System 1 (fast) vs System 2 (slow, deliberate).
         _complexity = self._classify_complexity(user_message)
         logger.info(
-            "[AiAgent] 🧠 Complexity: %s | Intent: %s | query: %.50s",
-            _complexity, _intent, user_message
+            "[AiAgent] 🧠 Complexity: %s | Intent: %s | query_len: %d",
+            _complexity, _intent, len(user_message) if user_message else 0
         )
 
         # Critical gate: dangerous commands require explicit confirmation
@@ -2432,12 +2448,12 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
                         else:
                             if cmd_str:
                                 executed_commands.add(cmd_str)
-                            logger.info("[AiAgent][iter=%d] Executing tool: %s(%s)", iteration, fn_name, fn_args)
+                            logger.info("[AiAgent][iter=%d] Executing tool: %s(%s)", iteration, fn_name, _sanitize_for_log(fn_args))
                             tool_result = await self._execute_tool(
                                 fn_name, fn_args, chat_id=chat_id, pending_photos=pending_photos, user_message=user_message
                             )
                     else:
-                        logger.info("[AiAgent][iter=%d] Executing tool: %s(%s)", iteration, fn_name, fn_args)
+                        logger.info("[AiAgent][iter=%d] Executing tool: %s(%s)", iteration, fn_name, _sanitize_for_log(fn_args))
                         tool_result = await self._execute_tool(
                             fn_name, fn_args, chat_id=chat_id, pending_photos=pending_photos, user_message=user_message
                         )
@@ -2498,7 +2514,7 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
                             raw_tool_error = tool_result.split("⚠️")[0].strip()
                             failure_context = (
                                 f"Tool '{fn_name}' thất bại {_consecutive_tool_failures} lần liên tiếp. "
-                                f"Tham số: {json.dumps(fn_args, ensure_ascii=False)[:200]}. "
+                                f"Tham số: {json.dumps(_sanitize_for_log(fn_args), ensure_ascii=False)[:200]}. "
                                 f"Lỗi: {raw_tool_error[:300]}"
                             )
                             asyncio.create_task(

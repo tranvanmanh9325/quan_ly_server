@@ -460,8 +460,8 @@ class LlmRouter:
 
             model_to_use = requested_model or provider.default_model
 
-            # Try up to 3 keys within this provider before escalating tier
-            attempts_in_provider = min(3, max(1, len(provider.keys)))
+            # Try all available keys within this provider before escalating tier
+            attempts_in_provider = min(len(provider.keys), 7)
             for _ in range(attempts_in_provider):
                 key_entry = await provider.get_next_key()
                 if not key_entry:
@@ -505,9 +505,19 @@ class LlmRouter:
                     resp = await self._http_client.post(provider.base_url, headers=headers, json=payload)
                     latency = time.time() - t0
 
-                    # Handle 429 Rate Limit
-                    if resp.status_code == 429:
-                        await provider.mark_rate_limited(key_entry, cooldown_seconds=60.0)
+                    # Handle 429 Rate Limit & 413 Token Quota with dynamic retry-after parsing
+                    if resp.status_code in (413, 429):
+                        cooldown = 25.0
+                        try:
+                            if "retry-after" in resp.headers:
+                                cooldown = float(resp.headers["retry-after"])
+                            else:
+                                m = re.search(r"try again in ([\d\.]+)s", resp.text)
+                                if m:
+                                    cooldown = float(m.group(1)) + 0.5
+                        except Exception:
+                            pass
+                        await provider.mark_rate_limited(key_entry, cooldown_seconds=cooldown)
                         continue
 
                     # Handle 401 Unauthorized

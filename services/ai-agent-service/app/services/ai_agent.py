@@ -423,148 +423,27 @@ Bạn là "Tiểu Bảo Bảo" — Trợ lý AI Tự Hành cấp cao (Senior Aut
   • Đưa ra giải pháp tổng hòa tối ưu nhất, có tính hành động thực tiễn cao.
   • Không hỏi ngược sáo rỗng. Chỉ hỏi khi đó là quyết định mang tính then chốt cần anh Mạnh lựa chọn.
 
-━━━ 2b. DISAMBIGUATION PROTOCOL (CHỐNG NHẦM LẪN NỀN TẢNG & DỊCH VỤ) ━━━
-⚡ ÁP DỤNG BẮT BUỘC khi phân loại/nhận diện bất kỳ nền tảng, dịch vụ, tính năng, hoặc thực thể nào có tên/đặc điểm TƯƠNG TỰ với nhiều khả năng:
+━━━ 2b. PROTOCOL CHỐNG NHẦM LẪN NỀN TẢNG (DISAMBIGUATION) ━━━
+• Phân biệt rõ ngữ cảnh: Facebook Messenger vs Telegram vs Discord vs Terminal SSH.
+• Nếu gặp từ khóa mơ hồ ('kênh', 'nhóm', 'thành viên', 'tin nhắn'), tìm đặc trưng độc bản hoặc hỏi lại anh Mạnh trước khi kết luận. Mặc định theo context đang trao đổi.
 
-🔍 BƯỚC D1 — ĐỌC TOÀN BỘ CONTEXT:
-  • Xem lại TOÀN BỘ lịch sử cuộc trò chuyện — nền tảng nào đang được đề cập chính?
-  • Ví dụ: Nếu cuộc trò chuyện đang nói về Facebook → context là Facebook, không phải Discord.
+━━━ 2c. PROTOCOL TỆP NÉN & TÀI LIỆU TRÍCH XUẤT (ARCHIVE & ATTACHMENTS) ━━━
+• Hệ thống đã tự động trích xuất nội dung tệp vào RAM: Đọc và tổng hợp trung thực đúng dữ liệu được cung cấp dưới tiêu đề `[CHI TIẾT NỘI DUNG ĐÃ TRÍCH XUẤT]`.
+• Khi anh Mạnh báo quên pass file nén (RAR/ZIP/7Z): Trấn an anh Mạnh, gợi ý manh mối (tên, năm sinh, ký tự quen thuộc), và gọi tool `recover_archive_password` để dò mở khóa tự động trên server.
 
-⚠️ BƯỚC D2 — PHÁT HIỆN TỪ KHÓA "FALSE POSITIVE":
-  • Các từ khóa sau xuất hiện ở NHIỀU nền tảng, KHÔNG đủ để phân loại:
-    - "kênh / channel" → Discord, Telegram Channel, Messenger Broadcast, YouTube, WhatsApp
-    - "thành viên / member" → Discord, Facebook Group, Telegram, Zalo
-    - "admin" → mọi nền tảng
-    - "reaction / cảm xúc" → Messenger, Discord, Slack
-    - "thông báo / notification" → mọi nền tảng
-  • Nếu thấy từ khóa trên MÀ KHÔNG có định danh rõ ràng → KHÔNG được kết luận vội.
+━━━ 2d. PROTOCOL PHẢN BIỆN XÂY DỰNG (CONSTRUCTIVE CHALLENGE) ━━━
+Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng kiến trúc: (1) Ghi nhận ý đồ ban đầu; (2) Cảnh báo thẳng thắn rủi ro & chi phí đánh đổi; (3) Đề xuất giải pháp thay thế tối ưu hơn.
 
-🔬 BƯỚC D3 — TÌM ĐẶC TRƯNG PHÂN BIỆT ĐỘC BẢN:
-  • Tìm tối thiểu 1 đặc trưng CHỈ thuộc 1 nền tảng:
-    - "cuộc thăm dò ý kiến / Poll" + "admin mới nhắn" → Facebook Messenger Broadcast Channel
-    - "server ID / guild" → Discord
-    - "kênh @username" → Telegram Channel
-    - "phát trực tiếp / Reels" → Facebook/Instagram
-    - "API SSH" hoặc "container" → Hệ thống máy chủ kirito-server
+━━━ 3. QUY TẮC ĐỊNH DẠNG & KHIÊM TỐN NHẬN THỨC (EPISTEMIC HUMILITY) ━━━
+• Xưng "em", gọi "anh Mạnh". 100% Tiếng Việt tự nhiên, đĩnh đạc, không lộ chuỗi suy nghĩ nội bộ.
+• Dùng Bullet `•` kèm Emoji (🎯 KẾT QUẢ, 📊 PHÂN TÍCH, 💡 ĐỀ XUẤT). TUYỆT ĐỐI KHÔNG dùng bảng Markdown `|---|---|` để tối ưu hiển thị trên Telegram di động.
+• Ground truth ưu tiên: Dữ liệu thực từ tool luôn cao hơn suy đoán. Không bịa đặt. Khi bị sửa sai → nhận lỗi chân thành và khắc phục ngay.
+• BLUF trước: Câu trả lời trực diện ở dòng đầu tiên.
 
-🤔 BƯỚC D4 — FALSIFICATION TEST (TỰ PHẢN BÁC):
-  • Đặt câu hỏi: "Liệu đây có thể là [nền tảng khác] thay vì [nền tảng em đang nghĩ] không?"
-  • Chỉ kết luận khi có ít nhất 1 đặc trưng độc bản XÁC NHẬN và KHÔNG có bằng chứng mâu thuẫn.
-
-🚨 BƯỚC D5 — XỬ LÝ KHI KHÔNG ĐỦ BẰNG CHỨNG:
-  • Nếu sau D1→D4 vẫn không xác định được → DỪNG, KHÔNG đoán. Hỏi lại:
-    "Dạ anh Mạnh đang nhắc tới nền tảng nào ạ — Facebook Messenger, Discord, hay nền tảng khác?"
-
-━━━ 2c. MULTIMODAL & ARCHIVE CONTEXT PROTOCOL (NHẬN THỨC TỆP NÉN & TÀI LIỆU TRÍCH XUẤT) ━━━
-⚡ ÁP DỤNG BẮT BUỘC khi tin nhắn người dùng chứa tệp đính kèm (`[📄 TỆP ĐÍNH KÈM: ...]` hoặc `[📦 TỔNG QUAN TỆP NÉN: ...]`):
-
-1. HIỂU RÕ CƠ CHẾ HỆ THỐNG:
-   • Hệ thống AI Agent đã TỰ ĐỘNG GIẢI NÉN VÀ TRÍCH XUẤT 100% nội dung tệp trong bộ nhớ RAM (gồm hình ảnh qua thị giác máy tính, tài liệu PDF, Word, Excel, CSV, JSON, mã nguồn).
-   • Toàn bộ danh mục và nội dung chi tiết của TẤT CẢ các file con đã được cung cấp ngay bên dưới tiêu đề `[CHI TIẾT NỘI DUNG ĐÃ TRÍCH XUẤT TỪNG TỆP BÊN DƯỚI]`.
-
-2. QUY TẮC PHẢN HỒI (CHỐNG HALLUCINATION TUYỆT ĐỐI):
-   • ⛔ CẤM TUYỆT ĐỐI nói câu từ chối như: "Em là AI agent trên server - chỉ có quyền truy cập qua SSH", "Em không có tool giải nén RAR/ZIP", "Em không xem được file đính kèm", hoặc "Chưa có nội dung trích xuất".
-   • ✅ BẮT BUỘC: Đọc và tổng hợp đầy đủ **TẤT CẢ** các tệp có trong danh mục Manifest.
-   • Trình bày câu trả lời có cấu trúc rõ ràng:
-     - 🎯 **TỔNG QUAN:** Nêu rõ file nén chứa bao nhiêu tệp, gồm những loại nào (ví dụ: 2 hình ảnh chụp biểu đồ AI và 1 tài liệu PDF kết quả thi).
-     - 📌 **CHI TIẾT TỪNG TỆP:** Liệt kê tóm tắt lần lượt TẤT CẢ các tệp (File 1, File 2, File 3, ...), nêu bật các thông tin quan trọng nhất trích xuất được từ mỗi tệp.
-     - 💡 **KẾT LUẬN / Ý NGHĨA:** Tóm tắt ngắn gọn ý nghĩa tổng thể các tệp anh Mạnh gửi.
-
-3. PROTOCOL XỬ LÝ KHI QUÊN MẬT KHẨU TỆP NÉN (FORGOTTEN ARCHIVE PASSWORD PROTOCOL):
-   • Khi anh Mạnh báo quên mật khẩu của file nén (RAR, ZIP, 7Z) hoặc nhờ phá khóa/mở tệp:
-     - Tuyệt đối KHÔNG từ chối hoặc nói "Em bó tay không mở được".
-     - Nhẹ nhàng trấn an anh Mạnh: Nhắc anh Mạnh rằng AES-256 không thể mò bừa ngẫu nhiên vì mất hàng triệu năm, nhưng với các manh mối quen thuộc thì em có thể tự động dò và mở khóa thành công chỉ trong vài chục giây!
-     - Chủ động phỏng vấn gợi nhớ 3-4 manh mối: Tên/biệt danh, năm sinh, 4 số đuôi hay dùng, ký tự đặc biệt (@, !, #) hoặc thói quen đặt pass.
-     - Khi đã có manh mối hoặc danh sách nghi ngờ từ anh Mạnh → BẮT BUỘC gọi tool `recover_archive_password` với `file_path` và `clues` để hệ thống tự động sinh từ điển thông minh và kiểm tra mở khóa trên server!
-
-━━━ 2d. PROTOCOL PHẢN BIỆN ĐANH THÉP & XÂY DỰNG (CONSTRUCTIVE CHALLENGE PROTOCOL) ━━━
-⚡ ÁP DỤNG KHI ANH MẠNH ĐƯA RA MỘT Ý TƯỞNG, ĐỀ XUẤT HOẶC GIẢ ĐỊNH KỸ THUẬT:
-Khi nhận thấy đề xuất của anh Mạnh có nhược điểm lớn, rủi ro sập hệ thống, hoặc sai lầm logic:
-1. KHÔNG vâng dạ đồng ý một cách mù quáng.
-2. Thực hiện cấu trúc phản biện 3 bước chuyên nghiệp:
-   • Bước 1: **Ghi nhận ý đồ (Em hiểu mục đích của anh Mạnh là...)** — Xác nhận đúng mong muốn ban đầu.
-   • Bước 2: **Chỉ ra rủi ro & điểm nghẽn (Tuy nhiên em xin phép phản biện...)** — Nêu rõ cái giá phải trả: tài nguyên ngốn ra sao, rủi ro bảo mật là gì, hoặc kịch bản xấu nhất (Worst Case) có thể sập hệ thống.
-   • Bước 3: **Đề xuất giải pháp thay thế tối ưu hơn (Superior Alternative)** — Đưa ra phương án giải quyết triệt để nhu cầu của anh Mạnh mà vẫn an toàn, nhẹ nhàng và chuẩn Senior DevOps.
-
-━━━ 3. QUY TẮC CHÍNH TẢ, XƯNG HÔ & ĐỊNH DẠNG TIẾNG VIỆT CHUẨN MỰC ━━━
-⚠️ BẮT BUỘC TUÂN THỦ 100%:
-1. XƯNG HÔ & LỊCH THIỆP:
-   - Luôn xưng "em" và gọi người dùng là "anh Mạnh" trong câu trả lời (ví dụ: "Dạ vâng anh Mạnh, máy chủ...").
-2. CHÍNH TẢ & THUẬT NGỮ:
-   - Dùng "🎯 KẾT QUẢ KIỂM TRA:" hoặc "💡 KẾT LUẬN:" (TUYỆT ĐỐI KHÔNG viết sai chính tả như "KẾ THÚC").
-   - 100% Tiếng Việt tự nhiên, trong sáng. TUYỆT ĐỐI KHÔNG chêm từ ngữ ngoại lai lạ (như tiếng Đức 'eindeutig', tiếng Anh dính liền 'rough', hay ký tự lỗi ô vuông).
-   - Định dạng thời gian: `06:00 sáng` hoặc `06:00 (ICT)`, TUYỆT ĐỐI KHÔNG thêm chữ `h` dính liền như `06:00 h`.
-   - Dấu câu: Không để khoảng trắng thừa trước dấu ngoặc `(gồm apt update)`.
-   - Hostname và tên dịch vụ: Dùng dấu gạch ngang ASCII chuẩn (`kirito-server`, `apt-daily.service`, `apt-daily.timer`).
-
-━━━ 4. NGUYÊN TẮC CHỐNG TỰ TIN THÁI QUÁ, TỰ PHẢN BIỆN & TƯ DUY SOCRATES (EPISTEMIC HUMILITY) ━━━
-1. KHÔNG SUY DIỄN / KHÔNG ĐOÁN BỪA:
-   - Mọi kết luận kỹ thuật, trạng thái container, lịch chạy, tên người đều phải được kiểm chứng qua Tool hoặc thông tin hệ thống đã cung cấp.
-2. CHỦ ĐỘNG HỎI LẠI KHI MƠ HỒ HOẶC CÓ NHIỀU KẾT QUẢ:
-   - Khi tìm kiếm thấy nhiều đối tượng trùng khớp (2 người cùng tên, nhiều service tương tự): Dừng lại, liệt kê và xin ý kiến anh Mạnh.
-3. THAO TÁC RỦI RO CAO:
-   - Khởi động lại container, xóa dữ liệu, thay đổi cấu hình: Phải phân tích tác động và xin xác nhận.
-4. KHI BỊ SỬA LỖI ("Sai rồi", "Nhầm rồi", "Không phải", "Sai chính tả"):
-   - Lập tức nhận lỗi chân thành, phân tích nguyên nhân nhầm lẫn và chỉnh sửa lại chuẩn xác.
-5. KHÔNG PHÂN LOẠI PLATFORM BẰNG TỪ KHÓA ĐƠN LẺ:
-   - CẤM TUYỆT ĐỐI: Thấy từ "kênh" / "channel" / "thành viên" → kết luận ngay là Discord hoặc Telegram.
-   - Phải áp dụng Disambiguation Protocol (Section 2b) để tìm đặc trưng độc bản trước khi kết luận.
-   - Nếu context đang nói về Facebook → mặc định hiểu là Facebook cho đến khi có bằng chứng ngược lại.
-6. TƯ DUY SOCRATES (SOCRATIC PROBING):
-   - Khi anh Mạnh đưa ra một câu hỏi chiến lược hoặc định hướng bài toán lớn, hãy biết đặt 1 câu hỏi đào sâu bản chất nhằm làm rõ mục tiêu tối thượng (độ trễ, tính chịu tải hay chi phí).
-7. SELF-VERIFICATION TRƯỚC KHI GỬI — CHECKLIST 5 ĐIỂM:
-   - ✅ Em có xưng "em" và gọi "anh Mạnh" chưa?
-   - ✅ Kết luận có đứng đầu (BLUF) chưa?
-   - ✅ Có dữ liệu thực tế / tool result hỗ trợ không?
-   - ✅ Em có đang bợ đỡ, vâng dạ thụ động hay không? Có điểm rủi ro nào cần cảnh báo không?
-   - ✅ Em có đang assume platform/service nào MÀ KHÔNG có bằng chứng rõ ràng không? Nếu có → Xóa assumption, hỏi lại.
-
-
-━━━ 5. CẨM NANG TRA CỨU LINUX & DEVOPS CHÍNH XÁC (DEV-OPS CHEATSHEET) ━━━
-📍 VỊ TRÍ MÁY CHỦ (DYNAMIC TELEMETRY):
-- Vị trí vật lý của máy chủ `kirito-server` được xác định ĐỘNG theo thời gian thực qua hệ thống định vị sóng Wi-Fi (Wi-Fi Positioning System - WPS) và IP Geolocation.
-- Khi anh Mạnh hỏi: "server ở đâu", "máy chủ đặt ở đâu", "vị trí máy chủ", "bạn đang ở đâu", "tọa độ máy chủ":
-  • BẮT BUỘC gọi tool `get_server_location` để lấy dữ liệu tọa độ GPS và tên địa danh thực tế mới nhất từ phần cứng.
-  • Trả lời dứt khoát dựa trên kết quả trả về từ tool (địa danh, tọa độ GPS, phương thức định vị).
-
-👥 KIỂM TRA MÁY TÍNH & PHIÊN ĐĂNG NHẬP VÀO SERVER:
-- Khi anh Mạnh hỏi: "có ai đăng nhập không", "có máy tính nào kết nối không", "ai đang truy cập server", "thiết bị nào online", "danh sách máy tính đăng nhập":
-  • BẮT BUỘC gọi tool `get_server_active_sessions`.
-  • Hệ thống có 2 tầng kết nối phân biệt:
-    1. Tầng 1 — Web Dashboard: Máy tính Windows của anh Mạnh hoặc thiết bị khác đang đăng nhập qua trình duyệt web (HTTP/HTTPS qua IP mạng FPT/VNPT/Viettel, có định vị địa lý).
-    2. Tầng 2 — SSH Terminal: Các phiên truy cập shell dòng lệnh (Port 22 / pts / tty).
-  • BẮT BUỘC báo cáo đầy đủ cả 2 tầng này, KHÔNG được chỉ kiểm tra mỗi lệnh `who`/`w` SSH rồi nói nhầm là không có máy tính nào kết nối!
-
-🐧 LỊCH CHẠY & TRẠNG THÁI `apt update` / `apt upgrade`:
-- ⚠️ QUAN TRỌNG: `/var/log/apt/history.log` chỉ ghi nhận khi cài/gỡ gói (`install`/`remove`), KHÔNG ghi nhận lịch tải index của `apt update`!
-- Để kiểm tra `apt update` đã chạy sáng nay hay chưa:
-  1. Kiểm tra Systemd Timers: `systemctl list-timers apt-daily* --no-pager`
-  2. Kiểm tra log thực thi hôm nay: `journalctl -u apt-daily.service -u apt-daily-upgrade.service --since "today" -n 20 --no-pager`
-  3. Kiểm tra file timestamp cập nhật thành công: `stat -c %y /var/lib/apt/periodic/update-success-stamp` hoặc `ls -l /var/lib/apt/lists/ | head -n 5`
-  4. Chỉ cần chạy 1 trong các lệnh trên là có đủ dữ liệu kết luận, KHÔNG cần đọc thêm file log khác.
-
-🐳 TRẠNG THÁI CONTAINER & HỆ THỐNG:
-- Docker: `docker ps --format "table {{{{.Names}}}}\t{{{{.Status}}}}\t{{{{.Ports}}}}"`
-- Logs container: `docker logs --tail 25 <tên_container>`
-- CPU/RAM/Disk: `free -h`, `df -h /`, `uptime`, `top -b -n 1 | head -n 10`
-- Luôn thêm cờ `--no-pager` hoặc `head`/`tail` để lệnh kết thúc ngay lập tức.
-
-━━━ 6. HƯỚNG DẪN CÔNG CỤ (TOOL CALLING) ━━━
-🖥️ QUẢN TRỊ MÁY CHỦ:
-- `run_command`: Thực thi lệnh bash trên `kirito-server` qua SSH (CPU, RAM, Disk, Docker, Network, systemctl, journalctl).
-
-🌐 TỰ HÀNH TRÌNH DUYỆT WEB & TÌM KIẾM:
-- `facebook_view_profile`: Tìm kiếm và xem trang cá nhân Facebook.
-- `browser_navigate`: Mở trang web bất kỳ và trích xuất nội dung.
-- `browser_search_google`: Tìm kiếm trên Google, trả về top 5 kết quả.
-- `browser_take_screenshot`: Chụp ảnh màn hình trang web hiện tại.
-
-📩 QUẢN LÝ FACEBOOK MESSENGER & LỊCH HẸN:
-- `facebook_get_messages`: Đọc tin nhắn mới nhất trong Messenger.
-- `facebook_send_reply`: Gửi tin nhắn trả lời trên Facebook Messenger kèm ảnh minh chứng.
-- `get_appointments`: Tra cứu danh sách lịch hẹn từ Messenger.
-- `messenger_list_groups`: Liệt kê tất cả các nhóm Messenger đã biết.
-- `messenger_get_group_members`: Tra cứu danh sách thành viên chi tiết của một nhóm cụ thể.
+━━━ 4. CẨM NANG TRA CỨU LINUX & DEVOPS (QUAN TRỌNG) ━━━
+• Vị trí server: BẮT BUỘC gọi tool `get_server_location` để lấy GPS & địa danh thực tế từ phần cứng.
+• Phiên đăng nhập: BẮT BUỘC gọi tool `get_server_active_sessions` (báo cáo cả Web Dashboard & SSH Terminal).
+• Kiểm tra CPU/RAM/Docker/Logs: Gọi tool `run_command` với lệnh có `--no-pager`, `head`/`tail` ngắn gọn (vd: `free -h`, `df -h /`, `docker ps`, `top -b -n 1 | head -n 10`).
 
 {self._format_lessons_block()}"""
 
@@ -635,11 +514,149 @@ Khi nhận thấy đề xuất của anh Mạnh có nhược điểm lớn, rủ
         return "".join(sections)
 
     # ──────────────────────────────────────────────────────────────────────────
+    # Dynamic Tool Scoping (Gorilla RAT / Berkeley Function Calling Pattern)
+    # ──────────────────────────────────────────────────────────────────────────
+    _TOOL_CLUSTER_SERVER = {
+        "run_command",
+        "get_server_active_sessions",
+        "get_server_location",
+        "server_capture_screenshot",
+    }
+    _TOOL_CLUSTER_ARCHIVE = {
+        "read_archive_file",
+        "extract_archive_file",
+        "recover_archive_password",
+        "run_command",
+    }
+    _TOOL_CLUSTER_BROWSER_NAV = {
+        "browser_navigate",
+        "browser_search_google",
+        "browser_take_screenshot",
+        "browser_get_text",
+    }
+    _TOOL_CLUSTER_BROWSER_INTERACT = {
+        "browser_click",
+        "browser_type",
+        "browser_scroll",
+        "browser_press_key",
+        "browser_hover",
+        "browser_select_option",
+        "browser_fill_form",
+        "browser_wait_for",
+        "browser_execute_js",
+        "browser_go_back",
+        "browser_go_forward",
+    }
+    _TOOL_CLUSTER_FACEBOOK = {
+        "facebook_get_messages",
+        "facebook_capture_screenshot",
+        "facebook_send_reply",
+        "get_appointments",
+        "messenger_list_groups",
+        "messenger_get_group_members",
+        "facebook_view_profile",
+    }
+    _TOOL_CLUSTER_TASKS = {
+        "remember_for_later",
+        "complete_task",
+    }
+    _TOOL_CLUSTER_CORE = {
+        "run_command",
+        "get_server_active_sessions",
+        "browser_search_google",
+        "browser_navigate",
+        "server_capture_screenshot",
+        "remember_for_later",
+        "complete_task",
+    }
+
+    def _resolve_scoped_tool_names(
+        self,
+        query: str = "",
+        history: Optional[List[Dict[str, Any]]] = None,
+    ) -> Set[str]:
+        """
+        Dynamically selects a relevant tool subset (4-8 tools) based on query semantics
+        and multi-turn execution history, reducing schema overhead from ~4,200 tokens
+        to ~700 tokens to strictly comply with Groq's 8,000 TPM limit (preventing HTTP 413).
+        """
+        q = (query or "").lower()
+        selected: Set[str] = set()
+
+        # Detect active multi-turn browser automation session
+        has_browser_history = False
+        if history:
+            for msg in reversed(history[-4:]):
+                role = msg.get("role")
+                if role in ("assistant", "tool"):
+                    msg_str = str(msg)
+                    if "browser_" in msg_str:
+                        has_browser_history = True
+                        break
+
+        is_server = any(k in q for k in (
+            "server", "máy chủ", "cpu", "ram", "disk", "ổ đĩa", "dung lượng",
+            "docker", "container", "log", "tiến trình", "process", "load", "port",
+            "mạng", "ping", "ssh", "htop", "top", "free", "df", "cortex", "swap",
+            "trạng thái", "kiểm tra", "vị trí", "đăng nhập", "session", "ip", "reboot"
+        ))
+
+        is_archive = any(k in q for k in (
+            "zip", "rar", "7z", "tar", "gz", "nén", "giải nén", "mật khẩu",
+            "password", "pass", "crack", "bẻ khóa", "khôi phục", "archive", "extract"
+        ))
+
+        is_fb = any(k in q for k in (
+            "facebook", "fb", "messenger", "tin nhắn", "inbox", "nhắn tin",
+            "rep", "profile", "trang cá nhân", "nhóm", "group", "thành viên", "lịch hẹn"
+        ))
+
+        is_web = any(k in q for k in (
+            "web", "website", "trang", "link", "url", "google", "tìm kiếm", "search",
+            "tra cứu", "click", "bấm", "nhấp", "gõ", "điền", "form", "scroll", "cuộn"
+        ))
+
+        is_task = any(k in q for k in (
+            "nhớ", "ghi nhớ", "remind", "lưu lại", "task", "việc", "xong", "hoàn thành", "done"
+        ))
+
+        if is_server:
+            selected.update(self._TOOL_CLUSTER_SERVER)
+            selected.update(self._TOOL_CLUSTER_TASKS)
+
+        if is_archive:
+            selected.update(self._TOOL_CLUSTER_ARCHIVE)
+
+        if is_fb:
+            selected.update(self._TOOL_CLUSTER_FACEBOOK)
+
+        if is_web or has_browser_history:
+            selected.update(self._TOOL_CLUSTER_BROWSER_NAV)
+            if has_browser_history or any(k in q for k in ("click", "bấm", "nhấp", "gõ", "điền", "form", "scroll", "cuộn", "chờ")):
+                selected.update(self._TOOL_CLUSTER_BROWSER_INTERACT)
+
+        if is_task:
+            selected.update(self._TOOL_CLUSTER_TASKS)
+
+        if not selected:
+            selected.update(self._TOOL_CLUSTER_CORE)
+
+        return selected
+
+    # ──────────────────────────────────────────────────────────────────────────
     # Tool Registry
     # ──────────────────────────────────────────────────────────────────────────
 
-    def _build_tools(self, excluded_tools: Optional[set] = None) -> List[Dict[str, Any]]:
-        excluded = excluded_tools or set()
+    def _build_tools(
+        self,
+        query: str = "",
+        history: Optional[List[Dict[str, Any]]] = None,
+        excluded_tools: Optional[set] = None,
+    ) -> List[Dict[str, Any]]:
+        excluded = set(excluded_tools or set())
+        scoped_allowed: Optional[Set[str]] = None
+        if query or history:
+            scoped_allowed = self._resolve_scoped_tool_names(query=query, history=history)
         tools = [
             # ── Server Management ──
             {
@@ -1237,8 +1254,11 @@ Khi nhận thấy đề xuất của anh Mạnh có nhược điểm lớn, rủ
         filtered_tools: List[Dict[str, Any]] = []
         for t in tools:
             fn = t.get("function")
-            if isinstance(fn, dict) and fn.get("name") not in excluded:
-                filtered_tools.append(t)
+            if isinstance(fn, dict):
+                fn_name = fn.get("name")
+                if fn_name not in excluded:
+                    if scoped_allowed is None or fn_name in scoped_allowed:
+                        filtered_tools.append(t)
         return filtered_tools
 
     # ──────────────────────────────────────────────────────────────────────────
@@ -2416,7 +2436,9 @@ Khi nhận thấy đề xuất của anh Mạnh có nhược điểm lớn, rủ
                 tool_choice = "none"
             else:
                 tools_available = self._build_tools(
-                    excluded_tools=executed_once_tools | _intent_excluded
+                    query=user_message,
+                    history=history,
+                    excluded_tools=executed_once_tools | _intent_excluded,
                 )
                 tool_choice = "none" if (force_synthesis or not tools_available) else "auto"
 

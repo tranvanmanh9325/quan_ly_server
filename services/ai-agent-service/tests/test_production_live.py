@@ -158,10 +158,59 @@ async def run_production_verification():
     assert len(recalled_after_reboot) > 0
     print(f"  • Ký ức được khôi phục nguyên vẹn sau khi khởi động lại: {recalled_after_reboot[0]}")
 
+    # ──────────────────────────────────────────────────────────────────────────
+    # Phase 7: Live End-to-End Chat & Tool Execution Verification (Groq TPM Safe)
+    # ──────────────────────────────────────────────────────────────────────────
+    print("\n[Phase 7] Kiểm thử đàm thoại thực tế (End-to-End Inference & Tool Execution)...")
+    from app.core.db import db_manager
+    from app.core.http_client import http_client_manager
+    from app.core.llm_router import LlmRouter
+    from app.core.ssh_client import SshClient
+    from app.services.message_cache import FacebookMessageCache
+    from app.services.ai_agent import AiAgentService
+    from app.services.memory_service import AgentMemoryService
+
+    await db_manager.initialize()
+    http_client = http_client_manager.get_client()
+
+    router = LlmRouter()
+    ssh = SshClient()
+    cache = FacebookMessageCache()
+    agent = AiAgentService(router, ssh, cache)
+    memory_svc = AgentMemoryService()
+    memory_svc.set_http_client(http_client)
+    agent.set_memory_service(memory_svc)
+
+    test_query = "Chào em Tiểu Bảo Bảo! Em hãy kiểm tra nhanh CPU và RAM của máy chủ hiện tại, đồng thời cho anh biết tâm trạng của em nhé!"
+    print(f"  • Câu hỏi kiểm thử: \"{test_query}\"")
+
+    # Verify dynamic tool scoping
+    scoped_tools = agent._build_tools(query=test_query)
+    print(f"  • Số công cụ sau khi Dynamic Scoping: {len(scoped_tools)} tools (giảm từ 31 tools)")
+    assert len(scoped_tools) <= 10, f"Scoped tools must be <= 10, got {len(scoped_tools)}"
+    assert any(t["function"]["name"] == "run_command" for t in scoped_tools), "run_command must be in scoped tools"
+
+    dopamine_before = agent.brain.neuro.dopamine
+    chat_start = time.perf_counter()
+    reply = await asyncio.wait_for(
+        agent.chat(chat_id="live_prod_test_session", user_input=test_query),
+        timeout=35.0,
+    )
+    chat_latency = time.perf_counter() - chat_start
+    print(f"  • Thời gian phản hồi hoàn chỉnh (Sub-3s Inference): {chat_latency:.2f}s")
+    print(f"  • Dopamine sau tác vụ: {agent.brain.neuro.dopamine:.2f} (trước đó: {dopamine_before:.2f})")
+    print("  • Phản hồi từ Tiểu Bảo Bảo:")
+    for line in reply.strip().splitlines()[:12]:
+        print(f"    {line}")
+
+    assert len(reply) > 50, "Reply must be a substantive response"
+    assert "anh Mạnh" in reply or "Mạnh" in reply, "Persona must address user properly"
+
     print("\n" + "=" * 70)
-    print("✅ TẤT CẢ 6 PHÂN HỆ PRODUCT VERIFICATION ĐÃ VƯỢT QUA VỚI ĐIỂM SỐ 100%!")
+    print("✅ TẤT CẢ 7 PHÂN HỆ PRODUCT VERIFICATION ĐÃ VƯỢT QUA VỚI ĐIỂM SỐ 100%!")
     print("=" * 70)
 
 
 if __name__ == "__main__":
     asyncio.run(run_production_verification())
+

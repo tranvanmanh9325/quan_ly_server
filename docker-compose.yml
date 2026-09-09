@@ -72,7 +72,7 @@ services:
     env_file:
       - .env
     environment:
-      JAVA_TOOL_OPTIONS: "-XX:+UseG1GC -XX:MaxRAMPercentage=60.0 -XX:+UseStringDeduplication -XX:ParallelGCThreads=2 -XX:ConcGCThreads=1 -XX:+ExitOnOutOfMemoryError"
+      JAVA_TOOL_OPTIONS: "-XX:+UseSerialGC -XX:MaxRAMPercentage=70.0 -XX:+UseStringDeduplication -XX:+ExitOnOutOfMemoryError -XX:+TieredCompilation -XX:TieredStopAtLevel=1"
       TELEGRAM_POLLING_ENABLED: "false"
     restart: unless-stopped
     stop_grace_period: 15s
@@ -96,9 +96,9 @@ services:
       resources:
         limits:
           cpus: '0.6'
-          memory: 512M
+          memory: 384M
         reservations:
-          memory: 256M
+          memory: 192M
 
   ai-agent-service:
     init: true

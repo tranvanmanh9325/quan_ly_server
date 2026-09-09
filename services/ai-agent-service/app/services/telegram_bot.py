@@ -32,15 +32,18 @@ class TelegramBot:
         self.token = settings.TELEGRAM_BOT_TOKEN
         self.chat_id = settings.TELEGRAM_CHAT_ID
         self.polling_enabled = settings.TELEGRAM_POLLING_ENABLED
-        self._http_client = httpx.AsyncClient(timeout=35.0)
         self._running = False
         self._last_offset = 0
         # Pending encrypted archive sessions waiting for password: chat_id -> dict
         self._pending_archives: Dict[str, Dict[str, Any]] = {}
-        # Reuse the same http_client to avoid spawning extra connection pools
-        self._media = MediaProcessor(http_client=self._http_client)
+        # Reuse the singleton http_client to avoid spawning extra connection pools
+        self._media = MediaProcessor(http_client=http_client_manager.get_client())
         if hasattr(self.ai_agent, "set_telegram_bot"):
             self.ai_agent.set_telegram_bot(self)
+
+    @property
+    def _http_client(self) -> httpx.AsyncClient:
+        return http_client_manager.get_client()
 
     def set_appointment_service(self, appointment_service: Any) -> None:
         self.appointment_service = appointment_service
@@ -52,6 +55,38 @@ class TelegramBot:
     @property
     def api_url(self) -> str:
         return f"https://api.telegram.org/bot{self.token}"
+
+    async def send_chat_action(self, chat_id: str, action: str = "typing") -> None:
+        """Sends chat action status (e.g. 'typing') to Telegram."""
+        try:
+            url = f"{self.api_url}/sendChatAction"
+            payload = {"chat_id": chat_id, "action": action}
+            await self._http_client.post(url, json=payload, timeout=5.0)
+        except Exception as e:
+            logger.debug("[TelegramBot] sendChatAction (%s) error: %s", action, e)
+
+    async def _send_typing_heartbeat(self, chat_id: str, stop_event: asyncio.Event) -> None:
+        """Periodically renews the Telegram typing indicator every 4 seconds."""
+        while not stop_event.is_set():
+            await self.send_chat_action(chat_id, "typing")
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=4.0)
+            except asyncio.TimeoutError:
+                pass
+
+    async def chat_with_agent(self, chat_id: str, message: str) -> str:
+        """Invokes AI Agent while maintaining an active Telegram typing indicator heartbeat."""
+        stop_event = asyncio.Event()
+        heartbeat_task = asyncio.create_task(self._send_typing_heartbeat(chat_id, stop_event))
+        try:
+            return await self.ai_agent.chat(chat_id, message)
+        finally:
+            stop_event.set()
+            heartbeat_task.cancel()
+            try:
+                await heartbeat_task
+            except asyncio.CancelledError:
+                pass
 
     async def send_message(
         self,
@@ -494,7 +529,7 @@ class TelegramBot:
                     f"[📄 TỆP ĐÍNH KÈM: {filename} (Đã phá khóa thành công, mật khẩu: {found_pwd})]{caption_part}\n\n"
                     f"{content}"
                 )
-                reply = await self.ai_agent.chat(chat_id, user_input)
+                reply = await self.chat_with_agent(chat_id, user_input)
                 await self.send_message(chat_id, reply)
                 return
 
@@ -717,7 +752,7 @@ class TelegramBot:
 
         else:
             # Route unrecognized slash command to AI Agent
-            reply = await self.ai_agent.chat(chat_id, command)
+            reply = await self.chat_with_agent(chat_id, command)
             await self.send_message(chat_id, reply)
 
 
@@ -763,7 +798,7 @@ class TelegramBot:
                     logger.info("[TelegramBot] STT transcript: '%s'", transcript[:80])
                 else:
                     user_input = "[🎤 Tin nhắn thoại]: (Không nhận được nội dung âm thanh)"
-                reply = await self.ai_agent.chat(chat_id, user_input)
+                reply = await self.chat_with_agent(chat_id, user_input)
                 await self.send_message(chat_id, reply)
             except Exception as err:
                 logger.error("[TelegramBot] Voice processing error: %s", err, exc_info=True)
@@ -784,7 +819,7 @@ class TelegramBot:
                 caption_part = f" (caption: {caption})" if caption else ""
                 user_input = f"[📸 Ảnh từ anh Mạnh{caption_part}]: {vision_result}"
                 logger.info("[TelegramBot] Vision result: '%s'", vision_result[:80])
-                reply = await self.ai_agent.chat(chat_id, user_input)
+                reply = await self.chat_with_agent(chat_id, user_input)
                 await self.send_message(chat_id, reply)
             except Exception as err:
                 logger.error("[TelegramBot] Photo processing error: %s", err, exc_info=True)
@@ -892,7 +927,7 @@ class TelegramBot:
                 caption_part = f"\n[Yêu cầu từ anh Mạnh]: {caption}" if caption else ""
                 user_input = f"[📄 TỆP ĐÍNH KÈM: {filename}]{caption_part}\n\n{content}"
                 logger.info("[TelegramBot] Document extracted: %d chars", len(content))
-                reply = await self.ai_agent.chat(chat_id, user_input)
+                reply = await self.chat_with_agent(chat_id, user_input)
                 await self.send_message(chat_id, reply)
 
                 # Optional: If user explicitly requested extracting/sending child files directly
@@ -964,7 +999,7 @@ class TelegramBot:
                         f"{content}"
                     )
                     logger.info("[TelegramBot] Decrypted document extracted: %d chars", len(content))
-                    reply = await self.ai_agent.chat(chat_id, user_input)
+                    reply = await self.chat_with_agent(chat_id, user_input)
                     await self.send_message(chat_id, f"🔓 <i>Đã mở khóa tệp <b>{pending['filename']}</b> thành công!</i>\n\n" + reply)
                     return
                 except ArchiveInvalidPasswordError:
@@ -1010,7 +1045,7 @@ class TelegramBot:
         else:
             try:
                 logger.info("[TelegramBot] Received message from %s (length=%d)", chat_id, len(text))
-                reply = await self.ai_agent.chat(chat_id, text)
+                reply = await self.chat_with_agent(chat_id, text)
                 logger.info("[TelegramBot] AI reply for %s sent successfully (length=%d)", chat_id, len(reply))
                 await self.send_message(chat_id, reply)
             except Exception as err:

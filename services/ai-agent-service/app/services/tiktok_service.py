@@ -575,12 +575,13 @@ class TikTokService:
                         "--disable-setuid-sandbox",
                         "--disable-dev-shm-usage",
                         "--disable-gpu",
-                        "--disable-background-media-suspend=false",
+                        "--disable-software-rasterizer",
+                        "--disable-background-networking",
                         "--autoplay-policy=user-gesture-required",
-                        "--disable-features=Translate,OptimizationHints,MediaRouter",
+                        "--disable-features=Translate,OptimizationHints,MediaRouter,AudioServiceOutOfProcess",
                         "--renderer-process-limit=2",
                         "--mute-audio",
-                        "--js-flags=--max-old-space-size=512",
+                        "--js-flags=--max-old-space-size=256",
                     ]
                     try:
                         context = await p.chromium.launch_persistent_context(

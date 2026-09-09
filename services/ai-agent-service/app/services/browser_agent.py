@@ -162,6 +162,14 @@ class BrowserAgentService:
                 "--disable-dev-shm-usage",
                 "--disable-blink-features=AutomationControlled",
                 "--disable-infobars",
+                "--disable-gpu",
+                "--disable-software-rasterizer",
+                "--renderer-process-limit=2",
+                "--js-flags=--max-old-space-size=256",
+                "--mute-audio",
+                "--autoplay-policy=user-gesture-required",
+                "--disable-background-networking",
+                "--disable-features=Translate,OptimizationHints,MediaRouter,AudioServiceOutOfProcess",
             ],
             user_agent=(
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "

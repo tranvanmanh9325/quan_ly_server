@@ -143,5 +143,24 @@ class TestToolCallResilience(unittest.TestCase):
         self.assertEqual(result, "Chào anh Mạnh! Hệ thống đang chạy ổn định.")
 
 
+    def test_compact_messages_user_synthesis_turn(self):
+        """Verify that _build_compact_messages_for_llm appends role: 'user' synthesis directive when force_synthesis=True."""
+        history = [{"role": "user", "content": "check server"}, {"role": "assistant", "content": "calling tool"}]
+        messages = self.agent._build_compact_messages_for_llm(history, iteration=2, force_synthesis=True)
+        last_msg = messages[-1]
+        self.assertEqual(last_msg["role"], "user")
+        self.assertIn("YÊU CẦU TỔNG HỢP TRỰC TIẾP", last_msg["content"])
+        self.assertIn("BLUF", last_msg["content"])
+
+    def test_headless_chromium_flags_presence(self):
+        """Verify that HEADLESS_CHROMIUM_ARGS contains performance and resource flags."""
+        from app.services.facebook_service import HEADLESS_CHROMIUM_ARGS
+        self.assertIn("--disable-gpu", HEADLESS_CHROMIUM_ARGS)
+        self.assertIn("--disable-software-rasterizer", HEADLESS_CHROMIUM_ARGS)
+        self.assertIn("--renderer-process-limit=2", HEADLESS_CHROMIUM_ARGS)
+        self.assertIn("--mute-audio", HEADLESS_CHROMIUM_ARGS)
+        self.assertIn("--autoplay-policy=user-gesture-required", HEADLESS_CHROMIUM_ARGS)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -28,6 +28,21 @@ BROWSER_DATA_DIR = "/app/browser_data/facebook"
 # Used both to detect "this is a bot message" in DOM and to skip scan logic.
 AWAY_REPLY_MARKERS = ("Tiểu Bảo Bảo", "trợ lí AI", "vắng mặt")
 
+HEADLESS_CHROMIUM_ARGS = [
+    "--no-sandbox",
+    "--disable-dev-shm-usage",
+    "--disable-blink-features=AutomationControlled",
+    "--disable-infobars",
+    "--disable-gpu",
+    "--disable-software-rasterizer",
+    "--renderer-process-limit=2",
+    "--js-flags=--max-old-space-size=256",
+    "--mute-audio",
+    "--autoplay-policy=user-gesture-required",
+    "--disable-background-networking",
+    "--disable-features=Translate,OptimizationHints,MediaRouter,AudioServiceOutOfProcess",
+]
+
 
 class FacebookService:
     def __init__(self, message_cache: FacebookMessageCache, ai_agent_ref: Any = None, appointment_service: Any = None):
@@ -593,11 +608,7 @@ class FacebookService:
                     headless=True,
                     timezone_id="Asia/Ho_Chi_Minh",
                     locale="vi-VN",
-                    args=[
-                        "--no-sandbox",
-                        "--disable-dev-shm-usage",
-                        "--disable-blink-features=AutomationControlled",
-                    ],
+                    args=HEADLESS_CHROMIUM_ARGS,
                     viewport={"width": 1366, "height": 850},
                     user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
                 )
@@ -1631,12 +1642,7 @@ class FacebookService:
                         headless=True,
                         timezone_id="Asia/Ho_Chi_Minh",
                         locale="vi-VN",
-                        args=[
-                            "--no-sandbox",
-                            "--disable-dev-shm-usage",
-                            # Prevents Facebook from detecting automation and restricting rendering
-                            "--disable-blink-features=AutomationControlled",
-                        ],
+                        args=HEADLESS_CHROMIUM_ARGS,
                         viewport={"width": 1280, "height": 800},
                         user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
                     )
@@ -2042,11 +2048,7 @@ class FacebookService:
                     viewport={"width": 1280, "height": 900},
                     timezone_id="Asia/Ho_Chi_Minh",
                     locale="vi-VN",
-                    args=[
-                        "--no-sandbox",
-                        "--disable-dev-shm-usage",
-                        "--disable-blink-features=AutomationControlled",
-                    ],
+                    args=HEADLESS_CHROMIUM_ARGS,
                     user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
                 )
                 try:
@@ -2210,11 +2212,7 @@ class FacebookService:
                     viewport={"width": 1280, "height": 900},
                     timezone_id="Asia/Ho_Chi_Minh",
                     locale="vi-VN",
-                    args=[
-                        "--no-sandbox",
-                        "--disable-dev-shm-usage",
-                        "--disable-blink-features=AutomationControlled",
-                    ],
+                    args=HEADLESS_CHROMIUM_ARGS,
                     user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
                 )
                 try:

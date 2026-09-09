@@ -2321,8 +2321,8 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
         # System 2 (COMPLEX): full depth parameters
         self._current_complexity = _complexity
         _is_simple = (_complexity == "simple")
-        _force_synth_threshold = 2 if _is_simple else 4   # synthesize earlier for simple queries
-        _max_tools_threshold   = 1 if _is_simple else 3   # fewer tool calls for simple queries
+        _force_synth_threshold = 2 if _is_simple else 3   # synthesize earlier for simple queries
+        _max_tools_threshold   = 1 if _is_simple else 2   # fewer tool calls for simple queries
         _temp_tool   = 0.05 if _is_simple else 0.1
         _temp_synth  = 0.15 if _is_simple else 0.25
         # Adaptive Token Quota: Function calls emit only ~50-80 tokens JSON.
@@ -2403,23 +2403,23 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
 
             if has_tool_calls:
                 history.append(assistant_msg)
-                for tc in assistant_msg["tool_calls"]:
-                    call_id = tc.get("id", f"call_{iteration}")
-                    fn_name = tc.get("function", {}).get("name", "")
+                tool_calls = assistant_msg.get("tool_calls", [])
 
-                    # Prevent re-calling read-only inquiry tools in the same turn
+                async def _run_tool_call_item(tc_item, tc_idx):
+                    nonlocal _consecutive_tool_failures, _reflexion_triggered
+                    call_id = tc_item.get("id", f"call_{iteration}_{tc_idx}")
+                    fn_name = tc_item.get("function", {}).get("name", "")
+
                     if fn_name == "facebook_get_messages":
                         executed_once_tools.add(fn_name)
 
                     try:
-                        fn_args = json.loads(tc.get("function", {}).get("arguments", "{}"))
-                        # Groq sometimes corrupts Vietnamese diacritics in tool_call JSON.
-                        # Restore the original name from the user's message when possible.
+                        fn_args = json.loads(tc_item.get("function", {}).get("arguments", "{}"))
                         fn_args = self._repair_unicode_args(fn_args, user_message)
                     except Exception:
                         fn_args = {}
 
-                    # ── Loop Detection for run_command ──
+                    # Loop Detection for run_command
                     if fn_name == "run_command":
                         cmd_str = fn_args.get("command", "").strip()
                         if cmd_str and cmd_str in executed_commands:
@@ -2451,10 +2451,8 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
                     if fn_name not in _NON_COMPRESS_TOOLS and isinstance(tool_result, str) and len(tool_result) > 100:
                         tool_result = self.llm_router.rtk.compress(tool_result, max_chars=1500, max_lines=25)
 
-                    # ── C3.4 Reflexion: detect tool failure and annotate for self-correction ──
+                    # Reflexion check
                     if fn_name == "run_command":
-                        # For shell commands, log outputs naturally contain "error", "failed", "not found".
-                        # Only flag failure if the shell/system execution itself explicitly failed.
                         _SHELL_ERROR_STARTS = (
                             "error:", "lỗi:", "blocked:", "không thể kết nối",
                             "bash:", "sh:", "zsh:", "timeout:", "failed to parse",
@@ -2512,6 +2510,27 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
                             )
                     else:
                         _consecutive_tool_failures = 0
+
+                    return {
+                        "call_id": call_id,
+                        "fn_name": fn_name,
+                        "tool_result": tool_result,
+                        "is_failure": _is_tool_failure,
+                    }
+
+                # Parallel tool execution with asyncio.gather when multiple tool calls are emitted
+                if len(tool_calls) > 1:
+                    logger.info("[AiAgent][iter=%d] ⚡ Parallel executing %d tool calls concurrently", iteration, len(tool_calls))
+                    executed_items = await asyncio.gather(*[_run_tool_call_item(tc, idx) for idx, tc in enumerate(tool_calls)])
+                else:
+                    item = await _run_tool_call_item(tool_calls[0], 0)
+                    executed_items = [item]
+
+                for item in executed_items:
+                    call_id = item["call_id"]
+                    fn_name = item["fn_name"]
+                    tool_result = item["tool_result"]
+                    _is_tool_failure = item["is_failure"]
 
                     history.append({
                         "role": "tool",
@@ -2769,14 +2788,14 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
                 messages.append(m)
 
         # Inject stagnation / synthesis directive if loop is progressing
-        if force_synthesis or iteration >= 3:
+        if force_synthesis or iteration >= 2:
             messages.append({
-                "role": "system",
+                "role": "user",
                 "content": (
-                    "⚡ [HỆ THỐNG YÊU CẦU]: Đã thu thập đủ thông tin từ các công cụ trên. "
-                    "Hãy DỪNG gọi thêm tool và TỔNG HỢP câu trả lời cuối cùng trực diện cho anh Mạnh "
+                    "⚡ [YÊU CẦU TỔNG HỢP TRỰC TIẾP]: Đã thu thập đủ thông tin từ các công cụ trên. "
+                    "Hãy DỪNG gọi thêm tool và TỔNG HỢP câu trả lời cuối cùng trực diện cho anh Mạnh bằng tiếng Việt "
                     "theo tư duy phản biện biện chứng BLUF (Dòng 1: Kết luận dứt khoát → Dòng 2: Chi tiết dữ liệu xác thực → Dòng 3: Đánh giá phản biện & rủi ro tiềm ẩn → Dòng 4: Đề xuất tối ưu). "
-                    "Tuyệt đối KHÔNG trả về câu báo lỗi máy móc hay vâng dạ ba phải.\n\n"
+                    "Tuyệt đối KHÔNG gọi thêm tool, KHÔNG xuất JSON thô, hãy trả lời dứt khoát ngay bây giờ.\n\n"
                     # Phase 3: Metacognition / Uncertainty Calibration
                     "🧠 [ĐÁNH GIÁ MỨC ĐỘ CHẮC CHẮN & PHẢN BIỆN — Metacognition & Anti-Sycophancy]:\n"
                     "• 🟢 Nếu có đủ dữ liệu từ tool → Kết luận dứt khoát, dùng số liệu cụ thể.\n"

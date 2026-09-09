@@ -2455,15 +2455,33 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
                         tool_result = self.llm_router.rtk.compress(tool_result, max_chars=1500, max_lines=25)
 
                     # ── C3.4 Reflexion: detect tool failure and annotate for self-correction ──
-                    _FAILURE_SIGNALS = (
-                        "lỗi:", "lỗi khi", "error:", "error khi", "unknown tool",
-                        "không tìm thấy", "không tồn tại", "thất bại", "failed",
-                        "chưa được khởi tạo", "not found",
-                    )
-                    _is_tool_failure = isinstance(tool_result, str) and any(
-                        tool_result.lower().startswith(s) or f" {s}" in tool_result.lower()
-                        for s in _FAILURE_SIGNALS
-                    )
+                    if fn_name == "run_command":
+                        # For shell commands, log outputs naturally contain "error", "failed", "not found".
+                        # Only flag failure if the shell/system execution itself explicitly failed.
+                        _SHELL_ERROR_STARTS = (
+                            "error:", "lỗi:", "blocked:", "không thể kết nối",
+                            "bash:", "sh:", "zsh:", "timeout:", "failed to parse",
+                        )
+                        _SHELL_ERROR_CONTAINS = (
+                            "command not found", "no such file or directory",
+                            "permission denied", "syntax error", "invalid option",
+                            "failed to parse timestamp",
+                        )
+                        res_lower = tool_result.lower().strip() if isinstance(tool_result, str) else ""
+                        _is_tool_failure = (
+                            any(res_lower.startswith(s) for s in _SHELL_ERROR_STARTS)
+                            or any(s in res_lower for s in _SHELL_ERROR_CONTAINS)
+                        )
+                    else:
+                        _FAILURE_SIGNALS = (
+                            "lỗi:", "lỗi khi", "error:", "error khi", "unknown tool",
+                            "không tìm thấy", "không tồn tại", "thất bại", "failed",
+                            "chưa được khởi tạo", "not found",
+                        )
+                        _is_tool_failure = isinstance(tool_result, str) and any(
+                            tool_result.lower().startswith(s) or f" {s}" in tool_result.lower()
+                            for s in _FAILURE_SIGNALS
+                        )
 
                     if _is_tool_failure and fn_name not in self._DIRECT_RETURN_TOOLS:
                         _consecutive_tool_failures += 1
@@ -2509,12 +2527,7 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
 
                     # P6 (v4.0) STDP + P8 EFE: record tool outcome for causal learning
                     if self.memory_service:
-                        # Detect success/failure from tool output heuristically
-                        _result_str = tool_result.lower()
-                        _tool_ok = not any(
-                            kw in _result_str for kw in
-                            ("error", "fail", "exception", "traceback", "errno", "not found", "permission denied")
-                        )
+                        _tool_ok = not _is_tool_failure
                         # P8 EFE: per-tool success rate (fire-and-forget)
                         asyncio.create_task(
                             self.memory_service.record_tool_outcome(fn_name, _tool_ok)
@@ -2590,6 +2603,44 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
             # ── Final answer — flush the last deferred screenshot (if any) ──
             final = raw_content.strip()
             if final:
+                # Output Sanitization Guardrail: Prevent leaked JSON tool calls or code structures
+                if self._is_raw_tool_leak(final):
+                    logger.warning(
+                        "[AiAgent][iter=%d] 🛡️ Output Sanitizer intercepted leaked raw tool call in final: %.100s",
+                        iteration, final,
+                    )
+                    leaked_calls = self._extract_pseudo_tool_calls(final)
+                    if leaked_calls and iteration < MAX_AGENT_ITERATIONS - 1:
+                        assistant_msg["tool_calls"] = [
+                            {
+                                "id": f"call_leak_rec_{iteration}_{idx}",
+                                "type": "function",
+                                "function": {
+                                    "name": pc["name"],
+                                    "arguments": json.dumps(pc["args"], ensure_ascii=False),
+                                },
+                            }
+                            for idx, pc in enumerate(leaked_calls)
+                        ]
+                        assistant_msg["content"] = None
+                        history.append(assistant_msg)
+                        for idx, pc in enumerate(leaked_calls):
+                            fn_name = pc["name"]
+                            fn_args = pc["args"]
+                            tool_result = await self._execute_tool(
+                                fn_name, fn_args, chat_id=chat_id, pending_photos=pending_photos, user_message=user_message
+                            )
+                            history.append({
+                                "role": "tool",
+                                "tool_call_id": f"call_leak_rec_{iteration}_{idx}",
+                                "content": tool_result,
+                            })
+                        continue
+                    else:
+                        # At loop limit, discard raw JSON so it falls through to graceful synthesis fallback
+                        final = ""
+
+            if final:
                 await self._flush_pending_photos(pending_photos, chat_id)
                 history.append(assistant_msg)
                 self._trim_history(history)
@@ -2634,7 +2685,7 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
         )
         if fallback_result and fallback_result.get("choices"):
             final_content = fallback_result["choices"][0].get("message", {}).get("content", "").strip()
-            if final_content:
+            if final_content and not self._is_raw_tool_leak(final_content):
                 await self._flush_pending_photos(pending_photos, chat_id)
                 history.append({"role": "assistant", "content": final_content})
                 self._trim_history(history)
@@ -2764,19 +2815,88 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
             if history and history[0].get("role") == "tool":
                 history.pop(0)
 
-    def _extract_pseudo_tool_calls(self, text: str) -> List[Dict[str, Any]]:
-        """Parse pseudo-XML function tags emitted by non-native tool-call models.
+    @staticmethod
+    def _is_raw_tool_leak(text: str) -> bool:
+        """Detects whether text is an unexecuted raw tool call JSON or pseudo-XML code."""
+        if not text or not isinstance(text, str):
+            return False
+        s = text.strip()
+        # Direct or embedded JSON tool call
+        if s.startswith("{") and s.endswith("}"):
+            if any(k in s for k in ('"name"', '"arguments"', '"function"', '"parameters"')):
+                return True
+        # Top-level tool call array
+        if s.startswith("[") and s.endswith("]") and ('"name"' in s or '"function"' in s):
+            return True
+        # Pseudo-XML tags
+        if s.startswith("<function") or s.startswith("<tool_call"):
+            return True
+        # Markdown fenced JSON tool call
+        if s.startswith("```") and any(k in s for k in ('"name"', '"arguments"', '"function"')):
+            return True
+        return False
 
-        Supports 3 formats:
+    def _extract_pseudo_tool_calls(self, text: str) -> List[Dict[str, Any]]:
+        """Parse pseudo-XML function tags or raw JSON tool calls emitted in content.
+
+        Supports formats:
         - P1: <function=name>{"key": "val"}</function>  (common OpenRouter format)
         - P2: <function>name</function>{"key": "val"}
         - P3: <tool_call><function=name><parameter=key>val</parameter></function></tool_call>
               (nemotron / nvidia format with named parameter tags)
+        - P4: Raw JSON: {"name": "...", "arguments": {...}} or {"type": "function", "function": {...}}
+        - P5: Markdown code blocks: ```json\n{"name": ...}\n```
         """
         import re
-        calls = []
-        if not text or ("<function" not in text and "<tool_call" not in text):
+        calls: List[Dict[str, Any]] = []
+        if not text:
             return calls
+
+        clean_text = text.strip()
+        # Strip markdown fences if wrapping the whole text
+        if clean_text.startswith("```"):
+            lines = clean_text.splitlines()
+            if len(lines) >= 2 and lines[0].startswith("```") and lines[-1].startswith("```"):
+                clean_text = "\n".join(lines[1:-1]).strip()
+
+        # P4 / P5: Direct or embedded JSON tool call parsing
+        if "{" in clean_text and "}" in clean_text:
+            parsed_json = None
+            try:
+                parsed_json = json.loads(clean_text)
+            except Exception:
+                start = clean_text.find("{")
+                end = clean_text.rfind("}")
+                if start != -1 and end > start:
+                    try:
+                        parsed_json = json.loads(clean_text[start : end + 1])
+                    except Exception:
+                        pass
+
+            if parsed_json is not None:
+                items = parsed_json if isinstance(parsed_json, list) else [parsed_json]
+                for item in items:
+                    if isinstance(item, dict):
+                        if "name" in item and ("arguments" in item or "parameters" in item):
+                            args = item.get("arguments", item.get("parameters"))
+                            if isinstance(args, str):
+                                try:
+                                    args = json.loads(args)
+                                except Exception:
+                                    args = {"raw": args}
+                            calls.append({"name": str(item["name"]).strip(), "args": args if isinstance(args, dict) else {}})
+                        elif "function" in item and isinstance(item["function"], dict):
+                            fn = item["function"]
+                            fn_name = fn.get("name", "")
+                            args = fn.get("arguments", {})
+                            if isinstance(args, str):
+                                try:
+                                    args = json.loads(args)
+                                except Exception:
+                                    args = {"raw": args}
+                            calls.append({"name": str(fn_name).strip(), "args": args if isinstance(args, dict) else {}})
+                if calls:
+                    return calls
 
         # P1: <function=name ...>{"json"}</function>
         p1 = re.findall(r"<function=([a-zA-Z0-9_]+)[^>]*>(.*?)(?:</function>|$)", text, re.DOTALL)
@@ -2788,7 +2908,7 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
                 start = fn_args_str.find("{")
                 end = fn_args_str.rfind("}")
                 if start != -1 and end != -1:
-                    args = json.loads(fn_args_str[start:end + 1])
+                    args = json.loads(fn_args_str[start : end + 1])
                     calls.append({"name": fn_name, "args": args})
             except Exception:
                 pass
@@ -2800,17 +2920,12 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
                 start = fn_args_str.find("{")
                 end = fn_args_str.rfind("}")
                 if start != -1 and end != -1:
-                    args = json.loads(fn_args_str[start:end + 1])
+                    args = json.loads(fn_args_str[start : end + 1])
                     calls.append({"name": fn_name, "args": args})
             except Exception:
                 pass
 
-        # P3: Nemotron/nvidia parameter tag format:
-        # <tool_call>
-        # <function=run_command>
-        # <parameter=command>grep "2026-08-28" /var/log/apt/history.log</parameter>
-        # </function>
-        # </tool_call>
+        # P3: Nemotron/nvidia parameter tag format
         tool_call_blocks = re.findall(r"<tool_call>(.*?)</tool_call>", text, re.DOTALL)
         for block in tool_call_blocks:
             fn_match = re.search(r"<function=([a-zA-Z0-9_]+)>", block)
@@ -2821,7 +2936,6 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
             params = re.findall(r"<parameter=([a-zA-Z0-9_]+)>(.*?)</parameter>", block, re.DOTALL)
             if params:
                 args = {k: v.strip() for k, v in params}
-                # Avoid duplicates with P1 (P1 skips blocks with parameter tags, but double-check)
                 if not any(c["name"] == fn_name and c["args"] == args for c in calls):
                     calls.append({"name": fn_name, "args": args})
 

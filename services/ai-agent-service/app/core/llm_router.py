@@ -468,7 +468,125 @@ class LlmRouter:
                 logger.debug("[9Router] CoT preamble stripped (%d paragraphs removed)", len(paragraphs) - len(real_paragraphs))
                 return stripped
 
-        return content
+    @staticmethod
+    def _rehydrate_failed_tool_call(raw: str) -> Optional[List[Dict[str, Any]]]:
+        """
+        Parses failed_generation string emitted by Groq/LLMs into valid OpenAI tool_calls.
+        Handles:
+        1. JSON tool calls: {"name": ..., "arguments": ...}
+        2. OpenAI tool calls: {"type": "function", "function": {"name": ..., "arguments": ...}}
+        3. Arrays of tool calls
+        4. Markdown code-fenced JSON blocks
+        5. Pseudo-XML tags: <function=name>...</function> or <tool_call>...
+        """
+        if not raw or not isinstance(raw, str):
+            return None
+
+        text = raw.strip()
+        tool_calls: List[Dict[str, Any]] = []
+
+        # 1. Try stripping markdown code fences
+        if text.startswith("```"):
+            lines = text.splitlines()
+            if len(lines) >= 2 and lines[0].startswith("```") and lines[-1].startswith("```"):
+                text = "\n".join(lines[1:-1]).strip()
+
+        # Helper to convert name + args into OpenAI tool call dict
+        def _make_tool_call(name: str, args: Any, idx: int = 0) -> Optional[Dict[str, Any]]:
+            if not name or not isinstance(name, str):
+                return None
+            clean_name = name.strip()
+            if not clean_name:
+                return None
+            if isinstance(args, dict):
+                args_str = json.dumps(args, ensure_ascii=False)
+            elif isinstance(args, str):
+                args_str = args
+            else:
+                args_str = json.dumps(args, ensure_ascii=False) if args is not None else "{}"
+            return {
+                "id": f"call_groq_rec_{int(time.time())}_{idx}",
+                "type": "function",
+                "function": {
+                    "name": clean_name,
+                    "arguments": args_str,
+                },
+            }
+
+        # 2. Attempt Direct JSON Parse
+        parsed_json = None
+        try:
+            parsed_json = json.loads(text)
+        except Exception:
+            start = text.find("{")
+            end = text.rfind("}")
+            if start != -1 and end > start:
+                try:
+                    parsed_json = json.loads(text[start : end + 1])
+                except Exception:
+                    pass
+
+        if parsed_json is not None:
+            items = parsed_json if isinstance(parsed_json, list) else [parsed_json]
+            for idx, item in enumerate(items):
+                if isinstance(item, dict):
+                    # Check {"name": ..., "arguments": ...} or {"name": ..., "parameters": ...}
+                    if "name" in item and ("arguments" in item or "parameters" in item):
+                        tc = _make_tool_call(item["name"], item.get("arguments", item.get("parameters")), idx)
+                        if tc:
+                            tool_calls.append(tc)
+                    # Check {"type": "function", "function": {"name": ..., "arguments": ...}}
+                    elif "function" in item and isinstance(item["function"], dict):
+                        fn = item["function"]
+                        tc = _make_tool_call(fn.get("name", ""), fn.get("arguments", {}), idx)
+                        if tc:
+                            tool_calls.append(tc)
+            if tool_calls:
+                return tool_calls
+
+        # 3. Pseudo-XML tag formats
+        # P1: <function=name ...>{"json"}</function>
+        p1 = re.findall(r"<function=([a-zA-Z0-9_]+)[^>]*>(.*?)(?:</function>|$)", text, re.DOTALL)
+        for idx, (fn_name, fn_args_str) in enumerate(p1):
+            if "<parameter=" in fn_args_str or "</parameter>" in fn_args_str:
+                continue
+            start = fn_args_str.find("{")
+            end = fn_args_str.rfind("}")
+            if start != -1 and end > start:
+                try:
+                    args = json.loads(fn_args_str[start : end + 1])
+                    tc = _make_tool_call(fn_name, args, len(tool_calls))
+                    if tc:
+                        tool_calls.append(tc)
+                except Exception:
+                    pass
+
+        # P2: <function>name</function>{"json"}
+        p2 = re.findall(r"<function>([a-zA-Z0-9_]+)</function>\s*({.*?})(?:</function>|$)", text, re.DOTALL)
+        for idx, (fn_name, fn_args_str) in enumerate(p2):
+            try:
+                args = json.loads(fn_args_str)
+                tc = _make_tool_call(fn_name, args, len(tool_calls))
+                if tc:
+                    tool_calls.append(tc)
+            except Exception:
+                pass
+
+        # P3: <tool_call><function=name><parameter=key>val</parameter></function></tool_call>
+        tool_call_blocks = re.findall(r"<tool_call>(.*?)</tool_call>", text, re.DOTALL)
+        for block in tool_call_blocks:
+            fn_match = re.search(r"<function=([a-zA-Z0-9_]+)>", block)
+            if not fn_match:
+                continue
+            fn_name = fn_match.group(1)
+            params = re.findall(r"<parameter=([a-zA-Z0-9_]+)>(.*?)</parameter>", block, re.DOTALL)
+            if params:
+                args = {k: v.strip() for k, v in params}
+                tc = _make_tool_call(fn_name, args, len(tool_calls))
+                if tc:
+                    tool_calls.append(tc)
+
+        return tool_calls if tool_calls else None
 
     async def complete(
         self,
@@ -599,9 +717,50 @@ class LlmRouter:
                         err_data = resp.json()
                         failed_gen = err_data.get("error", {}).get("failed_generation", "")
                         if failed_gen:
+                            # 1. Attempt to rehydrate the failed generation into valid tool_calls
+                            rehydrated_calls = self._rehydrate_failed_tool_call(failed_gen)
+                            if rehydrated_calls:
+                                logger.info(
+                                    "[9Router] 🛠️ Successfully rehydrated %d tool call(s) from Groq failed_generation",
+                                    len(rehydrated_calls),
+                                )
+                                return {
+                                    "id": f"chatcmpl-9router-recovered-{int(time.time())}",
+                                    "object": "chat.completion",
+                                    "created": int(time.time()),
+                                    "model": model_to_use,
+                                    "choices": [
+                                        {
+                                            "index": 0,
+                                            "message": {
+                                                "role": "assistant",
+                                                "content": None,
+                                                "tool_calls": rehydrated_calls,
+                                            },
+                                            "finish_reason": "tool_calls",
+                                        }
+                                    ],
+                                    "_9router": {
+                                        "provider": f"{provider.name}_recovered",
+                                        "tier": provider.tier,
+                                        "key_id": key_entry.key_id,
+                                        "latency_sec": round(latency, 3),
+                                    },
+                                }
+
+                            # 2. If not a tool call, check if it's genuinely conversational text
                             cleaned = re.sub(r"<function=.*?>.*?</function>", "", failed_gen, flags=re.DOTALL).strip()
                             cleaned = re.sub(r"<function=.*", "", cleaned, flags=re.DOTALL).strip()
-                            if cleaned:
+                            # CRITICAL GUARD: Never return raw tool JSON/code as conversational content
+                            is_code_or_json = (
+                                (cleaned.startswith("{") and cleaned.endswith("}"))
+                                or '"name"' in cleaned
+                                or '"arguments"' in cleaned
+                                or '"function"' in cleaned
+                                or cleaned.startswith("<tool_call")
+                            )
+                            if cleaned and not is_code_or_json:
+                                logger.info("[9Router] Recovered text content from Groq failed_generation")
                                 return {
                                     "id": f"chatcmpl-9router-recovered-{int(time.time())}",
                                     "object": "chat.completion",
@@ -621,6 +780,11 @@ class LlmRouter:
                                         "latency_sec": round(latency, 3),
                                     },
                                 }
+
+                            logger.warning(
+                                "[9Router] Groq failed_generation could not be safely parsed or recovered (len=%d). Failover to next key...",
+                                len(failed_gen),
+                            )
 
                     logger.warning(
                         "[9Router] Provider '%s' returned HTTP %d: %s. Trying next...",

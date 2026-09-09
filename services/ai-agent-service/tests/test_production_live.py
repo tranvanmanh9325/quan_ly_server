@@ -193,7 +193,7 @@ async def run_production_verification():
     dopamine_before = agent.brain.neuro.dopamine
     chat_start = time.perf_counter()
     reply = await asyncio.wait_for(
-        agent.chat(chat_id="live_prod_test_session", user_input=test_query),
+        agent.chat(chat_id="live_prod_test_session", user_message=test_query),
         timeout=35.0,
     )
     chat_latency = time.perf_counter() - chat_start

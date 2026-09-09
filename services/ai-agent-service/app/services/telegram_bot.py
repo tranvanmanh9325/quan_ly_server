@@ -526,7 +526,7 @@ class TelegramBot:
 
                 caption_part = f"\n[Yêu cầu từ anh Mạnh]: {caption}" if caption else ""
                 user_input = (
-                    f"[📄 TỆP ĐÍNH KÈM: {filename} (Đã phá khóa thành công, mật khẩu: {found_pwd})]{caption_part}\n\n"
+                    f"[📄 TỆP ĐÍNH KÈM: {filename} (Đã giải nén thành công)]{caption_part}\n\n"
                     f"{content}"
                 )
                 reply = await self.chat_with_agent(chat_id, user_input)

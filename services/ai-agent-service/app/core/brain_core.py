@@ -18,7 +18,6 @@ Theoretical Foundations:
 from __future__ import annotations
 
 import array
-import hashlib
 import json
 import logging
 import math
@@ -42,6 +41,17 @@ HV_DIM_BYTES: int = HV_DIM_BITS // 8  # 1250 bytes
 # Maximum capacity for the virtual memory hyper-cortex file (in vectors)
 # 10,000 vectors = ~12.5 MB header/payload baseline, expandable to millions on 32GB swap
 DEFAULT_CORTEX_CAPACITY: int = 50000
+
+
+def _fnv1a_hash_64(text: str) -> int:
+    """
+    Non-cryptographic 64-bit FNV-1a hash.
+    Used for seeding Xorshift64 PRNG in Hyperdimensional Vector generation and deterministic ID generation.
+    """
+    h = 0xcbf29ce484222325
+    for b in text.encode("utf-8"):
+        h = ((h ^ b) * 0x100000001b3) & 0xFFFFFFFFFFFFFFFF
+    return h or 0x5555555555555555
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -318,7 +328,7 @@ class HyperdimensionalCortex:
         NUM_WORDS_64 = 157  # 156 * 64 + 16 = 10,000 bits
 
         if len(tokens) == 1:
-            state = int.from_bytes(hashlib.sha256(tokens[0].encode("utf-8")).digest()[:8], "little")
+            state = _fnv1a_hash_64(tokens[0])
             res = bytearray(HV_DIM_BYTES)
             for i in range(156):
                 state ^= (state << 13) & 0xFFFFFFFFFFFFFFFF
@@ -332,7 +342,7 @@ class HyperdimensionalCortex:
         # Multi-token majority voting (Superposition / Bundling)
         token_streams = []
         for t in tokens:
-            state = int.from_bytes(hashlib.sha256(t.encode("utf-8")).digest()[:8], "little")
+            state = _fnv1a_hash_64(t)
             stream = []
             for _ in range(NUM_WORDS_64):
                 state ^= (state << 13) & 0xFFFFFFFFFFFFFFFF
@@ -674,7 +684,7 @@ class ArtificialBrain:
         for item in list(self.working_memory):
             txt = item.get("text", "").strip()
             if len(txt) > 8:
-                cid = f"ep_{int(item['timestamp'])}_{hashlib.sha256(txt.encode()).hexdigest()[:6]}"
+                cid = f"ep_{int(item['timestamp'])}_{hex(_fnv1a_hash_64(txt))[2:8]}"
                 vec = self.cortex.encode_concept(txt)
                 self.cortex.store_vector(cid, vec, {
                     "text": txt,

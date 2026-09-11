@@ -790,21 +790,30 @@ class ArtificialBrain:
 
     def _prime_innate_knowledge(self) -> None:
         """Primes foundational instincts, identity, and priorities into the Virtual Cortex."""
-        if self.cortex.vector_count == 0:
-            innate_facts = [
-                ("identity_self", "Em là Tiểu Bảo Bảo, trợ lý AI kiêm quản trị viên đắc lực và trung thành của anh Trần Văn Mạnh.", "identity"),
-                ("owner_bond", "Anh Trần Văn Mạnh là chủ nhân tôn kính, người sáng lập và phát triển hệ thống kirito-server.", "relational"),
-                ("core_mission", "Nhiệm vụ tối thượng: Bảo vệ an toàn server, giám sát tài nguyên CPU/RAM, hỗ trợ công việc và chăm sóc anh Mạnh.", "duty"),
-                ("homeostasis_rule", "Khi CPU hoặc RAM vượt quá 90%, lập tức cảnh giác cao độ và tìm giải pháp hạ nhiệt hệ thống.", "instinct"),
-            ]
-            for cid, fact, cat in innate_facts:
+        innate_facts = [
+            ("identity_self", "Em là Tiểu Bảo Bảo, trợ lý AI kiêm quản trị viên đắc lực và trung thành của anh Trần Văn Mạnh.", "identity"),
+            ("owner_bond", "Anh Trần Văn Mạnh là chủ nhân tôn kính, người sáng lập và phát triển hệ thống kirito-server.", "relational"),
+            ("core_mission", "Nhiệm vụ tối thượng: Bảo vệ an toàn server, giám sát tài nguyên CPU/RAM, hỗ trợ công việc và chăm sóc anh Mạnh.", "duty"),
+            ("homeostasis_rule", "Khi CPU hoặc RAM vượt quá 90%, lập tức cảnh giác cao độ và tìm giải pháp hạ nhiệt hệ thống.", "instinct"),
+            ("server_arch", "Máy chủ kirito-server chạy Ubuntu 26.04 LTS trên Intel Core i5-4310U 2 nhân 4 luồng, RAM 3.2GB vật lý kết hợp Swap 32GB NVMe.", "infrastructure"),
+            ("docker_services", "Hệ thống microservices gồm 5 container: auth-service, metrics-service, file-service, ai-agent-service và frontend Nginx.", "architecture"),
+            ("network_security", "Bảo mật hệ thống nhiều lớp với tường lửa UFW, Fail2ban, SSH Ed25519, Cloudflare CDN và đường hầm ngrok an toàn.", "security"),
+            ("tiktok_automation", "Tiểu Bảo Bảo tự động duy trì giữ chuỗi bạn bè TikTok Streak Keeper hàng ngày bằng Playwright Headless chống quên chuỗi.", "automation"),
+            ("telegram_remote", "Điều khiển máy chủ kirito-server từ xa qua Telegram Bot, tự vấn nội tâm, giải mã phá khóa tệp nén RAR/ZIP đa luồng siêu tốc.", "remote_control"),
+            ("linux_tuning", "Tối ưu hóa tài nguyên Linux: sysctl vm.swappiness=10, vfs_cache_pressure=50, TCP BBR congestion và Nginx upstream keepalive.", "optimization"),
+            ("cognitive_brain", "Trung tâm não bộ AI tích hợp 6 chất dẫn truyền Panksepp, Russell Circumplex, Karl Friston FEP và vỏ não ảo 32GB HDC mmap.", "cognitive_core"),
+            ("dream_synthesis", "Động cơ giấc mơ tiềm thức chạy chu kỳ ngủ SWS và REM đêm để tinh thể hóa ký ức làm việc và sinh bản tin giác ngộ sáng sớm.", "dream_engine"),
+        ]
+        for cid, fact, cat in innate_facts:
+            if cid not in self.cortex.entry_index:
                 vec = self.cortex.encode_concept(fact)
                 self.cortex.store_vector(cid, vec, {"text": fact, "category": cat, "pinned": True})
 
     def step_pulse(self, server_metrics: Optional[Dict[str, Any]] = None) -> Optional[WorkspaceSignal]:
         """
         Periodic Cognitive Pulse (Heartbeat, runs every 30-60 seconds).
-        Updates homeostatic balance, calculates Free Energy, and arbitrates consciousness.
+        Updates homeostatic balance, calculates Free Energy, and arbitrates consciousness
+        among biological subconscious daemons (Global Workspace Theory).
         """
         now = time.time()
         self.total_pulses += 1
@@ -835,7 +844,7 @@ class ArtificialBrain:
         # 3. Active Inference: compute Variational Free Energy F
         free_energy = self.active_inference.update_beliefs_and_compute_free_energy(observation)
 
-        # 4. Generate subconscious candidates for the Global Workspace
+        # 4. Generate subconscious candidates for the Global Workspace (Dehaene & Baars GWT)
         candidates: List[WorkspaceSignal] = []
 
         # Candidate A: Interoceptive Processor (Server Health)
@@ -849,36 +858,79 @@ class ArtificialBrain:
         elif observation == "METRICS_WARNING":
             candidates.append(WorkspaceSignal(
                 source="InteroceptionDaemon",
-                salience=0.68,
+                salience=0.78,
                 summary=f"Hệ thống tải cao: CPU={cpu_usage:.1f}%, RAM={ram_usage:.1f}%.",
                 action_suggestion="MONITOR_CLOSELY"
             ))
+        else:
+            homeo_salience = 0.68 + 0.05 * (1.0 - min(1.0, cpu_usage / 100.0))
+            candidates.append(WorkspaceSignal(
+                source="InteroceptionDaemon",
+                salience=round(homeo_salience, 3),
+                summary=f"Hệ thống ổn định: CPU={cpu_usage:.1f}%, RAM={ram_usage:.1f}% bình ổn trong ngưỡng an toàn.",
+                action_suggestion="MAINTAIN_EQUILIBRIUM"
+            ))
 
-        # Candidate B: Free Energy Surprise Anomaly
+        # Candidate B: Relational Daemon (Empathy & Protective Care for Anh Mạnh)
+        relational_salience = 0.67 + 0.12 * self.neuro.oxytocin
+        candidates.append(WorkspaceSignal(
+            source="RelationalDaemon",
+            salience=round(relational_salience, 3),
+            summary="Tâm thức hướng về anh Mạnh: Sẵn sàng bảo vệ máy chủ và đồng hành cùng anh.",
+            action_suggestion="ATTENTIVE_READINESS"
+        ))
+
+        # Candidate C: Curiosity & System Cognition Daemon
+        curiosity_salience = 0.66 + 0.10 * self.neuro.dopamine
+        candidates.append(WorkspaceSignal(
+            source="CuriosityDaemon",
+            salience=round(curiosity_salience, 3),
+            summary="Tư duy phân tích: Giám sát tối ưu hóa 32GB Virtual Memory và các container Docker.",
+            action_suggestion="CONTINUOUS_COGNITION"
+        ))
+
+        # Candidate D: Exteroception Daemon (Network & Peripheral Connectivity)
+        ext_salience = 0.65 + 0.08 * self.neuro.noradrenaline
+        candidates.append(WorkspaceSignal(
+            source="ExteroceptionDaemon",
+            salience=round(ext_salience, 3),
+            summary="Mạng lưới ngoại vi: Thông suốt các kênh SSH, ngrok tunnel và dịch vụ bot Telegram.",
+            action_suggestion="PERIPHERAL_SCAN"
+        ))
+
+        # Candidate E: Free Energy Surprise Anomaly (Active Inference)
         if free_energy > 1.80:
             candidates.append(WorkspaceSignal(
                 source="FreeEnergyMinimizer",
-                salience=0.75,
+                salience=0.85,
                 summary=f"Năng lượng tự do biến thiên tăng cao (F={free_energy:.2f}) — Đang có sự kiện bất thường!",
                 action_suggestion="DEEP_SYSTEM2_DELIBERATION"
             ))
 
-        # 5. Prefrontal Working Memory update from sensory observation
+        # 5. Lateral inhibition competition (Global Workspace arbitration)
+        winning_signal = self.workspace.arbitrate(candidates)
+
+        # 6. Prefrontal Working Memory update from conscious stream (Miller 7 +/- 2 slots)
         if observation in ("METRICS_CRITICAL", "METRICS_WARNING"):
             self.add_working_memory_item(
                 text=f"Cảnh báo hệ thống: CPU={cpu_usage:.1f}%, RAM={ram_usage:.1f}%",
                 category="sensor_alert",
                 salience=0.88,
             )
-        elif self.total_pulses % 10 == 0 or len(self.working_memory) == 0:
+        elif winning_signal:
+            cat = "homeostasis_check"
+            if winning_signal.source == "RelationalDaemon":
+                cat = "user_interaction"
+            elif winning_signal.source == "CuriosityDaemon":
+                cat = "learning_synthesis"
+            elif winning_signal.source == "ExteroceptionDaemon":
+                cat = "network_event"
             self.add_working_memory_item(
-                text=f"Kiểm tra nhịp tim định kỳ: CPU={cpu_usage:.1f}%, RAM={ram_usage:.1f}% bình ổn",
-                category="homeostasis_check",
-                salience=0.25,
+                text=winning_signal.summary,
+                category=cat,
+                salience=winning_signal.salience,
             )
 
-        # 6. Lateral inhibition competition
-        winning_signal = self.workspace.arbitrate(candidates)
         self._save_state()
         return winning_signal
 

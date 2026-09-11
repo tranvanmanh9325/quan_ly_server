@@ -459,7 +459,7 @@ export default function AiAgentsPage() {
             const probe = await axios.get(`${apiPrefix}/vnc-ready`);
             if (probe.data.ready) {
               clearInterval(checkReady);
-              setVncUrl(`/vnc-embed.html?t=${Date.now()}`);
+              setVncUrl(`/vnc-embed.html?platform=${platform}&t=${Date.now()}`);
               setShowVncModal(true);
               setVncIsLaunching(false);
               setVncStatusMsg('');
@@ -493,6 +493,30 @@ export default function AiAgentsPage() {
       await axios.post(`${apiPrefix}/close-browser-session`);
     } catch {}
   };
+
+  // Disconnect VNC session immediately if user closes tab, refreshes, or navigates away
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (showVncModal) {
+        const apiPrefix = vncPlatform === 'tiktok' ? '/api/tiktok' : '/api/facebook';
+        try {
+          navigator.sendBeacon(`${apiPrefix}/close-browser-session`);
+        } catch {}
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    window.addEventListener('pagehide', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      window.removeEventListener('pagehide', handleBeforeUnload);
+      if (showVncModal) {
+        const apiPrefix = vncPlatform === 'tiktok' ? '/api/tiktok' : '/api/facebook';
+        try {
+          navigator.sendBeacon(`${apiPrefix}/close-browser-session`);
+        } catch {}
+      }
+    };
+  }, [showVncModal, vncPlatform]);
 
   const handleSaveBrowserSession = async () => {
     setVncIsSaving(true);

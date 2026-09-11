@@ -167,13 +167,21 @@
     const ro = new ResizeObserver(() => triggerScale());
     ro.observe(screen);
 
-    // Clean disconnect on page unload
-    window.addEventListener('beforeunload', () => {
+    // Clean disconnect and session reaping on page unload or container destruction
+    const cleanupSession = () => {
       clearTimeout(reconnectTimer);
       if (rfb) {
         try { rfb.disconnect(); } catch (e) {}
       }
-    });
+      try {
+        const urlParams = new URLSearchParams(window.location.search);
+        const plat = urlParams.get('platform') || 'tiktok';
+        navigator.sendBeacon(`/api/${plat}/close-browser-session`);
+      } catch (e) {}
+    };
+
+    window.addEventListener('beforeunload', cleanupSession);
+    window.addEventListener('pagehide', cleanupSession);
 
     initVNC();
   </script>

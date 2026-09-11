@@ -15,10 +15,7 @@ from app.core.db import get_db_connection, get_db_dict_cursor
 logger = logging.getLogger("app.services.vnc_manager")
 
 # Maximum idle time allowed before auto-reaping the VNC session (10 minutes)
-MAX_IDLE_SECONDS = 600
-
-# Consistent Desktop User-Agent to prevent anti-bot session invalidation
-DESKTOP_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+MAX_IDLE_SECONDS = 180
 
 
 class VncManager:
@@ -32,6 +29,7 @@ class VncManager:
     6. Cookie Pre-Injection: Restores authenticated cookies from PostgreSQL upon startup.
     7. Guaranteed Auto-Save: Extracts and persists cookies across ALL exit paths (X button, Save button, timeout).
     8. Anti-Bot Stealth Layer: Neutralizes navigator.webdriver and provides consistent Chrome environment.
+    9. Zero-Viewer Auto-Reap: Automatically frees 100% CPU/RAM within 20s when no browser tab is watching.
     """
 
     def __init__(self):
@@ -74,6 +72,24 @@ class VncManager:
         self.touch()
         return True
 
+    @staticmethod
+    def _count_active_vnc_clients() -> int:
+        """Counts established WebSocket connections to port 6080 (0x17C0) from Linux procfs."""
+        try:
+            count = 0
+            for path in ("/proc/net/tcp", "/proc/net/tcp6"):
+                if not os.path.exists(path):
+                    continue
+                with open(path, "r") as f:
+                    lines = f.readlines()[1:]
+                for line in lines:
+                    parts = line.strip().split()
+                    if len(parts) >= 4 and parts[1].upper().endswith(":17C0") and parts[3] == "01":
+                        count += 1
+            return count
+        except Exception:
+            return 1
+
     def _get_profile_dir(self, platform: str) -> str:
         """Returns isolated user data directory for each platform."""
         plat = "tiktok" if platform.lower() == "tiktok" else "facebook"
@@ -82,12 +98,32 @@ class VncManager:
         return target
 
     async def _idle_watchdog(self):
-        """Background daemon that auto-reaps the session if no activity for MAX_IDLE_SECONDS."""
-        logger.info("[VNC-Manager] Idle watchdog started (timeout: %ds).", MAX_IDLE_SECONDS)
+        """Background daemon that auto-reaps the session when no client is viewing or on idle timeout."""
+        logger.info("[VNC-Manager] Idle watchdog started (idle timeout: %ds).", MAX_IDLE_SECONDS)
+        no_client_duration = 0
+        grace_period = 25
         try:
             while self._is_running:
-                await asyncio.sleep(15)
-                if self._is_running and (time.time() - self._last_active_time > MAX_IDLE_SECONDS):
+                await asyncio.sleep(5)
+                if not self._is_running:
+                    break
+
+                # 1. Zero-Viewer check: if user closed the tab, port 6080 has 0 connections
+                if grace_period > 0:
+                    grace_period -= 5
+                else:
+                    active_viewers = self._count_active_vnc_clients()
+                    if active_viewers == 0:
+                        no_client_duration += 5
+                        if no_client_duration >= 20:
+                            logger.info("[VNC-Manager] Zero active viewers on port 6080 for %ds; auto-reaping session to free server CPU...", no_client_duration)
+                            await self.close_session()
+                            break
+                    else:
+                        no_client_duration = 0
+
+                # 2. Maximum idle timeout
+                if time.time() - self._last_active_time > MAX_IDLE_SECONDS:
                     logger.warning("[VNC-Manager] Session idle for >%ds; auto-reaping resources with auto-save...", MAX_IDLE_SECONDS)
                     await self.close_session()
                     break
@@ -436,16 +472,22 @@ class VncManager:
             self._watchdog_task.cancel()
             self._watchdog_task = None
         if not skip_save and self._context:
-            try: await self._extract_and_save_session(self._current_platform)
-            except Exception as e: logger.warning("[VNC-Manager] Auto-save during cleanup failed: %s", e)
+            try:
+                await asyncio.wait_for(self._extract_and_save_session(self._current_platform), timeout=5.0)
+            except Exception as e:
+                logger.warning("[VNC-Manager] Auto-save during cleanup timed out or failed: %s", e)
         try:
-            if self._context: await self._context.close()
-        except Exception: pass
+            if self._context:
+                await asyncio.wait_for(self._context.close(), timeout=3.0)
+        except Exception:
+            pass
         self._context = None
         self._page = None
         try:
-            if self._playwright: await self._playwright.stop()
-        except Exception: pass
+            if self._playwright:
+                await asyncio.wait_for(self._playwright.stop(), timeout=3.0)
+        except Exception:
+            pass
         self._playwright = None
         self._kill_stale_processes()
         logger.info("[VNC-Manager] VNC stack stopped and all system resources freed.")
@@ -453,7 +495,9 @@ class VncManager:
     def _kill_stale_processes(self):
         for proc in [self._websockify_proc, self._x11vnc_proc, self._openbox_proc, self._xvfb_proc]:
             if proc:
-                try: proc.terminate(); proc.wait(timeout=0.5)
+                try:
+                    proc.terminate()
+                    proc.wait(timeout=0.3)
                 except Exception:
                     try: proc.kill()
                     except Exception: pass
@@ -463,13 +507,15 @@ class VncManager:
             for pid_dir in os.listdir("/proc"):
                 if pid_dir.isdigit():
                     pid = int(pid_dir)
-                    if pid == my_pid: continue
+                    if pid == my_pid:
+                        continue
                     try:
                         with open(f"/proc/{pid}/cmdline", "rb") as f:
-                            cmdline = f.read().decode("utf-8", errors="ignore")
-                            if any(target in cmdline for target in ["Xvfb", "x11vnc", "websockify", "openbox"]):
+                            cmdline = f.read().decode("utf-8", errors="ignore").lower()
+                            if any(target in cmdline for target in ["xvfb", "x11vnc", "websockify", "openbox", "chrome", "chromium", "playwright"]):
                                 os.kill(pid, 9)
-                    except Exception: pass
+                    except Exception:
+                        pass
         for lock in ["/tmp/.X99-lock", "/tmp/.X11-unix/X99"]:
             if os.path.exists(lock):
                 try:

@@ -134,13 +134,16 @@ async def get_brain_telemetry(request: Request) -> Dict[str, Any]:
             datetime.fromtimestamp(dream_engine.last_rem_time, VN_TZ).strftime("%H:%M:%S %d/%m")
             if dream_engine.last_rem_time else None
         )
+        delivered = getattr(dream_engine, "delivered_epiphanies", [])
+        pending = getattr(dream_engine, "pending_morning_epiphany", None)
+        total_ep = len(delivered) + (1 if pending else 0)
         dream_data = {
             "is_sleeping": bool(getattr(dream_engine, "is_sleeping", False)),
             "sleep_stage": getattr(dream_engine, "sleep_stage", "AWAKE"),
             "last_sws_time": last_sws,
             "last_rem_time": last_rem,
-            "pending_morning_epiphany": getattr(dream_engine, "pending_morning_epiphany", None),
-            "total_epiphanies": len(getattr(dream_engine, "epiphany_history", [])),
+            "pending_morning_epiphany": pending,
+            "total_epiphanies": total_ep,
         }
 
     # 6. Theory of Mind (ToM) & Prefrontal Working Memory

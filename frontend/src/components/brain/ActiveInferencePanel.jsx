@@ -1,4 +1,5 @@
 import React from 'react';
+import { SciFiFreeEnergySpiralIcon } from './BrainSciFiIcons';
 
 /**
  * ActiveInferencePanel - Karl Friston's Variational Free Energy Principle (FEP)
@@ -47,7 +48,7 @@ export default function ActiveInferencePanel({ activeInference = {} }) {
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span style={{ fontSize: '1rem' }}>⚡</span>
+          <SciFiFreeEnergySpiralIcon size={18} color="var(--accent-cyan)" />
           <div>
             <h3
               style={{

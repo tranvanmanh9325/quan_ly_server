@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { SciFiNeuroMolecularIcon } from './BrainSciFiIcons';
 
 /**
  * Metadata configuration for 6 biological neurotransmitters
@@ -94,7 +95,7 @@ export default function NeurotransmitterGauges({
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span style={{ fontSize: '1rem' }}>🧬</span>
+          <SciFiNeuroMolecularIcon size={18} color="#00ff9d" />
           <div>
             <h3
               style={{

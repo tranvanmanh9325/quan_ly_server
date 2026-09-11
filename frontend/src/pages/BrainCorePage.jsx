@@ -7,6 +7,14 @@ import {
   SciFiPulseBadge,
   SciFiChronoSpinnerIcon,
 } from '../components/SciFiIcons';
+import {
+  SciFiCyberCerebrumIcon,
+  SciFiCircumplexRadarIcon,
+  SciFiNeuroMolecularIcon,
+  SciFiVirtualCortexLatticeIcon,
+  SciFiCognitivePulseBurstIcon,
+  SciFiSyncRefreshLoopIcon,
+} from '../components/brain/BrainSciFiIcons';
 
 import RussellCircumplexRadar from '../components/brain/RussellCircumplexRadar';
 import NeurotransmitterGauges from '../components/brain/NeurotransmitterGauges';
@@ -157,14 +165,22 @@ export default function BrainCorePage() {
   return (
     <div
       style={{
+        height: '100%',
+        overflowY: 'auto',
+        overflowX: 'hidden',
+        boxSizing: 'border-box',
         padding: '20px 24px 60px',
-        maxWidth: '1680px',
-        margin: '0 auto',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '20px',
       }}
     >
+      <div
+        style={{
+          maxWidth: '1680px',
+          margin: '0 auto',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '20px',
+        }}
+      >
       {/* ── Top Header HUD ───────────────────────────────────────────── */}
       <div
         style={{
@@ -227,11 +243,20 @@ export default function BrainCorePage() {
                 flexWrap: 'wrap',
               }}
             >
-              <span>🧠 Kiến trúc Nhận thức 7 Tầng (CoALA/ACT-R/GWT)</span>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                <SciFiCyberCerebrumIcon size={14} color="var(--accent-cyan)" />
+                <span>Kiến trúc Nhận thức 7 Tầng (CoALA/ACT-R/GWT)</span>
+              </span>
               <span>•</span>
-              <span>🧬 Không gian Cảm xúc Russell 2D</span>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                <SciFiCircumplexRadarIcon size={14} color="var(--accent-pink)" />
+                <span>Không gian Cảm xúc Russell 2D</span>
+              </span>
               <span>•</span>
-              <span>💾 32GB Virtual Memory mmap Cortex</span>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                <SciFiVirtualCortexLatticeIcon size={14} color="#bd00ff" />
+                <span>32GB Virtual Memory mmap Cortex</span>
+              </span>
             </div>
           </div>
         </div>
@@ -310,7 +335,7 @@ export default function BrainCorePage() {
               </>
             ) : (
               <>
-                <span>⚡</span>
+                <SciFiCognitivePulseBurstIcon size={15} color="var(--accent-cyan)" />
                 <span>KÍCH HOẠT NHỊP ĐẬP</span>
               </>
             )}
@@ -335,7 +360,7 @@ export default function BrainCorePage() {
               gap: '4px',
             }}
           >
-            <span>🔄</span>
+            <SciFiSyncRefreshLoopIcon size={15} color="#e0f2fe" />
           </button>
         </div>
       </div>
@@ -481,6 +506,7 @@ export default function BrainCorePage() {
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }

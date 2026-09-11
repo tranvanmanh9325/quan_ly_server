@@ -1,4 +1,10 @@
 import React, { useState } from 'react';
+import {
+  SciFiVirtualCortexLatticeIcon,
+  SciFiAssociativeSearchIcon,
+  SciFiCognitivePulseBurstIcon,
+  SciFiPinnedVectorIcon,
+} from './BrainSciFiIcons';
 
 /**
  * VirtualCortexExplorer - 32GB Virtual Memory Cortex via mmap Demand Paging
@@ -55,7 +61,7 @@ export default function VirtualCortexExplorer({
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span style={{ fontSize: '1rem' }}>🌐</span>
+          <SciFiVirtualCortexLatticeIcon size={18} color="var(--accent-cyan)" />
           <div>
             <h3
               style={{
@@ -215,7 +221,14 @@ export default function VirtualCortexExplorer({
             transition: 'all 0.2s ease',
           }}
         >
-          {isSearching ? 'ĐANG DÒ TÌM...' : '🔍 GỢI NHỚ LIÊN TƯỞNG'}
+          {isSearching ? (
+            'ĐANG DÒ TÌM...'
+          ) : (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+              <SciFiAssociativeSearchIcon size={14} color="var(--accent-cyan)" />
+              <span>GỢI NHỚ LIÊN TƯỞNG</span>
+            </span>
+          )}
         </button>
       </form>
 
@@ -237,8 +250,9 @@ export default function VirtualCortexExplorer({
               KẾT QUẢ LIÊN TƯỞNG TỪ VỎ NÃO ẢO ({recallResults.length} ký ức tương đồng):
             </span>
             {searchLatency !== null && (
-              <span style={{ fontSize: '0.68rem', color: '#00ff9d', fontFamily: 'Share Tech Mono' }}>
-                ⚡ Tốc độ: {searchLatency}ms
+              <span style={{ fontSize: '0.68rem', color: '#00ff9d', fontFamily: 'Share Tech Mono', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                <SciFiCognitivePulseBurstIcon size={12} color="#00ff9d" />
+                <span>Tốc độ: {searchLatency}ms</span>
               </span>
             )}
           </div>
@@ -276,7 +290,12 @@ export default function VirtualCortexExplorer({
 
                   <div style={{ display: 'flex', gap: '10px', fontSize: '0.65rem', color: 'rgba(224, 242, 254, 0.5)' }}>
                     <span>Phân loại: {item.category}</span>
-                    {item.pinned && <span style={{ color: 'var(--accent-yellow)' }}>📌 Cố định</span>}
+                    {item.pinned && (
+                      <span style={{ color: 'var(--accent-yellow)', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                        <SciFiPinnedVectorIcon size={12} color="var(--accent-yellow)" />
+                        <span>Cố định</span>
+                      </span>
+                    )}
                     {item.consolidated_at && <span>Nén lúc: {item.consolidated_at}</span>}
                   </div>
                 </div>

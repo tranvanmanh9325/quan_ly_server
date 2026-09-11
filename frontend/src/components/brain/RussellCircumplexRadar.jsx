@@ -1,4 +1,5 @@
 import React from 'react';
+import { SciFiCircumplexRadarIcon } from './BrainSciFiIcons';
 
 /**
  * RussellCircumplexRadar - 2D Cartesian Affect Space Visualization
@@ -44,7 +45,7 @@ export default function RussellCircumplexRadar({ affect = {} }) {
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span style={{ fontSize: '1rem' }}>🎭</span>
+          <SciFiCircumplexRadarIcon size={18} color="var(--accent-pink)" />
           <div>
             <h3 style={{
               margin: 0,

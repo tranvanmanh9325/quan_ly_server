@@ -1,6 +1,13 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import {
+  SciFiCognitivePulseBurstIcon,
+  SciFiZoomInIcon,
+  SciFiZoomOutIcon,
+  SciFiFullscreenExpandIcon,
+  SciFiFullscreenExitIcon,
+} from './BrainSciFiIcons';
 
 /**
  * NeuralNetwork3DFlow - Interactive 3D Neural Network Architecture & Synaptic Activation Flow
@@ -85,6 +92,19 @@ export default function NeuralNetwork3DFlow({
     controls.update();
   }, []);
 
+  // Zoom control helper
+  const handleZoom = useCallback((factor) => {
+    if (!cameraRef.current || !controlsRef.current) return;
+    const camera = cameraRef.current;
+    const controls = controlsRef.current;
+    const offset = camera.position.clone().sub(controls.target);
+    offset.multiplyScalar(factor);
+    if (offset.length() > 150 && offset.length() < 1400) {
+      camera.position.copy(controls.target).add(offset);
+      controls.update();
+    }
+  }, []);
+
   // Trigger visual electrical pulse wave through the network
   const triggerVisualPulse = useCallback(() => {
     pulseWaveRef.current.active = true;
@@ -120,6 +140,13 @@ export default function NeuralNetwork3DFlow({
     return () => document.removeEventListener('fullscreenchange', handleFsChange);
   }, []);
 
+  // Enable direct wheel zoom only in fullscreen mode
+  useEffect(() => {
+    if (controlsRef.current) {
+      controlsRef.current.enableZoom = isFullscreen;
+    }
+  }, [isFullscreen]);
+
   // ── Three.js Scene Setup ──────────────────────────────────────────────────
   useEffect(() => {
     const mount = mountRef.current;
@@ -151,8 +178,24 @@ export default function NeuralNetwork3DFlow({
     controls.dampingFactor = 0.05;
     controls.maxDistance = 1400;
     controls.minDistance = 150;
+    controls.enableZoom = false; // Disable default wheel capture so the page scrolls freely
     controls.target.set(10, 0, 0);
     controlsRef.current = controls;
+
+    // Ctrl + mouse wheel for precision 3D zooming without blocking normal page scrolling
+    const handleDomWheel = (e) => {
+      if (e.ctrlKey && cameraRef.current && controlsRef.current) {
+        e.preventDefault();
+        const factor = e.deltaY > 0 ? 1.08 : 0.92;
+        const offset = cameraRef.current.position.clone().sub(controlsRef.current.target);
+        offset.multiplyScalar(factor);
+        if (offset.length() > 150 && offset.length() < 1400) {
+          cameraRef.current.position.copy(controlsRef.current.target).add(offset);
+          controlsRef.current.update();
+        }
+      }
+    };
+    renderer.domElement.addEventListener('wheel', handleDomWheel, { passive: false });
 
     // 4. Lighting
     const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
@@ -483,6 +526,7 @@ export default function NeuralNetwork3DFlow({
     return () => {
       cancelAnimationFrame(animId);
       window.removeEventListener('resize', handleResize);
+      renderer.domElement.removeEventListener('wheel', handleDomWheel);
       controls.dispose();
       renderer.dispose();
       fiberGeo.dispose();
@@ -531,7 +575,7 @@ export default function NeuralNetwork3DFlow({
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', pointerEvents: 'auto' }}>
-          <div style={{ fontSize: '1.2rem' }}>⚡</div>
+          <SciFiCognitivePulseBurstIcon size={20} color="var(--accent-cyan)" />
           <div>
             <div
               style={{
@@ -607,6 +651,42 @@ export default function NeuralNetwork3DFlow({
             </button>
           </div>
 
+          {/* Zoom In/Out Buttons */}
+          <div style={{ display: 'flex', background: 'rgba(0,0,0,0.5)', padding: '2px', borderRadius: '3px', border: '1px solid rgba(0,243,255,0.2)' }}>
+            <button
+              type="button"
+              onClick={() => handleZoom(0.85)}
+              style={{
+                padding: '4px 8px',
+                background: 'transparent',
+                color: '#00f3ff',
+                border: 'none',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+              }}
+              title="Phóng to 3D (Zoom In)"
+            >
+              <SciFiZoomInIcon size={13} color="#00f3ff" />
+            </button>
+            <button
+              type="button"
+              onClick={() => handleZoom(1.15)}
+              style={{
+                padding: '4px 8px',
+                background: 'transparent',
+                color: '#00f3ff',
+                border: 'none',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+              }}
+              title="Thu nhỏ 3D (Zoom Out)"
+            >
+              <SciFiZoomOutIcon size={13} color="#00f3ff" />
+            </button>
+          </div>
+
           {/* Auto-Rotate Toggle */}
           <button
             type="button"
@@ -640,9 +720,13 @@ export default function NeuralNetwork3DFlow({
               cursor: 'pointer',
               borderRadius: '2px',
               boxShadow: '0 0 10px rgba(0, 243, 255, 0.3)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
             }}
           >
-            ⚡ BẮN XUNG ĐIỆN
+            <SciFiCognitivePulseBurstIcon size={13} color="#ffffff" />
+            <span>BẮN XUNG ĐIỆN</span>
           </button>
 
           {/* Fullscreen Toggle */}
@@ -657,10 +741,16 @@ export default function NeuralNetwork3DFlow({
               border: '1px solid rgba(255, 255, 255, 0.2)',
               cursor: 'pointer',
               borderRadius: '2px',
+              display: 'flex',
+              alignItems: 'center',
             }}
             title={isFullscreen ? 'Thu nhỏ' : 'Toàn màn hình'}
           >
-            {isFullscreen ? '✕' : '⛶'}
+            {isFullscreen ? (
+              <SciFiFullscreenExitIcon size={14} color="#e0f2fe" />
+            ) : (
+              <SciFiFullscreenExpandIcon size={14} color="#e0f2fe" />
+            )}
           </button>
         </div>
       </div>
@@ -685,7 +775,7 @@ export default function NeuralNetwork3DFlow({
       >
         <div style={{ color: 'rgba(224, 242, 254, 0.65)', display: 'flex', gap: '16px' }}>
           <span>Chuột trái: <strong style={{ color: '#00f3ff' }}>Xoay 3D</strong></span>
-          <span>Cuộn chuột: <strong style={{ color: '#00f3ff' }}>Phóng to/Thu nhỏ</strong></span>
+          <span>Ctrl + Cuộn chuột: <strong style={{ color: '#00f3ff' }}>Phóng to/Thu nhỏ</strong></span>
           <span>Chuột phải: <strong style={{ color: '#00f3ff' }}>Di chuyển (Pan)</strong></span>
         </div>
 

@@ -1,4 +1,12 @@
 import React from 'react';
+import {
+  SciFiConsciousnessSpotlightIcon,
+  SciFiCyberCerebrumIcon,
+  SciFiDaemonInteroceptionIcon,
+  SciFiDaemonExteroceptionIcon,
+  SciFiDaemonRelationalIcon,
+  SciFiDaemonCuriosityIcon,
+} from './BrainSciFiIcons';
 
 /**
  * GlobalWorkspaceStream - Stanislas Dehaene & Bernard Baars Global Workspace Theory (GWT)
@@ -16,18 +24,18 @@ export default function GlobalWorkspaceStream({ workspace = {} }) {
     switch (source) {
       case 'InteroceptionDaemon':
       case 'Interoception':
-        return { label: 'NỘI THỂ (SERVER METRICS)', color: '#00ff9d', icon: '🖥️' };
+        return { label: 'NỘI THỂ (SERVER METRICS)', color: '#00ff9d', Icon: SciFiDaemonInteroceptionIcon };
       case 'ExteroceptionDaemon':
       case 'Exteroception':
-        return { label: 'NGOẠI THỂ (NETWORK/EVENT)', color: '#00f3ff', icon: '🌐' };
+        return { label: 'NGOẠI THỂ (NETWORK/EVENT)', color: '#00f3ff', Icon: SciFiDaemonExteroceptionIcon };
       case 'RelationalDaemon':
       case 'Relational':
-        return { label: 'TRI KỶ (ANH MẠNH)', color: '#ff007f', icon: '💕' };
+        return { label: 'TRI KỶ (ANH MẠNH)', color: '#ff007f', Icon: SciFiDaemonRelationalIcon };
       case 'CuriosityDaemon':
       case 'Curiosity':
-        return { label: 'TÒ MÒ (LEARNING)', color: '#ffd700', icon: '✨' };
+        return { label: 'TÒ MÒ (LEARNING)', color: '#ffd700', Icon: SciFiDaemonCuriosityIcon };
       default:
-        return { label: source || 'TIỀM THỨC', color: '#bd00ff', icon: '🧠' };
+        return { label: source || 'TIỀM THỨC', color: '#bd00ff', Icon: SciFiCyberCerebrumIcon };
     }
   };
 
@@ -47,7 +55,7 @@ export default function GlobalWorkspaceStream({ workspace = {} }) {
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span style={{ fontSize: '1rem' }}>🔦</span>
+          <SciFiConsciousnessSpotlightIcon size={18} color="var(--accent-cyan)" />
           <div>
             <h3
               style={{
@@ -97,7 +105,7 @@ export default function GlobalWorkspaceStream({ workspace = {} }) {
       >
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <span style={{ animation: 'pulse 1.5s infinite', display: 'inline-block' }}>💡</span>
+            <SciFiConsciousnessSpotlightIcon size={15} color="var(--accent-cyan)" style={{ animation: 'pulse 1.5s infinite' }} />
             <span
               style={{
                 fontSize: '0.75rem',
@@ -111,21 +119,29 @@ export default function GlobalWorkspaceStream({ workspace = {} }) {
             </span>
           </div>
 
-          {currentFocus && (
-            <span
-              style={{
-                fontSize: '0.7rem',
-                padding: '2px 6px',
-                borderRadius: '2px',
-                background: `${getSourceBadge(currentFocus.source).color}22`,
-                color: getSourceBadge(currentFocus.source).color,
-                border: `1px solid ${getSourceBadge(currentFocus.source).color}66`,
-                fontWeight: 600,
-              }}
-            >
-              {getSourceBadge(currentFocus.source).icon} {getSourceBadge(currentFocus.source).label}
-            </span>
-          )}
+          {currentFocus && (() => {
+            const badge = getSourceBadge(currentFocus.source);
+            const BadgeIcon = badge.Icon;
+            return (
+              <span
+                style={{
+                  fontSize: '0.7rem',
+                  padding: '2px 6px',
+                  borderRadius: '2px',
+                  background: `${badge.color}22`,
+                  color: badge.color,
+                  border: `1px solid ${badge.color}66`,
+                  fontWeight: 600,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '5px',
+                }}
+              >
+                <BadgeIcon size={12} color={badge.color} />
+                <span>{badge.label}</span>
+              </span>
+            );
+          })()}
         </div>
 
         {currentFocus ? (
@@ -220,7 +236,10 @@ export default function GlobalWorkspaceStream({ workspace = {} }) {
                   }}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flex: 1, minWidth: 0 }}>
-                    <span style={{ fontSize: '0.8rem' }}>{badge.icon}</span>
+                    {(() => {
+                      const BadgeIcon = badge.Icon;
+                      return <BadgeIcon size={13} color={badge.color} />;
+                    })()}
                     <span
                       style={{
                         color: '#e0f2fe',

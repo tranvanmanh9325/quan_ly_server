@@ -1,4 +1,5 @@
 import React from 'react';
+import { SciFiTheoryOfMindHeartIcon } from './BrainSciFiIcons';
 
 /**
  * TheoryOfMindCard - Premack & Woodruff Theory of Mind (ToM) & Affective Resonance
@@ -28,7 +29,7 @@ export default function TheoryOfMindCard({ tom = {} }) {
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span style={{ fontSize: '1rem' }}>💖</span>
+          <SciFiTheoryOfMindHeartIcon size={18} color="var(--accent-pink)" />
           <div>
             <h3
               style={{

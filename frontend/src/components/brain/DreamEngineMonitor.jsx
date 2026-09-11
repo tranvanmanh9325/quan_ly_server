@@ -1,4 +1,9 @@
 import React, { useState } from 'react';
+import {
+  SciFiDreamWaveIcon,
+  SciFiMorningEpiphanyIcon,
+} from './BrainSciFiIcons';
+import { SciFiChronoSpinnerIcon } from '../SciFiIcons';
 
 /**
  * DreamEngineMonitor - Subconscious Dream Engine & Synaptic Homeostasis
@@ -52,7 +57,7 @@ export default function DreamEngineMonitor({
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span style={{ fontSize: '1rem' }}>🌙</span>
+          <SciFiDreamWaveIcon size={18} color="#bd00ff" />
           <div>
             <h3
               style={{
@@ -173,7 +178,7 @@ export default function DreamEngineMonitor({
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <span>🌅</span>
+          <SciFiMorningEpiphanyIcon size={16} color="var(--accent-yellow)" />
           <span
             style={{
               fontSize: '0.74rem',
@@ -220,8 +225,12 @@ export default function DreamEngineMonitor({
             transition: 'all 0.2s ease',
           }}
         >
-          <span>{isDreaming ? '⏳' : '💤'}</span>
-          {isDreaming ? 'ĐANG CỦNG CỐ KÝ ỨC...' : 'MÔ PHỎNG GIẤC MƠ ĐÊM (CONSOLIDATE)'}
+          {isDreaming ? (
+            <SciFiChronoSpinnerIcon size={14} color="#bd00ff" />
+          ) : (
+            <SciFiDreamWaveIcon size={14} color="#bd00ff" />
+          )}
+          <span>{isDreaming ? 'ĐANG CỦNG CỐ KÝ ỨC...' : 'MÔ PHỎNG GIẤC MƠ ĐÊM (CONSOLIDATE)'}</span>
         </button>
 
         {consolidationResult && (

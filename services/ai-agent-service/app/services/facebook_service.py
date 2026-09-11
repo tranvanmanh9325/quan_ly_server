@@ -1655,10 +1655,16 @@ class FacebookService:
 
                     page: Page = await ctx.new_page()
 
-                    # Performance optimization: Route interception to abort heavy media, video streams, fonts and trackers during scan
+                    # Performance optimization: Route interception to abort heavy media, images, fonts and trackers during scan
                     async def _filter_scan_routes(route):
                         req = route.request
-                        if req.resource_type in ["media", "font"] or any(
+                        if req.resource_type in ["image", "media", "font"] or any(
+                            ext in req.url.lower()
+                            for ext in [
+                                ".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg",
+                                ".ico", ".woff", ".woff2", ".ttf", ".otf", ".mp4", ".mp3", ".webm"
+                            ]
+                        ) or any(
                             tracker in req.url
                             for tracker in [
                                 "facebook.com/tr/",
@@ -1731,22 +1737,28 @@ class FacebookService:
                         logger.info("[FB-Service] Total threads to check: %d", len(threads_to_check))
 
                         # ─── Process Each Thread ──────────────────────────────────
-                        for item in threads_to_check[:6]:
+                        # Cap at 2 most recent threads per scan to avoid spiking CPU on Haswell dual-core
+                        for item in threads_to_check[:2]:
                             t_href = item.get("href", "")
                             if not t_href:
                                 continue
                             try:
                                 logger.info("[FB-Service] Checking thread: %s", t_href)
                                 is_e2ee = "/messages/e2ee/t/" in t_href
-                                try:
-                                    await page.goto(
-                                        t_href,
-                                        wait_until="domcontentloaded",
-                                        timeout=20000 if is_e2ee else 15000,
-                                    )
-                                except Exception as nav_err:
-                                    logger.warning("[FB-Service] Navigation timeout for %s: %s — skipping", t_href, nav_err)
-                                    continue
+                                curr_clean = page.url.split("?")[0]
+                                target_clean = t_href.split("?")[0]
+                                if curr_clean != target_clean:
+                                    try:
+                                        await page.goto(
+                                            t_href,
+                                            wait_until="domcontentloaded",
+                                            timeout=20000 if is_e2ee else 15000,
+                                        )
+                                    except Exception as nav_err:
+                                        logger.warning("[FB-Service] Navigation timeout for %s: %s — skipping", t_href, nav_err)
+                                        continue
+                                else:
+                                    logger.info("[FB-Service] Already on active thread %s, skipping redundant navigation.", t_href)
                                 # Wait for message input box to confirm chat is loaded
                                 try:
                                     await page.wait_for_selector(

@@ -254,7 +254,7 @@ class VncManager:
                     if plat == "tiktok":
                         await cur.execute("""
                             INSERT INTO tiktok_config (id, cookies_json, last_status, enabled, streak_enabled, updated_at)
-                            VALUES (1, %s, %s, true, true, NOW())
+                            VALUES (1, %s, %s, false, false, NOW())
                             ON CONFLICT (id) DO UPDATE SET
                                 cookies_json = EXCLUDED.cookies_json,
                                 last_status = EXCLUDED.last_status,
@@ -263,7 +263,7 @@ class VncManager:
                     else:
                         await cur.execute("""
                             INSERT INTO facebook_config (id, cookies_json, last_status, enabled, threshold, cooldown_minutes, custom_message, created_at, updated_at)
-                            VALUES (1, %s, %s, true, 3, 2, '', NOW(), NOW())
+                            VALUES (1, %s, %s, false, 3, 2, '', NOW(), NOW())
                             ON CONFLICT (id) DO UPDATE SET
                                 cookies_json = EXCLUDED.cookies_json,
                                 last_status = EXCLUDED.last_status,

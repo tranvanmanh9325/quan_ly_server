@@ -29,20 +29,26 @@ logger = logging.getLogger("ai-agent-service")
 async def facebook_periodic_scan_loop(fb_service: FacebookService):
     """Background task to periodically run Facebook scan cycles."""
     logger.info("[FB-Scheduler] Started periodic scanner loop.")
+    # Stagger initial run to avoid CPU contention during service startup
+    await asyncio.sleep(90)
     while True:
         try:
             from app.services.vnc_manager import vnc_manager
             # If user is actively using the live VNC session, pause background scan to prevent lock contention
             if vnc_manager.is_running():
                 logger.debug("[FB-Scheduler] Live VNC session active; skipping scheduled scan cycle.")
-                await asyncio.sleep(20)
+                await asyncio.sleep(30)
                 continue
 
             cfg = await fb_service.get_config_from_db()
-            interval_min = max(3, cfg.get("scan_interval_minutes", 3))
-            if cfg.get("enabled", False):
-                logger.info("[FB-Scheduler] Running scheduled scan cycle...")
-                await fb_service.run_scan_cycle()
+            if not cfg.get("enabled", False):
+                # When disabled, poll status with a gentle sleep to prevent busy-waiting
+                await asyncio.sleep(60)
+                continue
+
+            interval_min = max(15, cfg.get("scan_interval_minutes", 15))
+            logger.info("[FB-Scheduler] Running scheduled scan cycle (interval: %dm)...", interval_min)
+            await fb_service.run_scan_cycle()
 
             await asyncio.sleep(interval_min * 60)
         except asyncio.CancelledError:
@@ -56,23 +62,32 @@ async def facebook_periodic_scan_loop(fb_service: FacebookService):
 async def tiktok_periodic_scan_loop(tt_service: TikTokService):
     """Background task to periodically run TikTok DM auto-reply and daily streak keeper checks."""
     logger.info("[TikTok-Scheduler] Started periodic scanner & streak keeper loop.")
+    # Stagger startup offset from Facebook to avoid concurrent browser launches
+    await asyncio.sleep(120)
     while True:
         try:
             from app.services.vnc_manager import vnc_manager
             if vnc_manager.is_running():
                 logger.debug("[TikTok-Scheduler] Live VNC session active; skipping scheduled scan cycle.")
-                await asyncio.sleep(20)
+                await asyncio.sleep(30)
                 continue
 
             cfg = await tt_service.get_config_from_db()
-            interval_min = max(3, cfg.get("scan_interval_minutes", 3))
+            dm_enabled = cfg.get("enabled", False)
+            streak_enabled = cfg.get("streak_enabled", True)
+
+            if not dm_enabled and not streak_enabled:
+                await asyncio.sleep(60)
+                continue
+
+            interval_min = max(15, cfg.get("scan_interval_minutes", 15))
 
             # 1. Run DM scan if enabled
-            if cfg.get("enabled", False):
+            if dm_enabled:
                 await tt_service.run_scan_cycle()
 
             # 2. Check and run daily streak keeper cycle if scheduled
-            if cfg.get("streak_enabled", True):
+            if streak_enabled:
                 await tt_service.run_streak_keeper_cycle(force=False)
 
             await asyncio.sleep(interval_min * 60)

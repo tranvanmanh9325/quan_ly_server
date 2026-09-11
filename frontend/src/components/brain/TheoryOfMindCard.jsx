@@ -333,7 +333,7 @@ export default function TheoryOfMindCard({ tom = {} }) {
       </div>
 
       {/* ── Active Prefrontal Working Memory List ──────────────────────────── */}
-      {workingItems && workingItems.length > 0 && (
+      {workingItems && workingItems.length > 0 ? (
         <div
           style={{
             background: 'rgba(5, 18, 36, 0.55)',
@@ -463,6 +463,21 @@ export default function TheoryOfMindCard({ tom = {} }) {
               );
             })}
           </div>
+        </div>
+      ) : (
+        <div
+          style={{
+            background: 'rgba(5, 18, 36, 0.45)',
+            border: '1px dashed rgba(0, 243, 255, 0.25)',
+            borderRadius: '4px',
+            padding: '14px 18px',
+            textAlign: 'center',
+            fontSize: '0.8rem',
+            color: 'rgba(224, 242, 254, 0.65)',
+            fontStyle: 'italic',
+          }}
+        >
+          Ký ức ngắn hạn đã được tinh thể hóa vào Vỏ Não Ảo 32GB sau chu kỳ ngủ đêm. Bộ đệm Prefrontal Cortex đang thanh lọc sẵn sàng nạp xung động mới.
         </div>
       )}
 

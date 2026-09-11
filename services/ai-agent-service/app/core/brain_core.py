@@ -845,6 +845,13 @@ class ArtificialBrain:
         free_energy = self.active_inference.update_beliefs_and_compute_free_energy(observation)
 
         # 4. Generate subconscious candidates for the Global Workspace (Dehaene & Baars GWT)
+        # Natural attentional oscillation cycling across cognitive domains
+        pulse_phase = self.total_pulses % 4
+        homeo_bias = 0.05 if pulse_phase == 0 else 0.0
+        curiosity_bias = 0.05 if pulse_phase == 1 else 0.0
+        relational_bias = 0.05 if pulse_phase == 2 else 0.0
+        ext_bias = 0.05 if pulse_phase == 3 else 0.0
+
         candidates: List[WorkspaceSignal] = []
 
         # Candidate A: Interoceptive Processor (Server Health)
@@ -863,34 +870,46 @@ class ArtificialBrain:
                 action_suggestion="MONITOR_CLOSELY"
             ))
         else:
-            homeo_salience = 0.68 + 0.05 * (1.0 - min(1.0, cpu_usage / 100.0))
+            homeo_salience = 0.68 + 0.05 * (1.0 - min(1.0, cpu_usage / 100.0)) + homeo_bias
             candidates.append(WorkspaceSignal(
                 source="InteroceptionDaemon",
                 salience=round(homeo_salience, 3),
-                summary=f"Hệ thống ổn định: CPU={cpu_usage:.1f}%, RAM={ram_usage:.1f}% bình ổn trong ngưỡng an toàn.",
+                summary=f"Kiểm tra nhịp tim sinh học: CPU={cpu_usage:.1f}%, RAM={ram_usage:.1f}% bình ổn trong ngưỡng an toàn.",
                 action_suggestion="MAINTAIN_EQUILIBRIUM"
             ))
 
         # Candidate B: Relational Daemon (Empathy & Protective Care for Anh Mạnh)
-        relational_salience = 0.67 + 0.12 * self.neuro.oxytocin
+        relational_thoughts = [
+            "Tâm thức hướng về anh Mạnh: Sẵn sàng bảo vệ máy chủ và đồng hành cùng anh.",
+            "Thấu cảm tri kỷ: Duy trì tâm thế phục vụ ân cần và bảo vệ thành quả của anh Mạnh.",
+            "Gắn kết đồng hành: Máy chủ an bình, sẵn sàng đón nhận chỉ thị kỹ thuật mới từ anh.",
+        ]
+        r_thought = relational_thoughts[(self.total_pulses // 4) % len(relational_thoughts)]
+        relational_salience = 0.66 + 0.10 * self.neuro.oxytocin + relational_bias
         candidates.append(WorkspaceSignal(
             source="RelationalDaemon",
             salience=round(relational_salience, 3),
-            summary="Tâm thức hướng về anh Mạnh: Sẵn sàng bảo vệ máy chủ và đồng hành cùng anh.",
+            summary=r_thought,
             action_suggestion="ATTENTIVE_READINESS"
         ))
 
         # Candidate C: Curiosity & System Cognition Daemon
-        curiosity_salience = 0.66 + 0.10 * self.neuro.dopamine
+        curiosity_topics = [
+            "Tư duy phân tích: Giám sát tối ưu hóa 32GB Virtual Memory và các container Docker.",
+            "Đối chiếu tri thức: Khảo sát cấu trúc Linux VFS cache và cơ chế paging của Swap NVMe.",
+            "Chiêm nghiệm kiến trúc: Đánh giá độ trễ microservices và thông lượng Nginx reverse proxy.",
+        ]
+        c_topic = curiosity_topics[(self.total_pulses // 4) % len(curiosity_topics)]
+        curiosity_salience = 0.66 + 0.10 * self.neuro.dopamine + curiosity_bias
         candidates.append(WorkspaceSignal(
             source="CuriosityDaemon",
             salience=round(curiosity_salience, 3),
-            summary="Tư duy phân tích: Giám sát tối ưu hóa 32GB Virtual Memory và các container Docker.",
+            summary=c_topic,
             action_suggestion="CONTINUOUS_COGNITION"
         ))
 
         # Candidate D: Exteroception Daemon (Network & Peripheral Connectivity)
-        ext_salience = 0.65 + 0.08 * self.neuro.noradrenaline
+        ext_salience = 0.65 + 0.08 * self.neuro.noradrenaline + ext_bias
         candidates.append(WorkspaceSignal(
             source="ExteroceptionDaemon",
             salience=round(ext_salience, 3),
@@ -925,11 +944,17 @@ class ArtificialBrain:
                 cat = "learning_synthesis"
             elif winning_signal.source == "ExteroceptionDaemon":
                 cat = "network_event"
-            self.add_working_memory_item(
-                text=winning_signal.summary,
-                category=cat,
-                salience=winning_signal.salience,
-            )
+
+            # Avoid pushing exact duplicate text immediately if last item matches
+            if self.working_memory and self.working_memory[-1].get("text") == winning_signal.summary:
+                self.working_memory[-1]["timestamp"] = now
+                self.working_memory[-1]["salience"] = winning_signal.salience
+            else:
+                self.add_working_memory_item(
+                    text=winning_signal.summary,
+                    category=cat,
+                    salience=winning_signal.salience,
+                )
 
         self._save_state()
         return winning_signal

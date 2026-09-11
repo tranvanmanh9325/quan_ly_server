@@ -27,13 +27,11 @@ export default function VirtualCortexExplorer({
   const backingStorage = cortex.backing_storage || '32GB Virtual Memory / mmap Demand Paging';
   const latencyMs = cortex.demand_paging_latency_ms || 0.08;
 
-  const handleSearch = async (e) => {
-    if (e) e.preventDefault();
-    if (!query.trim() || !onRecall || isSearching) return;
-
+  const executeRecall = async (searchTerm) => {
+    if (!searchTerm || !onRecall || isSearching) return;
     setIsSearching(true);
     try {
-      const resp = await onRecall(query.trim());
+      const resp = await onRecall(searchTerm);
       if (resp) {
         setRecallResults(resp.memories || []);
         setSearchLatency(resp.elapsed_ms || 0.1);
@@ -44,6 +42,25 @@ export default function VirtualCortexExplorer({
       setIsSearching(false);
     }
   };
+
+  const handleSearch = async (e) => {
+    if (e) e.preventDefault();
+    if (!query.trim()) return;
+    await executeRecall(query.trim());
+  };
+
+  const handleQuickChip = async (chipQuery) => {
+    setQuery(chipQuery);
+    await executeRecall(chipQuery);
+  };
+
+  const QUICK_CHIPS = [
+    { label: 'Anh Mạnh', query: 'Anh Mạnh' },
+    { label: 'Server Linux', query: 'Máy chủ kirito-server Linux' },
+    { label: 'Bảo mật', query: 'Bảo mật và tường lửa' },
+    { label: 'TikTok', query: 'Giữ chuỗi TikTok bạn bè' },
+    { label: 'Tối ưu hóa', query: 'Tối ưu hóa hiệu năng tài nguyên' },
+  ];
 
   return (
     <div
@@ -231,6 +248,37 @@ export default function VirtualCortexExplorer({
           )}
         </button>
       </form>
+
+      {/* Quick Search Chips */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+        <span style={{ fontSize: '0.68rem', color: 'rgba(224, 242, 254, 0.55)', fontFamily: 'Share Tech Mono' }}>
+          GỢI Ý TÌM KIẾM NHANH:
+        </span>
+        {QUICK_CHIPS.map((chip) => (
+          <button
+            key={chip.label}
+            type="button"
+            onClick={() => handleQuickChip(chip.query)}
+            disabled={isSearching || loading}
+            style={{
+              padding: '3px 9px',
+              borderRadius: '2px',
+              background: query === chip.query ? 'rgba(0, 243, 255, 0.25)' : 'rgba(0, 243, 255, 0.08)',
+              border: `1px solid ${query === chip.query ? 'var(--accent-cyan)' : 'rgba(0, 243, 255, 0.25)'}`,
+              color: query === chip.query ? '#ffffff' : 'var(--accent-cyan)',
+              fontSize: '0.7rem',
+              fontFamily: 'Share Tech Mono',
+              cursor: isSearching || loading ? 'not-allowed' : 'pointer',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '4px',
+              transition: 'all 0.15s ease',
+            }}
+          >
+            <span>[{chip.label}]</span>
+          </button>
+        ))}
+      </div>
 
       {/* Results Area */}
       {recallResults !== null && (

@@ -68,14 +68,33 @@ export default function NeurotransmitterGauges({
   loading = false,
 }) {
   const [stimulatingKey, setStimulatingKey] = useState(null);
+  const [optimisticValues, setOptimisticValues] = useState({});
 
   const handleStimulate = async (chemical, delta) => {
     if (!onStimulate || loading) return;
+    const currentVal = optimisticValues[chemical] ?? (typeof neuro[chemical] === 'number' ? neuro[chemical] : 0.5);
+    const nextVal = Math.max(0, Math.min(1, currentVal + delta));
+    setOptimisticValues((prev) => ({ ...prev, [chemical]: nextVal }));
     setStimulatingKey(chemical);
+
     try {
       await onStimulate(chemical, delta);
+    } catch {
+      // Revert on failure
+      setOptimisticValues((prev) => {
+        const copy = { ...prev };
+        delete copy[chemical];
+        return copy;
+      });
     } finally {
-      setTimeout(() => setStimulatingKey(null), 300);
+      setTimeout(() => {
+        setStimulatingKey(null);
+        setOptimisticValues((prev) => {
+          const copy = { ...prev };
+          delete copy[chemical];
+          return copy;
+        });
+      }, 500);
     }
   };
 
@@ -138,7 +157,7 @@ export default function NeurotransmitterGauges({
         }}
       >
         {TRANSMITTER_CONFIG.map((chem) => {
-          const rawVal = typeof neuro[chem.key] === 'number' ? neuro[chem.key] : 0.5;
+          const rawVal = optimisticValues[chem.key] ?? (typeof neuro[chem.key] === 'number' ? neuro[chem.key] : 0.5);
           const clampedVal = Math.max(0, Math.min(1, rawVal));
           const pct = Math.round(clampedVal * 100);
           const isBusy = stimulatingKey === chem.key;

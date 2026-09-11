@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import {
   SciFiDreamWaveIcon,
   SciFiMorningEpiphanyIcon,
+  SciFiCheckShieldIcon,
 } from './BrainSciFiIcons';
 import { SciFiChronoSpinnerIcon } from '../SciFiIcons';
 
@@ -239,9 +240,13 @@ export default function DreamEngineMonitor({
               fontSize: '0.72rem',
               color: '#00ff9d',
               fontFamily: 'Share Tech Mono',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
             }}
           >
-            ✓ Đã chuyển {consolidationResult.consolidated_memories_count} ký ức ngắn hạn vào Vỏ Não Ảo!
+            <SciFiCheckShieldIcon size={12} color="#00ff9d" />
+            <span>Đã chuyển {consolidationResult.consolidated_memories_count} ký ức ngắn hạn vào Vỏ Não Ảo!</span>
           </div>
         )}
       </div>

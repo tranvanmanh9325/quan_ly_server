@@ -293,7 +293,7 @@ export const SciFiAssociativeSearchIcon = ({ size = 18, color = 'currentColor', 
   </svg>
 );
 
-// 11. COGNITIVE PULSE ACTION — Action potential flash with radiating wavefronts
+// 11. COGNITIVE PULSE ACTION — Quantum Neuromorphic Action Potential (Diamond core + dual polarized shockwave rings + radiating axon spines)
 export const SciFiCognitivePulseBurstIcon = ({ size = 18, color = 'currentColor', className = '', ...props }) => (
   <svg
     width={size}
@@ -305,13 +305,29 @@ export const SciFiCognitivePulseBurstIcon = ({ size = 18, color = 'currentColor'
     style={{ display: 'inline-block', verticalAlign: 'middle' }}
     {...props}
   >
-    <polygon points="13,2 4,14 11,14 9,22 20,10 13,10" fill={color} />
-    <path d="M19 4C21 6 22 9 22 12C22 15 21 18 19 20" stroke={color} strokeWidth="1.2" strokeLinecap="round" strokeOpacity="0.5" />
-    <path d="M2 12C2 9 3 6 5 4" stroke={color} strokeWidth="1.2" strokeLinecap="round" strokeOpacity="0.5" />
+    {/* Dual Polarized Shockwave Ellipses */}
+    <ellipse cx="12" cy="12" rx="9.5" ry="4" transform="rotate(-30 12 12)" stroke={color} strokeWidth="1.1" strokeDasharray="2 2" strokeOpacity="0.75" />
+    <ellipse cx="12" cy="12" rx="9.5" ry="4" transform="rotate(30 12 12)" stroke={color} strokeWidth="1.1" strokeOpacity="0.5" />
+    
+    {/* Central Quantum Diamond Core */}
+    <polygon points="12,4 16.5,12 12,20 7.5,12" stroke={color} strokeWidth="1.4" fill={color} fillOpacity="0.25" />
+    
+    {/* 4 Radiating High-Energy Axon Spines */}
+    <line x1="12" y1="4" x2="12" y2="1.5" stroke={color} strokeWidth="1.5" strokeLinecap="round" />
+    <line x1="12" y1="20" x2="12" y2="22.5" stroke={color} strokeWidth="1.5" strokeLinecap="round" />
+    <line x1="7.5" y1="12" x2="1.5" y2="12" stroke={color} strokeWidth="1.5" strokeLinecap="round" />
+    <line x1="16.5" y1="12" x2="22.5" y2="12" stroke={color} strokeWidth="1.5" strokeLinecap="round" />
+    
+    {/* Quantum Spark Node */}
+    <circle cx="12" cy="12" r="1.8" fill="#ffffff" />
+    <circle cx="6" cy="6" r="0.9" fill={color} />
+    <circle cx="18" cy="6" r="0.9" fill={color} />
+    <circle cx="6" cy="18" r="0.9" fill={color} />
+    <circle cx="18" cy="18" r="0.9" fill={color} />
   </svg>
 );
 
-// 12. SYNC REFRESH LOOP — High-tech dual accelerator orbital arrows
+// 12. SYNC REFRESH LOOP — Hexagonal Cyclotron Accelerator with dual quantum vector thrusters
 export const SciFiSyncRefreshLoopIcon = ({ size = 16, color = 'currentColor', className = '', ...props }) => (
   <svg
     width={size}
@@ -323,11 +339,20 @@ export const SciFiSyncRefreshLoopIcon = ({ size = 16, color = 'currentColor', cl
     style={{ display: 'inline-block', verticalAlign: 'middle' }}
     {...props}
   >
-    <path d="M21 12A9 9 0 0 0 6 5.3L3 8" stroke={color} strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
-    <polyline points="3,3 3,8 8,8" stroke={color} strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
-    <path d="M3 12A9 9 0 0 0 18 18.7L21 16" stroke={color} strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
-    <polyline points="21,21 21,16 16,16" stroke={color} strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
-    <circle cx="12" cy="12" r="1.5" fill={color} />
+    {/* Hexagonal Cyclotron Outer Guide Track */}
+    <polygon points="12,2 21,7.2 21,16.8 12,22 3,16.8 3,7.2" stroke={color} strokeWidth="1.2" strokeDasharray="3 2" fill={color} fillOpacity="0.08" />
+    
+    {/* Dual High-Energy Curved Accelerators */}
+    <path d="M12 5.5A6.5 6.5 0 0 1 18.5 12" stroke={color} strokeWidth="1.6" strokeLinecap="round" />
+    <path d="M12 18.5A6.5 6.5 0 0 1 5.5 12" stroke={color} strokeWidth="1.6" strokeLinecap="round" />
+    
+    {/* Cyber Vector Chevrons */}
+    <polyline points="15.5,12 18.5,12 18.5,9" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    <polyline points="8.5,12 5.5,12 5.5,15" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    
+    {/* Central Reactor Spark */}
+    <circle cx="12" cy="12" r="2.2" stroke={color} strokeWidth="1.1" fill={color} fillOpacity="0.4" />
+    <circle cx="12" cy="12" r="0.8" fill="#ffffff" />
   </svg>
 );
 
@@ -422,7 +447,7 @@ export const SciFiPinnedVectorIcon = ({ size = 14, color = 'currentColor', class
   </svg>
 );
 
-// 18. ZOOM IN — Optical focal reticle with plus sign
+// 18. ZOOM IN — Tactical Reticle HUD Brackets with target plus indicator
 export const SciFiZoomInIcon = ({ size = 14, color = 'currentColor', className = '', ...props }) => (
   <svg
     width={size}
@@ -434,14 +459,18 @@ export const SciFiZoomInIcon = ({ size = 14, color = 'currentColor', className =
     style={{ display: 'inline-block', verticalAlign: 'middle' }}
     {...props}
   >
-    <circle cx="11" cy="11" r="7" stroke={color} strokeWidth="1.4" fill={color} fillOpacity="0.08" />
-    <line x1="16.5" y1="16.5" x2="21" y2="21" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
-    <line x1="11" y1="8" x2="11" y2="14" stroke={color} strokeWidth="1.4" strokeLinecap="round" />
-    <line x1="8" y1="11" x2="14" y2="11" stroke={color} strokeWidth="1.4" strokeLinecap="round" />
+    {/* 4 Tactical Corner L-Brackets */}
+    <path d="M4 8V4H8M16 4H20V8M4 16V20H8M16 20H20V16" stroke={color} strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+    {/* Concentric Coordinate Ring */}
+    <circle cx="12" cy="12" r="4.5" stroke={color} strokeWidth="0.9" strokeDasharray="1.5 1.5" strokeOpacity="0.6" />
+    {/* Laser Crosshair Target Plus */}
+    <line x1="12" y1="9.5" x2="12" y2="14.5" stroke={color} strokeWidth="1.5" strokeLinecap="round" />
+    <line x1="9.5" y1="12" x2="14.5" y2="12" stroke={color} strokeWidth="1.5" strokeLinecap="round" />
+    <circle cx="12" cy="12" r="0.8" fill="#ffffff" />
   </svg>
 );
 
-// 19. ZOOM OUT — Optical focal reticle with minus sign
+// 19. ZOOM OUT — Tactical Reticle HUD Brackets with target minus indicator
 export const SciFiZoomOutIcon = ({ size = 14, color = 'currentColor', className = '', ...props }) => (
   <svg
     width={size}
@@ -453,9 +482,13 @@ export const SciFiZoomOutIcon = ({ size = 14, color = 'currentColor', className 
     style={{ display: 'inline-block', verticalAlign: 'middle' }}
     {...props}
   >
-    <circle cx="11" cy="11" r="7" stroke={color} strokeWidth="1.4" fill={color} fillOpacity="0.08" />
-    <line x1="16.5" y1="16.5" x2="21" y2="21" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
-    <line x1="8" y1="11" x2="14" y2="11" stroke={color} strokeWidth="1.4" strokeLinecap="round" />
+    {/* 4 Tactical Corner L-Brackets */}
+    <path d="M4 8V4H8M16 4H20V8M4 16V20H8M16 20H20V16" stroke={color} strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+    {/* Concentric Coordinate Ring */}
+    <circle cx="12" cy="12" r="4.5" stroke={color} strokeWidth="0.9" strokeDasharray="1.5 1.5" strokeOpacity="0.6" />
+    {/* Laser Target Minus */}
+    <line x1="9.5" y1="12" x2="14.5" y2="12" stroke={color} strokeWidth="1.5" strokeLinecap="round" />
+    <circle cx="12" cy="12" r="0.8" fill="#ffffff" />
   </svg>
 );
 
@@ -488,6 +521,100 @@ export const SciFiFullscreenExitIcon = ({ size = 14, color = 'currentColor', cla
     {...props}
   >
     <path d="M9 4V9H4M15 4V9H20M9 20V15H4M15 20V15H20" stroke={color} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+// 22. SUCCESS PULSE SHIELD — Cybernetic shield with glowing check crest and quantum pulse node
+export const SciFiSuccessPulseIcon = ({ size = 16, color = '#00ff9d', className = '', ...props }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    className={className}
+    style={{ display: 'inline-block', verticalAlign: 'middle' }}
+    {...props}
+  >
+    {/* Cyber Shield Perimeter */}
+    <path
+      d="M12 2.5L20 6V11.5C20 16.5 16.5 20.8 12 22C7.5 20.8 4 16.5 4 11.5V6L12 2.5Z"
+      stroke={color}
+      strokeWidth="1.4"
+      fill={color}
+      fillOpacity="0.16"
+      strokeLinejoin="round"
+    />
+    {/* Holographic Checkmark */}
+    <path
+      d="M8.5 12L11 14.5L15.5 9"
+      stroke={color}
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+    <circle cx="12" cy="2.5" r="1.2" fill="#ffffff" />
+    <circle cx="11" cy="14.5" r="0.8" fill="#ffffff" />
+  </svg>
+);
+
+// 23. WARNING SHIELD — Cyber hazard triangle with status pulse core
+export const SciFiWarningShieldIcon = ({ size = 16, color = '#ff3366', className = '', ...props }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    className={className}
+    style={{ display: 'inline-block', verticalAlign: 'middle' }}
+    {...props}
+  >
+    {/* Cyber Hazard Triangle */}
+    <polygon
+      points="12,3 22,20 2,20"
+      stroke={color}
+      strokeWidth="1.4"
+      fill={color}
+      fillOpacity="0.16"
+      strokeLinejoin="round"
+    />
+    <line x1="12" y1="8.5" x2="12" y2="13.5" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
+    <circle cx="12" cy="17" r="1.2" fill={color} />
+    <circle cx="12" cy="17" r="0.6" fill="#ffffff" />
+  </svg>
+);
+
+// 24. CHECK SHIELD — Holographic verification circle with tick
+export const SciFiCheckShieldIcon = ({ size = 14, color = '#00ff9d', className = '', ...props }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    className={className}
+    style={{ display: 'inline-block', verticalAlign: 'middle' }}
+    {...props}
+  >
+    <circle cx="12" cy="12" r="9" stroke={color} strokeWidth="1.3" fill={color} fillOpacity="0.15" />
+    <path d="M8 12.5L10.8 15.2L16 9" stroke={color} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+// 25. THRESHOLD ARROW — Mini sci-fi cyber chevron upward indicator
+export const SciFiThresholdArrowIcon = ({ size = 10, color = 'currentColor', className = '', ...props }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 16 16"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    className={className}
+    style={{ display: 'inline-block', verticalAlign: 'middle' }}
+    {...props}
+  >
+    <path d="M3 11L8 5L13 11" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
   </svg>
 );
 

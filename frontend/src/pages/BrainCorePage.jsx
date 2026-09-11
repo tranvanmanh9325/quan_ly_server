@@ -14,6 +14,8 @@ import {
   SciFiVirtualCortexLatticeIcon,
   SciFiCognitivePulseBurstIcon,
   SciFiSyncRefreshLoopIcon,
+  SciFiSuccessPulseIcon,
+  SciFiWarningShieldIcon,
 } from '../components/brain/BrainSciFiIcons';
 
 import RussellCircumplexRadar from '../components/brain/RussellCircumplexRadar';
@@ -98,12 +100,19 @@ export default function BrainCorePage() {
         ram_usage: 45.0,
       });
       if (resp.data && resp.data.status === 'success') {
-        setLastActionMessage(`⚡ Nhịp đập nhận thức thành công! Ý thức: ${resp.data.winning_consciousness?.summary || 'Tâm trí cân bằng'}`);
+        const summary = resp.data.winning_consciousness?.summary || 'Tâm trí cân bằng';
+        setLastActionMessage({
+          type: 'success',
+          text: `Nhịp đập nhận thức hoàn tất! Ý thức: ${summary}`,
+        });
         await fetchTelemetry(true);
       }
     } catch (err) {
       console.error('Lỗi kích hoạt nhịp đập:', err);
-      setLastActionMessage('⚠️ Kích hoạt nhịp đập thất bại.');
+      setLastActionMessage({
+        type: 'error',
+        text: 'Kích hoạt nhịp đập thất bại. Vui lòng kiểm tra kết nối AI Agent.',
+      });
     } finally {
       setTimeout(() => setIsPulsing(false), 400);
       setTimeout(() => setLastActionMessage(null), 5000);
@@ -211,7 +220,7 @@ export default function BrainCorePage() {
               boxShadow: '0 0 15px rgba(0, 243, 255, 0.3)',
             }}
           >
-            <SciFiBrainCoreIcon size={28} color="var(--accent-cyan)" />
+            <SciFiCyberCerebrumIcon size={28} color="var(--accent-cyan)" />
           </div>
 
           <div>
@@ -369,20 +378,25 @@ export default function BrainCorePage() {
       {lastActionMessage && (
         <div
           style={{
-            background: 'rgba(0, 255, 157, 0.12)',
-            border: '1px solid #00ff9d',
+            background: lastActionMessage.type === 'error' ? 'rgba(255, 51, 102, 0.14)' : 'rgba(0, 255, 157, 0.12)',
+            border: `1px solid ${lastActionMessage.type === 'error' ? '#ff3366' : '#00ff9d'}`,
             borderRadius: '3px',
             padding: '10px 16px',
             fontSize: '0.82rem',
-            color: '#00ff9d',
+            color: lastActionMessage.type === 'error' ? '#ff3366' : '#00ff9d',
             fontFamily: 'Share Tech Mono, monospace',
             display: 'flex',
             alignItems: 'center',
-            gap: '8px',
+            gap: '10px',
             animation: 'fadeIn 0.3s ease-in',
           }}
         >
-          {lastActionMessage}
+          {lastActionMessage.type === 'error' ? (
+            <SciFiWarningShieldIcon size={16} color="#ff3366" />
+          ) : (
+            <SciFiSuccessPulseIcon size={16} color="#00ff9d" />
+          )}
+          <span>{lastActionMessage.text}</span>
         </div>
       )}
 
@@ -399,9 +413,13 @@ export default function BrainCorePage() {
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
+            gap: '12px',
           }}
         >
-          <span>{error}</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <SciFiWarningShieldIcon size={16} color="#ff3366" />
+            <span>{error}</span>
+          </div>
           <button
             type="button"
             onClick={() => fetchTelemetry(false)}
@@ -412,6 +430,7 @@ export default function BrainCorePage() {
               color: '#ffffff',
               cursor: 'pointer',
               fontSize: '0.75rem',
+              fontFamily: 'Share Tech Mono',
             }}
           >
             Thử lại

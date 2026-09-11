@@ -1,5 +1,5 @@
 import React from 'react';
-import { SciFiFreeEnergySpiralIcon } from './BrainSciFiIcons';
+import { SciFiFreeEnergySpiralIcon, SciFiThresholdArrowIcon } from './BrainSciFiIcons';
 
 /**
  * ActiveInferencePanel - Karl Friston's Variational Free Energy Principle (FEP)
@@ -151,7 +151,10 @@ export default function ActiveInferencePanel({ activeInference = {} }) {
 
         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.68rem', color: 'rgba(224, 242, 254, 0.5)' }}>
           <span>0.00 (Hoàn toàn dự đoán được)</span>
-          <span style={{ color: 'var(--accent-yellow)' }}>▲ Ngưỡng F=0.60</span>
+          <span style={{ color: 'var(--accent-yellow)', display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
+            <SciFiThresholdArrowIcon size={10} color="var(--accent-yellow)" />
+            <span>Ngưỡng F=0.60</span>
+          </span>
           <span>1.50+ (Bất ngờ cực đại)</span>
         </div>
 

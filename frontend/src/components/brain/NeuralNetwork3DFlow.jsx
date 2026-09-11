@@ -52,6 +52,17 @@ export default function NeuralNetwork3DFlow({
   const pulseWaveRef = useRef({ active: false, progress: 0, speed: 0.015 });
   const flareSpriteRef = useRef(null);
   const layerMeshesRef = useRef([]);
+  const cameraTweenRef = useRef({ active: false, targetPos: new THREE.Vector3(10, 20, 680) });
+  const pulseHudBarRef = useRef(null);
+  const pulseHudTextRef = useRef(null);
+
+  // Update autoRotate directly without destroying/recreating scene
+  useEffect(() => {
+    if (controlsRef.current) {
+      controlsRef.current.autoRotate = autoRotate;
+      controlsRef.current.autoRotateSpeed = 0.8;
+    }
+  }, [autoRotate]);
 
   // Create smooth radial glow sprite texture for incandescent focal flares
   const createGlowTexture = useCallback(() => {
@@ -70,26 +81,22 @@ export default function NeuralNetwork3DFlow({
     return new THREE.CanvasTexture(canvas);
   }, []);
 
-  // Set camera to preset angles
+  // Set camera to preset angles with smooth flight interpolation
   const applyCameraPreset = useCallback((preset) => {
     if (!cameraRef.current || !controlsRef.current) return;
     setActivePreset(preset);
-    const camera = cameraRef.current;
     const controls = controlsRef.current;
-
     controls.target.set(10, 0, 0);
 
+    let targetPos = new THREE.Vector3(10, 20, 680);
     if (preset === 'pipeline') {
-      // Direct side/pipeline view matching user's reference image
-      camera.position.set(10, 20, 680);
+      targetPos = new THREE.Vector3(10, 20, 680);
     } else if (preset === 'perspective') {
-      // Isometric 3D angle showing depth
-      camera.position.set(380, 220, 520);
+      targetPos = new THREE.Vector3(380, 220, 520);
     } else if (preset === 'top') {
-      // Top-down overhead view
-      camera.position.set(10, 750, 40);
+      targetPos = new THREE.Vector3(10, 750, 40);
     }
-    controls.update();
+    cameraTweenRef.current = { active: true, targetPos };
   }, []);
 
   // Zoom control helper
@@ -109,6 +116,10 @@ export default function NeuralNetwork3DFlow({
   const triggerVisualPulse = useCallback(() => {
     pulseWaveRef.current.active = true;
     pulseWaveRef.current.progress = 0;
+    if (pulseHudTextRef.current) {
+      pulseHudTextRef.current.innerText = 'PASS: L0 ➔ L7 [0%] • 1.21 GW POTENTIAL';
+      pulseHudTextRef.current.style.color = '#00f3ff';
+    }
     if (onTriggerPulse) onTriggerPulse();
   }, [onTriggerPulse]);
 
@@ -117,6 +128,10 @@ export default function NeuralNetwork3DFlow({
     if (pulseTrigger > 0) {
       pulseWaveRef.current.active = true;
       pulseWaveRef.current.progress = 0;
+      if (pulseHudTextRef.current) {
+        pulseHudTextRef.current.innerText = 'PASS: L0 ➔ L7 [0%] • 1.21 GW POTENTIAL';
+        pulseHudTextRef.current.style.color = '#00f3ff';
+      }
     }
   }, [pulseTrigger]);
 
@@ -212,9 +227,11 @@ export default function NeuralNetwork3DFlow({
     // 5. Build Neural Layers & Nodes
     const layerMeshes = [];
     const layerPositions = []; // Store node positions per layer for spline wiring
+    const layerMetaList = [];
 
     LAYERS_CONFIG.forEach((cfg, lIdx) => {
       const nodeCoords = [];
+      const layerNodes = [];
       const nodeCount = cfg.nodes;
       const layerGroup = new THREE.Group();
       layerGroup.position.set(cfg.x, 0, 0);
@@ -245,6 +262,7 @@ export default function NeuralNetwork3DFlow({
         const nodeMesh = new THREE.Mesh(nodeGeo, nodeMat);
         nodeMesh.position.set(0, y, z);
         layerGroup.add(nodeMesh);
+        layerNodes.push(nodeMesh);
 
         nodeCoords.push(new THREE.Vector3(cfg.x, y, z));
       }
@@ -264,6 +282,15 @@ export default function NeuralNetwork3DFlow({
       scene.add(layerGroup);
       layerMeshes.push(layerGroup);
       layerPositions.push(nodeCoords);
+      layerMetaList.push({
+        id: cfg.id,
+        name: cfg.name,
+        x: cfg.x,
+        planeMesh,
+        wireMat,
+        nodes: layerNodes,
+        baseColor: new THREE.Color(cfg.color),
+      });
     });
 
     layerMeshesRef.current = layerMeshes;
@@ -424,6 +451,42 @@ export default function NeuralNetwork3DFlow({
     const skipMesh = new THREE.LineSegments(skipGeo, skipMat);
     scene.add(skipMesh);
 
+    // 8b. High-Energy Traveling Shockwave Wavefront
+    const shockwaveGroup = new THREE.Group();
+    
+    // Main inner glowing plasma cylinder
+    const shockGeo = new THREE.CylinderGeometry(85, 85, 14, 32, 1, true);
+    shockGeo.rotateZ(Math.PI / 2);
+    const shockMat = new THREE.MeshBasicMaterial({
+      color: 0x00f3ff,
+      transparent: true,
+      opacity: 0,
+      blending: THREE.AdditiveBlending,
+      side: THREE.DoubleSide,
+    });
+    const shockMesh = new THREE.Mesh(shockGeo, shockMat);
+    shockwaveGroup.add(shockMesh);
+
+    // Outer razor-sharp ionization ring
+    const ringGeo = new THREE.RingGeometry(80, 96, 32);
+    ringGeo.rotateY(Math.PI / 2);
+    const ringMat = new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0,
+      blending: THREE.AdditiveBlending,
+      side: THREE.DoubleSide,
+    });
+    const ringMesh = new THREE.Mesh(ringGeo, ringMat);
+    shockwaveGroup.add(ringMesh);
+
+    // Dynamic point light carried by the shockwave wavefront
+    const shockLight = new THREE.PointLight(0x00f3ff, 0, 450);
+    shockwaveGroup.add(shockLight);
+
+    shockwaveGroup.position.set(-480, 0, 0);
+    scene.add(shockwaveGroup);
+
     // 9. Particle Wave Stream (Electrical Action Potential Packets)
     const particleCount = 180;
     const particlePositions = new Float32Array(particleCount * 3);
@@ -466,12 +529,13 @@ export default function NeuralNetwork3DFlow({
       // Controls damping
       controls.update();
 
-      // Auto-orbit rotation if enabled
-      if (autoRotate) {
-        controls.autoRotate = true;
-        controls.autoRotateSpeed = 0.8;
-      } else {
-        controls.autoRotate = false;
+      // Camera smooth flight interpolation
+      if (cameraTweenRef.current?.active) {
+        camera.position.lerp(cameraTweenRef.current.targetPos, delta * 6.0);
+        if (camera.position.distanceTo(cameraTweenRef.current.targetPos) < 2) {
+          camera.position.copy(cameraTweenRef.current.targetPos);
+          cameraTweenRef.current.active = false;
+        }
       }
 
       // Flare pulsation
@@ -483,10 +547,10 @@ export default function NeuralNetwork3DFlow({
 
       // Update particle stream along splines
       const positions = particleGeo.attributes.position.array;
+      const isPulsingActive = pulseWaveRef.current.active;
+      const streamSpeed = isPulsingActive ? 0.035 : 0.008;
       for (let i = 0; i < particleCount; i++) {
-        // Signal speed affected by pulse wave
-        const speed = pulseWaveRef.current.active ? 0.025 : 0.008;
-        particleProgress[i] = (particleProgress[i] + speed) % 1.0;
+        particleProgress[i] = (particleProgress[i] + streamSpeed) % 1.0;
         const curve = particleCurves[i];
         if (curve) {
           const pt = curve.getPoint(particleProgress[i]);
@@ -497,12 +561,113 @@ export default function NeuralNetwork3DFlow({
       }
       particleGeo.attributes.position.needsUpdate = true;
 
-      // Handle forward pass pulse surge
-      if (pulseWaveRef.current.active) {
-        pulseWaveRef.current.progress += delta * 1.4;
-        if (pulseWaveRef.current.progress > 1.0) {
+      // Handle SPECTACULAR NEURAL SHOCKWAVE SURGE
+      if (isPulsingActive) {
+        pulseWaveRef.current.progress += delta / 1.7; // ~1.7s sweep time across 8 layers
+        const progress = pulseWaveRef.current.progress;
+
+        if (progress >= 1.0) {
           pulseWaveRef.current.active = false;
+          pulseWaveRef.current.progress = 0;
+          shockMat.opacity = 0;
+          ringMat.opacity = 0;
+          shockLight.intensity = 0;
+          if (pulseHudBarRef.current) pulseHudBarRef.current.style.width = '0%';
+          if (pulseHudTextRef.current) {
+            pulseHudTextRef.current.innerText = 'MẠNG SẴN SÀNG • BẤM ĐỂ PHÓNG XUNG';
+            pulseHudTextRef.current.style.color = 'rgba(224, 242, 254, 0.65)';
+          }
+        } else {
+          // Current X coordinate along the pipeline (-480 to +490)
+          const waveX = -480 + progress * 970;
+          shockwaveGroup.position.x = waveX;
+
+          // Wavefront breathing & opacity
+          const waveFade = progress < 0.1 ? progress / 0.1 : (progress > 0.85 ? (1.0 - progress) / 0.15 : 1.0);
+          shockMat.opacity = 0.85 * waveFade;
+          ringMat.opacity = 0.95 * waveFade;
+          shockLight.intensity = 5.0 * waveFade;
+
+          // Dynamic spectral color shift
+          if (progress < 0.3) {
+            shockMat.color.setHex(0x00f3ff);
+            shockLight.color.setHex(0x00f3ff);
+          } else if (progress < 0.6) {
+            shockMat.color.setHex(0xffffff);
+            shockLight.color.setHex(0xffffff);
+          } else if (progress < 0.8) {
+            shockMat.color.setHex(0xffd700);
+            shockLight.color.setHex(0xffd700);
+          } else {
+            shockMat.color.setHex(0x00ff9d);
+            shockLight.color.setHex(0x00ff9d);
+          }
+
+          const pulseScale = 1.0 + Math.sin(time * 25.0) * 0.18;
+          shockwaveGroup.scale.set(1, pulseScale, pulseScale);
+
+          // Fiber line segments flash
+          fiberMat.opacity = 0.65 + Math.sin(progress * Math.PI) * 0.35;
+
+          // Camera micro-tremor in the first 350ms
+          if (progress < 0.22) {
+            const tremorMag = (1.0 - progress / 0.22) * 2.8;
+            camera.position.x += (Math.random() - 0.5) * tremorMag;
+            camera.position.y += (Math.random() - 0.5) * tremorMag;
+          }
+
+          // Incandescent flare burst when wave sweeps through L1 (-280)
+          if (flareSpriteRef.current && Math.abs(waveX - (-280)) < 70) {
+            const burstFactor = 1.0 - Math.abs(waveX - (-280)) / 70;
+            flareSpriteRef.current.scale.set(130 + burstFactor * 140, 240 + burstFactor * 220, 1);
+          }
+
+          // Layer Ignition: check each layer
+          layerMetaList.forEach((meta) => {
+            const dist = Math.abs(waveX - meta.x);
+            if (dist < 55) {
+              const ignite = 1.0 - dist / 55;
+              // Light up bounding wireframe
+              meta.wireMat.opacity = 0.22 + ignite * 0.78;
+              meta.wireMat.color.lerpColors(meta.baseColor, new THREE.Color(0xffffff), ignite * 0.9);
+
+              // Expand and blaze all node cubes in this layer
+              meta.nodes.forEach((node) => {
+                const nodeScale = 1.0 + ignite * 1.5; // up to 2.5x
+                node.scale.set(nodeScale, nodeScale, nodeScale);
+                node.material.color.lerpColors(meta.baseColor, new THREE.Color(0xffffff), ignite * 0.9);
+              });
+            } else {
+              // Smoothly decay back to normal
+              meta.wireMat.opacity = THREE.MathUtils.lerp(meta.wireMat.opacity, 0.22, delta * 7);
+              meta.wireMat.color.lerp(meta.baseColor, delta * 7);
+              meta.nodes.forEach((node) => {
+                node.scale.lerp(new THREE.Vector3(1, 1, 1), delta * 7);
+                node.material.color.lerp(meta.baseColor, delta * 7);
+              });
+            }
+          });
+
+          // Update HUD progress bar in real-time
+          const pct = Math.min(100, Math.round(progress * 100));
+          if (pulseHudBarRef.current) {
+            pulseHudBarRef.current.style.width = `${pct}%`;
+          }
+          if (pulseHudTextRef.current) {
+            pulseHudTextRef.current.innerText = `PASS: L0 ➔ L7 [${pct}%] • 1.21 GW POTENTIAL`;
+            pulseHudTextRef.current.style.color = '#00ff9d';
+          }
         }
+      } else {
+        // Idle decay for all layers
+        layerMetaList.forEach((meta) => {
+          meta.wireMat.opacity = THREE.MathUtils.lerp(meta.wireMat.opacity, 0.22, delta * 8);
+          meta.wireMat.color.lerp(meta.baseColor, delta * 8);
+          meta.nodes.forEach((node) => {
+            node.scale.lerp(new THREE.Vector3(1, 1, 1), delta * 8);
+            node.material.color.lerp(meta.baseColor, delta * 8);
+          });
+        });
       }
 
       renderer.render(scene, camera);
@@ -533,6 +698,10 @@ export default function NeuralNetwork3DFlow({
       fiberMat.dispose();
       skipGeo.dispose();
       skipMat.dispose();
+      shockGeo.dispose();
+      shockMat.dispose();
+      ringGeo.dispose();
+      ringMat.dispose();
       particleGeo.dispose();
       particleMat.dispose();
       glowTex.dispose();
@@ -540,7 +709,7 @@ export default function NeuralNetwork3DFlow({
         mount.removeChild(renderer.domElement);
       }
     };
-  }, [autoRotate, createGlowTexture]);
+  }, [createGlowTexture]);
 
   return (
     <div
@@ -594,8 +763,54 @@ export default function NeuralNetwork3DFlow({
           </div>
         </div>
 
-        {/* Action Buttons */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', pointerEvents: 'auto' }}>
+        {/* Action Buttons & Real-Time Pulse HUD */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', pointerEvents: 'auto', flexWrap: 'wrap' }}>
+          {/* Real-time Pulse Energy Bar */}
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              background: 'rgba(0,0,0,0.6)',
+              padding: '3px 10px',
+              borderRadius: '2px',
+              border: '1px solid rgba(0, 243, 255, 0.25)',
+            }}
+          >
+            <div
+              ref={pulseHudTextRef}
+              style={{
+                fontSize: '0.68rem',
+                fontFamily: 'Share Tech Mono, monospace',
+                color: 'rgba(224, 242, 254, 0.65)',
+                minWidth: '205px',
+                textAlign: 'center',
+              }}
+            >
+              MẠNG SẴN SÀNG • BẤM ĐỂ PHÓNG XUNG
+            </div>
+            <div
+              style={{
+                width: '75px',
+                height: '5px',
+                background: 'rgba(255, 255, 255, 0.1)',
+                borderRadius: '2px',
+                overflow: 'hidden',
+              }}
+            >
+              <div
+                ref={pulseHudBarRef}
+                style={{
+                  width: '0%',
+                  height: '100%',
+                  background: 'linear-gradient(90deg, #00f3ff, #00ff9d)',
+                  boxShadow: '0 0 6px #00f3ff',
+                  transition: 'width 0.05s linear',
+                }}
+              />
+            </div>
+          </div>
+
           {/* Preset Buttons */}
           <div style={{ display: 'flex', background: 'rgba(0,0,0,0.5)', padding: '2px', borderRadius: '3px', border: '1px solid rgba(0,243,255,0.2)' }}>
             <button
@@ -758,7 +973,7 @@ export default function NeuralNetwork3DFlow({
       {/* ── Three.js WebGL Mount Canvas ──────────────────────────────── */}
       <div ref={mountRef} style={{ width: '100%', height: '100%', cursor: 'grab' }} />
 
-      {/* ── Overlay Layer Labels (Matching Exact Red & Cyan Text in Screenshot) ── */}
+      {/* ── Overlay Layer Labels ────────────────────────────────────── */}
       <div
         style={{
           position: 'absolute',
@@ -779,11 +994,23 @@ export default function NeuralNetwork3DFlow({
           <span>Chuột phải: <strong style={{ color: '#00f3ff' }}>Di chuyển (Pan)</strong></span>
         </div>
 
-        <div style={{ display: 'flex', gap: '12px' }}>
-          <span style={{ color: '#ff3366' }}>● Dây đỏ: Ức chế / Trọng số âm</span>
-          <span style={{ color: '#00ff9d' }}>● Dây xanh lá: Hưng phấn / Trọng số dương</span>
-          <span style={{ color: '#ffd700' }}>● Dây vàng: Chùm kích hoạt cao</span>
-          <span style={{ color: '#00f3ff' }}>● Vòng cung: Residual Skip Connections</span>
+        <div style={{ display: 'flex', gap: '14px', alignItems: 'center' }}>
+          <span style={{ color: '#ff3366', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+            <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#ff3366', display: 'inline-block' }} />
+            <span>Dây đỏ: Ức chế / Trọng số âm</span>
+          </span>
+          <span style={{ color: '#00ff9d', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+            <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#00ff9d', display: 'inline-block' }} />
+            <span>Dây xanh lá: Hưng phấn / Trọng số dương</span>
+          </span>
+          <span style={{ color: '#ffd700', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+            <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#ffd700', display: 'inline-block' }} />
+            <span>Dây vàng: Chùm kích hoạt cao</span>
+          </span>
+          <span style={{ color: '#00f3ff', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+            <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#00f3ff', display: 'inline-block' }} />
+            <span>Vòng cung: Residual Skip Connections</span>
+          </span>
         </div>
       </div>
     </div>

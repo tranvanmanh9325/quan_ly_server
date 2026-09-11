@@ -206,7 +206,7 @@ class SubconsciousDreamEngine:
                     {"role": "user", "content": f"Bắt đầu giấc mơ REM lúc {now.strftime('%H:%M:%S %d/%m/%Y')}..."},
                 ],
                 temperature=0.85,
-                max_tokens=450,
+                max_tokens=1000,
             )
 
             if not llm_result:
@@ -217,7 +217,23 @@ class SubconsciousDreamEngine:
             cleaned = re.sub(r"^```(?:json)?\s*", "", raw_reply)
             cleaned = re.sub(r"\s*```$", "", cleaned).strip()
 
-            parsed = json.loads(cleaned)
+            parsed = {}
+            try:
+                parsed = json.loads(cleaned)
+            except Exception as j_err:
+                # Resilient fallback extraction in case of minor JSON formatting truncation
+                match_topic = re.search(r'"topic"\s*:\s*"([^"]+)"', cleaned)
+                match_insight = re.search(r'"insight"\s*:\s*"([^"]+)"', cleaned)
+                match_note = re.search(r'"sisterly_note"\s*:\s*"([^"]+)"', cleaned)
+                if match_insight:
+                    parsed = {
+                        "topic": match_topic.group(1) if match_topic else seed_topic,
+                        "insight": match_insight.group(1),
+                        "sisterly_note": match_note.group(1) if match_note else "",
+                    }
+                else:
+                    raise j_err
+
             topic = parsed.get("topic", seed_topic)
             insight = parsed.get("insight", "")
             sisterly_note = parsed.get("sisterly_note", "")

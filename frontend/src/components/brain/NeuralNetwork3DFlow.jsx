@@ -123,6 +123,14 @@ export default function NeuralNetwork3DFlow({
     if (onTriggerPulse) onTriggerPulse();
   }, [onTriggerPulse]);
 
+  // Expose global trigger for automated test verification
+  useEffect(() => {
+    window.__triggerBrainPulse = triggerVisualPulse;
+    return () => {
+      delete window.__triggerBrainPulse;
+    };
+  }, [triggerVisualPulse]);
+
   // Watch external pulseTrigger prop
   useEffect(() => {
     if (pulseTrigger > 0) {
@@ -563,7 +571,7 @@ export default function NeuralNetwork3DFlow({
 
       // Handle SPECTACULAR NEURAL SHOCKWAVE SURGE
       if (isPulsingActive) {
-        pulseWaveRef.current.progress += delta / 1.7; // ~1.7s sweep time across 8 layers
+        pulseWaveRef.current.progress += delta / 2.6; // ~2.6s sweep time across 8 layers
         const progress = pulseWaveRef.current.progress;
 
         if (progress >= 1.0) {

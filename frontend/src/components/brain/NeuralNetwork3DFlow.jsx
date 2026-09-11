@@ -13,14 +13,33 @@
  *    - Central Thalamus (Global Workspace Hub)
  *    - Limbic Hippocampus (Dream Engine & Consolidation)
  *    - Hypothalamus & Brainstem (Sensory Bus & Neurochemistry)
- * 6. Smooth Camera Target & Flight Tween Lerp, 3D Pulsing Beacon, Raycaster Selection,
- *    and Cyber Holographic Neuro-Inspector HUD.
+ * 6. Smooth Camera Target & Flight Tween Lerp, 3D Pulsing Beacon, Raycaster Selection.
+ * 7. 100% Bespoke Handcrafted Cyberpunk SVG Icons (Zero Unicode / Zero Library Icons).
+ * 8. High-Contrast Deep Matte Neuro-Inspector HUD (Crystal clear readability).
  * ============================================================================
  */
 
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import {
+  SciFiZoomInIcon,
+  SciFiZoomOutIcon,
+  SciFiFullscreenExpandIcon,
+  SciFiFullscreenExitIcon,
+  SciFiCognitivePulseBurstIcon,
+  SciFiSyncRefreshLoopIcon,
+  SciFiDeepBrainStimulationIcon,
+  SciFiCyberCloseCancelIcon,
+  SciFiMembraneVoltageIcon,
+  SciFiSynapticFrequencyIcon,
+  SciFiNeuroChemistryFlaskIcon,
+  SciFiOverviewHomeIcon,
+  SciFiPerspectiveEyeIcon,
+  SciFiAxialTopIcon,
+  SciFiCoronalFrontIcon,
+  SciFiSagittalLateralIcon,
+} from './BrainSciFiIcons';
 
 // ── 5 Core Anatomical & Cognitive Centers ─────────────────────────────────────
 const COGNITIVE_ZONES = [
@@ -772,8 +791,8 @@ export default function NeuralNetwork3DFlow({
           top: 0,
           left: 0,
           right: 0,
-          padding: '14px 20px',
-          background: 'linear-gradient(180deg, rgba(4, 7, 17, 0.95) 0%, rgba(4, 7, 17, 0) 100%)',
+          padding: '12px 20px',
+          background: 'linear-gradient(180deg, rgba(2, 4, 10, 0.98) 0%, rgba(2, 4, 10, 0.85) 75%, rgba(2, 4, 10, 0) 100%)',
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'center',
@@ -785,30 +804,22 @@ export default function NeuralNetwork3DFlow({
       >
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span
-              style={{
-                width: '8px',
-                height: '8px',
-                borderRadius: '50%',
-                background: '#00f3ff',
-                boxShadow: '0 0 8px #00f3ff',
-                animation: 'pulse 1.8s infinite',
-              }}
-            />
+            <SciFiCognitivePulseBurstIcon size={18} color="#00f3ff" />
             <h2
               style={{
                 margin: 0,
-                fontSize: '0.92rem',
+                fontSize: '0.96rem',
                 color: '#ffffff',
                 fontFamily: 'Rajdhani, sans-serif',
                 letterSpacing: '1.8px',
-                fontWeight: 700,
+                fontWeight: 800,
+                textShadow: '0 0 10px rgba(0, 243, 255, 0.5)',
               }}
             >
               HOLOGRAPHIC COGNITIVE CONNECTOME 3D • BẢN ĐỒ NÃO BỘ TIỂU BẢO BẢO
             </h2>
           </div>
-          <div style={{ fontSize: '0.7rem', color: 'rgba(224, 242, 254, 0.7)', fontFamily: 'Share Tech Mono', marginTop: '2px' }}>
+          <div style={{ fontSize: '0.72rem', color: '#cbd5e1', fontFamily: 'Share Tech Mono', marginTop: '2px', letterSpacing: '0.5px' }}>
             Chuẩn DTI Tractography Quốc Tế (RGB = XYZ) • 10,800 Cortical Neurons • Soliton Wave
             {typeof freeEnergy === 'number' && ` • F=${freeEnergy.toFixed(3)}`}
             {typeof totalPulses === 'number' && ` • Pulses: ${totalPulses}`}
@@ -818,69 +829,85 @@ export default function NeuralNetwork3DFlow({
         {/* Right Controls: Presets, AutoRotate, Fullscreen & Trigger Pulse */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', pointerEvents: 'auto' }}>
           {/* Preset Camera Views */}
-          <div style={{ display: 'flex', background: 'rgba(0, 0, 0, 0.6)', borderRadius: '3px', border: '1px solid rgba(0, 243, 255, 0.2)' }}>
+          <div style={{ display: 'flex', background: 'rgba(0, 0, 0, 0.75)', borderRadius: '4px', border: '1px solid rgba(0, 243, 255, 0.25)', overflow: 'hidden' }}>
             <button
               type="button"
               onClick={() => applyCameraPreset('perspective')}
               style={{
-                padding: '4px 8px',
-                fontSize: '0.68rem',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '5px',
+                padding: '5px 9px',
+                fontSize: '0.70rem',
                 fontFamily: 'Share Tech Mono',
-                background: activePreset === 'perspective' && !activeZone ? 'rgba(0, 243, 255, 0.25)' : 'transparent',
-                color: activePreset === 'perspective' && !activeZone ? '#00f3ff' : '#94a3b8',
+                background: activePreset === 'perspective' && !activeZone ? 'rgba(0, 243, 255, 0.3)' : 'transparent',
+                color: activePreset === 'perspective' && !activeZone ? '#00f3ff' : '#cbd5e1',
                 border: 'none',
                 cursor: 'pointer',
               }}
             >
-              Toàn Cảnh 3D
+              <SciFiPerspectiveEyeIcon size={12} color={activePreset === 'perspective' && !activeZone ? '#00f3ff' : '#94a3b8'} />
+              <span>Toàn Cảnh 3D</span>
             </button>
             <button
               type="button"
               onClick={() => applyCameraPreset('lateral')}
               style={{
-                padding: '4px 8px',
-                fontSize: '0.68rem',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '5px',
+                padding: '5px 9px',
+                fontSize: '0.70rem',
                 fontFamily: 'Share Tech Mono',
-                background: activePreset === 'lateral' ? 'rgba(0, 243, 255, 0.25)' : 'transparent',
-                color: activePreset === 'lateral' ? '#00f3ff' : '#94a3b8',
+                background: activePreset === 'lateral' ? 'rgba(0, 243, 255, 0.3)' : 'transparent',
+                color: activePreset === 'lateral' ? '#00f3ff' : '#cbd5e1',
                 border: 'none',
                 borderLeft: '1px solid rgba(0, 243, 255, 0.15)',
                 cursor: 'pointer',
               }}
             >
-              Bán Cầu Ngang
+              <SciFiSagittalLateralIcon size={12} color={activePreset === 'lateral' ? '#00f3ff' : '#94a3b8'} />
+              <span>Bán Cầu Ngang</span>
             </button>
             <button
               type="button"
               onClick={() => applyCameraPreset('top')}
               style={{
-                padding: '4px 8px',
-                fontSize: '0.68rem',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '5px',
+                padding: '5px 9px',
+                fontSize: '0.70rem',
                 fontFamily: 'Share Tech Mono',
-                background: activePreset === 'top' ? 'rgba(0, 243, 255, 0.25)' : 'transparent',
-                color: activePreset === 'top' ? '#00f3ff' : '#94a3b8',
+                background: activePreset === 'top' ? 'rgba(0, 243, 255, 0.3)' : 'transparent',
+                color: activePreset === 'top' ? '#00f3ff' : '#cbd5e1',
                 border: 'none',
                 borderLeft: '1px solid rgba(0, 243, 255, 0.15)',
                 cursor: 'pointer',
               }}
             >
-              Từ Trên Đỉnh
+              <SciFiAxialTopIcon size={12} color={activePreset === 'top' ? '#00f3ff' : '#94a3b8'} />
+              <span>Từ Trên Đỉnh</span>
             </button>
             <button
               type="button"
               onClick={() => applyCameraPreset('frontal')}
               style={{
-                padding: '4px 8px',
-                fontSize: '0.68rem',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '5px',
+                padding: '5px 9px',
+                fontSize: '0.70rem',
                 fontFamily: 'Share Tech Mono',
-                background: activePreset === 'frontal' ? 'rgba(0, 243, 255, 0.25)' : 'transparent',
-                color: activePreset === 'frontal' ? '#00f3ff' : '#94a3b8',
+                background: activePreset === 'frontal' ? 'rgba(0, 243, 255, 0.3)' : 'transparent',
+                color: activePreset === 'frontal' ? '#00f3ff' : '#cbd5e1',
                 border: 'none',
                 borderLeft: '1px solid rgba(0, 243, 255, 0.15)',
                 cursor: 'pointer',
               }}
             >
-              Mặt Trước
+              <SciFiCoronalFrontIcon size={12} color={activePreset === 'frontal' ? '#00f3ff' : '#94a3b8'} />
+              <span>Mặt Trước</span>
             </button>
           </div>
 
@@ -889,12 +916,13 @@ export default function NeuralNetwork3DFlow({
             type="button"
             onClick={() => setAutoRotate(!autoRotate)}
             style={{
-              padding: '4px 10px',
-              fontSize: '0.68rem',
+              padding: '5px 11px',
+              fontSize: '0.70rem',
               fontFamily: 'Share Tech Mono',
-              background: autoRotate ? 'rgba(0, 255, 157, 0.2)' : 'rgba(0, 0, 0, 0.6)',
-              color: autoRotate ? '#00ff9d' : '#94a3b8',
-              border: `1px solid ${autoRotate ? 'rgba(0, 255, 157, 0.5)' : 'rgba(0, 243, 255, 0.2)'}`,
+              fontWeight: 600,
+              background: autoRotate ? 'rgba(0, 255, 157, 0.25)' : 'rgba(0, 0, 0, 0.75)',
+              color: autoRotate ? '#00ff9d' : '#cbd5e1',
+              border: `1px solid ${autoRotate ? 'rgba(0, 255, 157, 0.6)' : 'rgba(0, 243, 255, 0.25)'}`,
               borderRadius: '3px',
               cursor: 'pointer',
             }}
@@ -909,48 +937,51 @@ export default function NeuralNetwork3DFlow({
               title="Phóng to (Ctrl + Cuộn chuột)"
               onClick={() => handleZoom(0.85)}
               style={{
-                padding: '4px 8px',
-                fontSize: '0.75rem',
-                background: 'rgba(0, 0, 0, 0.6)',
-                color: '#00f3ff',
-                border: '1px solid rgba(0, 243, 255, 0.2)',
+                padding: '5px 9px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                background: 'rgba(0, 0, 0, 0.75)',
+                border: '1px solid rgba(0, 243, 255, 0.25)',
                 borderRadius: '3px 0 0 3px',
                 cursor: 'pointer',
               }}
             >
-              ＋
+              <SciFiZoomInIcon size={14} color="#00f3ff" />
             </button>
             <button
               type="button"
               title="Thu nhỏ (Ctrl + Cuộn chuột)"
               onClick={() => handleZoom(1.15)}
               style={{
-                padding: '4px 8px',
-                fontSize: '0.75rem',
-                background: 'rgba(0, 0, 0, 0.6)',
-                color: '#00f3ff',
-                border: '1px solid rgba(0, 243, 255, 0.2)',
+                padding: '5px 9px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                background: 'rgba(0, 0, 0, 0.75)',
+                border: '1px solid rgba(0, 243, 255, 0.25)',
                 borderRadius: '0',
                 cursor: 'pointer',
               }}
             >
-              －
+              <SciFiZoomOutIcon size={14} color="#00f3ff" />
             </button>
             <button
               type="button"
               title="Đặt lại góc nhìn toàn cảnh"
               onClick={resetToOverview}
               style={{
-                padding: '4px 8px',
-                fontSize: '0.75rem',
-                background: 'rgba(0, 0, 0, 0.6)',
-                color: '#00f3ff',
-                border: '1px solid rgba(0, 243, 255, 0.2)',
+                padding: '5px 9px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                background: 'rgba(0, 0, 0, 0.75)',
+                border: '1px solid rgba(0, 243, 255, 0.25)',
                 borderRadius: '0 3px 3px 0',
                 cursor: 'pointer',
               }}
             >
-              ⟲
+              <SciFiSyncRefreshLoopIcon size={14} color="#00f3ff" />
             </button>
           </div>
 
@@ -960,27 +991,32 @@ export default function NeuralNetwork3DFlow({
             title="Toàn màn hình"
             onClick={toggleFullscreen}
             style={{
-              padding: '4px 8px',
-              fontSize: '0.75rem',
-              background: 'rgba(0, 0, 0, 0.6)',
-              color: isFullscreen ? '#00ff9d' : '#00f3ff',
-              border: '1px solid rgba(0, 243, 255, 0.2)',
+              padding: '5px 9px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              background: 'rgba(0, 0, 0, 0.75)',
+              border: '1px solid rgba(0, 243, 255, 0.25)',
               borderRadius: '3px',
               cursor: 'pointer',
             }}
           >
-            {isFullscreen ? '⤢' : '⤡'}
+            {isFullscreen ? (
+              <SciFiFullscreenExitIcon size={15} color="#00ff9d" />
+            ) : (
+              <SciFiFullscreenExpandIcon size={15} color="#00f3ff" />
+            )}
           </button>
 
           {/* Soliton Wave Status Badge */}
           <div
             style={{
-              padding: '4px 8px',
-              fontSize: '0.68rem',
+              padding: '5px 9px',
+              fontSize: '0.70rem',
               fontFamily: 'Share Tech Mono',
               borderRadius: '3px',
-              background: pulseActive ? 'rgba(255, 0, 85, 0.25)' : 'rgba(0, 243, 255, 0.1)',
-              border: `1px solid ${pulseActive ? '#ff0055' : 'rgba(0, 243, 255, 0.3)'}`,
+              background: pulseActive ? 'rgba(255, 0, 85, 0.25)' : 'rgba(0, 243, 255, 0.12)',
+              border: `1px solid ${pulseActive ? '#ff0055' : 'rgba(0, 243, 255, 0.35)'}`,
               color: pulseActive ? '#ff0055' : '#00f3ff',
               display: 'flex',
               alignItems: 'center',
@@ -993,7 +1029,7 @@ export default function NeuralNetwork3DFlow({
                 height: '6px',
                 borderRadius: '50%',
                 background: pulseActive ? '#ff0055' : '#00ff9d',
-                boxShadow: `0 0 6px ${pulseActive ? '#ff0055' : '#00ff9d'}`,
+                boxShadow: `0 0 8px ${pulseActive ? '#ff0055' : '#00ff9d'}`,
               }}
             />
             {pulseActive ? `SÓNG KHỬ CỰC: ${pulsePct}%` : 'CONNECTOME: SẴN SÀNG'}
@@ -1006,21 +1042,21 @@ export default function NeuralNetwork3DFlow({
             style={{
               display: 'flex',
               alignItems: 'center',
-              gap: '6px',
-              padding: '5px 12px',
-              fontSize: '0.72rem',
+              gap: '7px',
+              padding: '6px 14px',
+              fontSize: '0.74rem',
               fontFamily: 'Share Tech Mono',
               fontWeight: 700,
-              background: 'linear-gradient(135deg, rgba(0, 243, 255, 0.25), rgba(189, 0, 255, 0.25))',
+              background: 'linear-gradient(135deg, rgba(0, 243, 255, 0.35), rgba(189, 0, 255, 0.35))',
               color: '#ffffff',
               border: '1px solid #00f3ff',
               borderRadius: '3px',
               cursor: 'pointer',
-              boxShadow: '0 0 14px rgba(0, 243, 255, 0.4)',
+              boxShadow: '0 0 16px rgba(0, 243, 255, 0.5)',
               transition: 'all 0.2s ease',
             }}
           >
-            <span>❖</span>
+            <SciFiCognitivePulseBurstIcon size={16} color="#00f3ff" />
             <span>KÍCH HOẠT XUNG THẦN KINH</span>
           </button>
         </div>
@@ -1033,36 +1069,31 @@ export default function NeuralNetwork3DFlow({
             position: 'absolute',
             top: 72,
             left: 20,
-            maxWidth: '360px',
-            background: 'rgba(4, 7, 17, 0.92)',
-            backdropFilter: 'blur(10px)',
-            border: `1px solid ${activeZone.color}`,
-            borderRadius: '5px',
-            padding: '12px 16px',
-            boxShadow: `0 8px 32px rgba(0,0,0,0.8), 0 0 20px ${activeZone.color}33`,
-            zIndex: 12,
+            width: '380px',
+            maxWidth: 'calc(100% - 40px)',
+            background: 'rgba(2, 5, 14, 0.98)',
+            backdropFilter: 'blur(20px)',
+            border: `1.5px solid ${activeZone.color}`,
+            borderRadius: '6px',
+            padding: '14px 18px',
+            boxShadow: `0 20px 50px rgba(0,0,0,0.95), 0 0 30px ${activeZone.color}44, inset 0 0 20px ${activeZone.color}15`,
+            zIndex: 15,
             fontFamily: 'Share Tech Mono',
             animation: 'fadeIn 0.25s ease',
           }}
         >
           {/* Header & Close / Reset Button */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', borderBottom: '1px solid rgba(255, 255, 255, 0.1)', paddingBottom: '8px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <SciFiCognitivePulseBurstIcon size={18} color={activeZone.color} />
               <span
                 style={{
-                  width: '9px',
-                  height: '9px',
-                  borderRadius: '50%',
-                  background: activeZone.color,
-                  boxShadow: `0 0 8px ${activeZone.color}`,
-                }}
-              />
-              <span
-                style={{
-                  color: activeZone.color,
+                  color: '#ffffff',
+                  fontFamily: 'Rajdhani, sans-serif',
                   fontWeight: 800,
-                  fontSize: '0.8rem',
-                  letterSpacing: '1px',
+                  fontSize: '1.05rem',
+                  letterSpacing: '1.5px',
+                  textShadow: `0 0 12px ${activeZone.color}`,
                 }}
               >
                 {activeZone.name}
@@ -1071,59 +1102,104 @@ export default function NeuralNetwork3DFlow({
             <button
               type="button"
               onClick={resetToOverview}
-              title="Thoát chế độ cận cảnh"
+              title="Đóng bảng và trở về toàn cảnh"
               style={{
-                background: 'transparent',
-                border: 'none',
-                color: '#94a3b8',
-                fontSize: '0.9rem',
+                background: 'rgba(255, 255, 255, 0.05)',
+                border: '1px solid rgba(255, 255, 255, 0.2)',
+                borderRadius: '3px',
+                color: '#cbd5e1',
+                padding: '4px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
                 cursor: 'pointer',
-                padding: '2px 6px',
+                transition: 'all 0.15s ease',
               }}
             >
-              ✕
+              <SciFiCyberCloseCancelIcon size={15} color="#cbd5e1" />
             </button>
           </div>
 
           {/* Subtitle & Role */}
-          <div style={{ color: '#e2e8f0', fontSize: '0.72rem', fontWeight: 600, marginBottom: '6px' }}>
-            {activeZone.role} • <span style={{ color: activeZone.color }}>{activeZone.tensor}</span>
+          <div style={{ color: '#cbd5e1', fontSize: '0.78rem', fontWeight: 600, marginBottom: '8px' }}>
+            {activeZone.role} • <span style={{ color: activeZone.color, fontWeight: 700 }}>{activeZone.tensor}</span>
           </div>
 
           {/* Biological Description */}
-          <div style={{ color: 'rgba(224, 242, 254, 0.78)', fontSize: '0.68rem', lineHeight: '1.4', marginBottom: '10px' }}>
+          <div style={{ color: '#e2e8f0', fontSize: '0.74rem', lineHeight: '1.5', marginBottom: '12px' }}>
             {activeZone.desc}
           </div>
 
-          {/* Live Neuro-Telemetry Grid */}
+          {/* Live Neuro-Telemetry 3 Micro-Cards Grid */}
           <div
             style={{
               display: 'grid',
               gridTemplateColumns: 'repeat(3, 1fr)',
-              gap: '6px',
-              background: 'rgba(0, 0, 0, 0.45)',
-              padding: '8px',
-              borderRadius: '3px',
-              border: '1px solid rgba(255, 255, 255, 0.08)',
-              marginBottom: '10px',
-              fontSize: '0.62rem',
+              gap: '8px',
+              marginBottom: '12px',
             }}
           >
-            <div>
-              <div style={{ color: '#94a3b8' }}>ĐIỆN THẾ MÀNG</div>
-              <div style={{ color: '#00ff9d', fontWeight: 700, marginTop: '2px' }}>
+            {/* Card 1: Membrane Voltage */}
+            <div
+              style={{
+                background: 'rgba(0, 0, 0, 0.65)',
+                padding: '8px 10px',
+                borderRadius: '4px',
+                border: '1px solid rgba(0, 255, 157, 0.25)',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: '#94a3b8', fontSize: '0.68rem', fontWeight: 700 }}>
+                <SciFiMembraneVoltageIcon size={13} color="#00ff9d" />
+                <span>ĐIỆN THẾ MÀNG</span>
+              </div>
+              <div style={{ color: '#00ff9d', fontWeight: 800, fontSize: '0.88rem', marginTop: '4px' }}>
                 {activeZone.metrics.potential}
               </div>
             </div>
-            <div>
-              <div style={{ color: '#94a3b8' }}>TẦN SỐ XUNG</div>
-              <div style={{ color: '#00f3ff', fontWeight: 700, marginTop: '2px' }}>
+
+            {/* Card 2: Firing Rate */}
+            <div
+              style={{
+                background: 'rgba(0, 0, 0, 0.65)',
+                padding: '8px 10px',
+                borderRadius: '4px',
+                border: '1px solid rgba(0, 243, 255, 0.25)',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: '#94a3b8', fontSize: '0.68rem', fontWeight: 700 }}>
+                <SciFiSynapticFrequencyIcon size={13} color="#00f3ff" />
+                <span>TẦN SỐ XUNG</span>
+              </div>
+              <div style={{ color: '#00f3ff', fontWeight: 800, fontSize: '0.88rem', marginTop: '4px' }}>
                 {activeZone.metrics.firingRate}
               </div>
             </div>
-            <div>
-              <div style={{ color: '#94a3b8' }}>HÓA THẦN KINH</div>
-              <div style={{ color: '#ffd700', fontWeight: 700, marginTop: '2px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+
+            {/* Card 3: Neurochemistry */}
+            <div
+              style={{
+                background: 'rgba(0, 0, 0, 0.65)',
+                padding: '8px 10px',
+                borderRadius: '4px',
+                border: '1px solid rgba(255, 215, 0, 0.25)',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: '#94a3b8', fontSize: '0.68rem', fontWeight: 700 }}>
+                <SciFiNeuroChemistryFlaskIcon size={13} color="#ffd700" />
+                <span>HÓA THẦN KINH</span>
+              </div>
+              <div
+                style={{
+                  color: '#ffd700',
+                  fontWeight: 800,
+                  fontSize: '0.80rem',
+                  marginTop: '4px',
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                }}
+                title={activeZone.metrics.keyChemical}
+              >
                 {activeZone.metrics.keyChemical}
               </div>
             </div>
@@ -1136,36 +1212,50 @@ export default function NeuralNetwork3DFlow({
               onClick={fireActionPotential}
               style={{
                 flex: 1,
-                padding: '6px 8px',
-                fontSize: '0.66rem',
-                fontFamily: 'Share Tech Mono',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '6px',
+                padding: '8px 12px',
+                fontSize: '0.76rem',
+                fontFamily: 'Rajdhani, sans-serif',
                 fontWeight: 700,
-                background: `linear-gradient(135deg, ${activeZone.color}33, rgba(0, 243, 255, 0.2))`,
+                letterSpacing: '0.8px',
+                background: `linear-gradient(135deg, ${activeZone.color}40, rgba(0, 243, 255, 0.3))`,
                 color: '#ffffff',
                 border: `1px solid ${activeZone.color}`,
-                borderRadius: '3px',
+                borderRadius: '4px',
                 cursor: 'pointer',
                 textAlign: 'center',
+                boxShadow: `0 0 12px ${activeZone.color}55`,
                 transition: 'all 0.2s ease',
               }}
             >
-              ⚡ KÍCH THÍCH SÂU (DBS)
+              <SciFiDeepBrainStimulationIcon size={16} color="#ffffff" />
+              <span>KÍCH THÍCH SÂU (DBS)</span>
             </button>
             <button
               type="button"
               onClick={resetToOverview}
               style={{
-                padding: '6px 10px',
-                fontSize: '0.66rem',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '5px',
+                padding: '8px 12px',
+                fontSize: '0.74rem',
                 fontFamily: 'Share Tech Mono',
-                background: 'rgba(255, 255, 255, 0.06)',
-                color: '#94a3b8',
-                border: '1px solid rgba(255, 255, 255, 0.15)',
-                borderRadius: '3px',
+                fontWeight: 600,
+                background: 'rgba(255, 255, 255, 0.08)',
+                color: '#cbd5e1',
+                border: '1px solid rgba(255, 255, 255, 0.2)',
+                borderRadius: '4px',
                 cursor: 'pointer',
+                transition: 'all 0.2s ease',
               }}
             >
-              ⟲ TOÀN CẢNH
+              <SciFiOverviewHomeIcon size={14} color="#cbd5e1" />
+              <span>TOÀN CẢNH</span>
             </button>
           </div>
         </div>
@@ -1194,28 +1284,28 @@ export default function NeuralNetwork3DFlow({
         {/* DTI Tractography Color Legend */}
         <div
           style={{
-            background: 'rgba(4, 7, 17, 0.88)',
+            background: 'rgba(2, 4, 10, 0.94)',
             padding: '8px 14px',
             borderRadius: '4px',
-            border: '1px solid rgba(0, 243, 255, 0.25)',
-            boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
+            border: '1px solid rgba(0, 243, 255, 0.3)',
+            boxShadow: '0 8px 24px rgba(0,0,0,0.6)',
             display: 'flex',
             flexDirection: 'column',
             gap: '4px',
             pointerEvents: 'auto',
           }}
         >
-          <div style={{ color: '#00f3ff', fontWeight: 700, letterSpacing: '1px', fontSize: '0.68rem' }}>
+          <div style={{ color: '#00f3ff', fontWeight: 700, letterSpacing: '1px', fontSize: '0.70rem' }}>
             CHUẨN MÃ HÓA HƯỚNG TRỤC THẦN KINH DTI (HCP FA):
           </div>
-          <div style={{ display: 'flex', gap: '14px', flexWrap: 'wrap', fontSize: '0.66rem' }}>
-            <span style={{ color: '#ff3366', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+          <div style={{ display: 'flex', gap: '14px', flexWrap: 'wrap', fontSize: '0.68rem', color: '#cbd5e1' }}>
+            <span style={{ color: '#ff3366', display: 'inline-flex', alignItems: 'center', gap: '4px', fontWeight: 600 }}>
               ● Trục X (Đỏ): Liên bán cầu (Corpus Callosum)
             </span>
-            <span style={{ color: '#00ff9d', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+            <span style={{ color: '#00ff9d', display: 'inline-flex', alignItems: 'center', gap: '4px', fontWeight: 600 }}>
               ● Trục Y (Xanh lá): Trước - Sau (Frontal-Occipital)
             </span>
-            <span style={{ color: '#00f3ff', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+            <span style={{ color: '#00f3ff', display: 'inline-flex', alignItems: 'center', gap: '4px', fontWeight: 600 }}>
               ● Trục Z (Xanh lam): Trên - Dưới (Projection)
             </span>
           </div>
@@ -1231,10 +1321,10 @@ export default function NeuralNetwork3DFlow({
                 onClick={() => handleSelectZone(zone)}
                 title={`Bấm để focus cận cảnh vào ${zone.name}`}
                 style={{
-                  background: isSelected ? `${zone.color}26` : 'rgba(4, 7, 17, 0.85)',
-                  border: `1px solid ${isSelected ? zone.color : 'rgba(255, 255, 255, 0.16)'}`,
-                  boxShadow: isSelected ? `0 0 14px ${zone.color}66, inset 0 0 8px ${zone.color}33` : 'none',
-                  padding: '6px 12px',
+                  background: isSelected ? `${zone.color}33` : 'rgba(2, 5, 14, 0.92)',
+                  border: `1.5px solid ${isSelected ? zone.color : 'rgba(255, 255, 255, 0.2)'}`,
+                  boxShadow: isSelected ? `0 0 16px ${zone.color}77, inset 0 0 10px ${zone.color}44` : 'none',
+                  padding: '7px 13px',
                   borderRadius: '4px',
                   cursor: 'pointer',
                   textAlign: 'center',
@@ -1242,10 +1332,10 @@ export default function NeuralNetwork3DFlow({
                   transform: isSelected ? 'translateY(-2px)' : 'none',
                 }}
               >
-                <div style={{ color: isSelected ? '#ffffff' : zone.color, fontWeight: 700, fontSize: '0.68rem', letterSpacing: '0.5px' }}>
+                <div style={{ color: isSelected ? '#ffffff' : zone.color, fontWeight: 700, fontSize: '0.70rem', letterSpacing: '0.5px' }}>
                   {zone.name}
                 </div>
-                <div style={{ color: isSelected ? zone.color : '#94a3b8', fontSize: '0.62rem', marginTop: '1px' }}>
+                <div style={{ color: isSelected ? zone.color : '#94a3b8', fontSize: '0.64rem', marginTop: '2px' }}>
                   {zone.tensor}
                 </div>
               </div>

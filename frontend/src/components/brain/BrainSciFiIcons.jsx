@@ -618,3 +618,254 @@ export const SciFiThresholdArrowIcon = ({ size = 10, color = 'currentColor', cla
   </svg>
 );
 
+// 26. DEEP BRAIN STIMULATION (DBS) — Micro-electrode probe with high-frequency quantum RF shockwaves
+export const SciFiDeepBrainStimulationIcon = ({ size = 18, color = 'currentColor', className = '', ...props }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    className={className}
+    style={{ display: 'inline-block', verticalAlign: 'middle' }}
+    {...props}
+  >
+    {/* Micro-Electrode Needle Shaft */}
+    <line x1="12" y1="2" x2="12" y2="13" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
+    <polygon points="10,2 14,2 13,8 11,8" fill={color} fillOpacity="0.4" />
+    {/* Active Stimulation Tip */}
+    <circle cx="12" cy="13" r="1.6" fill="#ffffff" />
+    {/* High-Frequency Radial Shockwave Waves */}
+    <path d="M8 10C6.5 11.5 6.5 14.5 8 16" stroke={color} strokeWidth="1.4" strokeLinecap="round" />
+    <path d="M16 10C17.5 11.5 17.5 14.5 16 16" stroke={color} strokeWidth="1.4" strokeLinecap="round" />
+    <path d="M5.5 8C3.5 10.5 3.5 15.5 5.5 18" stroke={color} strokeWidth="1.1" strokeDasharray="1.5 1.5" strokeLinecap="round" strokeOpacity="0.75" />
+    <path d="M18.5 8C20.5 10.5 20.5 15.5 18.5 18" stroke={color} strokeWidth="1.1" strokeDasharray="1.5 1.5" strokeLinecap="round" strokeOpacity="0.75" />
+    {/* Quantum Spark Burst */}
+    <line x1="12" y1="16" x2="12" y2="22" stroke={color} strokeWidth="1.6" strokeLinecap="round" />
+    <polygon points="12,18 10,20.5 14,20.5" fill={color} />
+  </svg>
+);
+
+// 27. CYBER CLOSE / CANCEL — Octagonal Reticle with dual diagonal laser crosshairs & target nodes
+export const SciFiCyberCloseCancelIcon = ({ size = 16, color = 'currentColor', className = '', ...props }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    className={className}
+    style={{ display: 'inline-block', verticalAlign: 'middle' }}
+    {...props}
+  >
+    {/* Octagonal Tactical Frame */}
+    <polygon
+      points="7,3 17,3 21,7 21,17 17,21 7,21 3,17 3,7"
+      stroke={color}
+      strokeWidth="1.3"
+      fill={color}
+      fillOpacity="0.12"
+      strokeLinejoin="round"
+    />
+    {/* Diagonal Laser Crosshairs */}
+    <line x1="8" y1="8" x2="16" y2="16" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
+    <line x1="16" y1="8" x2="8" y2="16" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
+    {/* 4 Peripheral Precision Nodes */}
+    <circle cx="12" cy="4" r="0.8" fill={color} />
+    <circle cx="12" cy="20" r="0.8" fill={color} />
+    <circle cx="4" cy="12" r="0.8" fill={color} />
+    <circle cx="20" cy="12" r="0.8" fill={color} />
+  </svg>
+);
+
+// 28. MEMBRANE VOLTAGE — Biological action potential depolarization waveform (mV meter)
+export const SciFiMembraneVoltageIcon = ({ size = 16, color = 'currentColor', className = '', ...props }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    className={className}
+    style={{ display: 'inline-block', verticalAlign: 'middle' }}
+    {...props}
+  >
+    <rect x="2" y="3" width="20" height="18" rx="2" stroke={color} strokeWidth="1.2" fill={color} fillOpacity="0.08" />
+    <line x1="2" y1="12" x2="22" y2="12" stroke={color} strokeWidth="0.8" strokeDasharray="2 2" strokeOpacity="0.4" />
+    {/* Action Potential Depolarization & Hyperpolarization Wave */}
+    <path
+      d="M3 13.5H7L8.5 15L10.5 4.5L12.5 18L14 13.5H21"
+      stroke={color}
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+    <circle cx="10.5" cy="4.5" r="1.3" fill="#ffffff" />
+  </svg>
+);
+
+// 29. SYNAPTIC FREQUENCY — EEG Gamma rhythm oscillations with frequency counter (Hz)
+export const SciFiSynapticFrequencyIcon = ({ size = 16, color = 'currentColor', className = '', ...props }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    className={className}
+    style={{ display: 'inline-block', verticalAlign: 'middle' }}
+    {...props}
+  >
+    <path
+      d="M2 12C3.5 6 4.5 6 6 12C7.5 18 8.5 18 10 12C11.5 6 12.5 6 14 12C15.5 18 16.5 18 18 12C19.5 6 20.5 6 22 12"
+      stroke={color}
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+    <line x1="2" y1="20" x2="22" y2="20" stroke={color} strokeWidth="1" strokeLinecap="round" />
+    <line x1="6" y1="19" x2="6" y2="21" stroke={color} strokeWidth="1" />
+    <line x1="14" y1="19" x2="14" y2="21" stroke={color} strokeWidth="1" />
+    <circle cx="14" cy="6.5" r="1.2" fill="#ffffff" />
+  </svg>
+);
+
+// 30. NEUROCHEMISTRY FLASK — Molecular synthesizer flask with bio-active receptor rings
+export const SciFiNeuroChemistryFlaskIcon = ({ size = 16, color = 'currentColor', className = '', ...props }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    className={className}
+    style={{ display: 'inline-block', verticalAlign: 'middle' }}
+    {...props}
+  >
+    {/* Erlenmeyer / Reaction Flask Body */}
+    <path
+      d="M9 3H15M10 3V8.5L4.5 18.5C3.8 19.8 4.7 21.5 6.2 21.5H17.8C19.3 21.5 20.2 19.8 19.5 18.5L14 8.5V3"
+      stroke={color}
+      strokeWidth="1.4"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      fill={color}
+      fillOpacity="0.1"
+    />
+    {/* Liquid Line */}
+    <path d="M7 15C9 14.2 11 15.8 13 15C15 14.2 16 15 17 15" stroke={color} strokeWidth="1.2" strokeLinecap="round" />
+    {/* Active Chemical Bubbles */}
+    <circle cx="9" cy="18" r="1.2" fill="#ffffff" />
+    <circle cx="14" cy="17.5" r="0.9" fill={color} />
+    <circle cx="12" cy="12" r="1" fill={color} />
+  </svg>
+);
+
+// 31. OVERVIEW HOME — Holographic 3D Global Space Coordinate with return orbit
+export const SciFiOverviewHomeIcon = ({ size = 16, color = 'currentColor', className = '', ...props }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    className={className}
+    style={{ display: 'inline-block', verticalAlign: 'middle' }}
+    {...props}
+  >
+    {/* Central Hexagonal Core */}
+    <polygon points="12,3 18,6.5 18,13.5 12,17 6,13.5 6,6.5" stroke={color} strokeWidth="1.3" fill={color} fillOpacity="0.18" />
+    {/* Coordinate Axes */}
+    <line x1="12" y1="3" x2="12" y2="17" stroke={color} strokeWidth="0.9" strokeDasharray="1.5 1.5" />
+    <line x1="6" y1="10" x2="18" y2="10" stroke={color} strokeWidth="0.9" strokeDasharray="1.5 1.5" />
+    {/* Circular Orbit Ring with Return Chevron */}
+    <path d="M4 18C6.5 21 17.5 21 20 18" stroke={color} strokeWidth="1.4" strokeLinecap="round" />
+    <polyline points="18,15 20.5,18 18,20.5" stroke={color} strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+    <circle cx="12" cy="10" r="1.4" fill="#ffffff" />
+  </svg>
+);
+
+// 32. PERSPECTIVE EYE — 3D volumetric viewpoint prism
+export const SciFiPerspectiveEyeIcon = ({ size = 14, color = 'currentColor', className = '', ...props }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    className={className}
+    style={{ display: 'inline-block', verticalAlign: 'middle' }}
+    {...props}
+  >
+    <path d="M2 12S6 4 12 4S22 12 22 12S18 20 12 20S2 12 2 12Z" stroke={color} strokeWidth="1.4" fill={color} fillOpacity="0.1" />
+    <circle cx="12" cy="12" r="4.5" stroke={color} strokeWidth="1.2" />
+    <circle cx="12" cy="12" r="1.8" fill="#ffffff" />
+    <line x1="12" y1="2" x2="12" y2="4" stroke={color} strokeWidth="1.2" />
+    <line x1="12" y1="20" x2="12" y2="22" stroke={color} strokeWidth="1.2" />
+  </svg>
+);
+
+// 33. AXIAL TOP — Brain top-down axial section icon
+export const SciFiAxialTopIcon = ({ size = 14, color = 'currentColor', className = '', ...props }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    className={className}
+    style={{ display: 'inline-block', verticalAlign: 'middle' }}
+    {...props}
+  >
+    <ellipse cx="12" cy="12" rx="9" ry="7.5" stroke={color} strokeWidth="1.3" fill={color} fillOpacity="0.1" />
+    <line x1="12" y1="4.5" x2="12" y2="19.5" stroke={color} strokeWidth="1.4" strokeDasharray="1.5 1.5" />
+    <circle cx="12" cy="12" r="2.2" stroke={color} strokeWidth="1" fill={color} fillOpacity="0.3" />
+    <circle cx="8" cy="12" r="1" fill={color} />
+    <circle cx="16" cy="12" r="1" fill={color} />
+  </svg>
+);
+
+// 34. SAGITTAL LATERAL — Lateral side view silhouette
+export const SciFiSagittalLateralIcon = ({ size = 14, color = 'currentColor', className = '', ...props }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    className={className}
+    style={{ display: 'inline-block', verticalAlign: 'middle' }}
+    {...props}
+  >
+    <path
+      d="M5 14C3.5 12 3.5 8 6 5C9 2 16 2 19 6C21 9 20 14 17 16C15 17 14 19 13 21C11 21 10 19 9 17C7 17 6 15.5 5 14Z"
+      stroke={color}
+      strokeWidth="1.3"
+      fill={color}
+      fillOpacity="0.12"
+      strokeLinejoin="round"
+    />
+    <circle cx="12" cy="10" r="1.5" fill="#ffffff" />
+  </svg>
+);
+
+// 35. CORONAL FRONT — Frontal coronal section icon
+export const SciFiCoronalFrontIcon = ({ size = 14, color = 'currentColor', className = '', ...props }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    className={className}
+    style={{ display: 'inline-block', verticalAlign: 'middle' }}
+    {...props}
+  >
+    <path d="M4 14C4 7 8 4 12 4C16 4 20 7 20 14C20 18 17 20 12 20C7 20 4 18 4 14Z" stroke={color} strokeWidth="1.3" fill={color} fillOpacity="0.1" />
+    <line x1="12" y1="4" x2="12" y2="20" stroke={color} strokeWidth="1.2" strokeDasharray="1.5 1.5" />
+    <circle cx="8" cy="13" r="1.5" stroke={color} strokeWidth="1" fill={color} fillOpacity="0.3" />
+    <circle cx="16" cy="13" r="1.5" stroke={color} strokeWidth="1" fill={color} fillOpacity="0.3" />
+  </svg>
+);
+
+

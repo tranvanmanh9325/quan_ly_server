@@ -88,6 +88,7 @@ export default function WorldMapPage() {
   const [showOrbits, setShowOrbits] = useState(true);
   const [selectedSatellite, setSelectedSatellite] = useState(null);
   const [telemetrySatellite, setTelemetrySatellite] = useState(null);
+  const [c2EpochSec] = useState(() => Math.floor(Date.now() / 1000));
 
   // useDeferredValue: pass borders to Globe at low priority so first paint isn't blocked
   const deferredBorders = useDeferredValue(bordersData);
@@ -117,10 +118,7 @@ export default function WorldMapPage() {
 
   // 1-Hz SGP4 real-time telemetry updater for active satellite card
   useEffect(() => {
-    if (!selectedSatellite) {
-      setTelemetrySatellite(null);
-      return;
-    }
+    if (!selectedSatellite) return;
 
     const updateTelemetry = () => {
       const pos = getSatellitePosition(selectedSatellite, new Date());
@@ -129,7 +127,10 @@ export default function WorldMapPage() {
 
     updateTelemetry();
     const timer = setInterval(updateTelemetry, 1000);
-    return () => clearInterval(timer);
+    return () => {
+      clearInterval(timer);
+      setTelemetrySatellite(null);
+    };
   }, [selectedSatellite]);
 
 
@@ -191,7 +192,7 @@ export default function WorldMapPage() {
           );
           lat = pos.coords.latitude;
           lon = pos.coords.longitude;
-        } catch (_) { /* no GPS */ }
+        } catch { /* no GPS */ }
 
         if (lat !== 0 || lon !== 0) {
           try {
@@ -207,7 +208,7 @@ export default function WorldMapPage() {
               country = geo.countryName || 'Vietnam';
               countryCode = geo.countryCode || 'VN';
             }
-          } catch (_) { /* non-blocking */ }
+          } catch { /* non-blocking */ }
         }
 
         await axios.post('/api/metrics/client-checkin', { lat, lon, city, country, countryCode });
@@ -222,7 +223,7 @@ export default function WorldMapPage() {
     return () => clearInterval(interval);
   }, []);
 
-  const fetchGeolocationData = async () => {
+  const fetchGeolocationData = useCallback(async () => {
     setLoading(true);
     setErrorMsg(null);
     try {
@@ -233,9 +234,24 @@ export default function WorldMapPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  useEffect(() => { fetchGeolocationData(); }, []);
+  useEffect(() => {
+    let active = true;
+    axios.get('/api/metrics/geolocation')
+      .then(res => {
+        if (active && res.data) {
+          setGeoData({ server: res.data.server || null, connections: res.data.connections || [] });
+        }
+      })
+      .catch(err => {
+        if (active) setErrorMsg(`Failed to fetch geolocation: ${err.message}`);
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => { active = false; };
+  }, []);
 
   // Sync autoRotate + speed to OrbitControls & Pause 100% when tab is hidden
   useEffect(() => {
@@ -290,7 +306,7 @@ export default function WorldMapPage() {
 
     // 2. Downlink lasers from Vietnamese satellites and selected satellite
     if (showSatellites) {
-      const nowSec = Date.now() / 1000;
+      const nowSec = c2EpochSec;
       
       // If a specific satellite is selected, prioritize its dedicated C2 downlink
       if (selectedSatellite) {
@@ -358,7 +374,7 @@ export default function WorldMapPage() {
     }
 
     return arcs;
-  }, [geoData, showSatellites, selectedSatellite]);
+  }, [geoData, showSatellites, selectedSatellite, c2EpochSec]);
 
   const pointsData = useMemo(() => {
 

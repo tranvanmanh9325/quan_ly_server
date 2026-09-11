@@ -120,7 +120,6 @@ class AiAgentService:
         self.ssh_client = ssh_client
         self.message_cache = message_cache
         self.fb_service = fb_service_ref
-        if hasattr(self, 'tools'): self.tools.set_fb_service(fb_service)
         # Injected post-construction to avoid circular imports
         self.telegram_bot: Any = None
         self.browser_agent: Any = None

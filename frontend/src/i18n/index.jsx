@@ -50,12 +50,14 @@ export function I18nProvider({ children }) {
   );
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useTranslation() {
   const ctx = useContext(I18nContext);
   if (!ctx) throw new Error('useTranslation must be used inside I18nProvider');
   return ctx;
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export const SUPPORTED_LANGS = [
   { code: 'en', label: 'EN', flag: '🇺🇸', name: 'English' },
   { code: 'vi', label: 'VI', flag: '🇻🇳', name: 'Tiếng Việt' },

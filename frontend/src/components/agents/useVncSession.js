@@ -39,7 +39,9 @@ export function useVncSession({ onSessionSaved } = {}) {
         const apiPrefix = vncPlatform === 'tiktok' ? '/api/tiktok' : '/api/facebook';
         try {
           navigator.sendBeacon(`${apiPrefix}/close-browser-session`);
-        } catch {}
+        } catch {
+          // Ignore beacon delivery errors during page unload
+        }
       }
     };
     window.addEventListener('beforeunload', handleBeforeUnload);
@@ -51,7 +53,9 @@ export function useVncSession({ onSessionSaved } = {}) {
         const apiPrefix = vncPlatform === 'tiktok' ? '/api/tiktok' : '/api/facebook';
         try {
           navigator.sendBeacon(`${apiPrefix}/close-browser-session`);
-        } catch {}
+        } catch {
+          // Ignore beacon delivery errors during unmount
+        }
       }
     };
   }, [showVncModal, vncPlatform]);
@@ -108,7 +112,9 @@ export function useVncSession({ onSessionSaved } = {}) {
     const apiPrefix = vncPlatform === 'tiktok' ? '/api/tiktok' : '/api/facebook';
     try {
       await axios.post(`${apiPrefix}/close-browser-session`);
-    } catch {}
+    } catch {
+      // Best-effort session closure on backend
+    }
   };
 
   const handleSaveBrowserSession = async () => {

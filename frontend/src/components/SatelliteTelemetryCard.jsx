@@ -9,7 +9,6 @@ export default function SatelliteTelemetryCard({ satellite, onClose, onTrackCame
   if (!satellite) return null;
 
   const color = satellite.color || '#00ff9d';
-  const isGeo = satellite.type === 'GEO';
 
   return (
     <div style={{

@@ -24,22 +24,15 @@ export default function AiAgentsPage() {
   const { t } = useTranslation();
   const [searchParams, setSearchParams] = useSearchParams();
   const urlTab = searchParams.get('tab');
-  const [activePlatform, setActivePlatform] = useState(urlTab || 'facebook');
+  const activePlatform = urlTab || 'facebook';
   const [isAutoScroll, setIsAutoScroll] = useState(true);
   const [isHovered, setIsHovered] = useState(false);
   const marqueeContainerRef = useRef(null);
 
   // Sync tab with URL query parameter
   const handleSelectPlatform = (id) => {
-    setActivePlatform(id);
     setSearchParams({ tab: id }, { replace: true });
   };
-
-  useEffect(() => {
-    if (urlTab && urlTab !== activePlatform) {
-      setActivePlatform(urlTab);
-    }
-  }, [urlTab]);
 
   // ── Telegram state ────────────────────────────────────────────────────────
   const [tgConfig, setTgConfig] = useState({
@@ -57,7 +50,6 @@ export default function AiAgentsPage() {
   const tgSaveTimeoutRef = useRef(null);
 
   const fetchTgConfig = useCallback(() => {
-    setTgLoading(true);
     axios.get('/api/telegram/config')
       .then(res => {
         const d = res.data;
@@ -166,7 +158,7 @@ export default function AiAgentsPage() {
   const vnc = useVncSession({
     onSessionSaved: (platform) => {
       if (platform === 'facebook') fetchFbConfig();
-      if (platform === 'tiktok') setTtRefreshKey(Date.now());
+      if (platform === 'tiktok') setTtRefreshKey(k => k + 1);
     },
   });
   const handleLaunchVncBrowser = () => vnc.launchVnc('facebook');

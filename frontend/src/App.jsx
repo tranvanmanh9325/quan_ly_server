@@ -6,7 +6,7 @@ import ProtectedRoute from './components/ProtectedRoute';
 import ErrorBoundary from './components/ErrorBoundary';
 import SpaceInteractionLayer from './components/SpaceInteractionLayer';
 import { loadSettings } from './utils/settings';
-import { getToken, isAuthenticated } from './utils/auth';
+import { isAuthenticated } from './utils/auth';
 
 // ─── Code Splitting: Lazy-load individual routes to reduce initial bundle size ─
 const LoginPage       = lazy(() => import('./pages/LoginPage'));

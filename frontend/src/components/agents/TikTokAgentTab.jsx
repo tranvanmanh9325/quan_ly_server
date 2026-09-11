@@ -7,7 +7,7 @@ import {
   SciFiMessageStreakIcon, SciFiAddFriendIcon, SciFiTrashIcon,
   SciFiRadarScanIcon, SciFiAiChatBubbleIcon, SciFiVerifiedCheckIcon,
   SciFiUsersGroupIcon, SciFiSearchIcon, SciFiPlayPulseIcon,
-  SciFiHoloSilhouette,
+  SciFiHoloSilhouette, SciFiTikTokIcon, SciFiInfoIcon, SciFiTerminalPromptIcon,
 } from '../SciFiIcons';
 import {
   SectionHeader, SettingRow, Toggle, ThresholdSlider, DurationChip
@@ -64,7 +64,6 @@ export default function TikTokAgentTab({
   const [ttShowManualAdd, setTtShowManualAdd] = useState(false);
 
   const fetchTtConfig = useCallback(() => {
-    setTtLoading(true);
     axios.get('/api/tiktok/config')
       .then(res => {
         const d = res.data;
@@ -1208,7 +1207,7 @@ export default function TikTokAgentTab({
                                     fontFamily: 'Share Tech Mono',
                                     fontSize: '0.72rem',
                                     fontWeight: 'bold',
-                                    cursor: Boolean(ttInstantSending) ? 'not-allowed' : 'pointer',
+                                    cursor: ttInstantSending ? 'not-allowed' : 'pointer',
                                     borderRadius: '2px',
                                     display: 'flex',
                                     alignItems: 'center',

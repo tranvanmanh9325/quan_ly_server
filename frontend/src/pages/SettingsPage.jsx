@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import {
   SciFiSettingsIcon, SciFiRefreshIcon, SciFiPulseBadge,
@@ -228,7 +227,6 @@ const SciFiSelect = ({ value, onChange, options, color = 'var(--accent-purple)' 
 // ── Main Component ──────────────────────────────────────────────────────────
 export default function SettingsPage() {
   const { t } = useTranslation();
-  const navigate = useNavigate();
   const [settings, setSettings] = useState(loadSettings);
   const [saved, setSaved] = useState(false);
   const [connStatus, setConnStatus] = useState('checking');

@@ -15,6 +15,9 @@ from app.core.brain_core import (
     GlobalWorkspace,
     HyperdimensionalCortex,
     NeurotransmitterState,
+    TheoryOfMindEngine,
+    UserAffectiveState,
+    ResponseGranularity,
     WorkspaceSignal,
     HV_DIM_BITS,
     HV_DIM_BYTES,
@@ -164,9 +167,136 @@ def test_artificial_brain_full_lifecycle(temp_cortex_dir):
     brain.cortex.close()
 
 
+def test_six_neurotransmitters_and_circumplex():
+    """Verifies all 6 Jaak Panksepp neurochemicals and Russell Circumplex quadrant mapping."""
+    neuro = NeurotransmitterState()
+    assert hasattr(neuro, "oxytocin") and neuro.oxytocin == 0.60
+    assert hasattr(neuro, "endorphins") and neuro.endorphins == 0.40
+
+    # 1. Test Quadrant 1: High Valence, High Arousal (Playful / Excited)
+    neuro.stimulate("dopamine", 0.40)
+    neuro.stimulate("endorphins", 0.40)
+    neuro.stimulate("cortisol", -0.05)
+    val, aro, quad, title, hint = neuro.calculate_circumplex()
+    assert "Q1" in quad
+    assert val > 0 and aro > 0.4
+    assert "Hào hứng" in title or "Sôi nổi" in title
+
+    # 2. Test Quadrant 2: Low Valence, High Arousal (Alert / Battle Mode)
+    neuro2 = NeurotransmitterState()
+    neuro2.stimulate("noradrenaline", 0.70)
+    neuro2.stimulate("cortisol", 0.80)
+    neuro2.stimulate("serotonin", -0.40)
+    val2, aro2, quad2, title2, hint2 = neuro2.calculate_circumplex()
+    assert "Q2" in quad2
+    assert val2 < 0 and aro2 > 0.4
+    assert "Cảnh giác" in title2 or "Chiến đấu" in title2
+
+    # 3. Test Quadrant 4: High Valence, Low Arousal (Warm / Caring Homeostasis)
+    neuro4 = NeurotransmitterState()
+    neuro4.stimulate("oxytocin", 0.35)
+    neuro4.stimulate("serotonin", 0.25)
+    neuro4.stimulate("noradrenaline", -0.15)
+    val4, aro4, quad4, title4, hint4 = neuro4.calculate_circumplex()
+    assert "Q4" in quad4
+    assert val4 > 0 and aro4 <= 0.4
+    assert "Trầm ấm" in title4 or "Săn sóc" in title4
+
+
+def test_theory_of_mind_engine():
+    """Verifies Theory of Mind (ToM) mental model inference across varied user states."""
+    tom = TheoryOfMindEngine()
+
+    # Case 1: Fatigued user
+    p_fatigued = tom.analyze_mental_state("anh mệt quá, đi ngủ đây")
+    assert p_fatigued.affective_state == UserAffectiveState.FATIGUED
+    assert p_fatigued.granularity == ResponseGranularity.FLASH_BLUF
+    assert p_fatigued.cognitive_bandwidth <= 0.45
+
+    # Case 2: Stressed crisis
+    p_stress = tom.analyze_mental_state("server bị sập rồi cứu anh với, crash liên tục")
+    assert p_stress.affective_state == UserAffectiveState.STRESSED
+    assert p_stress.granularity == ResponseGranularity.FLASH_BLUF
+    assert "sự cố" in p_stress.hidden_intent.lower() or "downtime" in p_stress.hidden_intent.lower()
+
+    # Case 3: Excited exploration
+    p_excited = tom.analyze_mental_state("anh mới phát hiện ra kỹ thuật này hay cực kỳ, thử xem nhé")
+    assert p_excited.affective_state == UserAffectiveState.EXCITED
+    assert p_excited.granularity == ResponseGranularity.DEEP_DIALECTICAL
+    assert p_excited.cognitive_bandwidth >= 0.85
+
+    # Case 4: Equanimity / Standard check
+    p_normal = tom.analyze_mental_state("kiểm tra dung lượng ổ đĩa giúp anh")
+    assert p_normal.affective_state == UserAffectiveState.EQUANIMITY
+    assert p_normal.granularity == ResponseGranularity.STRUCTURED_BULLET
+
+
+def test_dream_engine_sws_and_epiphany(temp_cortex_dir):
+    """Verifies SWS consolidation and morning epiphany formatting in SubconsciousDreamEngine."""
+    from app.services.dream_engine import SubconsciousDreamEngine
+
+    brain = ArtificialBrain(storage_dir=temp_cortex_dir)
+    # Add dummy working memory
+    brain.perceive_user_interaction("Lưu ý tối ưu L3 Cache cho Nginx và Haswell", is_correction=False, task_success=True)
+
+    class DummyLlmRouter:
+        async def complete(self, **kwargs):
+            return {
+                "choices": [{
+                    "message": {
+                        "content": '{"topic": "Tối ưu L3 Cache qua Zero-Copy", "insight": "Giảm tải 40% memory bus bằng mmap streaming.", "sisterly_note": "Em đã tối ưu xong, anh yên tâm ngủ ngon nhé!"}'
+                    }
+                }]
+            }
+
+    class DummySshClient:
+        async def execute_command(self, cmd):
+            return "0.15 0.20 0.18 1/120 12345"
+
+    dream = SubconsciousDreamEngine(
+        brain=brain,
+        llm_router=DummyLlmRouter(),
+        ssh_client=DummySshClient(),
+        storage_dir=temp_cortex_dir,
+    )
+
+    # Test SWS consolidation
+    import asyncio
+    loop = asyncio.new_event_loop()
+    sws_res = loop.run_until_complete(dream.run_sws_cycle())
+    assert sws_res["phase"] == "SWS"
+    assert sws_res["consolidated_vectors"] == 1
+    assert len(brain.working_memory) == 0
+
+    # Test REM dream generation
+    rem_res = loop.run_until_complete(dream.run_rem_dream_cycle(force=True))
+    assert rem_res is not None
+    assert rem_res["topic"] == "Tối ưu L3 Cache qua Zero-Copy"
+    assert dream.pending_morning_epiphany is not None
+
+    # Test pop_morning_epiphany during morning window
+    dream.is_morning_window = lambda: True
+    msg = dream.pop_morning_epiphany()
+    assert msg is not None
+    assert "Chào buổi sáng anh Mạnh!" in msg
+    assert "Tối ưu L3 Cache qua Zero-Copy" in msg
+    assert dream.pending_morning_epiphany is None  # Popped & consumed!
+
+    loop.close()
+    brain.cortex.close()
+
+
 if __name__ == "__main__":
     print("Testing test_neurotransmitter_decay_and_stimulation...")
     test_neurotransmitter_decay_and_stimulation()
+    print("  -> Passed!")
+
+    print("Testing test_six_neurotransmitters_and_circumplex...")
+    test_six_neurotransmitters_and_circumplex()
+    print("  -> Passed!")
+
+    print("Testing test_theory_of_mind_engine...")
+    test_theory_of_mind_engine()
     print("  -> Passed!")
 
     print("Testing test_active_inference_free_energy...")
@@ -197,4 +327,12 @@ if __name__ == "__main__":
     finally:
         shutil.rmtree(tmp2, ignore_errors=True)
 
-    print("\nALL 6 NEUROMORPHIC BRAIN CORE TESTS PASSED WITH 100% SUCCESS!")
+    tmp3 = Path(tempfile.mkdtemp(prefix="test_cortex_"))
+    try:
+        print("Testing test_dream_engine_sws_and_epiphany...")
+        test_dream_engine_sws_and_epiphany(tmp3)
+        print("  -> Passed!")
+    finally:
+        shutil.rmtree(tmp3, ignore_errors=True)
+
+    print("\nALL 9 NEUROMORPHIC COGNITIVE ARCHITECTURE TESTS PASSED WITH 100% SUCCESS!")

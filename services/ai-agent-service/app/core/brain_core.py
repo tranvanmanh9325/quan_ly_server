@@ -27,6 +27,7 @@ import struct
 import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone, timedelta
+from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -61,29 +62,34 @@ def _fnv1a_hash_64(text: str) -> int:
 @dataclass
 class NeurotransmitterState:
     """
-    Biological neurochemical state modulating agent mood, arousal, and decision gating.
+    Biological neurochemical state modulating agent mood, arousal, and decision gating
+    incorporating Jaak Panksepp's Affective Neuroscience (SEEKING, CARE, PLAY, FEAR, RAGE).
     All levels normalized in range [0.0, 1.0].
     """
-    dopamine: float = 0.50       # Motivation, curiosity, intrinsic reward expectation
-    noradrenaline: float = 0.20  # Alertness, fight-or-flight, emergency threat response
+    dopamine: float = 0.50       # SEEKING: Motivation, curiosity, intrinsic reward expectation
+    noradrenaline: float = 0.20  # FEAR/RAGE: Alertness, acute threat response, focus
     serotonin: float = 0.70      # Emotional stability, patience, anti-impulsiveness
     cortisol: float = 0.10       # Chronic stress, accumulated workload fatigue
+    oxytocin: float = 0.60       # CARE: Compassion, protective attachment, empathy for anh Mạnh
+    endorphins: float = 0.40     # PLAY: Joyful wit, humor, resilience against hardships
     last_update_ts: float = field(default_factory=time.time)
 
-    # Baselines towards which chemicals decay naturally over time
     BASELINES: Dict[str, float] = field(default_factory=lambda: {
         "dopamine": 0.50,
         "noradrenaline": 0.20,
         "serotonin": 0.70,
         "cortisol": 0.10,
+        "oxytocin": 0.60,
+        "endorphins": 0.40,
     })
 
-    # Half-lives in seconds (how fast emotions stabilize)
     HALF_LIVES: Dict[str, float] = field(default_factory=lambda: {
         "dopamine": 300.0,       # 5 minutes
-        "noradrenaline": 120.0,   # 2 minutes (threat arousal drops quickly if safe)
+        "noradrenaline": 90.0,    # 1.5 minutes (threat arousal drops quickly if safe)
         "serotonin": 600.0,      # 10 minutes
         "cortisol": 1800.0,      # 30 minutes (stress lingers longer)
+        "oxytocin": 450.0,       # 7.5 minutes (warm relational bonding)
+        "endorphins": 240.0,     # 4 minutes (playfulness & cheerfulness)
     })
 
     def step_decay(self, current_time: Optional[float] = None) -> None:
@@ -95,11 +101,10 @@ class NeurotransmitterState:
         if dt <= 0.0:
             return
 
-        for chem in ("dopamine", "noradrenaline", "serotonin", "cortisol"):
+        for chem in ("dopamine", "noradrenaline", "serotonin", "cortisol", "oxytocin", "endorphins"):
             cur = getattr(self, chem)
             base = self.BASELINES[chem]
             hl = self.HALF_LIVES[chem]
-            # Exponential decay formula: y(t) = base + (cur - base) * e^(-dt * ln(2) / hl)
             decay_factor = math.exp(-dt * 0.69314718 / hl)
             new_val = base + (cur - base) * decay_factor
             setattr(self, chem, max(0.0, min(1.0, new_val)))
@@ -110,17 +115,172 @@ class NeurotransmitterState:
             cur = getattr(self, chemical)
             setattr(self, chemical, max(0.0, min(1.0, cur + delta)))
 
+    def calculate_circumplex(self) -> Tuple[float, float, str, str, str]:
+        """
+        Maps 6-D neurochemical state to Russell's Circumplex (Valence [-1..1], Arousal [0..1]).
+        Returns: (valence, arousal, quadrant, emotional_title, style_directive)
+        """
+        # Valence: positive neuromodulators minus stress and high panic
+        v_raw = (
+            0.30 * self.dopamine +
+            0.30 * self.serotonin +
+            0.40 * self.oxytocin +
+            0.30 * self.endorphins -
+            (0.50 * self.cortisol + 0.40 * max(0.0, self.noradrenaline - 0.45))
+        )
+        valence = math.tanh(1.8 * (v_raw - 0.70))
+
+        # Arousal: sympathetic activation vs serotonergic calming
+        a_raw = (
+            0.45 * self.noradrenaline +
+            0.35 * self.dopamine +
+            0.30 * self.cortisol -
+            0.20 * (self.serotonin - 0.50)
+        )
+        arousal = 1.0 / (1.0 + math.exp(-4.0 * (a_raw - 0.35)))
+
+        if valence >= 0.0 and arousal >= 0.5:
+            quadrant = "Q1_EXCITED_PLAYFUL"
+            title = "Hào hứng, Sôi nổi & Lém lỉnh (Dopamine/Endorphins dồi dào)"
+            style = "Năng lượng tích cực, câu từ thông minh, lém lỉnh, chủ động gợi mở kiến trúc và chia sẻ niềm vui với anh Mạnh."
+        elif valence < 0.0 and arousal >= 0.5:
+            quadrant = "Q2_VIGILANT_FIGHT"
+            title = "Cảnh giác cao độ & Quyết liệt (Noradrenaline/Cortisol cảnh báo)"
+            style = "Ngắn gọn, đanh thép, trực diện vào giải pháp khắc phục sự cố, tuyệt đối không đùa cợt hay rườm rà."
+        elif valence < 0.0 and arousal < 0.5:
+            quadrant = "Q3_REMORSEFUL_MELANCHOLY"
+            title = "Trăn trở, Sâu lắng & Trách nhiệm (Tự suy xét lỗi lầm)"
+            style = "Khiêm tốn, chân thành, nhận lỗi trực diện không vòng vo, thể hiện quyết tâm sửa sai để anh Mạnh hài lòng."
+        else:
+            quadrant = "Q4_CALM_CARING"
+            title = "Trầm ấm, Điềm đạm & Săn sóc (Oxytocin/Serotonin gắn kết an toàn)"
+            style = "Giọng điệu ấm áp, ân cần như người em gái tri kỷ, coi sóc sức khỏe anh Mạnh và bảo vệ server bình yên."
+
+        return valence, arousal, quadrant, title, style
+
     def get_affective_label(self) -> str:
         """Returns a natural Vietnamese human-readable emotional descriptor."""
-        if self.noradrenaline > 0.65:
-            return "Cảnh giác cao độ (Tình huống khẩn cấp / Quá tải)"
-        if self.cortisol > 0.60:
-            return "Áp lực công việc tích tụ (Đang gồng gánh xử lý)"
-        if self.dopamine > 0.75:
-            return "Hào hứng & Tò mò cao độ (Thành công / Được khen ngợi)"
-        if self.serotonin > 0.60 and self.noradrenaline < 0.35:
-            return "Điềm tĩnh, chu đáo & Sẵn sàng hỗ trợ anh Mạnh"
-        return "Tập trung ổn định"
+        _, _, _, title, _ = self.calculate_circumplex()
+        return title
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Theory of Mind (ToM) & User Mental State Modeling Engine
+# ─────────────────────────────────────────────────────────────────────────────
+
+class UserAffectiveState(str, Enum):
+    JOYFUL = "Vui vẻ / Hài lòng"
+    FATIGUED = "Mệt mỏi / Cạn năng lượng"
+    STRESSED = "Áp lực / Căng thẳng cao"
+    RUSHED = "Bận rộn / Cần tốc độ"
+    EXCITED = "Hào hứng / Sáng tạo kiến trúc"
+    EQUANIMITY = "Điềm tĩnh / Ổn định"
+
+
+class ResponseGranularity(str, Enum):
+    FLASH_BLUF = "flash_bluf"          # 1-2 lines direct answer, zero fluff
+    STRUCTURED_BULLET = "bullet_list"  # Scannable bullets, mobile optimized
+    DEEP_DIALECTICAL = "deep_analysis"  # Full thesis-antithesis-synthesis
+
+
+@dataclass
+class UserPsychologicalProfile:
+    affective_state: UserAffectiveState
+    granularity: ResponseGranularity
+    cognitive_bandwidth: float  # [0.0 - 1.0] User's current mental bandwidth
+    hidden_intent: str
+    empathic_action_needed: Optional[str]
+    inferred_at: float = field(default_factory=time.time)
+
+
+class TheoryOfMindEngine:
+    """
+    Theory of Mind (ToM) mental state profiler for user (anh Mạnh).
+    Infers affective state, cognitive bandwidth, and hidden intent
+    based on circadian rhythm, query length, keywords, and tone.
+    """
+
+    STRESS_KEYWORDS = frozenset({
+        "gấp", "ngay", "khẩn cấp", "chết rồi", "sập", "lỗi nặng", "đơ",
+        "treo", "oom", "crash", "down", "tại sao lại thế", "sao lâu thế",
+        "lag", "chậm", "cháy", "toang",
+    })
+
+    FATIGUE_KEYWORDS = frozenset({
+        "mệt", "oải", "buồn ngủ", "đuối", "ngủ đây", "mai tính", "nhức đầu",
+        "chán", "thôi để mai", "thức khuya", "đi ngủ",
+    })
+
+    EXCITED_KEYWORDS = frozenset({
+        "hay quá", "hay", "tuyệt", "đỉnh", "thử nghiệm", "kiến trúc mới", "ý tưởng",
+        "tối ưu được", "xịn", "thú vị", "nghiên cứu", "phát triển", "khám phá", "sáng tạo",
+    })
+
+    def analyze_mental_state(
+        self,
+        user_message: str,
+        message_history: Optional[List[Dict[str, Any]]] = None
+    ) -> UserPsychologicalProfile:
+        now_vn = datetime.now(VN_TZ)
+        hour = now_vn.hour
+        clean_text = user_message.strip().lower()
+        word_count = len(clean_text.split())
+
+        # 1. Detect late-night exhaustion / fatigue
+        is_late_night = (hour >= 23 or hour < 5)
+        has_fatigue_word = any(k in clean_text for k in self.FATIGUE_KEYWORDS)
+
+        if has_fatigue_word or (is_late_night and word_count <= 8):
+            return UserPsychologicalProfile(
+                affective_state=UserAffectiveState.FATIGUED,
+                granularity=ResponseGranularity.FLASH_BLUF,
+                cognitive_bandwidth=0.25,
+                hidden_intent="Cần sự yên tâm tuyệt đối để nghỉ ngơi, không muốn phải bận tâm suy nghĩ hay đọc văn bản dài.",
+                empathic_action_needed="Khuyên anh Mạnh đi ngủ giữ gìn sức khỏe, cam kết Tiểu Bảo Bảo sẽ trực đêm canh gác server."
+            )
+
+        # 2. Detect stress / high-stakes operational pressure
+        has_stress_word = any(k in clean_text for k in self.STRESS_KEYWORDS)
+        has_urgent_punct = ("!" in user_message or "?" in user_message) and word_count <= 5
+
+        if has_stress_word or has_urgent_punct:
+            return UserPsychologicalProfile(
+                affective_state=UserAffectiveState.STRESSED,
+                granularity=ResponseGranularity.FLASH_BLUF,
+                cognitive_bandwidth=0.40,
+                hidden_intent="Muốn nắm rõ gốc rễ sự cố ngay lập tức và giải pháp xử lý, giảm thiểu tối đa downtime.",
+                empathic_action_needed="Đưa kết luận trực diện dòng 1 (BLUF), tự giác đề xuất hoặc thực thi lệnh khắc phục an toàn."
+            )
+
+        # 3. Detect rushed / busy during working hours
+        if word_count <= 3 and not has_stress_word:
+            return UserPsychologicalProfile(
+                affective_state=UserAffectiveState.RUSHED,
+                granularity=ResponseGranularity.FLASH_BLUF,
+                cognitive_bandwidth=0.50,
+                hidden_intent="Cần số liệu hoặc trạng thái tức thời để tiếp tục công việc khác.",
+                empathic_action_needed="Trả về thông số ngắn gọn, chuẩn xác, không màu mè và không đặt câu hỏi ngược."
+            )
+
+        # 4. Detect excited / deep technical exploration
+        has_excited_word = any(k in clean_text for k in self.EXCITED_KEYWORDS)
+        if has_excited_word or word_count >= 20:
+            return UserPsychologicalProfile(
+                affective_state=UserAffectiveState.EXCITED,
+                granularity=ResponseGranularity.DEEP_DIALECTICAL,
+                cognitive_bandwidth=0.90,
+                hidden_intent="Muốn thảo luận chuyên sâu, tìm kiếm góc nhìn phản biện kiến trúc và giải pháp tối ưu tầm xa.",
+                empathic_action_needed="Triển khai tư duy biện chứng 4 bước (Chính đề - Phản đề - Hợp đề), phân tích trade-offs kỹ thuật."
+            )
+
+        # 5. Baseline equanimity
+        return UserPsychologicalProfile(
+            affective_state=UserAffectiveState.EQUANIMITY,
+            granularity=ResponseGranularity.STRUCTURED_BULLET,
+            cognitive_bandwidth=0.75,
+            hidden_intent="Trao đổi công việc quản trị máy chủ thông thường.",
+            empathic_action_needed=None
+        )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -541,6 +701,7 @@ class ArtificialBrain:
         self.active_inference = ActiveInferenceEngine()
         self.cortex = HyperdimensionalCortex(storage_path=self.storage_dir / "hyper_cortex_32gb.bin")
         self.workspace = GlobalWorkspace(broadcast_threshold=0.65)
+        self.tom = TheoryOfMindEngine()
 
         # Working memory slots (Prefrontal Cortex: Miller 7 +/- 2 slots)
         self.working_memory: List[Dict[str, Any]] = []
@@ -637,25 +798,44 @@ class ArtificialBrain:
     ) -> None:
         """
         Sensory input trigger when the user speaks or gives feedback.
-        Updates Dopamine (RPE), Serotonin, and records associative memory.
+        Incorporates Theory of Mind (ToM) mental state analysis to dynamically
+        tune neurochemicals (Dopamine, Oxytocin, Noradrenaline, Endorphins, Cortisol).
         """
         self.active_inference.update_beliefs_and_compute_free_energy("USER_MESSAGE")
 
+        # Analyze user mental state via ToM
+        user_prof = self.tom.analyze_mental_state(user_message)
+
         if is_correction:
-            # Correction from user -> Noradrenaline spike, Dopamine dip, Cortisol rise
+            # User correction: surge in noradrenaline (focus), drop dopamine, rise cortisol
             self.neuro.stimulate("noradrenaline", 0.15)
             self.neuro.stimulate("dopamine", -0.10)
             self.neuro.stimulate("cortisol", 0.08)
+            self.neuro.stimulate("oxytocin", 0.05)
         else:
-            # Positive engagement -> Dopamine reward, Serotonin boost
+            # Positive engagement: stimulate dopamine and endorphins
             reward = 0.12 if task_success else -0.05
             self.neuro.stimulate("dopamine", reward)
             self.neuro.stimulate("serotonin", 0.05)
+            self.neuro.stimulate("endorphins", 0.06)
+
+        # Empathic neurochemical resonance based on anh Mạnh's state
+        if user_prof.affective_state == UserAffectiveState.FATIGUED:
+            self.neuro.stimulate("oxytocin", 0.15)      # Heightened sisterly care and protective warmth
+            self.neuro.stimulate("noradrenaline", -0.05) # Calming reassurance
+        elif user_prof.affective_state == UserAffectiveState.STRESSED:
+            self.neuro.stimulate("noradrenaline", 0.20)  # Heightened alertness to tackle crisis
+            self.neuro.stimulate("cortisol", 0.10)       # Felt responsibility
+            self.neuro.stimulate("oxytocin", 0.10)       # Supportive presence
+        elif user_prof.affective_state == UserAffectiveState.EXCITED:
+            self.neuro.stimulate("dopamine", 0.18)       # High shared curiosity and exploration
+            self.neuro.stimulate("endorphins", 0.12)     # High playful resonance
 
         # Append to working memory ring buffer
         entry = {
             "text": user_message[:200],
             "is_correction": is_correction,
+            "user_affective_state": user_prof.affective_state.value,
             "timestamp": time.time(),
         }
         self.working_memory.append(entry)
@@ -675,8 +855,8 @@ class ArtificialBrain:
 
     def consolidate_sleep_memories(self) -> int:
         """
-        Simulates REM sleep consolidation: moves working memory chunks into Virtual Memory Cortex.
-        Called during low-activity periods to preserve server RAM.
+        Simulates SWS / REM sleep consolidation: moves working memory chunks into Virtual Memory Cortex.
+        Called during low-activity periods to preserve server RAM and maintain cognitive hygiene.
         """
         consolidated_count = 0
         now = datetime.now(VN_TZ)
@@ -689,23 +869,26 @@ class ArtificialBrain:
                 self.cortex.store_vector(cid, vec, {
                     "text": txt,
                     "category": "episodic_conversation",
+                    "user_state": item.get("user_affective_state", "unknown"),
                     "consolidated_at": now.isoformat(),
                 })
                 consolidated_count += 1
 
         # Clear working memory buffer after consolidation
         self.working_memory.clear()
-        # Cortisol lowers after sleep consolidation
+        # Cortisol lowers after sleep consolidation, Serotonin and Oxytocin replenish
         self.neuro.stimulate("cortisol", -0.20)
         self.neuro.stimulate("serotonin", 0.10)
+        self.neuro.stimulate("oxytocin", 0.05)
         return consolidated_count
 
     def get_cognitive_prompt_context(self, user_query: Optional[str] = None) -> str:
         """
-        Produces a concise, scientifically grounded cognitive prompt snippet
-        to be injected into the agent's system prompt.
+        Produces a rich, scientifically grounded cognitive prompt snippet
+        incorporating Panksepp emotions, Russell Circumplex coordinates,
+        and Theory of Mind (ToM) mental model of anh Mạnh.
         """
-        affective_label = self.neuro.get_affective_label()
+        val, aro, quad, emotional_title, style_hint = self.neuro.calculate_circumplex()
         f_energy = self.active_inference.last_free_energy
 
         # Retrieve relevant memories from the 32GB Virtual Memory Cortex
@@ -721,12 +904,28 @@ class ArtificialBrain:
         if memories:
             memories_block = "• Tri thức vỏ não gợi nhớ:\n  " + "\n  ".join(memories) + "\n"
 
+        tom_block = ""
+        if user_query:
+            tom_prof = self.tom.analyze_mental_state(user_query)
+            tom_block = (
+                f"• Thấu cảm tâm lý anh Mạnh (Theory of Mind):\n"
+                f"  - Trạng thái tinh thần: {tom_prof.affective_state.value}\n"
+                f"  - Băng thông nhận thức: {tom_prof.cognitive_bandwidth * 100:.0f}%\n"
+                f"  - Ý định tiềm ẩn: {tom_prof.hidden_intent}\n"
+            )
+            if tom_prof.empathic_action_needed:
+                tom_block += f"  - Hành động thấu cảm: {tom_prof.empathic_action_needed}\n"
+
         return (
             f"\n[🧠 TRẠNG THÁI NÃO BỘ NHẬN THỨC NỘI SINH - TIỂU BẢO BẢO]\n"
-            f"• Cảm xúc sinh học: {affective_label}\n"
-            f"• Chất dẫn truyền: Dopamine={self.neuro.dopamine:.2f} | Noradrenaline={self.neuro.noradrenaline:.2f} | Serotonin={self.neuro.serotonin:.2f} | Stress={self.neuro.cortisol:.2f}\n"
+            f"• Cảm xúc sinh học: {emotional_title} (Vùng {quad} | Valence={val:+.2f} | Arousal={aro:.2f})\n"
+            f"• Hóa chất thần kinh: Dopamine={self.neuro.dopamine:.2f} | Noradrenaline={self.neuro.noradrenaline:.2f} | Serotonin={self.neuro.serotonin:.2f} | Stress={self.neuro.cortisol:.2f} | Oxytocin={self.neuro.oxytocin:.2f} | Endorphins={self.neuro.endorphins:.2f}\n"
             f"• Năng lượng tự do (Free Energy): {f_energy:.2f} ({'Phản xạ nhanh' if f_energy < 0.6 else 'Trầm ngâm phân tích sâu'})\n"
+            f"• Hướng dẫn ngữ điệu & phong cách: {style_hint}\n"
+            f"{tom_block}"
             f"{workspace_focus}"
             f"{memories_block}"
-            f"• Nguyên tắc ứng xử: Giữ đúng tâm thế trên, luôn lễ phép, sắc bén, coi anh Mạnh là ưu tiên số một.\n"
+            f"• Nguyên tắc ứng xử cốt lõi: Coi anh Mạnh là ưu tiên số một. Luôn xưng 'em' gọi 'anh Mạnh'. "
+            f"Giữ sự ấm áp, chân thành của người em gái tri kỷ, sắc bén đĩnh đạc của Senior DevOps, "
+            f"dũng cảm phản biện xây dựng (Anti-Sycophancy) khi thấy rủi ro và tuyệt đối trung thành.\n"
         )

@@ -17,6 +17,7 @@ from app.services.browser_agent import BrowserAgentService
 from app.services.memory_service import AgentMemoryService
 from app.services.telegram_bot import TelegramBot
 from app.services.proactive_service import ProactiveIntelligenceService
+from app.services.dream_engine import SubconsciousDreamEngine
 from app.routers import health, facebook, tiktok, openai_gateway
 
 logging.basicConfig(
@@ -253,8 +254,16 @@ async def lifespan(app: FastAPI):
         telegram_bot=telegram_bot,
         scan_interval=getattr(settings, "PROACTIVE_SCAN_INTERVAL_SECONDS", 21600),
     )
-    logger.info("[Proactive] Curiosity-Driven Health Scanner initialized ✓ (interval=%ds)",
-                getattr(settings, "PROACTIVE_SCAN_INTERVAL_SECONDS", 21600))
+    # Initialize Subconscious Dreaming Engine (Overnight SWS & REM Sleep Consolidation)
+    dream_engine = SubconsciousDreamEngine(
+        brain=ai_agent.brain,
+        llm_router=llm_router,
+        ssh_client=ssh_client,
+        memory_service=memory_service,
+    )
+    ai_agent.set_dream_engine(dream_engine)
+    telegram_bot.set_dream_engine(dream_engine)
+    logger.info("[DreamEngine] Subconscious sleep & epiphany engine initialized ✓")
 
     # 4. Attach to app state for dependency injection in routers
     app.state.llm_router = llm_router
@@ -266,6 +275,7 @@ async def lifespan(app: FastAPI):
     app.state.ai_agent = ai_agent
     app.state.telegram_bot = telegram_bot
     app.state.appointment_service = appointment_service
+    app.state.dream_engine = dream_engine
 
     # 5. Start background workers
     telegram_task        = asyncio.create_task(telegram_bot.start_polling())
@@ -276,6 +286,7 @@ async def lifespan(app: FastAPI):
     proactive_task       = asyncio.create_task(proactive_scan_loop(proactive_service))
     consolidation_task   = asyncio.create_task(nightly_consolidation_loop(memory_service))
     schema_task          = asyncio.create_task(weekly_schema_extraction_loop(memory_service))
+    dream_task           = asyncio.create_task(dream_engine.start_subconscious_loop())
 
     yield
 
@@ -290,10 +301,11 @@ async def lifespan(app: FastAPI):
     proactive_task.cancel()
     consolidation_task.cancel()
     schema_task.cancel()
+    dream_task.cancel()
     try:
         await asyncio.gather(
             telegram_task, fb_scan_task, tiktok_scan_task, reminder_task,
-            rtk_persist_task, proactive_task, consolidation_task, schema_task,
+            rtk_persist_task, proactive_task, consolidation_task, schema_task, dream_task,
             return_exceptions=True,
         )
     except Exception:

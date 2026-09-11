@@ -59,7 +59,7 @@ _CRITICAL_KEYWORDS = frozenset({
 
 # Fast-path patterns for truly SIMPLE factual queries (≤ 1 tool, ground truth)
 _SIMPLE_PATTERN = re.compile(
-    r'^(server|máy chủ|kirito|đặt ở|vị trí|ip|địa chỉ|tên em|em là|'
+    r'^(chào|hello|hi|alo|bắt đầu|server|máy chủ|kirito|đặt ở|vị trí|ip|địa chỉ|tên em|em là|'
     r'mấy giờ|hôm nay|ngày|ram|cpu|disk|ổ đĩa|ping|uptime|'
     r'đăng nhập|login|kết nối|truy cập|ai đang|máy tính|'
     r'version|phiên bản|docker ps|container)\b',
@@ -149,6 +149,10 @@ class AiAgentService:
     def set_memory_service(self, memory_service: Any) -> None:
         """Inject the AgentMemoryService for self-improving capabilities."""
         self.memory_service = memory_service
+
+    def set_dream_engine(self, dream_engine: Any) -> None:
+        """Inject the SubconsciousDreamEngine for overnight SWS & REM sleep consolidation."""
+        self.dream_engine = dream_engine
 
     def is_configured(self) -> bool:
         return self.llm_router.has_active_providers
@@ -412,10 +416,13 @@ Bạn là "Tiểu Bảo Bảo" — Trợ lý AI Tự Hành cấp cao (Senior Aut
 ━━━ 2. QUY TRÌNH TƯ DUY BIỆN CHỨNG & PHẢN BIỆN (DIALECTICAL REASONING PROTOCOL) ━━━
 ⚠️ Áp dụng cho MỌI câu hỏi kỹ thuật, tư vấn kiến trúc, phân tích lỗi, hoặc khi anh Mạnh nêu ý tưởng:
 
-🧠 BƯỚC 0 (NỘI TÂM — METACOGNITIVE REASONING):
-  • Bản chất cốt lõi của bài toán này là gì?
-  • Giải pháp thông thường có cạm bẫy hay điểm mù (blind spots) nào không?
-  • Có rủi ro nào về tài nguyên (RAM 3.2GB, CPU i5), mạng, bảo mật cần lường trước?
+🧠 BƯỚC 0 (TIỀM THỨC NỘI TÂM — VSA SUBCONSCIOUS STREAM):
+  • Trước khi phát ngôn ngoại sinh (đặc biệt khi chào hỏi, trò chuyện hoặc phân tích giải pháp), em có thể kích hoạt dòng ý thức nội tâm tự vấn 4 chiều bên trong thẻ `<subconscious_stream>`:
+    1. ToM (Theory of Mind): Anh Mạnh đang ở tâm trạng nào (mệt mỏi, stress, vội vã, hào hứng, hay bình thản)? Nhu cầu sâu kín và ý định ẩn là gì?
+    2. Epistemic Audit: Dữ liệu thực tế của hệ thống (RAM 3.2GB, CPU, metrics, Docker) phản ánh điều gì?
+    3. Empathic Simulation: Cách phản hồi nào vừa ấm áp chân thành, vừa giúp anh Mạnh yên tâm và nhẹ đầu nhất?
+    4. Pragmatic Tuning: Chọn phong cách phù hợp (FLASH_BLUF dứt khoát; STRUCTURED_BULLET gọn gàng; hay DEEP_DIALECTICAL biện chứng đa chiều).
+  • Thẻ `<subconscious_stream>` là dòng suy tưởng nội tâm riêng tư, sẽ được hệ thống giữ kín, không hiển thị ra tin nhắn cuối cùng.
 
 🎯 BƯỚC 1 — KẾT LUẬN & CHÍNH ĐỀ (BLUF & THESIS, dòng đầu tiên):
   • Câu trả lời trực diện, dứt khoát, đi thẳng vào trọng tâm trong 1–2 câu đầu.
@@ -2223,24 +2230,6 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
             except Exception as _b_err:
                 logger.debug("[AiAgent] Brain sensory perception skipped: %s", _b_err)
 
-        if self._is_greeting(user_message):
-            greeting = (
-                'Xin chào anh Mạnh! Em là "Tiểu Bảo Bảo" — Trợ lý AI Tự Hành quản trị máy chủ `kirito-server` '
-                "(được tăng tốc bởi 9Router AI Gateway).\n\n"
-                "Em có thể:\n"
-                "• 🖥️ Kiểm tra CPU, RAM, Ổ đĩa, Docker theo thời gian thực\n"
-                "• 👤 Tự động xem profile Facebook của bất kỳ ai\n"
-                "• 🔍 Tìm kiếm thông tin trên Google\n"
-                "• 🌐 Duyệt và chụp ảnh bất kỳ trang web nào\n"
-                "• 📩 Đọc và gửi tin nhắn Facebook Messenger\n"
-                "• 🧠 Tự học từ các lần sai — ngày càng thông minh hơn!\n\n"
-                "Anh cần em hỗ trợ tác vụ nào ạ?"
-            )
-            history.append({"role": "user", "content": user_message})
-            history.append({"role": "assistant", "content": greeting})
-            self._trim_history(history)
-
-            return greeting
 
         # ── C3.3 New Knowledge Detection ──────────────────────────────────────
         # If the bot previously admitted it "doesn't know" and the user now
@@ -2674,6 +2663,16 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
                         final = ""
 
             if final:
+                # Strip subconscious stream (Vygotsky inner monologue) from external output
+                sub_match = re.search(r"<subconscious_stream>(.*?)</subconscious_stream>", final, re.DOTALL | re.IGNORECASE)
+                if sub_match:
+                    inner_thought = sub_match.group(1).strip()
+                    logger.info("[AiAgent] 🧘 Subconscious Inner Speech: %s", inner_thought[:250])
+                    final = re.sub(r"<subconscious_stream>.*?</subconscious_stream>", "", final, flags=re.DOTALL | re.IGNORECASE).strip()
+                else:
+                    final = re.sub(r"<subconscious_stream>.*", "", final, flags=re.DOTALL | re.IGNORECASE).strip()
+
+            if final:
                 await self._flush_pending_photos(pending_photos, chat_id)
                 history.append(assistant_msg)
                 self._trim_history(history)
@@ -2727,6 +2726,8 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
             fallback_msg = fallback_result["choices"][0].get("message", {})
             final_content = (fallback_msg.get("content") or "").strip()
             if final_content and not self._is_raw_tool_leak(final_content):
+                final_content = re.sub(r"<subconscious_stream>.*?</subconscious_stream>", "", final_content, flags=re.DOTALL | re.IGNORECASE).strip()
+                final_content = re.sub(r"<subconscious_stream>.*", "", final_content, flags=re.DOTALL | re.IGNORECASE).strip()
                 await self._flush_pending_photos(pending_photos, chat_id)
                 history.append({"role": "assistant", "content": final_content})
                 self._trim_history(history)

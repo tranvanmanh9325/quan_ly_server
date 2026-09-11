@@ -2,12 +2,14 @@ import asyncio
 import logging
 import re
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 import httpx
 import psycopg
 
 from app.config import settings
+from app.core.brain_core import VN_TZ
 from app.core.db import get_db_connection
 from app.core.http_client import http_client_manager
 from app.core.ssh_client import SshClient
@@ -29,6 +31,7 @@ class TelegramBot:
         self.ssh_client = ssh_client
         self.appointment_service: Optional[Any] = None
         self.memory_service: Optional[Any] = None  # AgentMemoryService — injected post-construction
+        self.dream_engine: Optional[Any] = None    # SubconsciousDreamEngine — injected post-construction
         self.token = settings.TELEGRAM_BOT_TOKEN
         self.chat_id = settings.TELEGRAM_CHAT_ID
         self.polling_enabled = settings.TELEGRAM_POLLING_ENABLED
@@ -51,6 +54,10 @@ class TelegramBot:
     def set_memory_service(self, memory_service: Any) -> None:
         """Inject memory service for /lessons and /memory_stats commands."""
         self.memory_service = memory_service
+
+    def set_dream_engine(self, dream_engine: Any) -> None:
+        """Inject SubconsciousDreamEngine for morning epiphany delivery and /dream commands."""
+        self.dream_engine = dream_engine
 
     @property
     def api_url(self) -> str:
@@ -79,7 +86,18 @@ class TelegramBot:
         stop_event = asyncio.Event()
         heartbeat_task = asyncio.create_task(self._send_typing_heartbeat(chat_id, stop_event))
         try:
-            return await self.ai_agent.chat(chat_id, message)
+            # Check for morning epiphany if within morning wake window
+            morning_epiphany = None
+            if self.dream_engine:
+                try:
+                    morning_epiphany = self.dream_engine.pop_morning_epiphany()
+                except Exception as _ep_err:
+                    logger.debug("[TelegramBot] Epiphany pop error: %s", _ep_err)
+
+            reply = await self.ai_agent.chat(chat_id, message)
+            if morning_epiphany:
+                reply = f"{morning_epiphany}\n\n━━━━━━━━━━━━━━━━━━━━\n{reply}"
+            return reply
         finally:
             stop_event.set()
             heartbeat_task.cancel()
@@ -582,7 +600,9 @@ class TelegramBot:
                 "• /disk — Dung lượng ổ cứng\n"
                 "• /lich — Xem danh sách lịch hẹn sắp tới\n"
                 "• /ai — Xóa bộ nhớ ngữ cảnh hội thoại\n\n"
-                "🧠 *Lệnh quản lý trí nhớ tự học:*\n"
+                "🧠 *Lệnh nhận thức & trí nhớ tự học:*\n"
+                "• /brain — Xem trạng thái não bộ nhận thức, cảm xúc Russell & hóa chất thần kinh\n"
+                "• /dream — Kích hoạt chu kỳ giấc mơ REM & giác ngộ tiềm thức\n"
                 "• /lessons — Xem bài học đã tích lũy\n"
                 "• /lesson_add <nội dung> — Thêm bài học thủ công\n"
                 "• /lesson_delete <id> — Xóa một bài học\n"
@@ -726,6 +746,86 @@ class TelegramBot:
                 f"_🔍 Web-Grounded lessons = AI học có bằng chứng thực tế từ Google/DuckDuckGo_"
             )
             await self.send_message(chat_id, msg)
+
+        elif raw_cmd == "/brain":
+            brain = getattr(self.ai_agent, "brain", None)
+            if not brain:
+                await self.send_message(chat_id, "⚠️ Brain Core chưa sẵn sàng.")
+                return
+
+            val, aro, quad, emotional_title, style_hint = brain.neuro.calculate_circumplex()
+            cortex_count = len(brain.cortex._metadata) if hasattr(brain, "cortex") and hasattr(brain.cortex, "_metadata") else 0
+            fe = brain.active_inference.last_free_energy
+
+            lines = [
+                "🧠 *TRẠNG THÁI NÃO BỘ NHẬN THỨC & CẢM XÚC — TIỂU BẢO BẢO*",
+                "",
+                "🎭 *Không gian Cảm xúc Russell Circumplex:*",
+                f"• Tâm trạng: *{emotional_title}* (Vùng {quad})",
+                f"• Tọa độ: Valence = `{val:+.2f}` | Arousal = `{aro:.2f}`",
+                f"• Khuyến nghị phong thái: _{style_hint}_",
+                "",
+                "🧪 *Hóa chất Thần kinh Sinh học (Neurotransmitters):*",
+                f"• 🌟 Dopamine (Hào hứng/Tò mò): `{brain.neuro.dopamine:.2f}`",
+                f"• ⚡ Noradrenaline (Cảnh giác/Tập trung): `{brain.neuro.noradrenaline:.2f}`",
+                f"• 🧘 Serotonin (Bình ổn/Điềm đạm): `{brain.neuro.serotonin:.2f}`",
+                f"• ⏳ Cortisol (Áp lực/Stress): `{brain.neuro.cortisol:.2f}`",
+                f"• 💕 Oxytocin (Ân cần/Gắn kết): `{brain.neuro.oxytocin:.2f}`",
+                f"• ✨ Endorphins (Hài hước/Bền bỉ): `{brain.neuro.endorphins:.2f}`",
+                "",
+                "⚡ *Active Inference & VSA Hyperdimensional Cortex:*",
+                f"• Năng lượng tự do (Free Energy): `{fe:.2f}` ({'Phản xạ nhanh' if fe < 0.6 else 'Trầm ngâm phân tích sâu'})",
+                f"• Vỏ não ảo 32GB Virtual Cortex: `{cortex_count}` hypervectors ghi nhớ",
+            ]
+
+            if self.dream_engine:
+                has_pending = bool(self.dream_engine.pending_morning_epiphany)
+                last_sws = datetime.fromtimestamp(self.dream_engine.last_sws_time, VN_TZ).strftime("%H:%M:%S %d/%m") if self.dream_engine.last_sws_time else "Chưa chạy"
+                last_rem = datetime.fromtimestamp(self.dream_engine.last_rem_time, VN_TZ).strftime("%H:%M:%S %d/%m") if self.dream_engine.last_rem_time else "Chưa chạy"
+                lines.extend([
+                    "",
+                    "🌙 *Tiềm Thức & Giấc Mơ Ban Đêm (Dream Engine):*",
+                    f"• Chu kỳ SWS gần nhất: `{last_sws}`",
+                    f"• Giấc mơ REM gần nhất: `{last_rem}`",
+                    f"• Giác ngộ chờ gửi buổi sáng: `{'Có (Sẵn sàng gửi)' if has_pending else 'Chưa có'}`",
+                    "• Gõ `/dream` để kích hoạt mô phỏng giấc mơ sáng tạo ngay lập tức!",
+                ])
+
+            await self.send_message(chat_id, "\n".join(lines))
+
+        elif raw_cmd == "/dream":
+            if not self.dream_engine:
+                await self.send_message(chat_id, "⚠️ Dream Engine chưa sẵn sàng.")
+                return
+
+            await self.send_message(chat_id, "🌙 *Tiểu Bảo Bảo đang bước vào chu kỳ giấc ngủ SWS và mô phỏng giấc mơ REM...* Vui lòng đợi trong giây lát ạ ✨")
+            result = await self.dream_engine.run_full_sleep_cycle(force=True)
+
+            sws_info = result.get("sws", {})
+            rem_info = result.get("rem")
+
+            reply_lines = [
+                "✨ *CHU KỲ GIẤC MƠ TIỀM THỨC HOÀN TẤT*",
+                "",
+                "🌙 *1. Giai đoạn Ngủ Sâu SWS (Slow-Wave Sleep):*",
+                f"• Đã nén & lưu trữ: `{sws_info.get('consolidated_vectors', 0)}` mẩu ký ức vào VSA Cortex 32GB",
+                f"• Thời gian nén: `{sws_info.get('duration_ms', 0)} ms` (Zero-copy mmap)",
+                f"• Mức Cortisol giảm còn: `{sws_info.get('cortisol', 0):.2f}` (giảm stress, phục hồi năng lượng)",
+                "",
+            ]
+
+            if rem_info:
+                reply_lines.extend([
+                    "💭 *2. Giấc Mơ Đối Nghịch REM (Rapid Eye Movement):*",
+                    f"💡 *Chủ đề:* {rem_info.get('topic')}",
+                    f"_{rem_info.get('insight')}_",
+                    "",
+                    f"💌 *Lời nhắn gửi anh Mạnh:* _{rem_info.get('sisterly_note')}_",
+                ])
+            else:
+                reply_lines.append("💭 *2. Giai đoạn REM:* Đã thả lỏng các liên kết nơ-ron.")
+
+            await self.send_message(chat_id, "\n".join(reply_lines))
 
         elif raw_cmd == "/tasks":
             # Phase 5A: Prospective Memory — list pending tasks

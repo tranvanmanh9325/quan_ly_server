@@ -140,11 +140,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '1.2'
-          memory: 1280M
+          cpus: '3.0'
+          memory: 1800M
         reservations:
-          memory: 256M
-    cpu_shares: 512
+          memory: 384M
+    cpu_shares: 1024
 
   file-service:
     build:

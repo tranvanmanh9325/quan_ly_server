@@ -356,11 +356,11 @@ class VncManager:
                         "--disable-default-apps", "--disable-extensions", "--no-first-run",
                         "--no-default-browser-check", "--disable-session-crashed-bubble",
                         "--hide-crash-restore-bubble", "--enable-fast-unload",
-                        "--disable-smooth-scrolling", "--autoplay-policy=user-gesture-required",
-                        "--mute-audio", "--disable-background-media-suspend=false",
-                        "--disable-gpu", "--disable-gpu-rasterization", "--disable-software-rasterizer",
-                        "--force-device-scale-factor=1", "--renderer-process-limit=2",
-                        "--js-flags=--max-old-space-size=512",
+                        "--disable-smooth-scrolling",
+                        "--mute-audio",
+                        "--enable-unsafe-swiftshader",
+                        "--enable-features=VaapiVideoDecoder,CanvasOopRasterization,ZeroCopy",
+                        "--force-device-scale-factor=1",
                         "--disable-features=Translate,OptimizationHints,MediaRouter,CalculateNativeWinOcclusion,InterestFeedContentSuggestions",
                         "--disable-background-networking", "--disable-component-update", "--disable-domain-reliability",
                     ],
@@ -369,7 +369,7 @@ class VncManager:
                     env=env_vars,
                 )
 
-                await self._setup_media_neutralizer(self._context)
+                await self._setup_stealth_layer(self._context)
 
                 # 7. Inject cookies
                 injected_count = await self._inject_cookies_from_db(self._context, self._current_platform)
@@ -394,8 +394,8 @@ class VncManager:
                 await self._cleanup_internal(skip_save=True)
                 return {"status": "error", "message": f"Lỗi khởi động VNC Session: {str(e)}"}
 
-    async def _setup_media_neutralizer(self, context: BrowserContext):
-        """Injects JS to neutralize HTMLMediaElement and hide video elements + stealth bot neutralization."""
+    async def _setup_stealth_layer(self, context: BrowserContext):
+        """Injects clean anti-bot stealth layer without interfering with video playback or DOM lifecycle."""
         try:
             script = """
             (() => {
@@ -403,37 +403,12 @@ class VncManager:
                     Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
                     window.chrome = window.chrome || { runtime: {}, loadTimes: () => {}, csi: () => {}, app: {} };
                 } catch(e) {}
-                const neutralize = (el) => {
-                    if (!el) return;
-                    if (el.tagName === 'VIDEO' || el.tagName === 'AUDIO') {
-                        try { el.muted = true; el.preload = 'none'; el.removeAttribute('src'); el.style.display = 'none'; el.pause(); } catch(e) {}
-                    }
-                    if (el.querySelectorAll) el.querySelectorAll('video, audio').forEach(neutralize);
-                };
-                const injectCss = () => {
-                    if (document.getElementById('__vnc_perf_guard')) return;
-                    const st = document.createElement('style');
-                    st.id = '__vnc_perf_guard';
-                    st.innerHTML = `video, audio { display: none !important; visibility: hidden !important; opacity: 0 !important; pointer-events: none !important; }`;
-                    (document.head || document.documentElement).appendChild(st);
-                };
-                if (document.head || document.documentElement) injectCss();
-                try {
-                    const obs = new MutationObserver((muts) => {
-                        for (const m of muts) m.addedNodes.forEach(neutralize);
-                    });
-                    obs.observe(document.documentElement, { childList: true, subtree: true });
-                } catch(e) {}
             })();
             """
             await context.add_init_script(script)
-            media_patterns = ["**/*.mp4*", "**/*.m4s*", "**/*.webm*", "**/*.ts*", "**/*.m3u8*"]
-            for pattern in media_patterns:
-                try: await context.route(pattern, lambda route: route.abort("blockedbyclient"))
-                except Exception: pass
-            logger.info("[VNC-Manager] Native stealth & video neutralization active.")
+            logger.info("[VNC-Manager] Native stealth layer active.")
         except Exception as e:
-            logger.warning("[VNC-Manager] Could not setup media neutralizer: %s", e)
+            logger.warning("[VNC-Manager] Could not setup stealth layer: %s", e)
 
     async def _safe_navigate(self, page: Page, url: str):
         try:

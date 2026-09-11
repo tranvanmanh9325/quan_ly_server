@@ -14,8 +14,11 @@ from app.core.db import get_db_connection, get_db_dict_cursor
 
 logger = logging.getLogger("app.services.vnc_manager")
 
-# Maximum idle time allowed before auto-reaping the VNC session (10 minutes)
+# Maximum idle time allowed before auto-reaping the VNC session (3 minutes)
 MAX_IDLE_SECONDS = 180
+
+# Consistent Desktop User-Agent to prevent anti-bot session invalidation
+DESKTOP_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 
 
 class VncManager:

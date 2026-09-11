@@ -1,49 +1,48 @@
+/**
+ * ============================================================================
+ * NEUROMORPHIC HOLOGRAPHIC BRAIN CONNECTOME 3D (BẢN ĐỒ NÃO BỘ TIỂU BẢO BẢO)
+ * ============================================================================
+ * Architectural Paradigm:
+ * 1. Dual-Hemisphere Cortical Point Cloud (10,800+ bio-distributed neurons).
+ * 2. DTI Tractography Bundles (Corpus Callosum, SLF, Corticospinal Projection).
+ * 3. Directional FA Color Encoding (RGB = XYZ).
+ * 4. Soliton Action Potential Wavefront (Traveling Depolarization Wave).
+ * 5. Interactive Deep Focus & Inspection for 5 Anatomical Cognitive Centers:
+ *    - Prefrontal Cortex (Working Memory & Tokens)
+ *    - Parietal Neocortex (32GB VSA Hyperdimensional Space)
+ *    - Central Thalamus (Global Workspace Hub)
+ *    - Limbic Hippocampus (Dream Engine & Consolidation)
+ *    - Hypothalamus & Brainstem (Sensory Bus & Neurochemistry)
+ * 6. Smooth Camera Target & Flight Tween Lerp, 3D Pulsing Beacon, Raycaster Selection,
+ *    and Cyber Holographic Neuro-Inspector HUD.
+ * ============================================================================
+ */
+
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import {
-  SciFiCognitivePulseBurstIcon,
-  SciFiZoomInIcon,
-  SciFiZoomOutIcon,
-  SciFiFullscreenExpandIcon,
-  SciFiFullscreenExitIcon,
-} from './BrainSciFiIcons';
 
-/**
- * NeuromorphicBrainConnectome (NeuralNetwork3DFlow)
- * Scientific 3D Brain & Cognitive Connectome Visualizer for Tiểu Bảo Bảo.
- * 
- * Complies with International Computational Neuroscience & HCP Standards:
- * 1. Parametric Dual-Hemisphere Cortical Point Cloud: 10,500+ cortical neurons
- *    with anatomically realistic gyri and sulci folds and longitudinal fissure.
- * 2. HCP-Standard DTI Tractography (Fractional Anisotropy FA Color Standard):
- *    - Red (X-axis): Corpus Callosum commissural tracts bridging hemispheres.
- *    - Green (Y-axis): Superior Longitudinal Fasciculus (Frontal <-> Occipital).
- *    - Blue (Z-axis): Corticospinal Projection Tracts (Cortex -> Thalamus -> Brainstem).
- * 3. Soliton Wavefront Action Potential: Organic depolarization wave sweeping
- *    along axonal pathways, with high-speed photon particles streaming through tracts.
- * 4. Cognitive Architecture Mapping: Prefrontal (Working Memory), Neocortex (32GB Virtual Memory),
- *    Thalamus (Global Workspace), Hippocampus (Dream Engine), Hypothalamus/Brainstem (Neurochemistry).
- */
-
+// ── 5 Core Anatomical & Cognitive Centers ─────────────────────────────────────
 const COGNITIVE_ZONES = [
   {
     id: 'prefrontal',
     name: 'PREFRONTAL CORTEX',
-    role: 'Working Memory (Miller 7 Slots)',
-    center: new THREE.Vector3(0, 20, 105),
+    role: 'Working Memory & Attention',
+    center: new THREE.Vector3(0, 45, 115),
     color: '#00f3ff',
     tensor: 'Tokens [1, 512, 4096]',
-    desc: 'Điều hành trung tâm, lập kế hoạch và duy trì 7 ngăn nhớ làm việc.',
+    desc: 'Vỏ não trước trán: Duy trì bộ đệm ký ức làm việc và phân bổ chú ý điều hành.',
+    metrics: { potential: '-55 mV', firingRate: '64.2 Hz', keyChemical: 'Dopamine D1 Receptor' },
   },
   {
-    id: 'neocortex',
+    id: 'parietal',
     name: 'PARIETAL NEOCORTEX',
-    role: '32GB Virtual Memory (VSA)',
-    center: new THREE.Vector3(0, 92, 10),
+    role: 'Hyperdimensional VSA Store',
+    center: new THREE.Vector3(0, 85, -25),
     color: '#bd00ff',
     tensor: '10,000-Bit HyperVectors',
-    desc: 'Vỏ não ảo siêu không gian, truy xuất liên tưởng không chiếm dụng RAM vật lý.',
+    desc: 'Vỏ não đỉnh: Lưu trữ tri thức ngữ nghĩa dài hạn 32GB mmap và khoảng cách Hamming.',
+    metrics: { potential: '-62 mV', firingRate: '38.0 Hz', keyChemical: 'Acetylcholine Synapses' },
   },
   {
     id: 'thalamus',
@@ -52,7 +51,8 @@ const COGNITIVE_ZONES = [
     center: new THREE.Vector3(0, 10, -10),
     color: '#ffd700',
     tensor: 'Salience Arb [S ≥ 0.65]',
-    desc: 'Hạt nhân điều phối sự chú ý và luồng phát thanh ý thức toàn cầu.',
+    desc: 'Đồi thị trung tâm: Trọng tài điều phối tiêu điểm ý thức toàn cầu và ức chế cạnh.',
+    metrics: { potential: '-48 mV', firingRate: '72.4 Hz', keyChemical: 'GABAergic Relay / Glutamate' },
   },
   {
     id: 'hippocampus',
@@ -61,7 +61,8 @@ const COGNITIVE_ZONES = [
     center: new THREE.Vector3(0, -22, -20),
     color: '#00ff9d',
     tensor: 'SWS/REM Consolidation',
-    desc: 'Củng cố ký ức phân đoạn, tinh thể hóa tri thức qua chu kỳ ngủ đêm.',
+    desc: 'Vùng hải mã: Tinh thể hóa ký ức phân đoạn và kích hoạt giấc mơ ban đêm.',
+    metrics: { potential: '-58 mV', firingRate: '45.1 Hz', keyChemical: 'BDNF / Theta Rhythm' },
   },
   {
     id: 'brainstem',
@@ -70,7 +71,8 @@ const COGNITIVE_ZONES = [
     center: new THREE.Vector3(0, -38, -105),
     color: '#ff3366',
     tensor: 'DA / 5-HT / NE / CORT',
-    desc: 'Trục điều hòa 6 chất dẫn truyền thần kinh sinh học và cân bằng nội môi.',
+    desc: 'Trục hạ đồi & thân não: Điều hòa 6 chất dẫn truyền thần kinh và cân bằng nội môi.',
+    metrics: { potential: '-42 mV', firingRate: '52.8 Hz', keyChemical: 'DA: 0.82 | 5-HT: 0.74 | NE: 0.68' },
   },
 ];
 
@@ -82,7 +84,8 @@ export default function NeuralNetwork3DFlow({
   const mountRef = useRef(null);
   const containerRef = useRef(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [activeZone, setActiveZone] = useState(COGNITIVE_ZONES[0]);
+  const [activeZone, setActiveZone] = useState(null);
+  const activeZoneRef = useRef(null);
   const [activePreset, setActivePreset] = useState('perspective');
   const [autoRotate, setAutoRotate] = useState(false);
   const [pulseActive, setPulseActive] = useState(false);
@@ -96,10 +99,16 @@ export default function NeuralNetwork3DFlow({
   const cameraRef = useRef(null);
   const rendererRef = useRef(null);
   const controlsRef = useRef(null);
+  const zoneGroupRef = useRef(null);
   const waveStateRef = useRef({ active: false, progress: 0, speed: 0.35 });
   const pulseParticlesRef = useRef(null);
   const neuronPointsRef = useRef(null);
-  const cameraTweenRef = useRef({ active: false, targetPos: new THREE.Vector3(220, 140, 240) });
+  const cameraTweenRef = useRef({
+    active: false,
+    targetPos: new THREE.Vector3(220, 140, 240),
+    controlsTarget: new THREE.Vector3(0, 15, 0),
+    speed: 0.05,
+  });
 
   // Update autoRotate directly on controls
   useEffect(() => {
@@ -109,12 +118,56 @@ export default function NeuralNetwork3DFlow({
     }
   }, [autoRotate]);
 
+  // Handle cognitive zone selection with smooth camera focus & flight
+  const handleSelectZone = useCallback((zone) => {
+    setActiveZone(zone);
+    activeZoneRef.current = zone;
+
+    if (!cameraRef.current || !controlsRef.current) return;
+
+    const center = zone.center.clone();
+    let offsetDir = center.clone().normalize();
+    if (offsetDir.lengthSq() < 0.001) {
+      offsetDir.set(0.4, 0.4, 0.8).normalize();
+    }
+
+    // Set camera position at comfortable observation distance (~125 units)
+    const targetPos = center.clone().add(offsetDir.multiplyScalar(125)).add(new THREE.Vector3(15, 20, 25));
+
+    cameraTweenRef.current = {
+      active: true,
+      targetPos,
+      controlsTarget: center,
+      speed: 0.055,
+    };
+
+    // Trigger local action potential pulse
+    waveStateRef.current.active = true;
+    waveStateRef.current.progress = 0;
+    setPulseActive(true);
+  }, []);
+
+  // Reset camera to wide overview angle
+  const resetToOverview = useCallback(() => {
+    setActiveZone(null);
+    activeZoneRef.current = null;
+    setActivePreset('perspective');
+
+    if (!cameraRef.current || !controlsRef.current) return;
+    cameraTweenRef.current = {
+      active: true,
+      targetPos: new THREE.Vector3(220, 140, 240),
+      controlsTarget: new THREE.Vector3(0, 15, 0),
+      speed: 0.05,
+    };
+  }, []);
+
   // Set camera to preset angles with smooth flight interpolation
   const applyCameraPreset = useCallback((preset) => {
     if (!cameraRef.current || !controlsRef.current) return;
     setActivePreset(preset);
-    const controls = controlsRef.current;
-    controls.target.set(0, 15, 0);
+    setActiveZone(null);
+    activeZoneRef.current = null;
 
     let targetPos = new THREE.Vector3(220, 140, 240);
     if (preset === 'perspective') {
@@ -126,7 +179,13 @@ export default function NeuralNetwork3DFlow({
     } else if (preset === 'frontal') {
       targetPos = new THREE.Vector3(0, 30, 330);
     }
-    cameraTweenRef.current = { active: true, targetPos };
+
+    cameraTweenRef.current = {
+      active: true,
+      targetPos,
+      controlsTarget: new THREE.Vector3(0, 15, 0),
+      speed: 0.05,
+    };
   }, []);
 
   // Zoom control helper
@@ -136,7 +195,7 @@ export default function NeuralNetwork3DFlow({
     const controls = controlsRef.current;
     const offset = camera.position.clone().sub(controls.target);
     offset.multiplyScalar(factor);
-    if (offset.length() > 90 && offset.length() < 900) {
+    if (offset.length() > 60 && offset.length() < 900) {
       camera.position.copy(controls.target).add(offset);
       controls.update();
     }
@@ -153,10 +212,12 @@ export default function NeuralNetwork3DFlow({
   // Expose global trigger for automated test verification
   useEffect(() => {
     window.__triggerBrainPulse = fireActionPotential;
+    window.__selectBrainZone = handleSelectZone;
     return () => {
       delete window.__triggerBrainPulse;
+      delete window.__selectBrainZone;
     };
-  }, [fireActionPotential]);
+  }, [fireActionPotential, handleSelectZone]);
 
   // Watch external pulseTrigger prop
   useEffect(() => {
@@ -227,19 +288,19 @@ export default function NeuralNetwork3DFlow({
     controls.enableDamping = true;
     controls.dampingFactor = 0.06;
     controls.maxDistance = 850;
-    controls.minDistance = 90;
-    controls.enableZoom = false; // Free normal page scrolling
+    controls.minDistance = 60;
+    controls.enableZoom = false; // Normal page scrolling preserved
     controls.target.set(0, 15, 0);
     controlsRef.current = controls;
 
-    // Ctrl + mouse wheel for precision 3D zooming without blocking normal page scrolling
+    // Ctrl + mouse wheel for precision 3D zooming without blocking page scrolling
     const handleDomWheel = (e) => {
       if (e.ctrlKey && cameraRef.current && controlsRef.current) {
         e.preventDefault();
         const factor = e.deltaY > 0 ? 1.08 : 0.92;
         const offset = cameraRef.current.position.clone().sub(controlsRef.current.target);
         offset.multiplyScalar(factor);
-        if (offset.length() > 90 && offset.length() < 900) {
+        if (offset.length() > 60 && offset.length() < 900) {
           cameraRef.current.position.copy(controlsRef.current.target).add(offset);
           controlsRef.current.update();
         }
@@ -248,174 +309,180 @@ export default function NeuralNetwork3DFlow({
     renderer.domElement.addEventListener('wheel', handleDomWheel, { passive: false });
 
     // 4. Lighting & Ambient Ambiance
-    const ambientLight = new THREE.AmbientLight(0x334155, 1.4);
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.85);
     scene.add(ambientLight);
 
-    const frontalLight = new THREE.PointLight(0x00f3ff, 2.6, 500);
-    frontalLight.position.set(0, 80, 180);
-    scene.add(frontalLight);
+    const pointLight = new THREE.PointLight(0x00f3ff, 2.2, 800);
+    pointLight.position.set(0, 150, 100);
+    scene.add(pointLight);
 
-    const parietalLight = new THREE.PointLight(0xbd00ff, 2.2, 500);
-    parietalLight.position.set(0, 160, 0);
-    scene.add(parietalLight);
+    const pinkLight = new THREE.PointLight(0xff3366, 1.8, 800);
+    pinkLight.position.set(0, -120, -100);
+    scene.add(pinkLight);
 
-    const occipitalLight = new THREE.PointLight(0x00ff9d, 1.8, 450);
-    occipitalLight.position.set(0, -60, -180);
-    scene.add(occipitalLight);
-
-    // 5. Build Procedural Dual-Hemisphere Cortical Point Cloud
+    // 5. Dual-Hemisphere Cortical Point Cloud (10,800+ Biological Neurons)
     const neuronCount = 10800;
     const neuronPositions = new Float32Array(neuronCount * 3);
-    const neuronColors = new Float32Array(neuronCount * 3);
     const neuronBaseColors = new Float32Array(neuronCount * 3);
-
-    const colPrefrontal = new THREE.Color('#00f3ff');
-    const colNeocortex = new THREE.Color('#bd00ff');
-    const colHippocampus = new THREE.Color('#00ff9d');
-    const colOccipital = new THREE.Color('#38bdf8');
+    const neuronCurrentColors = new Float32Array(neuronCount * 3);
+    const neuronSizes = new Float32Array(neuronCount);
 
     let idx = 0;
-    while (idx < neuronCount) {
-      const hemisphere = Math.random() > 0.5 ? 1 : -1;
+    for (let i = 0; i < neuronCount; i++) {
+      const isRightHemisphere = Math.random() > 0.5;
+      const hemiSign = isRightHemisphere ? 1 : -1;
+
       const u = Math.random();
       const v = Math.random();
       const theta = u * 2.0 * Math.PI;
       const phi = Math.acos(2.0 * v - 1.0);
+      const r = 0.35 + 0.65 * Math.cbrt(Math.random());
 
-      // Anatomical dimensions of human brain ellipsoids
-      const rX = 64 + Math.sin(phi * 4.0) * 4.0;
-      const rY = 56 + Math.cos(theta * 3.0) * 3.5;
-      const rZ = 86 + Math.sin(theta * 2.0) * 5.0;
+      let x = r * Math.sin(phi) * Math.cos(theta);
+      let y = r * Math.sin(phi) * Math.sin(theta);
+      let z = r * Math.cos(phi);
 
-      // Surface radius with sulcal/gyral procedural folding
-      const gyrusPerturbation = 1.0 + 0.12 * Math.sin(theta * 8.0) * Math.cos(phi * 8.0);
-      const radiusFactor = (0.55 + 0.45 * Math.cbrt(Math.random())) * gyrusPerturbation;
+      const aX = 110.0;
+      const bY = 78.0;
+      const cZ = 135.0;
 
-      let x = radiusFactor * rX * Math.sin(phi) * Math.cos(theta);
-      let y = radiusFactor * rY * Math.sin(phi) * Math.sin(theta);
-      let z = radiusFactor * rZ * Math.cos(phi);
+      x *= aX;
+      y *= bY;
+      z *= cZ;
 
-      // Separation of left and right hemispheres (Longitudinal Fissure)
-      const fissureGap = 4.8;
-      x = hemisphere * (Math.abs(x) + fissureGap);
+      const gyriWave = Math.sin(x * 0.12) * Math.cos(z * 0.10) * 8.5 +
+                       Math.sin(y * 0.15) * 5.0;
+      const sulciIndent = Math.cos(x * 0.22) * Math.sin(z * 0.18) * 4.0;
+      const perturbation = (gyriWave + sulciIndent) * (r > 0.7 ? 1.0 : 0.2);
 
-      // Anatomical vertical tilt & brain stem taper
-      if (z < -38) {
-        x *= 0.76;
-        y -= (Math.abs(z) - 38) * 0.26;
+      x += perturbation * (x / (aX || 1));
+      y += perturbation * (y / (bY || 1));
+      z += perturbation * (z / (cZ || 1));
+
+      x = Math.abs(x) * hemiSign;
+      const fissureGap = 6.5;
+      x += (isRightHemisphere ? fissureGap : -fissureGap);
+
+      if (y < 0 && z < -20) {
+        y *= 0.72;
       }
 
       neuronPositions[idx * 3] = x;
-      neuronPositions[idx * 3 + 1] = y + 20;
+      neuronPositions[idx * 3 + 1] = y;
       neuronPositions[idx * 3 + 2] = z;
 
-      // Color coding based on functional cortical regions
-      let c;
-      if (z > 40) {
-        c = colPrefrontal; // Frontal Lobe
-      } else if (y > 35) {
-        c = colNeocortex; // Parietal Neocortex
-      } else if (y < 0 && Math.abs(z) < 35) {
-        c = colHippocampus; // Deep Limbic / Hippocampus
-      } else {
-        c = colOccipital; // Occipital & Sensory
-      }
+      const normX = Math.abs(x) / (aX + fissureGap);
+      const normY = (y + bY) / (2 * bY);
+      const normZ = (z + cZ) / (2 * cZ);
 
-      const lum = 0.65 + Math.random() * 0.35;
-      neuronColors[idx * 3] = c.r * lum;
-      neuronColors[idx * 3 + 1] = c.g * lum;
-      neuronColors[idx * 3 + 2] = c.b * lum;
+      const rCol = 0.08 + 0.85 * normX;
+      const gCol = 0.15 + 0.80 * normY;
+      const bCol = 0.25 + 0.75 * normZ;
 
-      neuronBaseColors[idx * 3] = c.r * lum;
-      neuronBaseColors[idx * 3 + 1] = c.g * lum;
-      neuronBaseColors[idx * 3 + 2] = c.b * lum;
+      neuronBaseColors[idx * 3] = rCol;
+      neuronBaseColors[idx * 3 + 1] = gCol;
+      neuronBaseColors[idx * 3 + 2] = bCol;
 
+      neuronCurrentColors[idx * 3] = rCol;
+      neuronCurrentColors[idx * 3 + 1] = gCol;
+      neuronCurrentColors[idx * 3 + 2] = bCol;
+
+      neuronSizes[idx] = 1.6 + Math.random() * 2.2;
       idx++;
     }
 
     const neuronGeo = new THREE.BufferGeometry();
     neuronGeo.setAttribute('position', new THREE.BufferAttribute(neuronPositions, 3));
-    neuronGeo.setAttribute('color', new THREE.BufferAttribute(neuronColors, 3));
+    neuronGeo.setAttribute('color', new THREE.BufferAttribute(neuronCurrentColors, 3));
+    neuronGeo.setAttribute('size', new THREE.BufferAttribute(neuronSizes, 1));
 
     const neuronMat = new THREE.PointsMaterial({
-      size: 3.2,
+      size: 2.4,
       vertexColors: true,
       transparent: true,
       opacity: 0.82,
       blending: THREE.AdditiveBlending,
-      depthWrite: false,
     });
+
     const neuronCloud = new THREE.Points(neuronGeo, neuronMat);
     scene.add(neuronCloud);
-    neuronPointsRef.current = { geo: neuronGeo, baseColors: neuronBaseColors };
+    neuronPointsRef.current = { geo: neuronGeo, mat: neuronMat };
 
-    // 6. Build HCP-Standard DTI Tractography Axonal Fiber Bundles
-    // RGB Orientation Mapping: Red = L-R (X), Green = A-P (Y), Blue = S-I (Z)
+    // 6. DTI Tractography Bundles (Anatomical Fiber Tracts)
     const tractSplines = [];
     const tractPoints = [];
     const tractColors = [];
 
-    const addDtiTract = (controlPoints, subFibers = 6, spread = 3.2) => {
-      const curve = new THREE.CatmullRomCurve3(controlPoints);
+    // Corpus Callosum (Red FA: Left-Right Inter-hemispheric)
+    for (let c = 0; c < 28; c++) {
+      const zOffset = -70 + (c / 28) * 160;
+      const archHeight = 35 + Math.sin((c / 28) * Math.PI) * 25;
+      const span = 85;
+
+      const p0 = new THREE.Vector3(-span, archHeight * 0.4, zOffset);
+      const p1 = new THREE.Vector3(-span * 0.45, archHeight, zOffset + 5);
+      const p2 = new THREE.Vector3(0, archHeight * 1.15, zOffset);
+      const p3 = new THREE.Vector3(span * 0.45, archHeight, zOffset - 5);
+      const p4 = new THREE.Vector3(span, archHeight * 0.4, zOffset);
+
+      const curve = new THREE.CatmullRomCurve3([p0, p1, p2, p3, p4]);
       tractSplines.push(curve);
 
-      for (let s = 0; s < subFibers; s++) {
-        const jitter = new THREE.Vector3(
-          (Math.random() - 0.5) * spread,
-          (Math.random() - 0.5) * spread,
-          (Math.random() - 0.5) * spread
-        );
-
-        const subPts = curve.getPoints(36).map((pt) => pt.clone().add(jitter));
-
-        for (let p = 0; p < subPts.length - 1; p++) {
-          const p0 = subPts[p];
-          const p1 = subPts[p + 1];
-
-          // Compute fiber vector direction for DTI FA coloring
-          const dir = p1.clone().sub(p0).normalize();
-          const dtiRed = Math.abs(dir.x);   // Left-Right commissural (Red)
-          const dtiGreen = Math.abs(dir.z); // Anterior-Posterior association (Green)
-          const dtiBlue = Math.abs(dir.y);  // Superior-Inferior projection (Blue)
-
-          tractPoints.push(p0.x, p0.y, p0.z);
-          tractPoints.push(p1.x, p1.y, p1.z);
-
-          const brightness = 0.58;
-          tractColors.push(dtiRed * brightness, dtiGreen * brightness, dtiBlue * brightness);
-          tractColors.push(dtiRed * brightness, dtiGreen * brightness, dtiBlue * brightness);
-        }
+      const pts = curve.getPoints(40);
+      for (let j = 0; j < pts.length - 1; j++) {
+        tractPoints.push(pts[j].x, pts[j].y, pts[j].z);
+        tractPoints.push(pts[j + 1].x, pts[j + 1].y, pts[j + 1].z);
+        tractColors.push(1.0, 0.15, 0.35);
+        tractColors.push(1.0, 0.15, 0.35);
       }
-    };
-
-    // Bundle 1: Corpus Callosum (Red commissural arch linking left and right hemispheres)
-    for (let c = -42; c <= 42; c += 14) {
-      addDtiTract([
-        new THREE.Vector3(-46, 25, c),
-        new THREE.Vector3(-22, 54, c),
-        new THREE.Vector3(22, 54, c),
-        new THREE.Vector3(46, 25, c),
-      ], 8, 3.8);
     }
 
-    // Bundle 2: Superior Longitudinal Fasciculus (Green association stream Frontal <-> Occipital)
+    // Superior Longitudinal Fasciculus (Green FA: Frontal to Occipital)
     [-1, 1].forEach((side) => {
-      addDtiTract([
-        new THREE.Vector3(side * 28, 25, 96),
-        new THREE.Vector3(side * 42, 60, 24),
-        new THREE.Vector3(side * 38, 54, -46),
-        new THREE.Vector3(side * 22, 10, -92),
-      ], 10, 4.5);
+      for (let s = 0; s < 18; s++) {
+        const xOffset = side * (45 + s * 2.8);
+        const yOffset = 15 + (s % 4) * 8;
+
+        const p0 = new THREE.Vector3(xOffset, yOffset + 20, 115);
+        const p1 = new THREE.Vector3(xOffset * 1.1, yOffset + 45, 45);
+        const p2 = new THREE.Vector3(xOffset * 1.15, yOffset + 40, -35);
+        const p3 = new THREE.Vector3(xOffset * 0.8, yOffset + 10, -110);
+
+        const curve = new THREE.CatmullRomCurve3([p0, p1, p2, p3]);
+        tractSplines.push(curve);
+
+        const pts = curve.getPoints(36);
+        for (let j = 0; j < pts.length - 1; j++) {
+          tractPoints.push(pts[j].x, pts[j].y, pts[j].z);
+          tractPoints.push(pts[j + 1].x, pts[j + 1].y, pts[j + 1].z);
+          tractColors.push(0.0, 0.95, 0.55);
+          tractColors.push(0.0, 0.95, 0.55);
+        }
+      }
     });
 
-    // Bundle 3: Corticospinal Projection Tract (Blue projection stream Cortex -> Thalamus -> Brainstem)
+    // Corticospinal Projection (Blue FA: Motor Cortex down to Brainstem)
     [-1, 1].forEach((side) => {
-      addDtiTract([
-        new THREE.Vector3(side * 36, 76, 10),
-        new THREE.Vector3(side * 18, 40, 0),
-        new THREE.Vector3(side * 8, 6, -16),
-        new THREE.Vector3(0, -36, -52),
-      ], 8, 3.2);
+      for (let p = 0; p < 14; p++) {
+        const xStart = side * (30 + p * 3.5);
+        const zStart = -15 + (p % 3) * 10;
+
+        const p0 = new THREE.Vector3(xStart, 72, zStart);
+        const p1 = new THREE.Vector3(xStart * 0.65, 30, zStart - 15);
+        const p2 = new THREE.Vector3(xStart * 0.35, -5, -45);
+        const p3 = new THREE.Vector3(side * 8, -48, -95);
+
+        const curve = new THREE.CatmullRomCurve3([p0, p1, p2, p3]);
+        tractSplines.push(curve);
+
+        const pts = curve.getPoints(32);
+        for (let j = 0; j < pts.length - 1; j++) {
+          tractPoints.push(pts[j].x, pts[j].y, pts[j].z);
+          tractPoints.push(pts[j + 1].x, pts[j + 1].y, pts[j + 1].z);
+          tractColors.push(0.0, 0.85, 1.0);
+          tractColors.push(0.0, 0.85, 1.0);
+        }
+      }
     });
 
     const tractGeo = new THREE.BufferGeometry();
@@ -460,24 +527,72 @@ export default function NeuralNetwork3DFlow({
     scene.add(particleSystem);
     pulseParticlesRef.current = { geo: particleGeo, splines: particleSplines, progress: particleProgress };
 
-    // 8. Interactive Zone Anchors (Cognitive Hologram Rings)
+    // 8. Interactive Zone Anchors (Cognitive Hologram Rings & Beacons)
     const zoneGroup = new THREE.Group();
+    zoneGroupRef.current = zoneGroup;
+
     COGNITIVE_ZONES.forEach((zone) => {
-      const ringGeo = new THREE.RingGeometry(5.5, 7.2, 32);
+      const ringGeo = new THREE.RingGeometry(6.5, 8.8, 36);
       const ringMat = new THREE.MeshBasicMaterial({
         color: new THREE.Color(zone.color),
         side: THREE.DoubleSide,
         transparent: true,
-        opacity: 0.7,
+        opacity: 0.75,
       });
       const ringMesh = new THREE.Mesh(ringGeo, ringMat);
       ringMesh.position.copy(zone.center);
-      ringMesh.lookAt(camera.position);
+      ringMesh.userData = { zone };
       zoneGroup.add(ringMesh);
+
+      // Inner pulsating core sphere
+      const sphereGeo = new THREE.SphereGeometry(2.8, 16, 16);
+      const sphereMat = new THREE.MeshBasicMaterial({
+        color: new THREE.Color(zone.color),
+        transparent: true,
+        opacity: 0.85,
+        wireframe: true,
+      });
+      const sphereMesh = new THREE.Mesh(sphereGeo, sphereMat);
+      sphereMesh.position.copy(zone.center);
+      sphereMesh.userData = { zone, isCore: true };
+      zoneGroup.add(sphereMesh);
     });
     scene.add(zoneGroup);
 
-    // 9. Animation Loop (Smooth 60 FPS)
+    // 9. Raycaster 2-Way Interaction: Click on 3D Beacon Rings directly
+    const raycaster = new THREE.Raycaster();
+    const mouse = new THREE.Vector2();
+
+    const handleCanvasClick = (event) => {
+      const rect = renderer.domElement.getBoundingClientRect();
+      mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+      raycaster.setFromCamera(mouse, camera);
+      const intersects = raycaster.intersectObjects(zoneGroup.children, false);
+
+      if (intersects.length > 0) {
+        const hitZone = intersects[0].object.userData.zone;
+        if (hitZone) {
+          handleSelectZone(hitZone);
+        }
+      }
+    };
+
+    const handleCanvasMouseMove = (event) => {
+      const rect = renderer.domElement.getBoundingClientRect();
+      mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+      raycaster.setFromCamera(mouse, camera);
+      const intersects = raycaster.intersectObjects(zoneGroup.children, false);
+      renderer.domElement.style.cursor = intersects.length > 0 ? 'pointer' : 'default';
+    };
+
+    renderer.domElement.addEventListener('click', handleCanvasClick);
+    renderer.domElement.addEventListener('mousemove', handleCanvasMouseMove);
+
+    // 10. Animation Loop (Smooth 60 FPS)
     let animId;
     const clock = new THREE.Clock();
 
@@ -486,86 +601,117 @@ export default function NeuralNetwork3DFlow({
       const delta = clock.getDelta();
       const time = clock.getElapsedTime();
 
-      // Smooth camera tween
+      // Smooth camera and controls target flight tween
       if (cameraTweenRef.current.active) {
-        camera.position.lerp(cameraTweenRef.current.targetPos, 0.05);
-        if (camera.position.distanceTo(cameraTweenRef.current.targetPos) < 1.0) {
+        const spd = cameraTweenRef.current.speed || 0.05;
+        camera.position.lerp(cameraTweenRef.current.targetPos, spd);
+        if (cameraTweenRef.current.controlsTarget) {
+          controls.target.lerp(cameraTweenRef.current.controlsTarget, spd);
+        }
+        if (camera.position.distanceTo(cameraTweenRef.current.targetPos) < 1.2) {
           cameraTweenRef.current.active = false;
         }
       }
 
       controls.update();
 
-      // Subtle organic rotation when autoRotate is OFF
-      if (!autoRotate) {
-        scene.rotation.y = time * 0.04;
+      // Subtle organic rotation when autoRotate is OFF and no zone is being inspected
+      if (!autoRotate && !activeZoneRef.current) {
+        neuronCloud.rotation.y = Math.sin(time * 0.15) * 0.04;
+        tractMesh.rotation.y = Math.sin(time * 0.15) * 0.04;
       }
 
-      // Keep zone rings facing camera
+      // Action Potential Photon Particle Flow
+      if (pulseParticlesRef.current) {
+        const { geo, splines, progress } = pulseParticlesRef.current;
+        const posAttr = geo.attributes.position;
+        const pArr = posAttr.array;
+        const pSpeed = waveStateRef.current.active ? 1.35 : 0.45;
+
+        for (let k = 0; k < progress.length; k++) {
+          progress[k] = (progress[k] + delta * pSpeed) % 1.0;
+          const pt = splines[k].getPoint(progress[k]);
+          pArr[k * 3] = pt.x;
+          pArr[k * 3 + 1] = pt.y;
+          pArr[k * 3 + 2] = pt.z;
+        }
+        posAttr.needsUpdate = true;
+      }
+
+      // Update 3D Zone Beacon Rings (Billboard orientation & Pulsing Scale)
+      const currentZone = activeZoneRef.current;
       zoneGroup.children.forEach((mesh) => {
         mesh.lookAt(camera.position);
+        const isMatch = currentZone && mesh.userData.zone?.id === currentZone.id;
+        if (isMatch) {
+          const osc = 1.0 + 0.22 * Math.sin(time * 7.5);
+          mesh.scale.set(osc, osc, osc);
+          if (mesh.material) mesh.material.opacity = 0.96;
+        } else {
+          mesh.scale.set(1.0, 1.0, 1.0);
+          if (mesh.material) mesh.material.opacity = currentZone ? 0.25 : 0.72;
+        }
       });
 
-      // Update particle stream along tracts
-      const pPositions = particleGeo.attributes.position.array;
-      const isWaveActive = waveStateRef.current.active;
-      const speedMultiplier = isWaveActive ? 0.038 : 0.007;
+      // Soliton Wavefront Depolarization & Local Zone Spotlight
+      if (neuronPointsRef.current) {
+        const curCols = neuronPointsRef.current.geo.attributes.color.array;
+        const baseCols = neuronBaseColors;
+        const nPositions = neuronPositions;
 
-      for (let i = 0; i < particleCount; i++) {
-        particleProgress[i] = (particleProgress[i] + speedMultiplier) % 1.0;
-        const curCurve = particleSplines[i];
-        if (curCurve) {
-          const pt = curCurve.getPoint(particleProgress[i]);
-          pPositions[i * 3] = pt.x;
-          pPositions[i * 3 + 1] = pt.y;
-          pPositions[i * 3 + 2] = pt.z;
-        }
-      }
-      particleGeo.attributes.position.needsUpdate = true;
+        // 1. Global Soliton Wavefront Sweep
+        if (waveStateRef.current.active) {
+          waveStateRef.current.progress += delta * waveStateRef.current.speed;
+          const prog = waveStateRef.current.progress;
+          setPulsePct(Math.min(100, Math.round(prog * 100)));
 
-      // Update Soliton Wavefront Propagation
-      if (isWaveActive) {
-        waveStateRef.current.progress += delta / 2.0;
-        const prog = waveStateRef.current.progress;
-        setPulsePct(Math.min(100, Math.round(prog * 100)));
-
-        if (prog >= 1.0) {
-          waveStateRef.current.active = false;
-          waveStateRef.current.progress = 0;
-          setPulseActive(false);
-          setPulsePct(0);
-
-          // Restore neuron colors
-          const curCols = neuronGeo.attributes.color.array;
-          const baseCols = neuronBaseColors;
-          for (let k = 0; k < curCols.length; k++) {
-            curCols[k] = baseCols[k];
+          if (prog >= 1.0) {
+            waveStateRef.current.active = false;
+            setPulseActive(false);
+            setPulsePct(0);
           }
-          neuronGeo.attributes.color.needsUpdate = true;
-        } else {
-          // Wavefront sweeps from Frontal (Z = +105) to Occipital (Z = -105)
-          const sweepZ = 105 - prog * 210;
-          const curCols = neuronGeo.attributes.color.array;
-          const nPositions = neuronGeo.attributes.position.array;
-          const baseCols = neuronBaseColors;
+
+          const sweepZ = 135 - prog * 270;
 
           for (let n = 0; n < neuronCount; n++) {
             const zVal = nPositions[n * 3 + 2];
             const distToWave = Math.abs(zVal - sweepZ);
 
-            if (distToWave < 30) {
-              const ignite = 1.0 - distToWave / 30;
+            if (distToWave < 32) {
+              const ignite = 1.0 - distToWave / 32;
               curCols[n * 3] = baseCols[n * 3] + ignite * (1.0 - baseCols[n * 3]);
               curCols[n * 3 + 1] = baseCols[n * 3 + 1] + ignite * (1.0 - baseCols[n * 3 + 1]);
               curCols[n * 3 + 2] = baseCols[n * 3 + 2] + ignite * (1.0 - baseCols[n * 3 + 2]);
             } else {
-              curCols[n * 3] = THREE.MathUtils.lerp(curCols[n * 3], baseCols[n * 3], delta * 5);
-              curCols[n * 3 + 1] = THREE.MathUtils.lerp(curCols[n * 3 + 1], baseCols[n * 3 + 1], delta * 5);
-              curCols[n * 3 + 2] = THREE.MathUtils.lerp(curCols[n * 3 + 2], baseCols[n * 3 + 2], delta * 5);
+              curCols[n * 3] = THREE.MathUtils.lerp(curCols[n * 3], baseCols[n * 3], delta * 4.5);
+              curCols[n * 3 + 1] = THREE.MathUtils.lerp(curCols[n * 3 + 1], baseCols[n * 3 + 1], delta * 4.5);
+              curCols[n * 3 + 2] = THREE.MathUtils.lerp(curCols[n * 3 + 2], baseCols[n * 3 + 2], delta * 4.5);
             }
           }
-          neuronGeo.attributes.color.needsUpdate = true;
         }
+
+        // 2. Local Zone Depolarization (Spotlight around active zone center)
+        if (currentZone) {
+          const zCenter = currentZone.center;
+          const zColor = new THREE.Color(currentZone.color);
+          const glow = 0.5 + 0.5 * Math.sin(time * 8.0);
+
+          for (let n = 0; n < neuronCount; n++) {
+            const dx = nPositions[n * 3] - zCenter.x;
+            const dy = nPositions[n * 3 + 1] - zCenter.y;
+            const dz = nPositions[n * 3 + 2] - zCenter.z;
+            const distSq = dx * dx + dy * dy + dz * dz;
+
+            if (distSq < 2200) { // Radius ~47
+              const factor = 1.0 - Math.sqrt(distSq) / 47.0;
+              curCols[n * 3] = THREE.MathUtils.lerp(curCols[n * 3], zColor.r + 0.25 * glow, factor * 0.45);
+              curCols[n * 3 + 1] = THREE.MathUtils.lerp(curCols[n * 3 + 1], zColor.g + 0.25 * glow, factor * 0.45);
+              curCols[n * 3 + 2] = THREE.MathUtils.lerp(curCols[n * 3 + 2], zColor.b + 0.25 * glow, factor * 0.45);
+            }
+          }
+        }
+
+        neuronGeo.attributes.color.needsUpdate = true;
       }
 
       renderer.render(scene, camera);
@@ -573,7 +719,7 @@ export default function NeuralNetwork3DFlow({
 
     animate();
 
-    // 10. Responsive Resize
+    // 11. Responsive Resize
     const handleResize = () => {
       if (!mount) return;
       const w = mount.clientWidth;
@@ -584,11 +730,13 @@ export default function NeuralNetwork3DFlow({
     };
     window.addEventListener('resize', handleResize);
 
-    // 11. Clean Resource Disposal
+    // 12. Clean Resource Disposal
     return () => {
       cancelAnimationFrame(animId);
       window.removeEventListener('resize', handleResize);
       renderer.domElement.removeEventListener('wheel', handleDomWheel);
+      renderer.domElement.removeEventListener('click', handleCanvasClick);
+      renderer.domElement.removeEventListener('mousemove', handleCanvasMouseMove);
       controls.dispose();
       renderer.dispose();
       neuronGeo.dispose();
@@ -601,7 +749,7 @@ export default function NeuralNetwork3DFlow({
         mount.removeChild(renderer.domElement);
       }
     };
-  }, [autoRotate]);
+  }, [autoRotate, handleSelectZone]);
 
   return (
     <div
@@ -678,8 +826,8 @@ export default function NeuralNetwork3DFlow({
                 padding: '4px 8px',
                 fontSize: '0.68rem',
                 fontFamily: 'Share Tech Mono',
-                background: activePreset === 'perspective' ? 'rgba(0, 243, 255, 0.25)' : 'transparent',
-                color: activePreset === 'perspective' ? 'var(--accent-cyan)' : 'rgba(224, 242, 254, 0.6)',
+                background: activePreset === 'perspective' && !activeZone ? 'rgba(0, 243, 255, 0.25)' : 'transparent',
+                color: activePreset === 'perspective' && !activeZone ? '#00f3ff' : '#94a3b8',
                 border: 'none',
                 cursor: 'pointer',
               }}
@@ -694,8 +842,9 @@ export default function NeuralNetwork3DFlow({
                 fontSize: '0.68rem',
                 fontFamily: 'Share Tech Mono',
                 background: activePreset === 'lateral' ? 'rgba(0, 243, 255, 0.25)' : 'transparent',
-                color: activePreset === 'lateral' ? 'var(--accent-cyan)' : 'rgba(224, 242, 254, 0.6)',
+                color: activePreset === 'lateral' ? '#00f3ff' : '#94a3b8',
                 border: 'none',
+                borderLeft: '1px solid rgba(0, 243, 255, 0.15)',
                 cursor: 'pointer',
               }}
             >
@@ -709,8 +858,9 @@ export default function NeuralNetwork3DFlow({
                 fontSize: '0.68rem',
                 fontFamily: 'Share Tech Mono',
                 background: activePreset === 'top' ? 'rgba(0, 243, 255, 0.25)' : 'transparent',
-                color: activePreset === 'top' ? 'var(--accent-cyan)' : 'rgba(224, 242, 254, 0.6)',
+                color: activePreset === 'top' ? '#00f3ff' : '#94a3b8',
                 border: 'none',
+                borderLeft: '1px solid rgba(0, 243, 255, 0.15)',
                 cursor: 'pointer',
               }}
             >
@@ -724,8 +874,9 @@ export default function NeuralNetwork3DFlow({
                 fontSize: '0.68rem',
                 fontFamily: 'Share Tech Mono',
                 background: activePreset === 'frontal' ? 'rgba(0, 243, 255, 0.25)' : 'transparent',
-                color: activePreset === 'frontal' ? 'var(--accent-cyan)' : 'rgba(224, 242, 254, 0.6)',
+                color: activePreset === 'frontal' ? '#00f3ff' : '#94a3b8',
                 border: 'none',
+                borderLeft: '1px solid rgba(0, 243, 255, 0.15)',
                 cursor: 'pointer',
               }}
             >
@@ -733,7 +884,7 @@ export default function NeuralNetwork3DFlow({
             </button>
           </div>
 
-          {/* AutoRotate Toggle */}
+          {/* Auto-Rotate Toggle */}
           <button
             type="button"
             onClick={() => setAutoRotate(!autoRotate)}
@@ -742,87 +893,110 @@ export default function NeuralNetwork3DFlow({
               fontSize: '0.68rem',
               fontFamily: 'Share Tech Mono',
               background: autoRotate ? 'rgba(0, 255, 157, 0.2)' : 'rgba(0, 0, 0, 0.6)',
-              color: autoRotate ? '#00ff9d' : 'rgba(224, 242, 254, 0.6)',
-              border: `1px solid ${autoRotate ? '#00ff9d' : 'rgba(0, 243, 255, 0.2)'}`,
+              color: autoRotate ? '#00ff9d' : '#94a3b8',
+              border: `1px solid ${autoRotate ? 'rgba(0, 255, 157, 0.5)' : 'rgba(0, 243, 255, 0.2)'}`,
               borderRadius: '3px',
               cursor: 'pointer',
             }}
           >
-            Xoay 360° [{autoRotate ? 'BẬT' : 'TẮT'}]
+            {autoRotate ? 'Xoay 360° [BẬT]' : 'Xoay 360° [TẮT]'}
           </button>
 
-          {/* Zoom In / Out */}
-          <div style={{ display: 'flex', gap: '3px' }}>
+          {/* Zoom Buttons */}
+          <div style={{ display: 'flex', gap: '2px' }}>
             <button
               type="button"
+              title="Phóng to (Ctrl + Cuộn chuột)"
               onClick={() => handleZoom(0.85)}
-              title="Phóng to (Ctrl + Cuộn chuột lên)"
               style={{
                 padding: '4px 8px',
-                background: 'rgba(0, 243, 255, 0.1)',
-                border: '1px solid rgba(0, 243, 255, 0.3)',
-                color: 'var(--accent-cyan)',
-                borderRadius: '3px',
+                fontSize: '0.75rem',
+                background: 'rgba(0, 0, 0, 0.6)',
+                color: '#00f3ff',
+                border: '1px solid rgba(0, 243, 255, 0.2)',
+                borderRadius: '3px 0 0 3px',
                 cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
               }}
             >
-              <SciFiZoomInIcon size={13} color="var(--accent-cyan)" />
+              ＋
             </button>
             <button
               type="button"
+              title="Thu nhỏ (Ctrl + Cuộn chuột)"
               onClick={() => handleZoom(1.15)}
-              title="Thu nhỏ (Ctrl + Cuộn chuột xuống)"
               style={{
                 padding: '4px 8px',
-                background: 'rgba(0, 243, 255, 0.1)',
-                border: '1px solid rgba(0, 243, 255, 0.3)',
-                color: 'var(--accent-cyan)',
-                borderRadius: '3px',
+                fontSize: '0.75rem',
+                background: 'rgba(0, 0, 0, 0.6)',
+                color: '#00f3ff',
+                border: '1px solid rgba(0, 243, 255, 0.2)',
+                borderRadius: '0',
                 cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
               }}
             >
-              <SciFiZoomOutIcon size={13} color="var(--accent-cyan)" />
+              －
             </button>
             <button
               type="button"
-              onClick={toggleFullscreen}
-              title={isFullscreen ? 'Thoát toàn màn hình' : 'Toàn màn hình'}
+              title="Đặt lại góc nhìn toàn cảnh"
+              onClick={resetToOverview}
               style={{
                 padding: '4px 8px',
-                background: 'rgba(0, 243, 255, 0.1)',
-                border: '1px solid rgba(0, 243, 255, 0.3)',
-                color: 'var(--accent-cyan)',
-                borderRadius: '3px',
+                fontSize: '0.75rem',
+                background: 'rgba(0, 0, 0, 0.6)',
+                color: '#00f3ff',
+                border: '1px solid rgba(0, 243, 255, 0.2)',
+                borderRadius: '0 3px 3px 0',
                 cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
               }}
             >
-              {isFullscreen ? (
-                <SciFiFullscreenExitIcon size={13} color="var(--accent-cyan)" />
-              ) : (
-                <SciFiFullscreenExpandIcon size={13} color="var(--accent-cyan)" />
-              )}
+              ⟲
             </button>
           </div>
 
-          {/* Action Potential Status Badge */}
-          <div
+          {/* Fullscreen Toggle */}
+          <button
+            type="button"
+            title="Toàn màn hình"
+            onClick={toggleFullscreen}
             style={{
-              padding: '4px 10px',
-              background: 'rgba(0, 243, 255, 0.08)',
-              border: '1px solid rgba(0, 243, 255, 0.25)',
+              padding: '4px 8px',
+              fontSize: '0.75rem',
+              background: 'rgba(0, 0, 0, 0.6)',
+              color: isFullscreen ? '#00ff9d' : '#00f3ff',
+              border: '1px solid rgba(0, 243, 255, 0.2)',
               borderRadius: '3px',
-              fontSize: '0.7rem',
-              fontFamily: 'Share Tech Mono',
-              color: pulseActive ? '#00ff9d' : '#00f3ff',
+              cursor: 'pointer',
             }}
           >
-            {pulseActive ? `ACTION POTENTIAL: [${pulsePct}%]` : 'CONNECTOME: SẴN SÀNG'}
+            {isFullscreen ? '⤢' : '⤡'}
+          </button>
+
+          {/* Soliton Wave Status Badge */}
+          <div
+            style={{
+              padding: '4px 8px',
+              fontSize: '0.68rem',
+              fontFamily: 'Share Tech Mono',
+              borderRadius: '3px',
+              background: pulseActive ? 'rgba(255, 0, 85, 0.25)' : 'rgba(0, 243, 255, 0.1)',
+              border: `1px solid ${pulseActive ? '#ff0055' : 'rgba(0, 243, 255, 0.3)'}`,
+              color: pulseActive ? '#ff0055' : '#00f3ff',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+            }}
+          >
+            <span
+              style={{
+                width: '6px',
+                height: '6px',
+                borderRadius: '50%',
+                background: pulseActive ? '#ff0055' : '#00ff9d',
+                boxShadow: `0 0 6px ${pulseActive ? '#ff0055' : '#00ff9d'}`,
+              }}
+            />
+            {pulseActive ? `SÓNG KHỬ CỰC: ${pulsePct}%` : 'CONNECTOME: SẴN SÀNG'}
           </div>
 
           {/* Action Potential Trigger Button */}
@@ -830,31 +1004,177 @@ export default function NeuralNetwork3DFlow({
             type="button"
             onClick={fireActionPotential}
             style={{
-              padding: '6px 14px',
-              fontSize: '0.74rem',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '5px 12px',
+              fontSize: '0.72rem',
               fontFamily: 'Share Tech Mono',
               fontWeight: 700,
-              background: 'linear-gradient(135deg, rgba(0, 243, 255, 0.3), rgba(0, 255, 157, 0.35))',
+              background: 'linear-gradient(135deg, rgba(0, 243, 255, 0.25), rgba(189, 0, 255, 0.25))',
               color: '#ffffff',
               border: '1px solid #00f3ff',
               borderRadius: '3px',
               cursor: 'pointer',
-              boxShadow: '0 0 14px rgba(0, 243, 255, 0.35)',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
+              boxShadow: '0 0 14px rgba(0, 243, 255, 0.4)',
+              transition: 'all 0.2s ease',
             }}
           >
-            <SciFiCognitivePulseBurstIcon size={14} color="#ffffff" />
+            <span>❖</span>
             <span>KÍCH HOẠT XUNG THẦN KINH</span>
           </button>
         </div>
       </div>
 
-      {/* ── WebGL Canvas Mount ──────────────────────────────────────────────── */}
-      <div ref={mountRef} style={{ width: '100%', height: '100%', cursor: 'grab' }} />
+      {/* ── Active Cognitive Zone Holographic Inspector HUD ───────────────── */}
+      {activeZone && (
+        <div
+          style={{
+            position: 'absolute',
+            top: 72,
+            left: 20,
+            maxWidth: '360px',
+            background: 'rgba(4, 7, 17, 0.92)',
+            backdropFilter: 'blur(10px)',
+            border: `1px solid ${activeZone.color}`,
+            borderRadius: '5px',
+            padding: '12px 16px',
+            boxShadow: `0 8px 32px rgba(0,0,0,0.8), 0 0 20px ${activeZone.color}33`,
+            zIndex: 12,
+            fontFamily: 'Share Tech Mono',
+            animation: 'fadeIn 0.25s ease',
+          }}
+        >
+          {/* Header & Close / Reset Button */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span
+                style={{
+                  width: '9px',
+                  height: '9px',
+                  borderRadius: '50%',
+                  background: activeZone.color,
+                  boxShadow: `0 0 8px ${activeZone.color}`,
+                }}
+              />
+              <span
+                style={{
+                  color: activeZone.color,
+                  fontWeight: 800,
+                  fontSize: '0.8rem',
+                  letterSpacing: '1px',
+                }}
+              >
+                {activeZone.name}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={resetToOverview}
+              title="Thoát chế độ cận cảnh"
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: '#94a3b8',
+                fontSize: '0.9rem',
+                cursor: 'pointer',
+                padding: '2px 6px',
+              }}
+            >
+              ✕
+            </button>
+          </div>
 
-      {/* ── Bottom HUD Footer: DTI Legend & Cognitive Zone Analytics ───────── */}
+          {/* Subtitle & Role */}
+          <div style={{ color: '#e2e8f0', fontSize: '0.72rem', fontWeight: 600, marginBottom: '6px' }}>
+            {activeZone.role} • <span style={{ color: activeZone.color }}>{activeZone.tensor}</span>
+          </div>
+
+          {/* Biological Description */}
+          <div style={{ color: 'rgba(224, 242, 254, 0.78)', fontSize: '0.68rem', lineHeight: '1.4', marginBottom: '10px' }}>
+            {activeZone.desc}
+          </div>
+
+          {/* Live Neuro-Telemetry Grid */}
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(3, 1fr)',
+              gap: '6px',
+              background: 'rgba(0, 0, 0, 0.45)',
+              padding: '8px',
+              borderRadius: '3px',
+              border: '1px solid rgba(255, 255, 255, 0.08)',
+              marginBottom: '10px',
+              fontSize: '0.62rem',
+            }}
+          >
+            <div>
+              <div style={{ color: '#94a3b8' }}>ĐIỆN THẾ MÀNG</div>
+              <div style={{ color: '#00ff9d', fontWeight: 700, marginTop: '2px' }}>
+                {activeZone.metrics.potential}
+              </div>
+            </div>
+            <div>
+              <div style={{ color: '#94a3b8' }}>TẦN SỐ XUNG</div>
+              <div style={{ color: '#00f3ff', fontWeight: 700, marginTop: '2px' }}>
+                {activeZone.metrics.firingRate}
+              </div>
+            </div>
+            <div>
+              <div style={{ color: '#94a3b8' }}>HÓA THẦN KINH</div>
+              <div style={{ color: '#ffd700', fontWeight: 700, marginTop: '2px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {activeZone.metrics.keyChemical}
+              </div>
+            </div>
+          </div>
+
+          {/* Action Buttons: Deep Brain Stimulation & Reset */}
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button
+              type="button"
+              onClick={fireActionPotential}
+              style={{
+                flex: 1,
+                padding: '6px 8px',
+                fontSize: '0.66rem',
+                fontFamily: 'Share Tech Mono',
+                fontWeight: 700,
+                background: `linear-gradient(135deg, ${activeZone.color}33, rgba(0, 243, 255, 0.2))`,
+                color: '#ffffff',
+                border: `1px solid ${activeZone.color}`,
+                borderRadius: '3px',
+                cursor: 'pointer',
+                textAlign: 'center',
+                transition: 'all 0.2s ease',
+              }}
+            >
+              ⚡ KÍCH THÍCH SÂU (DBS)
+            </button>
+            <button
+              type="button"
+              onClick={resetToOverview}
+              style={{
+                padding: '6px 10px',
+                fontSize: '0.66rem',
+                fontFamily: 'Share Tech Mono',
+                background: 'rgba(255, 255, 255, 0.06)',
+                color: '#94a3b8',
+                border: '1px solid rgba(255, 255, 255, 0.15)',
+                borderRadius: '3px',
+                cursor: 'pointer',
+              }}
+            >
+              ⟲ TOÀN CẢNH
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── 3D Canvas Mounting Point ────────────────────────────────────────── */}
+      <div ref={mountRef} style={{ width: '100%', height: '100%' }} />
+
+      {/* ── Bottom HUD Footer & Zone Chips ──────────────────────────────────── */}
       <div
         style={{
           position: 'absolute',
@@ -903,29 +1223,34 @@ export default function NeuralNetwork3DFlow({
 
         {/* Cognitive Zones Interactive Chips */}
         <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', pointerEvents: 'auto' }}>
-          {COGNITIVE_ZONES.map((zone) => (
-            <div
-              key={zone.id}
-              onClick={() => setActiveZone(zone)}
-              style={{
-                background: activeZone.id === zone.id ? 'rgba(0, 243, 255, 0.25)' : 'rgba(4, 7, 17, 0.82)',
-                border: `1px solid ${activeZone.id === zone.id ? zone.color : 'rgba(255, 255, 255, 0.15)'}`,
-                boxShadow: activeZone.id === zone.id ? `0 0 10px ${zone.color}44` : 'none',
-                padding: '6px 10px',
-                borderRadius: '3px',
-                cursor: 'pointer',
-                textAlign: 'center',
-                transition: 'all 0.2s ease',
-              }}
-            >
-              <div style={{ color: zone.color, fontWeight: 700, fontSize: '0.68rem' }}>
-                {zone.name}
+          {COGNITIVE_ZONES.map((zone) => {
+            const isSelected = activeZone?.id === zone.id;
+            return (
+              <div
+                key={zone.id}
+                onClick={() => handleSelectZone(zone)}
+                title={`Bấm để focus cận cảnh vào ${zone.name}`}
+                style={{
+                  background: isSelected ? `${zone.color}26` : 'rgba(4, 7, 17, 0.85)',
+                  border: `1px solid ${isSelected ? zone.color : 'rgba(255, 255, 255, 0.16)'}`,
+                  boxShadow: isSelected ? `0 0 14px ${zone.color}66, inset 0 0 8px ${zone.color}33` : 'none',
+                  padding: '6px 12px',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  textAlign: 'center',
+                  transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+                  transform: isSelected ? 'translateY(-2px)' : 'none',
+                }}
+              >
+                <div style={{ color: isSelected ? '#ffffff' : zone.color, fontWeight: 700, fontSize: '0.68rem', letterSpacing: '0.5px' }}>
+                  {zone.name}
+                </div>
+                <div style={{ color: isSelected ? zone.color : '#94a3b8', fontSize: '0.62rem', marginTop: '1px' }}>
+                  {zone.tensor}
+                </div>
               </div>
-              <div style={{ color: '#ffffff', fontSize: '0.62rem' }}>
-                {zone.tensor}
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
     </div>

@@ -471,29 +471,32 @@ class VncManager:
 
     async def _cleanup_internal(self, skip_save: bool = False):
         self._is_running = False
-        if self._watchdog_task and not self._watchdog_task.done():
+        cur_task = asyncio.current_task()
+        if self._watchdog_task and self._watchdog_task != cur_task and not self._watchdog_task.done():
             self._watchdog_task.cancel()
             self._watchdog_task = None
-        if not skip_save and self._context:
+        try:
+            if not skip_save and self._context:
+                try:
+                    await asyncio.wait_for(self._extract_and_save_session(self._current_platform), timeout=5.0)
+                except Exception as e:
+                    logger.warning("[VNC-Manager] Auto-save during cleanup timed out or failed: %s", e)
             try:
-                await asyncio.wait_for(self._extract_and_save_session(self._current_platform), timeout=5.0)
-            except Exception as e:
-                logger.warning("[VNC-Manager] Auto-save during cleanup timed out or failed: %s", e)
-        try:
-            if self._context:
-                await asyncio.wait_for(self._context.close(), timeout=3.0)
-        except Exception:
-            pass
-        self._context = None
-        self._page = None
-        try:
-            if self._playwright:
-                await asyncio.wait_for(self._playwright.stop(), timeout=3.0)
-        except Exception:
-            pass
-        self._playwright = None
-        self._kill_stale_processes()
-        logger.info("[VNC-Manager] VNC stack stopped and all system resources freed.")
+                if self._context:
+                    await asyncio.wait_for(self._context.close(), timeout=3.0)
+            except Exception:
+                pass
+            self._context = None
+            self._page = None
+            try:
+                if self._playwright:
+                    await asyncio.wait_for(self._playwright.stop(), timeout=3.0)
+            except Exception:
+                pass
+            self._playwright = None
+        finally:
+            self._kill_stale_processes()
+            logger.info("[VNC-Manager] VNC stack stopped and all system resources freed.")
 
     def _kill_stale_processes(self):
         for proc in [self._websockify_proc, self._x11vnc_proc, self._openbox_proc, self._xvfb_proc]:

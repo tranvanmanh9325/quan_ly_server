@@ -19,6 +19,7 @@ const ContainersPage  = lazy(() => import('./pages/ContainersPage'));
 const TerminalPage    = lazy(() => import('./pages/TerminalPage'));
 const WorldMapPage    = lazy(() => import('./pages/WorldMapPage'));
 const AiAgentsPage    = lazy(() => import('./pages/AiAgentsPage'));
+const BrainCorePage   = lazy(() => import('./pages/BrainCorePage'));
 const SettingsPage    = lazy(() => import('./pages/SettingsPage'));
 
 // Route loading spinner fallback
@@ -341,6 +342,7 @@ function App() {
               <Route path="terminal" element={<TerminalPage />} />
               <Route path="security" element={<SecurityPage />} />
               <Route path="ai-agents" element={<AiAgentsPage />} />
+              <Route path="brain" element={<BrainCorePage />} />
               <Route path="settings" element={<SettingsPage />} />
             </Route>
           </Routes>

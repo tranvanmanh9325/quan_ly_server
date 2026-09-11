@@ -18,7 +18,7 @@ from app.services.memory_service import AgentMemoryService
 from app.services.telegram_bot import TelegramBot
 from app.services.proactive_service import ProactiveIntelligenceService
 from app.services.dream_engine import SubconsciousDreamEngine
-from app.routers import health, facebook, tiktok, openai_gateway
+from app.routers import health, facebook, tiktok, openai_gateway, brain
 
 logging.basicConfig(
     level=logging.INFO,
@@ -350,3 +350,4 @@ app.include_router(health.router)
 app.include_router(facebook.router)
 app.include_router(tiktok.router)
 app.include_router(openai_gateway.router)
+app.include_router(brain.router)

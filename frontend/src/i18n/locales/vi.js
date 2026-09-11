@@ -3,7 +3,7 @@ const vi = {
     overview: "Tổng quan", processes: "Tiến trình", services: "Dịch vụ",
     fileManager: "Quản lý File", dockerContainers: "Docker Containers",
     globalMap: "Bản đồ Toàn cầu", terminal: "Terminal Console",
-    security: "Bảo mật & Nhật ký", aiAgents: "AI Agents", settings: "Cài đặt",
+    security: "Bảo mật & Nhật ký", aiAgents: "AI Agents", brainCore: "Não Bộ AI", settings: "Cài đặt",
   },
   header: {
     systemOnline: "TRẠNG THÁI: TRỰC TUYẾN", criticalAlert: "CẢNH BÁO NGUY HIỂM",

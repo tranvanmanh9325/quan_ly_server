@@ -3,7 +3,7 @@ const ja = {
     overview: "概要", processes: "プロセス", services: "サービス",
     fileManager: "ファイルマネージャー", dockerContainers: "Dockerコンテナ",
     globalMap: "世界マップ", terminal: "ターミナルコンソール",
-    security: "セキュリティ＆ログ", aiAgents: "AIエージェント", settings: "設定",
+    security: "セキュリティ＆ログ", aiAgents: "AIエージェント", brainCore: "AI脳コア", settings: "設定",
   },
   header: {
     systemOnline: "システム状態: オンライン", criticalAlert: "重大な警告",

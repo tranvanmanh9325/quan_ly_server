@@ -1446,3 +1446,97 @@ export const SciFiHoloSilhouette = ({ size = 36, color = 'var(--accent-cyan)', c
     <circle cx="20" cy="14" r="1.5" fill={color} />
   </svg>
 );
+
+// 70. SCI-FI BRAIN CORE — Neuromorphic dual-hemisphere brain with synaptic bridge and pulse nucleus
+export const SciFiBrainCoreIcon = ({ size = 20, color = 'currentColor', className = '', ...props }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    className={className}
+    style={{ display: 'inline-block', verticalAlign: 'middle' }}
+    {...props}
+  >
+    {/* Left Hemisphere Gyri */}
+    <path
+      d="M12 4.5C9.5 3 6.5 3.5 5 5.5C3.2 7.8 3.5 11 4.5 13C3.5 14.5 3.8 17 5.5 18.5C7 19.8 9.5 19.5 12 18"
+      stroke={color}
+      strokeWidth="1.4"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+    <path
+      d="M6.5 8.5C8 9 9.5 8 10.5 6.5M6 13.5C7.5 14 9 13 10.5 11.5M7 17C8.5 16.5 9.5 17.5 11 16"
+      stroke={color}
+      strokeWidth="1.0"
+      strokeLinecap="round"
+      strokeOpacity="0.75"
+    />
+
+    {/* Right Hemisphere Gyri */}
+    <path
+      d="M12 4.5C14.5 3 17.5 3.5 19 5.5C20.8 7.8 20.5 11 19.5 13C20.5 14.5 20.2 17 18.5 18.5C17 19.8 14.5 19.5 12 18"
+      stroke={color}
+      strokeWidth="1.4"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+    <path
+      d="M17.5 8.5C16 9 14.5 8 13.5 6.5M18 13.5C16.5 14 15 13 13.5 11.5M17 17C15.5 16.5 14.5 17.5 13 16"
+      stroke={color}
+      strokeWidth="1.0"
+      strokeLinecap="round"
+      strokeOpacity="0.75"
+    />
+
+    {/* Synaptic Corpus Callosum (Central Bridge) */}
+    <line x1="12" y1="5" x2="12" y2="19" stroke={color} strokeWidth="1.2" strokeDasharray="1.5 1.5" />
+    <circle cx="12" cy="12" r="2.2" stroke={color} strokeWidth="1.2" fill={color} fillOpacity="0.25" />
+    <circle cx="12" cy="12" r="0.8" fill={color} />
+  </svg>
+);
+
+// 71. SCI-FI SYNAPSE — Axon terminal transmitting neurochemical signals
+export const SciFiSynapseIcon = ({ size = 20, color = 'currentColor', className = '', ...props }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    className={className}
+    style={{ display: 'inline-block', verticalAlign: 'middle' }}
+    {...props}
+  >
+    <circle cx="6" cy="6" r="3" stroke={color} strokeWidth="1.3" fill={color} fillOpacity="0.2" />
+    <circle cx="18" cy="18" r="3" stroke={color} strokeWidth="1.3" fill={color} fillOpacity="0.2" />
+    <path d="M8.5 8.5L15.5 15.5" stroke={color} strokeWidth="1.5" strokeLinecap="round" />
+    <line x1="6" y1="9" x2="6" y2="15" stroke={color} strokeWidth="1" strokeDasharray="1.5 1.5" strokeOpacity="0.6" />
+    <line x1="9" y1="18" x2="15" y2="18" stroke={color} strokeWidth="1" strokeDasharray="1.5 1.5" strokeOpacity="0.6" />
+    <circle cx="12" cy="12" r="1.5" fill={color} />
+  </svg>
+);
+
+// 72. SCI-FI NEURO DNA — Biomorphic molecular helix receptor
+export const SciFiNeuroDnaIcon = ({ size = 20, color = 'currentColor', className = '', ...props }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    className={className}
+    style={{ display: 'inline-block', verticalAlign: 'middle' }}
+    {...props}
+  >
+    <path d="M4 3C8 6 16 6 20 3M4 21C8 18 16 18 20 21" stroke={color} strokeWidth="1.3" strokeLinecap="round" />
+    <path d="M4 12C8 15 16 15 20 12" stroke={color} strokeWidth="1.3" strokeLinecap="round" />
+    <line x1="6" y1="4.5" x2="6" y2="19.5" stroke={color} strokeWidth="1" strokeOpacity="0.4" />
+    <line x1="12" y1="3" x2="12" y2="21" stroke={color} strokeWidth="1.2" strokeOpacity="0.7" />
+    <line x1="18" y1="4.5" x2="18" y2="19.5" stroke={color} strokeWidth="1" strokeOpacity="0.4" />
+    <circle cx="12" cy="7.5" r="1.2" fill={color} />
+    <circle cx="12" cy="16.5" r="1.2" fill={color} />
+  </svg>
+);

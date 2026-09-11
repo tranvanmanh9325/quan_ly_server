@@ -15,12 +15,14 @@ import GlobalWorkspaceStream from '../components/brain/GlobalWorkspaceStream';
 import VirtualCortexExplorer from '../components/brain/VirtualCortexExplorer';
 import DreamEngineMonitor from '../components/brain/DreamEngineMonitor';
 import TheoryOfMindCard from '../components/brain/TheoryOfMindCard';
+import NeuralNetwork3DFlow from '../components/brain/NeuralNetwork3DFlow';
 
 export default function BrainCorePage() {
   const { t } = useTranslation();
   const [telemetry, setTelemetry] = useState(null);
   const [loading, setLoading] = useState(true);
   const [isPulsing, setIsPulsing] = useState(false);
+  const [pulseCounter, setPulseCounter] = useState(0);
   const [lastActionMessage, setLastActionMessage] = useState(null);
   const [error, setError] = useState(null);
   const pollTimerRef = useRef(null);
@@ -80,6 +82,7 @@ export default function BrainCorePage() {
   const handlePulse = async () => {
     if (isPulsing) return;
     setIsPulsing(true);
+    setPulseCounter((p) => p + 1);
     setLastActionMessage(null);
     try {
       const resp = await axios.post('/api/ai/brain/pulse', {
@@ -411,6 +414,13 @@ export default function BrainCorePage() {
           </div>
         </div>
       )}
+
+      {/* ── 3D Neural Network Architecture & Synaptic Flow Visualizer (Hero Centerpiece) ── */}
+      <NeuralNetwork3DFlow
+        onTriggerPulse={handlePulse}
+        pulseTrigger={pulseCounter}
+        telemetry={telemetry}
+      />
 
       {/* ── Main 2-Column Responsive Dashboard Grid ─────────────────── */}
       {telemetry && (

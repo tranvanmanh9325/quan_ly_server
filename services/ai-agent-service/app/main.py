@@ -135,6 +135,32 @@ async def rtk_stats_persist_loop(llm_router: LlmRouter):
             logger.error("[RTK-Persist] Unexpected error in persist loop: %s", e)
 
 
+async def cognitive_heartbeat_loop(ai_agent: AiAgentService, interval_sec: int = 30):
+    """
+    Biological cognitive heartbeat loop for Tiểu Bảo Bảo:
+    Runs every 30s in background, samples REAL host CPU & RAM via psutil,
+    computes exponential neurochemical decay, updates Active Inference Free Energy,
+    and maintains continuous homeostatic equilibrium 24/7.
+    """
+    logger.info("[Brain-Heartbeat] Biological cognitive pulse loop started (interval: %ds).", interval_sec)
+    await asyncio.sleep(15)  # Initial grace delay after startup
+    while True:
+        try:
+            brain = getattr(ai_agent, "brain", None)
+            if brain:
+                import psutil
+                cpu = float(psutil.cpu_percent(interval=0.1))
+                ram = float(psutil.virtual_memory().percent)
+                brain.step_pulse({"cpu_usage": round(cpu, 1), "ram_usage": round(ram, 1)})
+            await asyncio.sleep(interval_sec)
+        except asyncio.CancelledError:
+            logger.info("[Brain-Heartbeat] Cognitive pulse loop cancelled.")
+            break
+        except Exception as e:
+            logger.debug("[Brain-Heartbeat] Unexpected error in pulse loop: %s", e)
+            await asyncio.sleep(10)
+
+
 async def proactive_scan_loop(proactive_service: ProactiveIntelligenceService):
     """Phase 5B: Curiosity-Driven server health scan — SRE always on duty."""
     await proactive_service.start()
@@ -287,6 +313,7 @@ async def lifespan(app: FastAPI):
     consolidation_task   = asyncio.create_task(nightly_consolidation_loop(memory_service))
     schema_task          = asyncio.create_task(weekly_schema_extraction_loop(memory_service))
     dream_task           = asyncio.create_task(dream_engine.start_subconscious_loop())
+    heartbeat_task       = asyncio.create_task(cognitive_heartbeat_loop(ai_agent, interval_sec=30))
 
     yield
 
@@ -302,10 +329,12 @@ async def lifespan(app: FastAPI):
     consolidation_task.cancel()
     schema_task.cancel()
     dream_task.cancel()
+    heartbeat_task.cancel()
     try:
         await asyncio.gather(
             telegram_task, fb_scan_task, tiktok_scan_task, reminder_task,
-            rtk_persist_task, proactive_task, consolidation_task, schema_task, dream_task,
+            rtk_persist_task, proactive_task, consolidation_task, schema_task,
+            dream_task, heartbeat_task,
             return_exceptions=True,
         )
     except Exception:

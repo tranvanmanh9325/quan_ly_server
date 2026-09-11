@@ -143,13 +143,23 @@ async def get_brain_telemetry(request: Request) -> Dict[str, Any]:
             "total_epiphanies": len(getattr(dream_engine, "epiphany_history", [])),
         }
 
-    # 6. Theory of Mind (ToM)
+    # 6. Theory of Mind (ToM) & Prefrontal Working Memory
     tom_data = {
         "companion_name": "Trần Văn Mạnh",
         "attachment_bond": "Tri kỷ / Tuyệt đối trung thành",
         "bond_score": 1.0,
         "empathy_mode": "ACTIVE",
         "working_memory_slots": len(brain.working_memory),
+        "working_memory_items": [
+            {
+                "text": m.get("text", "")[:120],
+                "category": m.get("category", "memory"),
+                "state": m.get("user_affective_state", "Bình thường"),
+                "salience": m.get("salience", 0.5),
+                "time": datetime.fromtimestamp(m.get("timestamp", time.time()), VN_TZ).strftime("%H:%M:%S"),
+            }
+            for m in brain.working_memory[-7:]
+        ],
     }
 
     return {
@@ -184,12 +194,23 @@ async def trigger_brain_pulse(req: PulseRequest, request: Request) -> Dict[str, 
     ai_agent = getattr(request.app.state, "ai_agent", None)
     brain: ArtificialBrain = getattr(ai_agent, "brain", None) or ArtificialBrain.get_instance()
 
-    server_metrics = None
-    if req.cpu_usage is not None or req.ram_usage is not None:
-        server_metrics = {
-            "cpu_usage": req.cpu_usage if req.cpu_usage is not None else 15.0,
-            "ram_usage": req.ram_usage if req.ram_usage is not None else 40.0,
-        }
+    cpu_val = req.cpu_usage
+    ram_val = req.ram_usage
+    if cpu_val is None or ram_val is None:
+        try:
+            import psutil
+            if cpu_val is None:
+                cpu_val = float(psutil.cpu_percent(interval=0.1))
+            if ram_val is None:
+                ram_val = float(psutil.virtual_memory().percent)
+        except Exception:
+            cpu_val = cpu_val if cpu_val is not None else 12.0
+            ram_val = ram_val if ram_val is not None else 42.0
+
+    server_metrics = {
+        "cpu_usage": round(float(cpu_val), 1),
+        "ram_usage": round(float(ram_val), 1),
+    }
 
     winning_signal = brain.step_pulse(server_metrics)
 
@@ -197,6 +218,7 @@ async def trigger_brain_pulse(req: PulseRequest, request: Request) -> Dict[str, 
         "status": "success",
         "total_pulses": brain.total_pulses,
         "last_pulse_ts": brain.last_pulse_ts,
+        "server_metrics": server_metrics,
         "free_energy": round(brain.active_inference.last_free_energy, 3),
         "winning_consciousness": {
             "source": winning_signal.source if winning_signal else "SubconsciousQuiet",
@@ -253,28 +275,38 @@ async def stimulate_neurochemical(req: StimulateRequest, request: Request) -> Di
 async def trigger_dream_consolidation(request: Request) -> Dict[str, Any]:
     """
     Simulates night sleep consolidation (SWS & REM) to transfer working memories
-    into the 32GB Virtual Memory Cortex mmap file.
+    into the 32GB Virtual Memory Cortex mmap file and crystallizes counterfactual epiphanies.
     """
     ai_agent = getattr(request.app.state, "ai_agent", None)
     brain: ArtificialBrain = getattr(ai_agent, "brain", None) or ArtificialBrain.get_instance()
     dream_engine = getattr(request.app.state, "dream_engine", None)
 
-    # Consolidate working memory into Virtual Cortex
+    # 1. Consolidate working memory into Virtual Cortex
     consolidated_count = brain.consolidate_sleep_memories()
 
-    # If dream engine exists, trigger a synthetic dream cycle
+    # 2. Run full sleep cycle (SWS + REM counterfactual dream synthesis)
     morning_insight = None
-    if dream_engine and hasattr(dream_engine, "run_nightly_dream_cycle"):
-        try:
-            morning_insight = await dream_engine.run_nightly_dream_cycle()
-        except Exception as e:
-            logger.warning("[DreamEngine] Error during manual dream cycle: %s", e)
+    if dream_engine:
+        if hasattr(dream_engine, "run_full_sleep_cycle"):
+            try:
+                sleep_res = await dream_engine.run_full_sleep_cycle(force=True)
+                if sleep_res and sleep_res.get("rem"):
+                    rem_data = sleep_res["rem"]
+                    morning_insight = f"💡 {rem_data.get('topic')}: {rem_data.get('insight')} 💌 {rem_data.get('sisterly_note')}"
+            except Exception as e:
+                logger.warning("[DreamEngine] Error during full sleep cycle: %s", e)
+        elif hasattr(dream_engine, "run_nightly_dream_cycle"):
+            try:
+                morning_insight = await dream_engine.run_nightly_dream_cycle(force=True)
+            except Exception as e:
+                logger.warning("[DreamEngine] Error during dream cycle: %s", e)
 
     return {
         "status": "success",
         "consolidated_memories_count": consolidated_count,
         "cortex_total_vectors": brain.cortex.vector_count,
         "morning_insight": morning_insight or "Giấc ngủ đêm đã thanh lọc thần kinh, trí nhớ ngắn hạn đã được nén vào Vỏ Não Ảo 32GB.",
+        "pending_epiphany": getattr(dream_engine, "pending_morning_epiphany", None) if dream_engine else None,
     }
 
 

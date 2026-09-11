@@ -11,7 +11,8 @@ export default function TheoryOfMindCard({ tom = {} }) {
   const attachmentBond = tom.attachment_bond || 'Tri kỷ / Tuyệt đối trung thành';
   const bondScore = typeof tom.bond_score === 'number' ? tom.bond_score : 1.0;
   const empathyMode = tom.empathy_mode || 'ACTIVE';
-  const workingSlots = typeof tom.working_memory_slots === 'number' ? tom.working_memory_slots : 4;
+  const workingSlots = typeof tom.working_memory_slots === 'number' ? tom.working_memory_slots : 0;
+  const workingItems = tom.working_memory_items || [];
 
   return (
     <div
@@ -150,6 +151,91 @@ export default function TheoryOfMindCard({ tom = {} }) {
           </div>
         </div>
       </div>
+
+      {/* Prefrontal Working Memory Active Slots */}
+      {workingItems && workingItems.length > 0 && (
+        <div
+          style={{
+            background: 'rgba(5, 18, 36, 0.5)',
+            border: '1px solid rgba(0, 243, 255, 0.15)',
+            borderRadius: '4px',
+            padding: '10px 12px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '8px',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span
+              style={{
+                fontSize: '0.72rem',
+                color: 'var(--accent-cyan)',
+                fontFamily: 'Share Tech Mono',
+                fontWeight: 700,
+                letterSpacing: '1px',
+              }}
+            >
+              CÁC NGĂN NHỚ ĐANG NẮP ĐẦY TRONG NÃO BỘ (PREFRONTAL CORTEX):
+            </span>
+            <span style={{ fontSize: '0.65rem', color: 'rgba(224, 242, 254, 0.5)' }}>
+              Được nén vào Vỏ Não Ảo 32GB khi chạy Giấc mơ đêm
+            </span>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            {workingItems.map((item, idx) => (
+              <div
+                key={idx}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: '10px',
+                  background: 'rgba(2, 12, 24, 0.6)',
+                  padding: '6px 10px',
+                  borderRadius: '2px',
+                  borderLeft: `2px solid ${
+                    item.category === 'sensor_alert' ? '#ff3366' :
+                    item.category === 'user_correction' ? '#ffd700' :
+                    item.category === 'user_interaction' ? 'var(--accent-pink)' : '#00f3ff'
+                  }`,
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden' }}>
+                  <span
+                    style={{
+                      fontSize: '0.65rem',
+                      padding: '1px 5px',
+                      borderRadius: '2px',
+                      background: 'rgba(0, 243, 255, 0.1)',
+                      color: 'var(--accent-cyan)',
+                      fontFamily: 'Share Tech Mono',
+                    }}
+                  >
+                    Slot #{idx + 1}
+                  </span>
+                  <span
+                    style={{
+                      fontSize: '0.78rem',
+                      color: '#ffffff',
+                      textOverflow: 'ellipsis',
+                      overflow: 'hidden',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {item.text}
+                  </span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+                  <span style={{ fontSize: '0.68rem', color: 'rgba(224, 242, 254, 0.5)', fontFamily: 'Share Tech Mono' }}>
+                    {item.time}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Empathic Note */}
       <div

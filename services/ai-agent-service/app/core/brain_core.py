@@ -710,6 +710,83 @@ class ArtificialBrain:
 
         # Prime initial core innate memories into the virtual cortex if empty
         self._prime_innate_knowledge()
+        # Restore persistent neurochemical state and pulses if saved
+        self._load_state()
+
+    def _save_state(self) -> None:
+        """Persists neurochemical state, pulse counter, and working memory to disk."""
+        try:
+            state_file = self.storage_dir / "brain_state.json"
+            data = {
+                "total_pulses": self.total_pulses,
+                "last_pulse_ts": self.last_pulse_ts,
+                "neuro": {
+                    "dopamine": round(self.neuro.dopamine, 4),
+                    "noradrenaline": round(self.neuro.noradrenaline, 4),
+                    "serotonin": round(self.neuro.serotonin, 4),
+                    "cortisol": round(self.neuro.cortisol, 4),
+                    "oxytocin": round(self.neuro.oxytocin, 4),
+                    "endorphins": round(self.neuro.endorphins, 4),
+                    "last_update_ts": self.neuro.last_update_ts,
+                },
+                "working_memory": self.working_memory[-7:],
+                "beliefs": self.active_inference.beliefs,
+                "last_free_energy": round(self.active_inference.last_free_energy, 4),
+                "updated_at": datetime.now(VN_TZ).isoformat(),
+            }
+            temp_file = state_file.with_suffix(".tmp")
+            with open(temp_file, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            temp_file.replace(state_file)
+        except Exception as e:
+            logger.debug("[BrainCore] Failed to save brain state: %s", e)
+
+    def _load_state(self) -> None:
+        """Restores neurochemical state and pulse history across service restarts."""
+        state_file = self.storage_dir / "brain_state.json"
+        if not state_file.exists():
+            return
+        try:
+            with open(state_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            self.total_pulses = data.get("total_pulses", self.total_pulses)
+            self.last_pulse_ts = data.get("last_pulse_ts", self.last_pulse_ts)
+            neuro_data = data.get("neuro", {})
+            for chem in ("dopamine", "noradrenaline", "serotonin", "cortisol", "oxytocin", "endorphins"):
+                if chem in neuro_data:
+                    setattr(self.neuro, chem, float(neuro_data[chem]))
+            if "last_update_ts" in neuro_data:
+                self.neuro.last_update_ts = float(neuro_data["last_update_ts"])
+            if "beliefs" in data and isinstance(data["beliefs"], dict):
+                self.active_inference.beliefs.update(data["beliefs"])
+            if "last_free_energy" in data:
+                self.active_inference.last_free_energy = float(data["last_free_energy"])
+            if "working_memory" in data and isinstance(data["working_memory"], list):
+                self.working_memory = data["working_memory"][-7:]
+            logger.info("[BrainCore] Restored persistent brain state (pulses=%d, F=%.2f)",
+                        self.total_pulses, self.active_inference.last_free_energy)
+        except Exception as e:
+            logger.warning("[BrainCore] Could not load brain state: %s", e)
+
+    def add_working_memory_item(
+        self,
+        text: str,
+        category: str = "general",
+        salience: float = 0.5,
+        user_state: Optional[str] = None
+    ) -> None:
+        """Adds a percept into Prefrontal Working Memory adhering to Miller 7 +/- 2 slots."""
+        entry = {
+            "text": text[:200],
+            "category": category,
+            "salience": round(salience, 2),
+            "user_affective_state": user_state or "Bình thường",
+            "timestamp": time.time(),
+        }
+        self.working_memory.append(entry)
+        if len(self.working_memory) > 7:
+            self.working_memory.pop(0)
+        self._save_state()
 
     def _prime_innate_knowledge(self) -> None:
         """Primes foundational instincts, identity, and priorities into the Virtual Cortex."""
@@ -786,8 +863,23 @@ class ArtificialBrain:
                 action_suggestion="DEEP_SYSTEM2_DELIBERATION"
             ))
 
-        # 5. Lateral inhibition competition
+        # 5. Prefrontal Working Memory update from sensory observation
+        if observation in ("METRICS_CRITICAL", "METRICS_WARNING"):
+            self.add_working_memory_item(
+                text=f"Cảnh báo hệ thống: CPU={cpu_usage:.1f}%, RAM={ram_usage:.1f}%",
+                category="sensor_alert",
+                salience=0.88,
+            )
+        elif self.total_pulses % 10 == 0 or len(self.working_memory) == 0:
+            self.add_working_memory_item(
+                text=f"Kiểm tra nhịp tim định kỳ: CPU={cpu_usage:.1f}%, RAM={ram_usage:.1f}% bình ổn",
+                category="homeostasis_check",
+                salience=0.25,
+            )
+
+        # 6. Lateral inhibition competition
         winning_signal = self.workspace.arbitrate(candidates)
+        self._save_state()
         return winning_signal
 
     def perceive_user_interaction(
@@ -831,16 +923,13 @@ class ArtificialBrain:
             self.neuro.stimulate("dopamine", 0.18)       # High shared curiosity and exploration
             self.neuro.stimulate("endorphins", 0.12)     # High playful resonance
 
-        # Append to working memory ring buffer
-        entry = {
-            "text": user_message[:200],
-            "is_correction": is_correction,
-            "user_affective_state": user_prof.affective_state.value,
-            "timestamp": time.time(),
-        }
-        self.working_memory.append(entry)
-        if len(self.working_memory) > 10:
-            self.working_memory.pop(0)
+        # Append to working memory ring buffer via Miller 7 +/- 2 slots
+        self.add_working_memory_item(
+            text=user_message[:200],
+            category="user_correction" if is_correction else "user_interaction",
+            salience=0.80 if is_correction else 0.65,
+            user_state=user_prof.affective_state.value,
+        )
 
     def recall_associative_memories(self, query: str, top_k: int = 3) -> List[str]:
         """
@@ -868,7 +957,7 @@ class ArtificialBrain:
                 vec = self.cortex.encode_concept(txt)
                 self.cortex.store_vector(cid, vec, {
                     "text": txt,
-                    "category": "episodic_conversation",
+                    "category": item.get("category", "episodic_conversation"),
                     "user_state": item.get("user_affective_state", "unknown"),
                     "consolidated_at": now.isoformat(),
                 })
@@ -880,6 +969,7 @@ class ArtificialBrain:
         self.neuro.stimulate("cortisol", -0.20)
         self.neuro.stimulate("serotonin", 0.10)
         self.neuro.stimulate("oxytocin", 0.05)
+        self._save_state()
         return consolidated_count
 
     def get_cognitive_prompt_context(self, user_query: Optional[str] = None) -> str:

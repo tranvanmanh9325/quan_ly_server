@@ -95,15 +95,14 @@ export default function BrainCorePage() {
     setPulseCounter((p) => p + 1);
     setLastActionMessage(null);
     try {
-      const resp = await axios.post('/api/ai/brain/pulse', {
-        cpu_usage: 25.0,
-        ram_usage: 45.0,
-      });
+      const resp = await axios.post('/api/ai/brain/pulse', {});
       if (resp.data && resp.data.status === 'success') {
         const summary = resp.data.winning_consciousness?.summary || 'Tâm trí cân bằng';
+        const metrics = resp.data.server_metrics;
+        const metricsInfo = metrics ? ` [CPU: ${metrics.cpu_usage}% | RAM: ${metrics.ram_usage}%]` : '';
         setLastActionMessage({
           type: 'success',
-          text: `Nhịp đập nhận thức hoàn tất! Ý thức: ${summary}`,
+          text: `Nhịp đập nhận thức hoàn tất!${metricsInfo} Ý thức: ${summary}`,
         });
         await fetchTelemetry(true);
       }

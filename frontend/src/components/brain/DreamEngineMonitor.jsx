@@ -194,8 +194,29 @@ export default function DreamEngineMonitor({
         </div>
 
         <div style={{ fontSize: '0.82rem', color: '#ffffff', lineHeight: '1.4' }}>
-          {pendingEpiphany ? (
-            pendingEpiphany
+          {pendingEpiphany && typeof pendingEpiphany === 'object' ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ color: 'var(--accent-cyan)', fontWeight: 700, fontFamily: 'Share Tech Mono' }}>
+                  [{pendingEpiphany.topic || 'Chiêm nghiệm'}]
+                </span>
+                {pendingEpiphany.created_at && (
+                  <span style={{ fontSize: '0.68rem', color: 'rgba(224, 242, 254, 0.5)' }}>
+                    {new Date(pendingEpiphany.created_at).toLocaleTimeString('vi-VN')}
+                  </span>
+                )}
+              </div>
+              <div style={{ color: '#e0f2fe' }}>
+                {pendingEpiphany.insight}
+              </div>
+              {pendingEpiphany.sisterly_note && (
+                <div style={{ color: '#ffb4e6', fontStyle: 'italic', fontSize: '0.78rem', borderLeft: '2px solid #ff79c6', paddingLeft: '8px' }}>
+                  💌 {pendingEpiphany.sisterly_note}
+                </div>
+              )}
+            </div>
+          ) : typeof pendingEpiphany === 'string' ? (
+            <span>{pendingEpiphany}</span>
           ) : (
             <span style={{ color: 'rgba(224, 242, 254, 0.65)', fontStyle: 'italic' }}>
               "Hệ thống đang tích lũy trải nghiệm ban ngày. Khi bước vào chu kỳ ngủ đêm, Tiểu Bảo Bảo sẽ tổng hợp toàn bộ sự kiện và tự chuẩn bị bản đúc kết gửi riêng cho anh Mạnh vào sáng sớm."

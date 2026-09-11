@@ -254,6 +254,24 @@ class SubconsciousDreamEngine:
                     )
                 )
 
+            # Crystallize the dream epiphany into the 32GB Virtual Memory Cortex (Kanerva VSA)
+            try:
+                vec = self.brain.cortex.encode_concept(f"{topic} {insight}")
+                self.brain.cortex.store_vector(
+                    epiphany_entry["id"],
+                    vec,
+                    {
+                        "text": f"{topic}: {insight}",
+                        "category": "dream_epiphany",
+                        "note": sisterly_note,
+                        "consolidated_at": now.isoformat(),
+                    }
+                )
+                logger.info("[DreamEngine] Stored dream epiphany into Virtual Cortex (total vectors: %d)",
+                            self.brain.cortex.vector_count)
+            except Exception as _cortex_err:
+                logger.debug("[DreamEngine] Failed storing epiphany into cortex: %s", _cortex_err)
+
             self._save_cache()
             logger.info("[DreamEngine] 💡 Crystallized new morning epiphany: '%s'", topic)
             return epiphany_entry
@@ -275,6 +293,17 @@ class SubconsciousDreamEngine:
             "rem": rem_res,
             "has_pending_epiphany": bool(self.pending_morning_epiphany),
         }
+
+    async def run_nightly_dream_cycle(self, force: bool = True) -> Optional[str]:
+        """
+        Alias for run_full_sleep_cycle ensuring backwards and router compatibility.
+        Executes SWS memory consolidation and REM counterfactual dream synthesis.
+        """
+        sleep_res = await self.run_full_sleep_cycle(force=force)
+        if self.pending_morning_epiphany:
+            ep = self.pending_morning_epiphany
+            return f"💡 {ep.get('topic')}: {ep.get('insight')} 💌 {ep.get('sisterly_note')}"
+        return "Chu kỳ giấc mơ SWS & REM đã hoàn tất, vỏ não đã được thanh lọc và cân bằng synapse."
 
     def pop_morning_epiphany(self) -> Optional[str]:
         """

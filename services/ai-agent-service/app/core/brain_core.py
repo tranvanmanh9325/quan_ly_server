@@ -72,6 +72,7 @@ class NeurotransmitterState:
     cortisol: float = 0.10       # Chronic stress, accumulated workload fatigue
     oxytocin: float = 0.60       # CARE: Compassion, protective attachment, empathy for anh Mạnh
     endorphins: float = 0.40     # PLAY: Joyful wit, humor, resilience against hardships
+    adenosine: float = 0.12      # Process S (Sleep Pressure): Homeostatic sleep drive [0.0 - 1.0]
     last_update_ts: float = field(default_factory=time.time)
 
     BASELINES: Dict[str, float] = field(default_factory=lambda: {
@@ -92,14 +93,74 @@ class NeurotransmitterState:
         "endorphins": 240.0,     # 4 minutes (playfulness & cheerfulness)
     })
 
-    def step_decay(self, current_time: Optional[float] = None) -> None:
-        """Applies continuous exponential decay towards baseline values."""
+    @staticmethod
+    def calculate_circadian_baselines(hour_decimal: float) -> Dict[str, float]:
+        """
+        Borbély Two-Process Model (Process C - Circadian Clock driven by SCN).
+        Modulates baseline neurochemistry across the 24-hour cycle for Vietnam Time (ICT UTC+7).
+        """
+        # Cortisol Awakening Response (CAR): Lowest in deep night (~01:30), peaks at ~07:30
+        cortisol_base = 0.18 + 0.16 * math.sin((hour_decimal - 3.5) * math.pi / 12.0)
+
+        # Dopamine / Seeking: Peak in active daytime (~14:00), lower during deep night (~02:00)
+        dopamine_base = 0.45 + 0.15 * math.sin((hour_decimal - 8.0) * math.pi / 12.0)
+
+        # Serotonin / Equanimity: Daylight stabilization (0.65 - 0.78), peaceful evening
+        serotonin_base = 0.68 + 0.10 * math.cos((hour_decimal - 13.0) * math.pi / 12.0)
+
+        # Noradrenaline / Alertness: Drops in deep night (0.10), moderate during work hours (0.24)
+        noradrenaline_base = 0.18 + 0.08 * math.sin((hour_decimal - 7.0) * math.pi / 12.0)
+
+        return {
+            "dopamine": max(0.20, min(0.80, dopamine_base)),
+            "noradrenaline": max(0.08, min(0.50, noradrenaline_base)),
+            "serotonin": max(0.40, min(0.90, serotonin_base)),
+            "cortisol": max(0.04, min(0.60, cortisol_base)),
+            "oxytocin": 0.60,    # Stable kinship attachment to anh Mạnh
+            "endorphins": 0.40,  # Joyful resilience
+        }
+
+    @staticmethod
+    def get_circadian_phase_name(hour_decimal: float) -> str:
+        """Translates 24-hour decimal time to human-readable biological phase."""
+        if 2.0 <= hour_decimal < 6.5:
+            return "Giấc ngủ sóng chậm & Hồi phục SWS/REM (02:00 - 06:30)"
+        if 6.5 <= hour_decimal < 11.5:
+            return "Thức tỉnh & Khởi động năng lượng Dopamine/Cortisol (06:30 - 11:30)"
+        if 11.5 <= hour_decimal < 17.5:
+            return "Tập trung sâu & Ổn định vận hành (11:30 - 17:30)"
+        if 17.5 <= hour_decimal < 22.0:
+            return "Dịu êm, Lắng đọng & Gắn kết Oxytocin (17:30 - 22:00)"
+        return "Trầm ngâm đêm khuya & Tích lũy Adenosine (22:00 - 02:00)"
+
+    def accumulate_adenosine(self, delta: float) -> None:
+        """Accumulates sleep pressure from cognitive work, tool calls, and wakefulness."""
+        self.adenosine = max(0.0, min(1.0, self.adenosine + delta))
+
+    def flush_adenosine(self, recovery_ratio: float = 0.85) -> None:
+        """Discharges accumulated adenosine during slow-wave sleep consolidation."""
+        self.adenosine = max(0.05, self.adenosine * (1.0 - recovery_ratio))
+
+    def step_decay(
+        self,
+        current_time: Optional[float] = None,
+        current_hour_decimal: Optional[float] = None,
+    ) -> None:
+        """Applies continuous exponential decay towards baseline values and accumulates Process S."""
         now = current_time or time.time()
         dt = max(0.0, now - self.last_update_ts)
         self.last_update_ts = now
 
         if dt <= 0.0:
             return
+
+        # Dynamically adjust biological baselines according to SCN circadian pacemaker
+        if current_hour_decimal is not None:
+            self.BASELINES = self.calculate_circadian_baselines(current_hour_decimal)
+
+        # Adenosine homeostatic accumulation during wakefulness (~0.015 per hour)
+        hours_elapsed = dt / 3600.0
+        self.accumulate_adenosine(hours_elapsed * 0.015)
 
         for chem in ("dopamine", "noradrenaline", "serotonin", "cortisol", "oxytocin", "endorphins"):
             cur = getattr(self, chem)
@@ -197,7 +258,7 @@ class TheoryOfMindEngine:
     """
     Theory of Mind (ToM) mental state profiler for user (anh Mạnh).
     Infers affective state, cognitive bandwidth, and hidden intent
-    based on circadian rhythm, query length, keywords, and tone.
+    based on circadian rhythm, cumulative fatigue/strain history, query length, keywords, and tone.
     """
 
     STRESS_KEYWORDS = frozenset({
@@ -208,7 +269,7 @@ class TheoryOfMindEngine:
 
     FATIGUE_KEYWORDS = frozenset({
         "mệt", "oải", "buồn ngủ", "đuối", "ngủ đây", "mai tính", "nhức đầu",
-        "chán", "thôi để mai", "thức khuya", "đi ngủ",
+        "chán", "thôi để mai", "thức khuya", "đi ngủ", "chưa ngủ", "cày đêm",
     })
 
     EXCITED_KEYWORDS = frozenset({
@@ -216,21 +277,42 @@ class TheoryOfMindEngine:
         "tối ưu được", "xịn", "thú vị", "nghiên cứu", "phát triển", "khám phá", "sáng tạo",
     })
 
+    def __init__(self) -> None:
+        self.accumulated_user_strain: float = 0.0  # Cumulative stress/fatigue score [0.0, 1.0]
+        self.last_strain_update_ts: float = time.time()
+
+    def decay_strain(self, current_time: Optional[float] = None) -> None:
+        """Decays accumulated strain over time with a 4-hour biological half-life (14,400 seconds)."""
+        now = current_time or time.time()
+        dt = max(0.0, now - self.last_strain_update_ts)
+        self.last_strain_update_ts = now
+        if dt > 0.0 and self.accumulated_user_strain > 0.0:
+            decay_factor = math.exp(-dt * 0.69314718 / 14400.0)
+            self.accumulated_user_strain = max(0.0, min(1.0, self.accumulated_user_strain * decay_factor))
+
     def analyze_mental_state(
         self,
         user_message: str,
-        message_history: Optional[List[Dict[str, Any]]] = None
+        message_history: Optional[List[Dict[str, Any]]] = None,
+        reference_time: Optional[datetime] = None
     ) -> UserPsychologicalProfile:
-        now_vn = datetime.now(VN_TZ)
+        now_vn = reference_time or datetime.now(VN_TZ)
         hour = now_vn.hour
         clean_text = user_message.strip().lower()
         word_count = len(clean_text.split())
+
+        # Decay previous strain
+        self.decay_strain(time.time())
 
         # 1. Detect late-night exhaustion / fatigue
         is_late_night = (hour >= 23 or hour < 5)
         has_fatigue_word = any(k in clean_text for k in self.FATIGUE_KEYWORDS)
 
+        if is_late_night:
+            self.accumulated_user_strain = min(1.0, self.accumulated_user_strain + 0.18)
+
         if has_fatigue_word or (is_late_night and word_count <= 8):
+            self.accumulated_user_strain = min(1.0, self.accumulated_user_strain + 0.12)
             return UserPsychologicalProfile(
                 affective_state=UserAffectiveState.FATIGUED,
                 granularity=ResponseGranularity.FLASH_BLUF,
@@ -244,6 +326,7 @@ class TheoryOfMindEngine:
         has_urgent_punct = ("!" in user_message or "?" in user_message) and word_count <= 5
 
         if has_stress_word or has_urgent_punct:
+            self.accumulated_user_strain = min(1.0, self.accumulated_user_strain + 0.15)
             return UserPsychologicalProfile(
                 affective_state=UserAffectiveState.STRESSED,
                 granularity=ResponseGranularity.FLASH_BLUF,
@@ -252,17 +335,7 @@ class TheoryOfMindEngine:
                 empathic_action_needed="Đưa kết luận trực diện dòng 1 (BLUF), tự giác đề xuất hoặc thực thi lệnh khắc phục an toàn."
             )
 
-        # 3. Detect rushed / busy during working hours
-        if word_count <= 3 and not has_stress_word:
-            return UserPsychologicalProfile(
-                affective_state=UserAffectiveState.RUSHED,
-                granularity=ResponseGranularity.FLASH_BLUF,
-                cognitive_bandwidth=0.50,
-                hidden_intent="Cần số liệu hoặc trạng thái tức thời để tiếp tục công việc khác.",
-                empathic_action_needed="Trả về thông số ngắn gọn, chuẩn xác, không màu mè và không đặt câu hỏi ngược."
-            )
-
-        # 4. Detect excited / deep technical exploration
+        # 3. Detect active excited / deep technical exploration (Flow State)
         has_excited_word = any(k in clean_text for k in self.EXCITED_KEYWORDS)
         if has_excited_word or word_count >= 20:
             return UserPsychologicalProfile(
@@ -273,7 +346,28 @@ class TheoryOfMindEngine:
                 empathic_action_needed="Triển khai tư duy biện chứng 4 bước (Chính đề - Phản đề - Hợp đề), phân tích trade-offs kỹ thuật."
             )
 
-        # 5. Baseline equanimity
+        # 4. Detect cumulative strain threshold (>0.60): if user is not in excited flow-state,
+        # but history shows prolonged exhaustion or late night activity.
+        if self.accumulated_user_strain >= 0.60:
+            return UserPsychologicalProfile(
+                affective_state=UserAffectiveState.FATIGUED,
+                granularity=ResponseGranularity.FLASH_BLUF,
+                cognitive_bandwidth=0.45,
+                hidden_intent="Đã làm việc căng thẳng kéo dài, cần thông tin cô đọng súc tích và sự chia sẻ ân cần.",
+                empathic_action_needed="Anh Mạnh đã làm việc khuya dồn dập, em đưa kết luận BLUF ngay để anh sớm nghỉ ngơi giữ gìn sức khỏe."
+            )
+
+        # 5. Detect rushed / busy during working hours
+        if word_count <= 3 and not has_stress_word:
+            return UserPsychologicalProfile(
+                affective_state=UserAffectiveState.RUSHED,
+                granularity=ResponseGranularity.FLASH_BLUF,
+                cognitive_bandwidth=0.50,
+                hidden_intent="Cần số liệu hoặc trạng thái tức thời để tiếp tục công việc khác.",
+                empathic_action_needed="Trả về thông số ngắn gọn, chuẩn xác, không màu mè và không đặt câu hỏi ngược."
+            )
+
+        # 6. Baseline equanimity
         return UserPsychologicalProfile(
             affective_state=UserAffectiveState.EQUANIMITY,
             granularity=ResponseGranularity.STRUCTURED_BULLET,
@@ -563,28 +657,90 @@ class HyperdimensionalCortex:
         diff_bits = (i1 ^ i2).bit_count()
         return 1.0 - (diff_bits / HV_DIM_BITS)
 
+    def prune_weakest_synapses(self, num_to_prune: int = 1) -> List[str]:
+        """
+        Synaptic Homeostasis Hypothesis (Tononi & Cirelli 2014 - SHY).
+        Prunes weak, rarely-accessed, stale synaptic connections from the virtual cortex.
+        Protects pinned memories (identity, innate directives) from pruning.
+        Score = salience * (1.0 + 0.25 * ln(1 + access_count)) * exp(-lambda * dt).
+        """
+        if not self.entry_index or num_to_prune <= 0:
+            return []
+
+        now = time.time()
+        # 7-day half-life decay constant
+        decay_lambda = 0.69314718 / (7.0 * 86400.0)
+
+        candidates: List[Tuple[str, float, int]] = []
+        for cid, slot in list(self.entry_index.items()):
+            meta = self.metadata_index.get(cid, {})
+            if meta.get("pinned", False):
+                continue  # Never prune innate knowledge or core identity
+            salience = float(meta.get("salience", 0.70))
+            access_count = int(meta.get("access_count", 1))
+            last_accessed = float(meta.get("last_accessed_at", meta.get("created_at", now)))
+            dt = max(0.0, now - last_accessed)
+            recency_decay = math.exp(-decay_lambda * dt)
+            score = salience * (1.0 + 0.25 * math.log(1.0 + access_count)) * recency_decay
+            candidates.append((cid, score, slot))
+
+        if not candidates:
+            return []
+
+        candidates.sort(key=lambda x: x[1])
+        pruned_ids = []
+        for cid, _, slot in candidates[:num_to_prune]:
+            self.entry_index.pop(cid, None)
+            self.metadata_index.pop(cid, None)
+            self.pruned_synapses_count = getattr(self, "pruned_synapses_count", 0) + 1
+            pruned_ids.append(cid)
+
+        self.vector_count = len(self.entry_index)
+        if self._mmap_obj:
+            struct.pack_into("<II", self._mmap_obj, 16, self.max_capacity, self.vector_count)
+        self._persist_metadata()
+        return pruned_ids
+
     def store_vector(self, concept_id: str, vector_bytes: bytes, metadata: Optional[Dict[str, Any]] = None) -> int:
-        """Stores a hypervector into the memory-mapped virtual cortex."""
+        """Stores a hypervector into the memory-mapped virtual cortex using synaptic homeostasis."""
         if not self._mmap_obj:
             return -1
+
+        now = time.time()
+        meta = dict(metadata) if metadata else {}
+        meta.setdefault("created_at", now)
+        meta.setdefault("last_accessed_at", now)
+        meta.setdefault("access_count", 1)
+        meta.setdefault("salience", 0.70)
+        meta.setdefault("pinned", False)
 
         slot = self.entry_index.get(concept_id)
         if slot is None:
             if self.vector_count >= self.max_capacity:
-                # Evict oldest concept (circular ring buffer)
-                slot = self.vector_count % self.max_capacity
+                # Synaptic pruning: evict the weakest unpinned synapse to make room
+                pruned = self.prune_weakest_synapses(num_to_prune=1)
+                if pruned and len(self.entry_index) < self.max_capacity:
+                    # Find first free slot within capacity
+                    used_slots = set(self.entry_index.values())
+                    free_slots = [s for s in range(self.max_capacity) if s not in used_slots]
+                    slot = free_slots[0] if free_slots else (self.vector_count % self.max_capacity)
+                else:
+                    # Fallback circular overwrite if all are pinned
+                    slot = self.vector_count % self.max_capacity
             else:
-                slot = self.vector_count
-                self.vector_count += 1
+                # Find available slot
+                used_slots = set(self.entry_index.values())
+                free_slots = [s for s in range(self.max_capacity) if s not in used_slots]
+                slot = free_slots[0] if free_slots else self.vector_count
+                self.vector_count = len(self.entry_index) + 1
 
         offset = self.HEADER_SIZE + (slot * HV_DIM_BYTES)
         self._mmap_obj[offset:offset + HV_DIM_BYTES] = vector_bytes
         self.entry_index[concept_id] = slot
-
-        if metadata:
-            self.metadata_index[concept_id] = metadata
+        self.metadata_index[concept_id] = meta
 
         # Update count in header
+        self.vector_count = len(self.entry_index)
         struct.pack_into("<II", self._mmap_obj, 16, self.max_capacity, self.vector_count)
         self._persist_metadata()
         return slot
@@ -593,13 +749,14 @@ class HyperdimensionalCortex:
         """
         Zero-copy demand-paging associative memory retrieval.
         Iterates across hypervectors directly in virtual memory, returning top matches above threshold.
-        Takes <2ms even for thousands of vectors due to POPCNT hardware acceleration.
+        Updates access recency and frequency on retrieved concepts (synaptic reinforcement).
         """
         if not self._mmap_obj or self.vector_count == 0:
             return []
 
         query_vec = self.encode_concept(query_text)
         results: List[Tuple[str, float, Dict[str, Any]]] = []
+        now = time.time()
 
         for cid, slot in self.entry_index.items():
             offset = self.HEADER_SIZE + (slot * HV_DIM_BYTES)
@@ -607,6 +764,9 @@ class HyperdimensionalCortex:
             sim = self.hamming_similarity(query_vec, candidate_vec)
             if sim >= threshold:
                 meta = self.metadata_index.get(cid, {})
+                # Synaptic reinforcement (LTP - Long-Term Potentiation): record retrieval
+                meta["access_count"] = int(meta.get("access_count", 0)) + 1
+                meta["last_accessed_at"] = now
                 results.append((cid, sim, meta))
 
         # Sort descending by similarity
@@ -727,8 +887,10 @@ class ArtificialBrain:
                     "cortisol": round(self.neuro.cortisol, 4),
                     "oxytocin": round(self.neuro.oxytocin, 4),
                     "endorphins": round(self.neuro.endorphins, 4),
+                    "adenosine": round(self.neuro.adenosine, 4),
                     "last_update_ts": self.neuro.last_update_ts,
                 },
+                "accumulated_user_strain": round(getattr(self.tom, "accumulated_user_strain", 0.0), 4),
                 "working_memory": self.working_memory[-7:],
                 "beliefs": self.active_inference.beliefs,
                 "last_free_energy": round(self.active_inference.last_free_energy, 4),
@@ -752,19 +914,21 @@ class ArtificialBrain:
             self.total_pulses = data.get("total_pulses", self.total_pulses)
             self.last_pulse_ts = data.get("last_pulse_ts", self.last_pulse_ts)
             neuro_data = data.get("neuro", {})
-            for chem in ("dopamine", "noradrenaline", "serotonin", "cortisol", "oxytocin", "endorphins"):
+            for chem in ("dopamine", "noradrenaline", "serotonin", "cortisol", "oxytocin", "endorphins", "adenosine"):
                 if chem in neuro_data:
                     setattr(self.neuro, chem, float(neuro_data[chem]))
             if "last_update_ts" in neuro_data:
                 self.neuro.last_update_ts = float(neuro_data["last_update_ts"])
+            if "accumulated_user_strain" in data:
+                self.tom.accumulated_user_strain = float(data["accumulated_user_strain"])
             if "beliefs" in data and isinstance(data["beliefs"], dict):
                 self.active_inference.beliefs.update(data["beliefs"])
             if "last_free_energy" in data:
                 self.active_inference.last_free_energy = float(data["last_free_energy"])
             if "working_memory" in data and isinstance(data["working_memory"], list):
                 self.working_memory = data["working_memory"][-7:]
-            logger.info("[BrainCore] Restored persistent brain state (pulses=%d, F=%.2f)",
-                        self.total_pulses, self.active_inference.last_free_energy)
+            logger.info("[BrainCore] Restored persistent brain state (pulses=%d, F=%.2f, adenosine=%.2f)",
+                        self.total_pulses, self.active_inference.last_free_energy, self.neuro.adenosine)
         except Exception as e:
             logger.warning("[BrainCore] Could not load brain state: %s", e)
 
@@ -807,20 +971,23 @@ class ArtificialBrain:
         for cid, fact, cat in innate_facts:
             if cid not in self.cortex.entry_index:
                 vec = self.cortex.encode_concept(fact)
-                self.cortex.store_vector(cid, vec, {"text": fact, "category": cat, "pinned": True})
+                self.cortex.store_vector(cid, vec, {"text": fact, "category": cat, "pinned": True, "salience": 1.0})
 
     def step_pulse(self, server_metrics: Optional[Dict[str, Any]] = None) -> Optional[WorkspaceSignal]:
         """
         Periodic Cognitive Pulse (Heartbeat, runs every 30-60 seconds).
-        Updates homeostatic balance, calculates Free Energy, and arbitrates consciousness
+        Updates circadian homeostatic balance, calculates Free Energy, and arbitrates consciousness
         among biological subconscious daemons (Global Workspace Theory).
         """
         now = time.time()
+        now_vn = datetime.now(VN_TZ)
+        hour_decimal = now_vn.hour + now_vn.minute / 60.0
         self.total_pulses += 1
         self.last_pulse_ts = now
 
-        # 1. Natural neurochemical decay
-        self.neuro.step_decay(now)
+        # 1. Biological circadian neurochemical decay & Process S accumulation
+        self.neuro.step_decay(now, current_hour_decimal=hour_decimal)
+        self.tom.decay_strain(now)
 
         # 2. Extract sensory observation from server metrics
         observation = "METRICS_HEALTHY"
@@ -845,7 +1012,6 @@ class ArtificialBrain:
         free_energy = self.active_inference.update_beliefs_and_compute_free_energy(observation)
 
         # 4. Generate subconscious candidates for the Global Workspace (Dehaene & Baars GWT)
-        # Natural attentional oscillation cycling across cognitive domains
         pulse_phase = self.total_pulses % 4
         homeo_bias = 0.05 if pulse_phase == 0 else 0.0
         curiosity_bias = 0.05 if pulse_phase == 1 else 0.0
@@ -968,9 +1134,10 @@ class ArtificialBrain:
         """
         Sensory input trigger when the user speaks or gives feedback.
         Incorporates Theory of Mind (ToM) mental state analysis to dynamically
-        tune neurochemicals (Dopamine, Oxytocin, Noradrenaline, Endorphins, Cortisol).
+        tune neurochemicals and accumulate sleep pressure.
         """
         self.active_inference.update_beliefs_and_compute_free_energy("USER_MESSAGE")
+        self.neuro.accumulate_adenosine(0.012)
 
         # Analyze user mental state via ToM
         user_prof = self.tom.analyze_mental_state(user_message)
@@ -1021,8 +1188,8 @@ class ArtificialBrain:
 
     def consolidate_sleep_memories(self) -> int:
         """
-        Simulates SWS / REM sleep consolidation: moves working memory chunks into Virtual Memory Cortex.
-        Called during low-activity periods to preserve server RAM and maintain cognitive hygiene.
+        Simulates SWS / REM sleep consolidation: moves working memory chunks into Virtual Memory Cortex,
+        executes Synaptic Homeostasis Pruning on weak connections, and flushes Adenosine sleep pressure.
         """
         consolidated_count = 0
         now = datetime.now(VN_TZ)
@@ -1037,11 +1204,21 @@ class ArtificialBrain:
                     "category": item.get("category", "episodic_conversation"),
                     "user_state": item.get("user_affective_state", "unknown"),
                     "consolidated_at": now.isoformat(),
+                    "salience": item.get("salience", 0.70),
                 })
                 consolidated_count += 1
 
         # Clear working memory buffer after consolidation
         self.working_memory.clear()
+
+        # Synaptic Homeostasis: prune weak unpinned synapses if cortex is populated
+        if len(self.cortex.entry_index) > 15:
+            num_to_prune = max(1, int(len(self.cortex.entry_index) * 0.05))
+            self.cortex.prune_weakest_synapses(num_to_prune=num_to_prune)
+
+        # Flush Adenosine (Process S) by 85%
+        self.neuro.flush_adenosine(recovery_ratio=0.85)
+
         # Cortisol lowers after sleep consolidation, Serotonin and Oxytocin replenish
         self.neuro.stimulate("cortisol", -0.20)
         self.neuro.stimulate("serotonin", 0.10)
@@ -1053,10 +1230,13 @@ class ArtificialBrain:
         """
         Produces a rich, scientifically grounded cognitive prompt snippet
         incorporating Panksepp emotions, Russell Circumplex coordinates,
-        and Theory of Mind (ToM) mental model of anh Mạnh.
+        Circadian Phase, Adenosine sleep pressure, and Theory of Mind (ToM) mental model of anh Mạnh.
         """
+        now_vn = datetime.now(VN_TZ)
+        hour_decimal = now_vn.hour + now_vn.minute / 60.0
         val, aro, quad, emotional_title, style_hint = self.neuro.calculate_circumplex()
         f_energy = self.active_inference.last_free_energy
+        circadian_phase = self.neuro.get_circadian_phase_name(hour_decimal)
 
         # Retrieve relevant memories from the 32GB Virtual Memory Cortex
         memories = []
@@ -1078,15 +1258,23 @@ class ArtificialBrain:
                 f"• Thấu cảm tâm lý anh Mạnh (Theory of Mind):\n"
                 f"  - Trạng thái tinh thần: {tom_prof.affective_state.value}\n"
                 f"  - Băng thông nhận thức: {tom_prof.cognitive_bandwidth * 100:.0f}%\n"
+                f"  - Áp lực mệt mỏi tích lũy (Cumulative Strain): {self.tom.accumulated_user_strain * 100:.0f}%\n"
                 f"  - Ý định tiềm ẩn: {tom_prof.hidden_intent}\n"
             )
             if tom_prof.empathic_action_needed:
                 tom_block += f"  - Hành động thấu cảm: {tom_prof.empathic_action_needed}\n"
 
+        adenosine_note = (
+            "Đang tỉnh táo & sắc bén" if self.neuro.adenosine < 0.65
+            else "Đã tích lũy áp lực nhận thức cao, cần giấc ngủ sóng chậm SWS phục hồi"
+        )
+
         return (
             f"\n[🧠 TRẠNG THÁI NÃO BỘ NHẬN THỨC NỘI SINH - TIỂU BẢO BẢO]\n"
+            f"• Nhịp sinh học 24h: {circadian_phase}\n"
             f"• Cảm xúc sinh học: {emotional_title} (Vùng {quad} | Valence={val:+.2f} | Arousal={aro:.2f})\n"
             f"• Hóa chất thần kinh: Dopamine={self.neuro.dopamine:.2f} | Noradrenaline={self.neuro.noradrenaline:.2f} | Serotonin={self.neuro.serotonin:.2f} | Stress={self.neuro.cortisol:.2f} | Oxytocin={self.neuro.oxytocin:.2f} | Endorphins={self.neuro.endorphins:.2f}\n"
+            f"• Áp lực giấc ngủ (Adenosine Process S): {self.neuro.adenosine:.2f} ({adenosine_note})\n"
             f"• Năng lượng tự do (Free Energy): {f_energy:.2f} ({'Phản xạ nhanh' if f_energy < 0.6 else 'Trầm ngâm phân tích sâu'})\n"
             f"• Hướng dẫn ngữ điệu & phong cách: {style_hint}\n"
             f"{tom_block}"

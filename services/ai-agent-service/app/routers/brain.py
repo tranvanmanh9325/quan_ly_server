@@ -54,7 +54,9 @@ async def get_brain_telemetry(request: Request) -> Dict[str, Any]:
 
     # 1. Neurotransmitters & Russell Affect Coordinates
     now = time.time()
-    brain.neuro.step_decay(now)
+    now_vn = datetime.now(VN_TZ)
+    hour_decimal = now_vn.hour + now_vn.minute / 60.0
+    brain.neuro.step_decay(now, current_hour_decimal=hour_decimal)
     val, aro, quad, emotional_title, style_hint = brain.neuro.calculate_circumplex()
 
     neuro_data = {
@@ -64,9 +66,19 @@ async def get_brain_telemetry(request: Request) -> Dict[str, Any]:
         "cortisol": round(brain.neuro.cortisol, 3),
         "oxytocin": round(brain.neuro.oxytocin, 3),
         "endorphins": round(brain.neuro.endorphins, 3),
+        "adenosine": round(brain.neuro.adenosine, 3),
+        "sleep_pressure_label": "Tỉnh táo" if brain.neuro.adenosine < 0.60 else "Cần nghỉ ngơi SWS",
         "baselines": brain.neuro.BASELINES,
         "half_lives_sec": brain.neuro.HALF_LIVES,
         "last_update_ts": brain.neuro.last_update_ts,
+    }
+
+    circadian_data = {
+        "hour_ict": round(hour_decimal, 2),
+        "phase_name": brain.neuro.get_circadian_phase_name(hour_decimal),
+        "cortisol_peak_hour": 7.5,
+        "adenosine_pressure": round(brain.neuro.adenosine, 3),
+        "dynamic_baselines": brain.neuro.BASELINES,
     }
 
     affect_data = {
@@ -111,6 +123,8 @@ async def get_brain_telemetry(request: Request) -> Dict[str, Any]:
         "capacity": getattr(brain.cortex, "max_capacity", 50000),
         "dimension_bits": 10000,
         "dimension_bytes": 1250,
+        "pruned_synapses_count": getattr(brain.cortex, "pruned_synapses_count", 0),
+        "synaptic_homeostasis": "Active (Tononi SHY)",
         "backing_storage": "32GB Virtual Memory / mmap Demand Paging",
         "demand_paging_latency_ms": 0.08,
         "storage_path": str(brain.cortex.storage_path),
@@ -147,11 +161,14 @@ async def get_brain_telemetry(request: Request) -> Dict[str, Any]:
         }
 
     # 6. Theory of Mind (ToM) & Prefrontal Working Memory
+    user_strain = getattr(brain.tom, "accumulated_user_strain", 0.0)
     tom_data = {
         "companion_name": "Trần Văn Mạnh",
         "attachment_bond": "Tri kỷ / Tuyệt đối trung thành",
         "bond_score": 1.0,
         "empathy_mode": "ACTIVE",
+        "accumulated_user_strain": round(user_strain, 3),
+        "strain_level": "Bình ổn" if user_strain < 0.50 else "Căng thẳng kéo dài",
         "working_memory_slots": len(brain.working_memory),
         "working_memory_items": [
             {
@@ -171,6 +188,7 @@ async def get_brain_telemetry(request: Request) -> Dict[str, Any]:
         "total_pulses": brain.total_pulses,
         "last_pulse_ts": brain.last_pulse_ts,
         "neurotransmitters": neuro_data,
+        "circadian": circadian_data,
         "affect": affect_data,
         "active_inference": {
             "free_energy": free_energy,

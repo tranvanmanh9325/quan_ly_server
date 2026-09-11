@@ -148,6 +148,8 @@ class SubconsciousDreamEngine:
             "duration_ms": round(duration_ms, 2),
             "cortisol": round(self.brain.neuro.cortisol, 3),
             "serotonin": round(self.brain.neuro.serotonin, 3),
+            "adenosine": round(self.brain.neuro.adenosine, 3),
+            "pruned_synapses": getattr(self.brain.cortex, "pruned_synapses_count", 0),
             "timestamp": datetime.now(VN_TZ).isoformat(),
         }
         logger.info("[DreamEngine] ✅ SWS complete: consolidated %d episodic vectors in %.2f ms",

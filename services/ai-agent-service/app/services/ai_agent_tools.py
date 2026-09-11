@@ -37,8 +37,45 @@ SCREENSHOT_TOOLS = frozenset({
     "browser_select_option",
     "browser_execute_js",
     "browser_fill_form",
-    "browser_wait_for",
 })
+
+_SPINAL_VETO_PATTERNS = (
+    re.compile(r"\brm\s+-[rfRF]{1,4}\s+([/~]|\*|\.)", re.IGNORECASE),
+    re.compile(r"\bmkfs(\.\w+)?\b", re.IGNORECASE),
+    re.compile(r"\bdd\s+if=.*of=/dev/(sd|nvme|vd)", re.IGNORECASE),
+    re.compile(r">\s*/dev/(sd|nvme|vd)", re.IGNORECASE),
+    re.compile(r"\bdrop\s+(database|schema)\b", re.IGNORECASE),
+    re.compile(r"\bdocker\s+system\s+prune\s+-a\s+--volumes", re.IGNORECASE),
+    re.compile(r"\bdocker\s+rm\s+-f\s+\$\(docker\s+ps", re.IGNORECASE),
+    re.compile(r"\biptables\s+-F\b", re.IGNORECASE),
+    re.compile(r"\bufw\s+reset\b", re.IGNORECASE),
+    re.compile(r"\bchmod\s+-R\s+777\s+/\b", re.IGNORECASE),
+    re.compile(r":\(\)\{\s*:\|:&\s*\};:", re.IGNORECASE),
+)
+
+def evaluate_spinal_safety_veto(command: str, confirm_token: Optional[str] = None) -> Optional[str]:
+    """
+    Biological Spinal Reflex Circuit Breaker: Intercepts lethal system commands at code level.
+    Triggers neurochemical alarm and halts execution unless explicit confirmation token is given.
+    """
+    if confirm_token == "CONFIRM_DANGEROUS_ACTION":
+        return None
+    for pattern in _SPINAL_VETO_PATTERNS:
+        if pattern.search(command):
+            try:
+                from app.core.brain_core import ArtificialBrain
+                brain = ArtificialBrain.get_instance()
+                brain.neuro.stimulate("noradrenaline", 0.35)
+                brain.neuro.stimulate("cortisol", 0.30)
+                brain.neuro.stimulate("dopamine", -0.20)
+            except Exception:
+                pass
+            return (
+                f"🛑 [PHẢN XẠ TỦY SỐNG BẢO VỆ SERVER - SPINAL SAFETY VETO]: Lệnh `{command}` "
+                f"đã bị chặn ngay lập tức ở tầng vi mạch an toàn! Thao tác này có nguy cơ phá hủy hệ thống hoặc tê liệt máy chủ. "
+                f"Em nhất quyết không tự ý thực thi nếu không có xác nhận bảo mật tường minh từ anh Mạnh kèm mã `CONFIRM_DANGEROUS_ACTION`!"
+            )
+    return None
 
 
 class AgentToolExecutor:
@@ -898,6 +935,9 @@ class AgentToolExecutor:
                 cmd = tool_args.get("command", "").strip()
                 if not cmd:
                     return "Error: No command specified."
+                veto_err = evaluate_spinal_safety_veto(cmd, tool_args.get("confirm"))
+                if veto_err:
+                    return veto_err
                 # Raw output; RTK compression applied at chat-loop level before inserting into history
                 return await self.ssh_client.execute_command(cmd)
 

@@ -570,8 +570,15 @@ export default function NeuralNetwork3DFlow({
       particleGeo.attributes.position.needsUpdate = true;
 
       // Handle SPECTACULAR NEURAL SHOCKWAVE SURGE
+      if (typeof window !== 'undefined' && window.__holdPulseProgress !== undefined) {
+        pulseWaveRef.current.active = true;
+        pulseWaveRef.current.progress = window.__holdPulseProgress;
+      }
+
       if (isPulsingActive) {
-        pulseWaveRef.current.progress += delta / 2.6; // ~2.6s sweep time across 8 layers
+        if (typeof window === 'undefined' || window.__holdPulseProgress === undefined) {
+          pulseWaveRef.current.progress += delta / 2.6; // ~2.6s sweep time across 8 layers
+        }
         const progress = pulseWaveRef.current.progress;
 
         if (progress >= 1.0) {

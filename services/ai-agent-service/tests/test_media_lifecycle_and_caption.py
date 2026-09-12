@@ -9,7 +9,7 @@ from pathlib import Path
 import tempfile
 import time
 import unittest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
 
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -135,7 +135,7 @@ class TestTelegramCaptionAndFallback(unittest.TestCase):
             bot = TelegramBot.__new__(TelegramBot)
             bot.token = "fake-token"
 
-            with patch.object(TelegramBot, "_http_client", new_callable=lambda: mock_client):
+            with patch.object(TelegramBot, "_http_client", new_callable=PropertyMock, return_value=mock_client):
                 with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as f:
                     f.write(b"fake video")
                     tmp_path = f.name
@@ -175,7 +175,7 @@ class TestTelegramCaptionAndFallback(unittest.TestCase):
             bot = TelegramBot.__new__(TelegramBot)
             bot.token = "fake-token"
 
-            with patch.object(TelegramBot, "_http_client", new_callable=lambda: mock_client):
+            with patch.object(TelegramBot, "_http_client", new_callable=PropertyMock, return_value=mock_client):
                 with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as f:
                     f.write(b"fake video")
                     tmp_path = f.name

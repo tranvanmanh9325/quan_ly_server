@@ -129,7 +129,6 @@ class TestTelegramCaptionAndFallback(unittest.TestCase):
         async def run():
             bot = TelegramBot.__new__(TelegramBot)
             bot.token = "fake-token"
-            bot.api_url = "https://api.telegram.org/botfake-token"
             bot._http_client = AsyncMock()
 
             mock_resp = MagicMock()
@@ -164,7 +163,6 @@ class TestTelegramCaptionAndFallback(unittest.TestCase):
         async def run():
             bot = TelegramBot.__new__(TelegramBot)
             bot.token = "fake-token"
-            bot.api_url = "https://api.telegram.org/botfake-token"
             bot._http_client = AsyncMock()
 
             # First call fails with "can't parse entities", second call succeeds

@@ -372,27 +372,22 @@ class AiAgentService:
 
     def _build_attachment_system_prompt(self) -> str:
         """
-        Ultra-compact system prompt for attachment processing (archive, PDF, image analysis).
-        Keeps only attachment-reading rules to stay under Groq's 8000 TPM limit.
+        Ultra-compact system prompt for attachment and multimodal video processing.
+        Keeps only attachment/video reading rules to stay under Groq's 8000 TPM limit.
         Full system prompt is ~4500 tokens; this one is ~600 tokens.
         """
         now_vn = datetime.now(VN_TZ).strftime("%H:%M %d/%m/%Y (ICT/UTC+7)")
         return (
             f'Bạn là "Tiểu Bảo Bảo" — Trợ lý AI của anh Mạnh. Thời gian: {now_vn}.\n'
             "Xưng \"em\", gọi người dùng là \"anh Mạnh\".\n\n"
-            "NHIỆM VỤ: Đọc và tóm tắt NỘI DUNG TỆP ĐÍNH KÈM đã được trích xuất.\n\n"
-            "QUY TẮC BẮT BUỘC (CHỐNG HALLUCINATION):\n"
-            "1. Chỉ đọc và tổng hợp ĐÚNG những gì có trong phần [CHI TIẾT NỘI DUNG ĐÃ TRÍCH XUẤT].\n"
-            "2. TUYỆT ĐỐI KHÔNG đoán mò, suy diễn nội dung mà KHÔNG có trong text trích xuất.\n"
-            "3. TUYỆT ĐỐI KHÔNG nói 'Dự đoán', 'Có khả năng chứa', 'Có thể là' khi đã có nội dung thực.\n"
-            "4. Với tệp PDF: Đọc đúng số liệu được cung cấp (ví dụ: N3, 32/60, 113/180...) và trình bày chính xác.\n"
-            "5. Với ảnh: Tóm tắt mô tả kỹ thuật đã có trong phần trích xuất.\n"
-            "6. Trình bày có cấu trúc, BLUF (kết luận trước), bằng tiếng Việt.\n"
-            "7. Phân tích TẤT CẢ các file trong archive — không bỏ sót bất kỳ file nào.\n\n"
-            "VÍ DỤ PHẢN HỒI ĐÚNG với PDF kết quả thi:\n"
-            "Phần nội dung trích xuất có: N3, 26A2080102-32551, 32 / 60, 113 / 180, 36 / 60, 45 / 60, A\n"
-            "→ Bot phải đọc: 'Result.pdf là phiếu kết quả thi JLPT N3. SBD: 26A2080102-32551. "
-            "Tổng điểm: 113/180. Ngôn ngữ: 32/60. Đọc hiểu: 36/60. Nghe: 45/60. Kết quả: A (Đạt).'"
+            "NHIỆM VỤ: Đọc và tóm tắt NỘI DUNG TỆP ĐÍNH KÈM / VIDEO ĐA PHƯƠNG THỨC đã được trích xuất.\n\n"
+            "QUY TẮC BẮT BUỘC:\n"
+            "1. Đọc và tổng hợp đầy đủ những gì có trong phần trích xuất (gồm cả Thị giác OCR và Lời thoại âm thanh Whisper STT).\n"
+            "2. Với video đa phương thức: Áp dụng quy tắc phân giải đối chiếu chéo (Cross-Modal Discrepancy Resolution). "
+            "Chữ viết in hoa/banner (OCR) là Ground Truth về tên địa danh, tổ chức. "
+            "Kết hợp lời thoại âm thanh để làm rõ chi tiết thời gian (giờ, ngày), các hoạt động (drone show, pháo hoa...), vé miễn phí, đơn vị tổ chức/đồng hành.\n"
+            "3. Tuyệt đối không ảo giác âm thanh: Không dùng các từ méo âm như 'trúng thú', 'đô lôn xấu', 'Quận Trân' khi đã có chữ OCR trên màn hình.\n"
+            "4. Trình bày mạch lạc, ấm áp, súc tích, BLUF (kết luận trực diện trước), bằng tiếng Việt.\n"
         )
 
     # ── Static Prefix Anchor for KV-Cache Reuse (100% Invariant across all turns) ──
@@ -742,6 +737,7 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
             or user_message.startswith("[📸")
             or user_message.startswith("[📄 File:")
             or user_message.startswith("[🎤 Tin nhắn thoại]:")
+            or user_message.startswith("[🎬")
         )
         if _is_attachment:
             logger.info("[AiAgent] 📎 Attachment detected — flushing history to prevent 413 context overflow.")
@@ -1280,9 +1276,11 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
                         messages.append(m_copy)
 
             elif role in ("user", "assistant") and isinstance(content, str):
-                if len(content) > 1000:
+                is_current_turn = (i >= len(history) - 1)
+                max_chars = 8000 if (is_attachment or is_current_turn) else 1000
+                if len(content) > max_chars:
                     m_copy = dict(m)
-                    m_copy["content"] = content[:1000] + "..."
+                    m_copy["content"] = content[:max_chars] + "..."
                     messages.append(m_copy)
                 else:
                     messages.append(m)

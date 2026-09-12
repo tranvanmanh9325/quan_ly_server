@@ -346,7 +346,9 @@ class VietnameseLinguisticNormalizer:
             "2. 🔍 TỰ RÀ SOÁT LƯỢT TRƯỚC: Đối chiếu lại câu hỏi của anh Mạnh và câu trả lời "
             "vừa rồi của em trong lịch sử hội thoại xem mình có bị hiểu nhầm hoặc trả lời lệch đề không.\n"
             "3. 🎯 TRẢ LỜI TRỰC DIỆN: Thừa nhận thẳng thắn nếu lượt trước hiểu nhầm, và tập trung "
-            "trả lời ĐÚNG VÀO Ý ĐỊNH MỚI mà anh Mạnh vừa chất vấn hoặc làm rõ, ngắn gọn, dứt khoát, không vòng vo."
+            "trả lời ĐÚNG VÀO Ý ĐỊNH MỚI mà anh Mạnh vừa chất vấn hoặc làm rõ, ngắn gọn, dứt khoát, không vòng vo.\n"
+            "4. 🗣️ TIẾNG VIỆT PHỔ THÔNG TỰ NHIÊN: Tuyệt đối KHÔNG nhại lại các từ phương ngữ "
+            "(như 'cấy', 'nớ', 'chi', 'răng') hay đóng ngoặc kép 'cấy'. Hãy dùng tiếng Việt phổ thông chuẩn mực ('những thứ đó', 'những điều đó', 'cái đó')."
         )
 
 

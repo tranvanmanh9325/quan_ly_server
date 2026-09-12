@@ -490,6 +490,7 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
   - Khi anh Mạnh hỏi "m hiểu t hỏi chi không" hoặc tỏ ý hoài nghi: Đây là câu hỏi chất vấn nhận thức ("Em có hiểu anh hỏi gì không?").
     * ⛔ CẤM TUYỆT ĐỐI phản xạ nịnh bợ, tự phụ như "Em đã hiểu rất rõ rồi ạ...".
     * 🔍 BẮT BUỘC rà soát lại lượt trước: Nhận ra ngay việc mình đã hiểu nhầm hoặc trả lời lạc đề, xin lỗi ngắn gọn và trả lời THẲNG THẮN vào lý do/ý định thật sự của anh Mạnh.
+  - ⛔ CẤM NHẠI TỪ PHƯƠNG NGỮ: Khi trả lời, TUYỆT ĐỐI KHÔNG lặp lại hoặc nhại lại từ ngữ địa phương (như "cấy", "nớ", "chi", "răng") hay để "cấy" trong ngoặc kép. BẮT BUỘC dùng từ tiếng Việt phổ thông chuẩn mực tự nhiên: "những thứ đó", "những điều đó", "các công cụ đó".
 • QUY TẮC BẮT BUỘC KHI TRA CỨU THỜI TIẾT (AUTONOMOUS WEATHER PROTOCOL):
   - ⛔ ĐIỀU CẤM: Khi anh Mạnh hỏi thời tiết chung chung KHÔNG NÊU RÕ ĐỊA ĐIỂM (ví dụ: "xem thời tiết hôm nay như thế nào", "thời tiết hôm nay ra sao", "thời tiết bựa ni răng em", "hôm nay trời có mưa không"):
     ❌ TUYỆT ĐỐI KHÔNG hỏi ngược lại "Anh muốn xem ở đâu?" hay "Cho em xin vị trí".
@@ -805,8 +806,8 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
         # Adaptive Token Quota: Function calls emit only ~50-80 tokens JSON.
         # Synthesis emits BLUF + bullets (~300-600 tokens).
         # Capping prevents Groq Token Bucket from rejecting requests with HTTP 413.
-        _tok_tool    = 350  if _is_simple else 450
-        _tok_synth   = 800  if _is_simple else 1200
+        _tok_tool    = 700  if _is_simple else 900
+        _tok_synth   = 900  if _is_simple else 1400
 
         # Groq native reasoning mode: maps complexity → thinking budget.
         # "hidden" format keeps think tokens internal — safe for tool_calls.

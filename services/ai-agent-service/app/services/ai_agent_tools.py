@@ -127,7 +127,13 @@ class AgentToolExecutor:
         "run_command",
         "get_server_active_sessions",
         "get_server_location",
+        "get_weather",
         "server_capture_screenshot",
+    }
+    _TOOL_CLUSTER_WEATHER = {
+        "get_weather",
+        "get_server_location",
+        "run_command",
     }
     _TOOL_CLUSTER_ARCHIVE = {
         "read_archive_file",
@@ -170,6 +176,8 @@ class AgentToolExecutor:
     _TOOL_CLUSTER_CORE = {
         "run_command",
         "get_server_active_sessions",
+        "get_server_location",
+        "get_weather",
         "browser_search_google",
         "browser_navigate",
         "server_capture_screenshot",
@@ -227,6 +235,16 @@ class AgentToolExecutor:
             "nhớ", "ghi nhớ", "remind", "lưu lại", "task", "việc", "xong", "hoàn thành", "done"
         ))
 
+        is_weather = any(k in q for k in (
+            "thời tiết", "weather", "nhiệt độ", "độ ẩm", "mưa", "nắng",
+            "dự báo", "bão", "không khí", "trời", "nóng", "lạnh", "gió",
+            "áp thấp", "mưa rào", "giông", "rét", "ấm", "sương mù",
+            "wttr", "a răng", "bựa ni"
+        ))
+
+        if is_weather:
+            selected.update(self._TOOL_CLUSTER_WEATHER)
+
         if is_server:
             selected.update(self._TOOL_CLUSTER_SERVER)
             selected.update(self._TOOL_CLUSTER_TASKS)
@@ -280,6 +298,22 @@ class AgentToolExecutor:
                     "name": "get_server_location",
                     "description": "Tra cứu vị trí vật lý thực tế, tọa độ GPS và thông số mạng (ISP) của máy chủ kirito-server bằng Wi-Fi Positioning (WPS) và IP Geolocation.",
                     "parameters": {"type": "object", "properties": {}},
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_weather",
+                    "description": "Tra cứu thông tin thời tiết thời gian thực và dự báo (nhiệt độ, độ ẩm, sức gió, khả năng mưa, trạng thái trời) tại địa phương hoặc theo tọa độ GPS. Nếu người dùng không chỉ định tên địa danh cụ thể (ví dụ: 'thời tiết hôm nay thế nào', 'trời có mưa không', 'thời tiết bựa ni răng em'), hãy để trống tham số location (null hoặc không truyền) để hệ thống tự động định vị vị trí máy chủ qua sóng Wi-Fi WPS và IP Geolocation.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "location": {
+                                "type": "string",
+                                "description": "Tên địa danh (ví dụ: 'Nghệ An', 'Hà Nội', 'Đà Nẵng') hoặc tọa độ. Bỏ trống hoặc null để tự động định vị theo vị trí máy chủ của anh Mạnh.",
+                            },
+                        },
+                    },
                 },
             },
             {
@@ -930,6 +964,137 @@ class AgentToolExecutor:
                         f"• Trạng thái: Đang hoạt động bình thường (On-premise)"
                     )
                 return "Không thể xác định vị trí máy chủ vào lúc này."
+
+            if tool_name == "get_weather":
+                loc_raw = tool_args.get("location") if tool_args else None
+                loc = (loc_raw or "").strip()
+
+                detected_city = None
+                detected_country = "Vietnam"
+                detected_lat = None
+                detected_lon = None
+                detected_source = None
+
+                # Tự động định vị máy chủ nếu location rỗng hoặc là từ khóa chỉ vị trí tại chỗ
+                if not loc or loc.lower() in ("here", "hiện tại", "máy chủ", "server", "ở đây", "chỗ này", "nơi này"):
+                    # 1. Thử Wi-Fi WPS locator
+                    wifi_raw = await self.ssh_client.execute_command(
+                        "python3 /home/kirito/quan_ly_server/scripts/server_wifi_locator.py 2>/dev/null"
+                    )
+                    if wifi_raw and "{" in wifi_raw:
+                        try:
+                            parsed = json.loads(wifi_raw[wifi_raw.find("{"):wifi_raw.rfind("}")+1])
+                            if "lat" in parsed and "lon" in parsed:
+                                detected_lat = parsed.get("lat")
+                                detected_lon = parsed.get("lon")
+                                detected_city = parsed.get("city")
+                                detected_country = parsed.get("country", "Vietnam")
+                                detected_source = "Wi-Fi WPS (Apple DB)"
+                        except Exception:
+                            pass
+
+                    # 2. Fallback IP Geolocation
+                    if not detected_city:
+                        ip_raw = await self.ssh_client.execute_command("curl -s --max-time 4 http://ip-api.com/json/")
+                        if ip_raw and "{" in ip_raw:
+                            try:
+                                geo_data = json.loads(ip_raw[ip_raw.find("{"):ip_raw.rfind("}")+1])
+                                detected_city = geo_data.get("city") or geo_data.get("regionName", "Hanoi")
+                                detected_country = geo_data.get("country", "Vietnam")
+                                detected_lat = geo_data.get("lat", 21.0184)
+                                detected_lon = geo_data.get("lon", 105.8461)
+                                detected_source = f"IP Geolocation ({geo_data.get('isp', 'ISP Gateway')})"
+                            except Exception:
+                                pass
+
+                    if not detected_city:
+                        detected_city = "Hanoi"
+                        detected_country = "Vietnam"
+                        detected_lat = 21.0285
+                        detected_lon = 105.8542
+                        detected_source = "Mặc định hệ thống"
+
+                    target_query = detected_city
+                else:
+                    target_query = loc
+
+                # Format query an toàn cho URL
+                query_encoded = target_query.replace(" ", "+")
+                weather_cmd = f'curl -s --max-time 5 "wttr.in/{query_encoded}?format=j1" 2>/dev/null'
+                res_raw = await self.ssh_client.execute_command(weather_cmd)
+
+                if res_raw and "current_condition" in res_raw:
+                    try:
+                        wdata = json.loads(res_raw[res_raw.find("{"):res_raw.rfind("}")+1])
+                        curr = wdata["current_condition"][0]
+                        forecast = wdata.get("weather", [{}])[0]
+                        hourly = forecast.get("hourly", [{}])[0] if forecast.get("hourly") else {}
+
+                        desc = curr.get("weatherDesc", [{}])[0].get("value", "Bình thường").strip()
+                        temp_c = curr.get("temp_C", "N/A")
+                        feels_c = curr.get("FeelsLikeC", temp_c)
+                        humidity = curr.get("humidity", "N/A")
+                        wind_speed = curr.get("windspeedKmph", "N/A")
+                        wind_dir = curr.get("winddir16Point", "")
+                        uv_index = curr.get("uvIndex", "N/A")
+                        max_temp = forecast.get("maxtempC", "N/A")
+                        min_temp = forecast.get("mintempC", "N/A")
+                        rain_prob = hourly.get("chanceofrain", "0")
+
+                        desc_vi_map = {
+                            "Clear": "Trời quang đãng, nắng ráo ☀️",
+                            "Sunny": "Trời nắng ráo ☀️",
+                            "Partly cloudy": "Có mây rải rác ⛅",
+                            "Partly Cloudy": "Có mây rải rác ⛅",
+                            "Cloudy": "Trời nhiều mây ☁️",
+                            "Overcast": "Trời u ám, âm u ☁️",
+                            "Mist": "Sương mù nhẹ 🌫️",
+                            "Patchy rain possible": "Có thể có mưa vài nơi 🌦️",
+                            "Light rain": "Mưa nhỏ nhẹ hạt 🌧️",
+                            "Moderate rain": "Mưa rào vừa 🌧️",
+                            "Heavy rain": "Mưa to nặng hạt ⛈️",
+                            "Thundery outbreaks possible": "Có thể có dông sét ⚡",
+                        }
+                        desc_display = desc_vi_map.get(desc, f"{desc} 🌤️")
+
+                        lines = []
+                        if detected_city:
+                            lines.append(f"📍 **[TỰ ĐỘNG ĐỊNH VỊ VỊ TRÍ MÁY CHỦ]**: **{detected_city}, {detected_country}**")
+                            if detected_lat and detected_lon:
+                                lines.append(f"• Tọa độ GPS: `{detected_lat:.4f}°N, {detected_lon:.4f}°E` ({detected_source})")
+                            lines.append(f"🌤️ **THỜI TIẾT THỰC TẾ KHU VỰC MÁY CHỦ ({detected_city.upper()})**:")
+                        else:
+                            lines.append(f"🌤️ **THỜI TIẾT TẠI {target_query.upper()}**:")
+
+                        lines.append(f"• Trạng thái: **{desc_display}**")
+                        lines.append(f"• Nhiệt độ: **{temp_c}°C** (Cảm giác thực tế: **{feels_c}°C**)")
+                        lines.append(f"• Biên độ ngày: Thấp nhất `{min_temp}°C` — Cao nhất `{max_temp}°C`")
+                        lines.append(f"• Độ ẩm không khí: **{humidity}%** | Gió: **{wind_speed} km/h** ({wind_dir})")
+                        lines.append(f"• Chỉ số UV: **{uv_index}** | Xác suất mưa: **{rain_prob}%**")
+
+                        try:
+                            rain_num = int(rain_prob)
+                        except Exception:
+                            rain_num = 0
+                        if rain_num >= 40:
+                            lines.append("💡 **Gợi ý**: Khả năng có mưa khá cao, anh nên mang theo áo mưa/ô khi ra ngoài nhé.")
+                        elif float(uv_index) >= 7 if uv_index != "N/A" else False:
+                            lines.append("💡 **Gợi ý**: Chỉ số UV khá cao, anh nhớ hạn chế đứng nắng lâu và bảo vệ da.")
+                        else:
+                            lines.append("💡 **Gợi ý**: Thời tiết khá thuận lợi cho các hoạt động làm việc và di chuyển ngoài trời.")
+
+                        return "\n".join(lines)
+                    except Exception as parse_err:
+                        logger.warning("[AiAgent] Weather JSON parse error: %s", parse_err)
+
+                # Fallback format string
+                fb_cmd = f'curl -s --max-time 4 "wttr.in/{query_encoded}?format=%l:+%c+%t+(cảm+giác+%f),+độ+ẩm+%h,+gió+%w&lang=vi"'
+                fb_raw = await self.ssh_client.execute_command(fb_cmd)
+                if fb_raw and not fb_raw.startswith("curl:") and not fb_raw.startswith("<!DOCTYPE"):
+                    loc_prefix = f"📍 [Vị trí máy chủ: {detected_city}]\n" if detected_city else ""
+                    return f"{loc_prefix}🌤️ Thời tiết hiện tại: {fb_raw.strip()}"
+
+                return f"Không thể lấy dữ liệu thời tiết cho khu vực '{target_query}' vào lúc này."
 
             if tool_name == "run_command":
                 cmd = tool_args.get("command", "").strip()

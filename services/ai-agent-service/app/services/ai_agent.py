@@ -55,7 +55,7 @@ _COMPLEX_KEYWORDS = frozenset({
 # Keywords that signal a CRITICAL/dangerous operation (mandatory confirmation)
 _CRITICAL_KEYWORDS = frozenset({
     "xóa", "delete", "drop", "rm -", "rm -rf", "shutdown", "halt",
-    "format", "truncate", "purge", "wipe", "kill -9", "stop tất cả",
+    "format c:", "format disk", "mkfs", "truncate", "purge", "wipe", "kill -9", "stop tất cả",
     "restart tất cả", "iptables -f", "disable firewall",
 })
 
@@ -182,10 +182,12 @@ class AiAgentService:
     @staticmethod
     def _extract_user_command(msg: str) -> str:
         """Extracts the actual user query/command text if msg is a document/file attachment envelope."""
-        if msg.startswith("[📄 TỆP ĐÍNH KÈM:") or msg.startswith("[📄 File:") or msg.startswith("[📸"):
+        if (msg.startswith("[📄 TỆP ĐÍNH KÈM:") or msg.startswith("[📄 File:") or 
+            msg.startswith("[📸") or msg.startswith("[🎬")):
             lines = msg.splitlines()
-            for line in lines[:5]:
-                if line.startswith("[Yêu cầu từ anh Mạnh]:") or line.startswith("Caption:") or line.startswith("[📸"):
+            for line in lines[:6]:
+                if (line.startswith("[Yêu cầu từ anh Mạnh]:") or line.startswith("• Yêu cầu từ anh Mạnh:") or 
+                    line.startswith("Caption:") or line.startswith("[📸") or line.startswith("[🎬")):
                     return line
             return lines[0]
         return msg
@@ -209,8 +211,9 @@ class AiAgentService:
         if any(k in cmd_lower for k in _CRITICAL_KEYWORDS):
             return "critical"
 
-        # Document attachments are always processed with System 2 (complex) depth
-        if msg.startswith("[📄 TỆP ĐÍNH KÈM:") or msg.startswith("[📄 File:") or msg.startswith("[📸"):
+        # Document and media attachments are always processed with System 2 (complex) depth
+        if (msg.startswith("[📄 TỆP ĐÍNH KÈM:") or msg.startswith("[📄 File:") or 
+            msg.startswith("[📸") or msg.startswith("[🎬")):
             return "complex"
 
         # COMPLEX: multi-step reasoning, diagnosis, comparison
@@ -238,7 +241,8 @@ class AiAgentService:
 
         Returns: 'diagnostic' | 'action' | 'learning' | 'query' | 'general'
         """
-        if msg.startswith("[📄 TỆP ĐÍNH KÈM:") or msg.startswith("[📄 File:") or msg.startswith("[📸"):
+        if (msg.startswith("[📄 TỆP ĐÍNH KÈM:") or msg.startswith("[📄 File:") or 
+            msg.startswith("[📸") or msg.startswith("[🎬")):
             return "query"
 
         cmd_text = self._extract_user_command(msg)

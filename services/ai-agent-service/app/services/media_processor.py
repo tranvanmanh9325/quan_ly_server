@@ -631,7 +631,9 @@ class MediaProcessor:
             result = await self._analyze_image_openrouter(b64, caption, is_archive=is_archive)
 
         if result:
-            return result
+            # Strip reasoning model think tags if present
+            cleaned = re.sub(r"<think>.*?</think>", "", result, flags=re.DOTALL).strip()
+            return cleaned or result
 
         logger.error("[MediaProcessor] All vision providers failed")
         return (

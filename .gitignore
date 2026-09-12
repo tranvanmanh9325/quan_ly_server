@@ -42,3 +42,4 @@ cortex_data/
 **/cortex_data/
 *.bin
 *.meta.json
+.agents/

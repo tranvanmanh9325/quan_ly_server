@@ -218,10 +218,13 @@ class AgentToolExecutor:
 
         is_media = any(k in q for k in (
             "tiktok", "youtube", "douyin", "reels", "reel", "video", "tải", "clip", "mp4",
-            "shorts", "facebook.com/watch", "fb.watch", "youtu.be", "v.douyin.com",
-            "vt.tiktok.com", "media", "download", "down video", "lưu clip", "chuyển file",
-            "tải về", "tải video"
-        )) or any(link in q for link in ("tiktok.com", "youtu.be", "youtube.com", "fb.watch", "douyin.com"))
+            "shorts", "short", "facebook.com/watch", "fb.watch", "youtu.be", "v.douyin.com",
+            "vt.tiktok.com", "threads", "threads.net", "facebook.com", "fb.com", "media", "download",
+            "down video", "lưu clip", "chuyển file", "tải về", "tải video",
+            "tai", "tai video", "tai clip", "tai ve", "lay video", "lay clip", "keo video"
+        )) or any(link in q for link in (
+            "tiktok.com", "youtu.be", "youtube.com", "fb.watch", "douyin.com", "facebook.com", "threads.net"
+        ))
 
         is_server = any(k in q for k in (
             "server", "máy chủ", "cpu", "ram", "disk", "ổ đĩa", "dung lượng",
@@ -354,13 +357,13 @@ class AgentToolExecutor:
                 "type": "function",
                 "function": {
                     "name": "download_media_video",
-                    "description": "Tải video từ các nền tảng mạng xã hội (TikTok, Douyin, YouTube, Facebook Reel/Watch, Instagram Reels, Twitter/X) về máy chủ kirito-server và gửi trực tiếp tệp video MP4 qua Telegram cho anh Mạnh. Tự động bóc tách không watermark/logo cho TikTok và Douyin. Tuyệt đối không từ chối khi anh Mạnh gửi link video hoặc nhờ tải video.",
+                    "description": "Tải video từ các nền tảng mạng xã hội (TikTok, Douyin, YouTube Shorts/Video, Facebook Reels/Watch, Threads, Instagram Reels, Twitter/X) về máy chủ kirito-server và gửi trực tiếp tệp video MP4 qua Telegram cho anh Mạnh. Tự động bóc tách không watermark/logo cho TikTok và Douyin, hỗ trợ chuẩn streaming Telegram inline cho Shorts, Reels và Threads. Tuyệt đối không từ chối khi anh Mạnh gửi link video hoặc nhờ tải video.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "url": {
                                 "type": "string",
-                                "description": "Đường dẫn (URL) video công khai cần tải (TikTok, Facebook, YouTube, Douyin, Reels...).",
+                                "description": "Đường dẫn (URL) video công khai cần tải (TikTok, Douyin, YouTube Shorts/Video, Facebook Reels/Watch, Threads, Instagram Reels...).",
                             },
                             "caption": {
                                 "type": "string",
@@ -1529,8 +1532,11 @@ class AgentToolExecutor:
                     pipeline = MultiTierMediaPipeline(http_client=client)
                     media_item = await pipeline.download(url)
 
-                    safe_title = html.escape(media_item.title)
-                    safe_author = html.escape(media_item.author)
+                    raw_title = media_item.title or "Video"
+                    if len(raw_title) > 350:
+                        raw_title = raw_title[:347] + "..."
+                    safe_title = html.escape(raw_title)
+                    safe_author = html.escape(media_item.author or "Unknown")
 
                     if media_item.media_type == "video" and media_item.file_path:
                         cap = caption_override or (

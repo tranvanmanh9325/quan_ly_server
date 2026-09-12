@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
+import json
 import logging
 import os
 from pathlib import Path
@@ -26,6 +27,7 @@ import shutil
 import tempfile
 import time
 from typing import Any, Dict, List, Optional, Tuple
+import urllib.parse
 
 import httpx
 
@@ -33,6 +35,69 @@ logger = logging.getLogger(__name__)
 
 TELEGRAM_MAX_FILE_SIZE = 48 * 1024 * 1024
 TEMP_MEDIA_DIR = Path("/tmp/media_downloads")
+
+
+def _clean_fbcdn_stream_url(stream_url: str) -> str:
+    """
+    Loại bỏ các query parameter phân đoạn byte range ('bytestart', 'byteend')
+    từ URL CDN của Meta (fbcdn.net / cdninstagram.com), chuyển đổi request từ
+    phân đoạn DASH range sang tải toàn vẹn progressive MP4 (chuẩn HTTP 200 OK).
+    """
+    parsed = urllib.parse.urlsplit(stream_url)
+    query_params = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
+    filtered = [
+        (k, v) for (k, v) in query_params 
+        if k.lower() not in ("bytestart", "byteend")
+    ]
+    new_query = urllib.parse.urlencode(filtered)
+    return urllib.parse.urlunsplit((
+        parsed.scheme,
+        parsed.netloc,
+        parsed.path,
+        new_query,
+        parsed.fragment,
+    ))
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# TẦNG 1: Regex Canonical Rewriting cho Facebook Share URLs (0ms, Zero Network)
+# ──────────────────────────────────────────────────────────────────────────
+
+_FB_SHARE_REEL_PATTERN = re.compile(
+    r"^https?://(?:(?:[\w-]+\.)?facebook\.com|(?:www\.)?fb\.com)/share/(?:r|reel)/([^/?#&]+)",
+    re.IGNORECASE,
+)
+_FB_SHARE_WATCH_PATTERN = re.compile(
+    r"^https?://(?:(?:[\w-]+\.)?facebook\.com|(?:www\.)?fb\.com)/share/(?:v|video)/([^/?#&]+)",
+    re.IGNORECASE,
+)
+
+
+def canonicalize_facebook_url(url: str) -> str:
+    """
+    Tầng 1 (Tĩnh): Chuẩn hóa các URL Facebook dạng share chứa ID rõ ràng sang Canonical URL chuẩn
+    mà yt-dlp hỗ trợ (/reel/<id>/ hoặc /watch/?v=<id>).
+
+    Ưu điểm:
+      - Hoàn toàn không tốn request mạng (0ms latency, 0 RAM, 0 HTTP overhead).
+      - Bỏ qua hoàn toàn cơ chế WAF/Bot Protection của Facebook đối với các link chia sẻ từ mobile.
+      - Tự động bóc tách và loại bỏ sạch sẽ các query parameters rác (?mibextid=..., ?_fb_noscript=1).
+    """
+    clean = url.strip()
+    m_reel = _FB_SHARE_REEL_PATTERN.search(clean)
+    if m_reel:
+        reel_id = m_reel.group(1)
+        return f"https://www.facebook.com/reel/{reel_id}/"
+
+    m_watch = _FB_SHARE_WATCH_PATTERN.search(clean)
+    if m_watch:
+        video_id = m_watch.group(1)
+        return f"https://www.facebook.com/watch/?v={video_id}"
+
+    return clean
+
+
+_normalize_facebook_url = canonicalize_facebook_url
 
 
 @dataclass
@@ -58,8 +123,14 @@ class MediaItem:
                     p.unlink()
                     logger.debug("[MediaItem] Cleaned up temporary file: %s", self.file_path)
                 parent = p.parent
-                if parent.name.startswith("media_") and parent != TEMP_MEDIA_DIR:
+                if (
+                    parent.is_dir()
+                    and parent.name.startswith("media_ytdlp_")
+                    and parent.resolve() != TEMP_MEDIA_DIR.resolve()
+                    and parent.resolve().is_relative_to(TEMP_MEDIA_DIR.resolve())
+                ):
                     shutil.rmtree(parent, ignore_errors=True)
+                    logger.debug("[MediaItem] Cleaned up temporary directory: %s", parent)
             except Exception as err:
                 logger.warning("[MediaItem] Failed to clean up file %s: %s", self.file_path, err)
 
@@ -136,8 +207,16 @@ class MultiTierMediaPipeline:
             re.IGNORECASE
         )
         self._facebook_regex = re.compile(
-            r"https?://(?:www\.|web\.|m\.)?(?:facebook\.com|fb\.watch)/.+",
+            r"https?://(?:www\.|web\.|m\.)?(?:facebook\.com|fb\.watch|fb\.me)/.+",
             re.IGNORECASE
+        )
+        self._facebook_redirect_regex = re.compile(
+            r"^https?://(?:(?:[\w-]+\.)?facebook\.com/share/|(?:www\.)?(?:fb\.watch|fb\.me|fb\.com/share)/)",
+            re.IGNORECASE
+        )
+        self._threads_regex = re.compile(
+            r"https?://(?:www\.)?(?:threads\.net|threads\.com)/(?:@[^/\s]+/post|t)/[^\s]+",
+            re.IGNORECASE,
         )
 
         TEMP_MEDIA_DIR.mkdir(parents=True, exist_ok=True)
@@ -147,7 +226,9 @@ class MultiTierMediaPipeline:
     async def _get_client(self) -> httpx.AsyncClient:
         if self._external_client and not self._external_client.is_closed:
             return self._external_client
+        transport = httpx.AsyncHTTPTransport(local_address="0.0.0.0")
         return httpx.AsyncClient(
+            transport=transport,
             timeout=httpx.Timeout(connect=10.0, read=35.0, write=35.0, pool=35.0),
             follow_redirects=True,
             headers={
@@ -157,6 +238,74 @@ class MultiTierMediaPipeline:
                 )
             },
         )
+
+    async def _resolve_redirect_url(self, url: str) -> str:
+        """
+        Tầng 2 (Động): Phân giải URL Facebook rút gọn động (fb.watch, fb.me...) bằng httpx stream ngắt sớm.
+
+        Ưu điểm kỹ thuật:
+          - Ép IPv4 (local_address='0.0.0.0') loại bỏ lỗi [Errno 101] Network is unreachable trên Docker bridge.
+          - Sử dụng User-Agent chính thức 'facebookexternalhit/1.1' được Meta white-list, loại bỏ triệt để HTTP 400 WAF.
+          - Dùng client.stream('GET', follow_redirects=True, max_redirects=5) ngắt sớm (early abort): đọc xong HTTP headers
+            chuyển hướng 3xx và header đích 200 OK là thoát ngay, không đọc byte nội dung nào (0 byte body, 0 RAM).
+          - Giới hạn max_redirects=5 và bắt httpx.TooManyRedirects chống redirect lặp vô tận từ login.php.
+          - Tự động nhận diện khi Facebook chuyển hướng về trang login hoặc checkpoint để cảnh báo video riêng tư.
+          - Chuẩn hóa canonicalize_facebook_url ngay sau khi phân giải để đảm bảo định dạng đích tương thích yt-dlp.
+          - Bọc try-except toàn diện: nếu timeout hoặc lỗi kết nối, trả về URL gốc một cách an toàn.
+        """
+        logger.info("[RedirectResolver] Resolving potential redirect URL: %s", url)
+        try:
+            transport = httpx.AsyncHTTPTransport(local_address="0.0.0.0")
+            timeout = httpx.Timeout(connect=5.0, read=5.0, write=5.0, pool=5.0)
+            headers = {
+                "User-Agent": "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)",
+                "Accept": "*/*",
+                "Accept-Language": "en-US,en;q=0.9",
+            }
+            async with httpx.AsyncClient(
+                transport=transport,
+                timeout=timeout,
+                follow_redirects=True,
+                max_redirects=5,
+                headers=headers,
+            ) as client:
+                async with client.stream("GET", url) as resp:
+                    resolved_url = str(resp.url)
+                    status_code = resp.status_code
+
+                    # Kiểm tra nếu Facebook redirect về trang login hoặc checkpoint (bài viết/video riêng tư)
+                    if any(p in resolved_url for p in ("/login", "/checkpoint", "login.php")):
+                        logger.warning(
+                            "[RedirectResolver] Facebook URL redirected to login/checkpoint (private/restricted): %s -> %s",
+                            url,
+                            resolved_url,
+                        )
+                        return url
+
+                    if status_code < 400:
+                        canonical = canonicalize_facebook_url(resolved_url)
+                        logger.info(
+                            "[RedirectResolver] Successfully resolved: %s -> %s (canonical: %s, HTTP %d)",
+                            url,
+                            resolved_url,
+                            canonical,
+                            status_code,
+                        )
+                        return canonical
+                    else:
+                        logger.warning(
+                            "[RedirectResolver] HTTP %d received for %s. Keeping original URL.",
+                            status_code,
+                            url,
+                        )
+                        return url
+
+        except (asyncio.TimeoutError, httpx.TooManyRedirects) as err:
+            logger.warning("[RedirectResolver] Timeout or redirect loop resolving for %s (%s). Keeping original URL.", url, err)
+            return url
+        except Exception as err:
+            logger.warning("[RedirectResolver] Error resolving redirect for %s: %s. Keeping original URL.", url, err)
+            return url
 
     # ──────────────────────────────────────────────────────────────────────────
     # TẦNG 1: TikWM API Engine (Siêu tốc < 0.5s - 1s, 100% No-Watermark HD)
@@ -239,7 +388,20 @@ class MultiTierMediaPipeline:
 
         async with self._ytdlp_semaphore:
             loop = asyncio.get_running_loop()
-            return await loop.run_in_executor(None, self._sync_ytdlp_download, url)
+            future = loop.run_in_executor(None, self._sync_ytdlp_download, url)
+            try:
+                return await asyncio.shield(future)
+            except asyncio.CancelledError:
+                def _cleanup_orphaned(f):
+                    try:
+                        if not f.cancelled():
+                            res = f.result()
+                            if res:
+                                res.cleanup()
+                    except Exception:
+                        pass
+                future.add_done_callback(_cleanup_orphaned)
+                raise
 
     def _sync_ytdlp_download(self, url: str) -> Optional[MediaItem]:
         try:
@@ -251,30 +413,43 @@ class MultiTierMediaPipeline:
         temp_dir = tempfile.mkdtemp(prefix="media_ytdlp_", dir=str(TEMP_MEDIA_DIR))
         out_tmpl = os.path.join(temp_dir, "media_%(id)s.%(ext)s")
 
+        # 1. Định dạng ưu tiên tuyệt đối MP4 AVC1/H.264 + AAC để xem inline Telegram
+        # Tự động chọn độ phân giải tốt nhất trong ngưỡng an toàn 48MB
+        format_chain = (
+            "bestvideo[vcodec^=avc1][filesize<=48M][ext=mp4]+bestaudio[acodec^=mp4a]/"
+            "bestvideo[vcodec^=avc1][filesize_approx<=48M][ext=mp4]+bestaudio[acodec^=mp4a]/"
+            "bestvideo[vcodec^=avc1][ext=mp4]+bestaudio[acodec^=mp4a]/"
+            "bestvideo[ext=mp4]+bestaudio[ext=m4a]/"
+            "best[ext=mp4]/best"
+        )
+
+        # 2. Bộ lọc ngắt sớm trước khi tải nếu thời lượng video quá dài (> 30 phút)
+        def _match_filter_duration(info_dict: Dict[str, Any], *, incomplete: bool = False) -> Optional[str]:
+            duration = info_dict.get("duration")
+            if duration and duration > 1800:
+                raise VideoTooLargeError(
+                    f"Thời lượng video ({duration // 60} phút) vượt quá giới hạn dung lượng 50MB của Telegram Bot."
+                )
+            return None
+
         ydl_opts: Dict[str, Any] = {
-            "format": (
-                "bestvideo[vcodec^=avc1][ext=mp4]+bestaudio[acodec^=mp4a]/"
-                "bestvideo[ext=mp4]+bestaudio[ext=m4a]/"
-                "best[ext=mp4]/best"
-            ),
+            "format": format_chain,
             "merge_output_format": "mp4",
             "outtmpl": out_tmpl,
             "max_filesize": TELEGRAM_MAX_FILE_SIZE,
+            # Bắt buộc bind IPv4 0.0.0.0 để triệt tiêu lỗi [Errno 101] Network is unreachable trên Docker bridge
+            "source_address": "0.0.0.0",
             "noplaylist": True,
             "socket_timeout": 25,
             "quiet": True,
             "no_warnings": True,
             "nocheckcertificate": True,
+            "match_filter": _match_filter_duration,
             "http_headers": {
                 "User-Agent": (
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
                 )
-            },
-            "extractor_args": {
-                "youtube": {
-                    "player_client": ["android", "ios", "web"],
-                }
             },
         }
 
@@ -291,7 +466,11 @@ class MultiTierMediaPipeline:
                 final_path = mp4_candidate if os.path.exists(mp4_candidate) else downloaded_file
 
                 if not os.path.exists(final_path):
+                    residual_files = list(Path(temp_dir).iterdir())
                     shutil.rmtree(temp_dir, ignore_errors=True)
+                    if residual_files:
+                        logger.info("[Tier 2: yt-dlp] Incomplete download detected (%s). Video rejected.", residual_files)
+                        raise VideoTooLargeError("Dung lượng video vượt quá giới hạn 50MB của Telegram Bot.")
                     return None
 
                 size = os.path.getsize(final_path)
@@ -312,15 +491,22 @@ class MultiTierMediaPipeline:
                     is_temp_file=True,
                 )
 
-        except yt_dlp.utils.DownloadError as err:
-            logger.warning("[Tier 2: yt-dlp] Download error: %s", err)
-            shutil.rmtree(temp_dir, ignore_errors=True)
-            return None
         except VideoTooLargeError:
-            raise
-        except Exception as err:
-            logger.error("[Tier 2: yt-dlp] Extraction failed: %s", err, exc_info=True)
             shutil.rmtree(temp_dir, ignore_errors=True)
+            raise
+        except yt_dlp.utils.DownloadError as err:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            err_str = str(err).lower()
+            if "larger than max-filesize" in err_str or "requested format is not available" in err_str:
+                logger.info("[Tier 2: yt-dlp] Video rejected due to size/format limits: %s", err)
+                raise VideoTooLargeError(
+                    "Dung lượng video vượt quá giới hạn 50MB của Telegram Bot."
+                )
+            logger.warning("[Tier 2: yt-dlp] Download error: %s", err)
+            return None
+        except Exception as err:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            logger.error("[Tier 2: yt-dlp] Extraction failed: %s", err, exc_info=True)
             return None
 
     # ──────────────────────────────────────────────────────────────────────────
@@ -331,16 +517,16 @@ class MultiTierMediaPipeline:
         """Bóc tách luồng trực tiếp từ DOM Hydration hoặc Network Stream."""
         logger.info("[Tier 3: Playwright] Initiating sniffing for: %s", url)
 
+        try:
+            from playwright.async_api import async_playwright
+        except ImportError:
+            logger.warning("[Tier 3: Playwright] Playwright not installed.")
+            return None
+
+        captured_video_url: Optional[str] = None
+        media_event = asyncio.Event()
+
         async with self._playwright_semaphore:
-            try:
-                from playwright.async_api import async_playwright
-            except ImportError:
-                logger.warning("[Tier 3: Playwright] Playwright not installed.")
-                return None
-
-            captured_video_url: Optional[str] = None
-            media_event = asyncio.Event()
-
             async with async_playwright() as pw:
                 browser = await pw.chromium.launch(
                     headless=True,
@@ -411,24 +597,182 @@ class MultiTierMediaPipeline:
                     await context.close()
                     await browser.close()
 
-            if not captured_video_url:
-                logger.warning("[Tier 3: Playwright] Sniffing yielded no media URL")
-                return None
+        if not captured_video_url:
+            logger.warning("[Tier 3: Playwright] Sniffing yielded no media URL")
+            return None
 
-            client = await self._get_client()
-            temp_file, size = await self._stream_url_to_file(captured_video_url, client)
+        client = await self._get_client()
+        temp_file, size = await self._stream_url_to_file(captured_video_url, client)
 
-            return MediaItem(
-                file_path=temp_file,
-                title="Extracted Media",
-                author="Creator",
-                duration=0,
-                media_type="video",
-                source_url=url,
-                file_size=size,
-                direct_stream_url=captured_video_url,
-                is_temp_file=True,
-            )
+        return MediaItem(
+            file_path=temp_file,
+            title="Extracted Media",
+            author="Creator",
+            duration=0,
+            media_type="video",
+            source_url=url,
+            file_size=size,
+            direct_stream_url=captured_video_url,
+            is_temp_file=True,
+        )
+
+    async def _download_threads_playwright(self, url: str) -> Optional[MediaItem]:
+        """
+        Trích xuất video Threads chuyên biệt bằng Playwright Headless Chromium:
+          - Quản lý bộ nhớ bằng asyncio.Semaphore(1) bảo vệ máy chủ RAM 3.2GB.
+          - Chặn toàn bộ hình ảnh, font, stylesheet để tối ưu tốc độ và giảm băng thông.
+          - Cơ chế Dual-Vector: bóc tách direct URL từ JSON hydration `video_versions`
+            kết hợp lắng nghe luồng mạng CDN Meta (`fbcdn.net`).
+          - Loại bỏ tham số byte range (`bytestart`, `byteend`) để tải toàn bộ tệp MP4 chuẩn 200 OK.
+          - Đóng Chromium ngay lập tức khi bắt được stream URL để giải phóng RAM trước khi stream.
+          - Ghi trực tiếp từng chunk 64KB ra đĩa SSD tạm /tmp/media_downloads/.
+        """
+        logger.info("[Threads Playwright] Initiating extraction for: %s", url)
+
+        try:
+            from playwright.async_api import async_playwright
+        except ImportError:
+            logger.warning("[Threads Playwright] Playwright module not installed.")
+            return None
+
+        title = "Threads Video"
+        author = "threads_creator"
+        extracted_stream_url: Optional[str] = None
+
+        # Bóc tách username tác giả từ URL pattern: /@username/post/
+        m_author = re.search(r"/@([^/\?]+)", url)
+        if m_author:
+            author = m_author.group(1)
+
+        async with self._playwright_semaphore:
+            network_stream_url: Optional[str] = None
+            stream_event = asyncio.Event()
+
+            async with async_playwright() as pw:
+                browser = await pw.chromium.launch(
+                    headless=True,
+                    args=[
+                        "--no-sandbox",
+                        "--disable-setuid-sandbox",
+                        "--disable-dev-shm-usage",
+                        "--disable-gpu",
+                        "--disable-extensions",
+                        "--disable-background-networking",
+                        "--disable-background-timer-throttling",
+                        "--disable-renderer-backgrounding",
+                        "--mute-audio",
+                    ],
+                )
+                context = await browser.new_context(
+                    user_agent=(
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+                    ),
+                    viewport={"width": 1280, "height": 800},
+                )
+                page = await context.new_page()
+
+                # Chặn tối đa các tài nguyên không liên quan đến việc lấy stream URL
+                await page.route(
+                    re.compile(r"\.(png|jpg|jpeg|gif|webp|svg|woff|woff2|ttf|otf|css)($|\?)", re.IGNORECASE),
+                    lambda route: route.abort(),
+                )
+
+                async def _on_response(response: Any) -> None:
+                    nonlocal network_stream_url
+                    res_url = response.url
+                    ct = response.headers.get("content-type", "").lower()
+                    if (
+                        ("fbcdn.net" in res_url or "cdninstagram.com" in res_url)
+                        and ("video" in ct or ".mp4" in res_url or response.request.resource_type == "media")
+                    ):
+                        if not network_stream_url:
+                            network_stream_url = res_url
+                            stream_event.set()
+
+                page.on("response", _on_response)
+
+                try:
+                    await page.goto(url, wait_until="domcontentloaded", timeout=15000)
+
+                    # Trích xuất metadata bài viết từ thẻ meta OpenGraph hoặc tiêu đề trang
+                    page_meta = await page.evaluate("""() => {
+                        const ogDesc = document.querySelector('meta[property="og:description"]')?.content;
+                        const ogTitle = document.querySelector('meta[property="og:title"]')?.content;
+                        const docTitle = document.title;
+                        return { ogDesc, ogTitle, docTitle };
+                    }""")
+
+                    if page_meta.get("ogDesc"):
+                        title = page_meta["ogDesc"].strip()
+                    elif page_meta.get("ogTitle"):
+                        title = page_meta["ogTitle"].strip()
+                    elif page_meta.get("docTitle"):
+                        title = page_meta["docTitle"].strip()
+
+                    # Cắt ngắn tiêu đề nếu quá dài để hiển thị chuẩn trong Telegram caption
+                    if len(title) > 100:
+                        title = title[:97] + "..."
+
+                    # Vector 1: Bóc tách trực tiếp từ mảng JSON hydration video_versions trong HTML
+                    html_content = await page.content()
+                    matches = re.finditer(r'\"video_versions\"\s*:\s*(\[[^\]]+\])', html_content)
+                    for m in matches:
+                        try:
+                            clean_json = m.group(1).replace(r"\/", "/")
+                            items = json.loads(clean_json)
+                            for it in items:
+                                candidate = it.get("url")
+                                if candidate and ("fbcdn.net" in candidate or "cdninstagram.com" in candidate):
+                                    extracted_stream_url = candidate
+                                    logger.info("[Threads Playwright] Found stream URL via video_versions JSON hydration")
+                                    break
+                            if extracted_stream_url:
+                                break
+                        except Exception as parse_err:
+                            logger.debug("[Threads Playwright] Failed parsing video_versions snippet: %s", parse_err)
+
+                    # Vector 2: Dự phòng nếu JSON hydration không có, chờ tín hiệu từ Network Listener
+                    if not extracted_stream_url:
+                        if not stream_event.is_set():
+                            try:
+                                await asyncio.wait_for(stream_event.wait(), timeout=4.0)
+                            except asyncio.TimeoutError:
+                                pass
+
+                        if network_stream_url:
+                            extracted_stream_url = network_stream_url
+                            logger.info("[Threads Playwright] Found stream URL via Network Sniffer")
+
+                finally:
+                    # ĐÓNG BROWSER NGAY LẬP TỨC để giải phóng 150MB RAM trước khi thực hiện tải stream
+                    await context.close()
+                    await browser.close()
+
+        if not extracted_stream_url:
+            logger.warning("[Threads Playwright] No video stream URL could be captured from %s", url)
+            return None
+
+        # Chuẩn hóa URL: Loại bỏ byte range query parameters để tải toàn bộ tệp
+        cleaned_stream_url = _clean_fbcdn_stream_url(extracted_stream_url)
+
+        # Tải tệp bằng Chunked Disk Streaming 64KB trực tiếp ra đĩa SSD
+        client = await self._get_client()
+        temp_file, size = await self._stream_url_to_file(cleaned_stream_url, client)
+
+        logger.info("[Threads Playwright] Successfully downloaded video to %s (%d bytes)", temp_file, size)
+
+        return MediaItem(
+            file_path=temp_file,
+            title=title,
+            author=author,
+            duration=0,
+            media_type="video",
+            source_url=url,
+            file_size=size,
+            direct_stream_url=cleaned_stream_url,
+            is_temp_file=True,
+        )
 
     # ──────────────────────────────────────────────────────────────────────────
     # Tiện ích Zero-RAM Chunked Disk Streaming
@@ -451,6 +795,7 @@ class MultiTierMediaPipeline:
                 temp_path = tf.name
 
             total_bytes = 0
+            download_success = False
             try:
                 with open(temp_path, "wb") as f:
                     async for chunk in response.aiter_bytes(chunk_size=64 * 1024):
@@ -461,10 +806,13 @@ class MultiTierMediaPipeline:
                                 f"Dung lượng tải xuống vượt quá ngưỡng an toàn ({size_mb:.1f}MB > 48MB)."
                             )
                         f.write(chunk)
-            except Exception:
-                if os.path.exists(temp_path):
-                    os.unlink(temp_path)
-                raise
+                download_success = True
+            finally:
+                if not download_success and os.path.exists(temp_path):
+                    try:
+                        os.unlink(temp_path)
+                    except OSError:
+                        pass
 
             return temp_path, total_bytes
 
@@ -475,18 +823,44 @@ class MultiTierMediaPipeline:
     async def download(self, url: str) -> MediaItem:
         """
         Phân giải và tải media qua hệ thống phân tầng thông minh:
-          Tier 1 (TikWM) -> Tier 2 (yt-dlp) -> Tier 3 (Playwright)
+          - Threads -> _download_threads_playwright
+          - Facebook (rút gọn/chia sẻ) -> _resolve_redirect_url -> Tier 2 (yt-dlp)
+          - TikTok / Douyin -> Tier 1 (TikWM) -> Tier 2 (yt-dlp) -> Tier 3 (Playwright)
+          - YouTube, Facebook và các nền tảng khác -> Tier 2 (yt-dlp) -> Tier 3 (Playwright)
         """
         # Tự động dọn dẹp các tệp tạm mồ côi cũ hơn 10 phút trước khi bắt đầu phiên mới
         cleanup_expired_media(max_age_seconds=600)
 
         clean_url = url.strip()
+
+        # 1. Định tuyến Threads chuyên biệt (yt-dlp không hỗ trợ Threads, đi thẳng vào Playwright Sniffer)
+        if self._threads_regex.search(clean_url):
+            try:
+                item = await self._download_threads_playwright(clean_url)
+                if item:
+                    item.source_url = clean_url
+                    logger.info("[Pipeline] Threads Playwright Sniffer succeeded!")
+                    return item
+            except VideoTooLargeError:
+                raise
+            except Exception as err:
+                logger.error("[Pipeline] Threads extraction failed: %s", err)
+                raise MediaPipelineError(f"Không thể tải video từ Threads: {err}")
+
+        # 2. Tiền xử lý Facebook URLs: Kết hợp 2 tầng (Tầng 1 Tĩnh -> Tầng 2 Động)
+        target_url = canonicalize_facebook_url(clean_url)
+        if self._facebook_redirect_regex.search(target_url):
+            resolved = await self._resolve_redirect_url(target_url)
+            target_url = canonicalize_facebook_url(resolved)
+
+        # 3. Định tuyến TikTok / Douyin (Tier 1: TikWM -> Tier 2: yt-dlp -> Tier 3: Playwright)
         is_tiktok_douyin = bool(self._tiktok_regex.search(clean_url))
 
         if is_tiktok_douyin:
             try:
                 item = await self._download_tikwm(clean_url)
                 if item:
+                    item.source_url = clean_url
                     logger.info("[Pipeline] Tier 1 (TikWM) succeeded!")
                     return item
             except VideoTooLargeError:
@@ -494,19 +868,23 @@ class MultiTierMediaPipeline:
             except Exception as err:
                 logger.warning("[Pipeline] Tier 1 failed, falling back to Tier 2: %s", err)
 
+        # 4. Tier 2: yt-dlp Universal Downloader (YouTube, Facebook Reels/Watch, Douyin...)
         try:
-            item = await self._download_ytdlp(clean_url)
+            item = await self._download_ytdlp(target_url)
             if item:
-                logger.info("[Pipeline] Tier 2 (yt-dlp) succeeded!")
+                item.source_url = clean_url
+                logger.info("[Pipeline] Tier 2 (yt-dlp) succeeded for URL: %s", target_url)
                 return item
         except VideoTooLargeError:
             raise
         except Exception as err:
             logger.warning("[Pipeline] Tier 2 failed, falling back to Tier 3: %s", err)
 
+        # 5. Tier 3: Playwright Sniffer Fallback
         try:
             item = await self._download_playwright_sniff(clean_url)
             if item:
+                item.source_url = clean_url
                 logger.info("[Pipeline] Tier 3 (Playwright Sniffer) succeeded!")
                 return item
         except VideoTooLargeError:
@@ -514,4 +892,4 @@ class MultiTierMediaPipeline:
         except Exception as err:
             logger.error("[Pipeline] Tier 3 failed: %s", err)
 
-        raise MediaPipelineError(f"Không thể trích xuất video từ liên kết: {url}")
+        raise MediaPipelineError(f"Không thể trích xuất video từ liên kết: {clean_url}")

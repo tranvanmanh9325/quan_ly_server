@@ -68,14 +68,17 @@ class TelegramBot:
             self.ai_agent.set_telegram_bot(self)
 
     _MEDIA_URL_REGEX = re.compile(
-        r"https?://(?:www\.|vt\.|vm\.|v\.|m\.)?(?:"
-        r"tiktok\.com|"
-        r"douyin\.com|"
-        r"youtube\.com|youtu\.be|"
-        r"facebook\.com/(?:reel|watch|share)|fb\.watch|"
-        r"instagram\.com/(?:reel|p|tv)|"
-        r"twitter\.com|x\.com"
-        r")/[^\s]+",
+        r"https?://(?:www\.|web\.|vt\.|vm\.|v\.|m\.)?(?:"
+        r"tiktok\.com/[^\s]+|"
+        r"douyin\.com/[^\s]+|"
+        r"youtube\.com/[^\s]+|youtu\.be/[^\s]+|"
+        r"(?:facebook\.com|fb\.com)/(?:reel|reels|share|.+?/videos)/[^\s]+|"
+        r"(?:facebook\.com|fb\.com)/watch(?:\?[^\s]+|/[^\s]*)|"
+        r"fb\.watch/[^\s]+|fb\.me/[^\s]+|fb\.com/[^\s]+|"
+        r"instagram\.com/(?:reel|p|tv)/[^\s]+|"
+        r"threads\.net/(?:@[^/\s]+/post|t)/[^\s]+|threads\.net/[^\s]+|threads\.com/[^\s]+|"
+        r"twitter\.com/[^\s]+|x\.com/[^\s]+"
+        r")",
         re.IGNORECASE,
     )
 
@@ -85,25 +88,53 @@ class TelegramBot:
         if not url_match:
             return None
 
-        media_url = url_match.group(0)
-        remaining_text = text.replace(media_url, "").strip().lower()
+        raw_url = url_match.group(0)
+        # Strip common trailing punctuation and enclosures attached in chat, markdown or rich text
+        media_url = raw_url.rstrip(".,;!?)\"'>]}…")
+        remaining_text = text.replace(raw_url, "").strip().lower()
+        clean_remaining = remaining_text.strip(" \t\r\n.,;:!?()[]{}<>\"'…*`~")
 
-        # TH 1: Chỉ gửi độc nhất link video
-        if not remaining_text:
+        # TH 1: Chỉ gửi độc nhất link video (kể cả khi bao bọc bởi ngoặc <>, [], (), {})
+        if not clean_remaining:
             return media_url, ""
 
-        # Nếu là câu hỏi phân tích nội dung -> Nhường cho AI Agent
+        # TH 2: Ý định phủ định (tuyệt đối không tải) -> Nhường AI Agent
+        negative_keywords = (
+            "đừng tải", "dung tai", "không tải", "khong tai",
+            "đừng down", "dung down", "không down", "khong down",
+            "chưa tải", "chua tai", "không cần tải", "khong can tai",
+            "ko tải", "ko tai", "k tải", "k tai", "ko cần tải", "ko can tai",
+            "đừng lưu", "dung luu", "không lưu", "khong luu",
+            "đừng lấy", "dung lay", "không lấy", "khong lay",
+        )
+        if any(k in remaining_text for k in negative_keywords):
+            return None
+
+        # TH 3: Câu hỏi phân tích, thắc mắc, hỏi nguyên nhân -> Nhường cho AI Agent
         analysis_keywords = (
             "nói về gì", "tóm tắt", "dịch", "xem giùm", "giải thích", "ai đây",
-            "nội dung là", "chi tiết", "nói chi", "chi rứa", "hát bài gì", "ý nghĩa"
+            "nội dung là", "chi tiết", "nói chi", "chi rứa", "hát bài gì", "ý nghĩa",
+            "noi ve gi", "tom tat", "dich", "xem gium", "giai thich", "ai day",
+            "noi dung la", "chi tiet", "noi chi", "chi rua", "hat bai gi", "y nghia",
+            "tại sao", "tai sao", "vì sao", "vi sao", "sao không", "sao khong",
+            "làm sao", "lam sao", "thế nào", "the nao", "được không", "duoc khong",
+            "được ko", "duoc ko", "sao tải", "sao tai", "sao chưa tải", "sao chua tai",
+            "tải kiểu gì", "tai kieu gi", "tại sao không", "tai sao khong",
+            "vì sao không", "vi sao khong", "hướng dẫn tải", "huong dan tai",
+            "quá tải", "qua tai",
         )
         if any(k in remaining_text for k in analysis_keywords):
             return None
 
-        # TH 2: Có từ khóa thể hiện ý định tải video
+        # TH 4: Có từ khóa thể hiện ý định tải video rõ ràng (loại bỏ từ đơn ambiguous: 'tai', 'lấy', 'lưu')
         download_keywords = (
-            "tải", "down", "download", "lấy", "lưu", "save", "gửi cho anh",
-            "gửi em", "tải video", "tải clip", "kéo video", "tải về", "chuyển file"
+            "tải", "down", "download", "save", "chuyển file",
+            "tải video", "tải clip", "kéo video", "kéo clip", "tải về", "lấy video", "lấy clip", "lấy file",
+            "lưu video", "lưu clip", "lưu về", "gửi cho anh", "gửi em",
+            "tai video", "tai clip", "keo video", "keo clip", "tai ve", "lay video", "lay clip", "lay file",
+            "tai giup", "tai ho", "tai ve may", "tai xuong", "gui em", "gui anh",
+            "tải giúp", "tải hộ", "tải giùm", "tai gium", "tải về máy", "tải xuống",
+            "luu video", "luu clip", "luu ve",
         )
         if any(k in remaining_text for k in download_keywords):
             return media_url, remaining_text
@@ -1502,8 +1533,11 @@ class TelegramBot:
                 media_item = await pipeline.download(media_url)
 
                 if media_item.media_type == "video" and media_item.file_path:
-                    safe_title = html.escape(media_item.title)
-                    safe_author = html.escape(media_item.author)
+                    raw_title = media_item.title or "Video"
+                    if len(raw_title) > 350:
+                        raw_title = raw_title[:347] + "..."
+                    safe_title = html.escape(raw_title)
+                    safe_author = html.escape(media_item.author or "Unknown")
                     caption = (
                         f"🎬 <b>{safe_title}</b>\n"
                         f"👤 Kênh: <code>@{safe_author}</code>\n"

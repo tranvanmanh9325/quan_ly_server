@@ -21,7 +21,7 @@ class TestWeatherTool(unittest.IsolatedAsyncioTestCase):
         self.ssh.execute_command = AsyncMock()
         self.cache = MagicMock(spec=FacebookMessageCache)
         self.agent = AiAgentService(self.router, self.ssh, self.cache)
-        self.executor = AgentToolExecutor(self.ssh)
+        self.executor = AgentToolExecutor(self.ssh, self.cache)
 
     def test_weather_tool_scoping_intent(self):
         """Verify queries activate get_weather and get_server_location in scoped tools."""

@@ -127,45 +127,42 @@ class TestTelegramCaptionAndFallback(unittest.TestCase):
 
     def test_send_video_includes_parse_mode_html(self):
         async def run():
-            bot = TelegramBot.__new__(TelegramBot)
-            bot.token = "fake-token"
-            bot._http_client = AsyncMock()
-
+            mock_client = AsyncMock()
             mock_resp = MagicMock()
             mock_resp.status_code = 200
-            bot._http_client.post = AsyncMock(return_value=mock_resp)
+            mock_client.post = AsyncMock(return_value=mock_resp)
 
-            with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as f:
-                f.write(b"fake video")
-                tmp_path = f.name
+            bot = TelegramBot.__new__(TelegramBot)
+            bot.token = "fake-token"
 
-            try:
-                caption = "🎬 <b>Test Title</b>\n👤 Kênh: <code>@author</code>"
-                sent = await bot.send_video(
-                    chat_id="123456",
-                    video_path=tmp_path,
-                    caption=caption,
-                    duration=12,
-                )
-                self.assertTrue(sent)
-                call_args = bot._http_client.post.call_args
-                self.assertIsNotNone(call_args)
-                data_arg = call_args.kwargs.get("data") or call_args[1].get("data")
-                self.assertEqual(data_arg["parse_mode"], "HTML")
-                self.assertEqual(data_arg["caption"], caption)
-            finally:
-                if os.path.exists(tmp_path):
-                    os.unlink(tmp_path)
+            with patch.object(TelegramBot, "_http_client", new_callable=lambda: mock_client):
+                with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as f:
+                    f.write(b"fake video")
+                    tmp_path = f.name
+
+                try:
+                    caption = "🎬 <b>Test Title</b>\n👤 Kênh: <code>@author</code>"
+                    sent = await bot.send_video(
+                        chat_id="123456",
+                        video_path=tmp_path,
+                        caption=caption,
+                        duration=12,
+                    )
+                    self.assertTrue(sent)
+                    call_args = mock_client.post.call_args
+                    self.assertIsNotNone(call_args)
+                    data_arg = call_args.kwargs.get("data") or call_args[1].get("data")
+                    self.assertEqual(data_arg["parse_mode"], "HTML")
+                    self.assertEqual(data_arg["caption"], caption)
+                finally:
+                    if os.path.exists(tmp_path):
+                        os.unlink(tmp_path)
 
         asyncio.run(run())
 
     def test_send_video_resilient_fallback_on_parse_error(self):
         async def run():
-            bot = TelegramBot.__new__(TelegramBot)
-            bot.token = "fake-token"
-            bot._http_client = AsyncMock()
-
-            # First call fails with "can't parse entities", second call succeeds
+            mock_client = AsyncMock()
             mock_fail = MagicMock()
             mock_fail.status_code = 400
             mock_fail.text = "Bad Request: can't parse entities: Character '<' is reserved"
@@ -173,27 +170,31 @@ class TestTelegramCaptionAndFallback(unittest.TestCase):
             mock_ok = MagicMock()
             mock_ok.status_code = 200
 
-            bot._http_client.post = AsyncMock(side_effect=[mock_fail, mock_ok])
+            mock_client.post = AsyncMock(side_effect=[mock_fail, mock_ok])
 
-            with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as f:
-                f.write(b"fake video")
-                tmp_path = f.name
+            bot = TelegramBot.__new__(TelegramBot)
+            bot.token = "fake-token"
 
-            try:
-                caption = "🎬 <b>Broken <Tag</b>"
-                sent = await bot.send_video(
-                    chat_id="123456",
-                    video_path=tmp_path,
-                    caption=caption,
-                )
-                self.assertTrue(sent)
-                self.assertEqual(bot._http_client.post.call_count, 2)
-                second_call_data = bot._http_client.post.call_args_list[1].kwargs.get("data")
-                self.assertNotIn("parse_mode", second_call_data)
-                self.assertNotIn("<b>", second_call_data["caption"])
-            finally:
-                if os.path.exists(tmp_path):
-                    os.unlink(tmp_path)
+            with patch.object(TelegramBot, "_http_client", new_callable=lambda: mock_client):
+                with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as f:
+                    f.write(b"fake video")
+                    tmp_path = f.name
+
+                try:
+                    caption = "🎬 <b>Broken <Tag</b>"
+                    sent = await bot.send_video(
+                        chat_id="123456",
+                        video_path=tmp_path,
+                        caption=caption,
+                    )
+                    self.assertTrue(sent)
+                    self.assertEqual(mock_client.post.call_count, 2)
+                    second_call_data = mock_client.post.call_args_list[1].kwargs.get("data")
+                    self.assertNotIn("parse_mode", second_call_data)
+                    self.assertNotIn("<b>", second_call_data["caption"])
+                finally:
+                    if os.path.exists(tmp_path):
+                        os.unlink(tmp_path)
 
         asyncio.run(run())
 

@@ -48,7 +48,7 @@ _OR_VISION_MODELS = [
 
 _OR_VISION_HEADERS_BASE = {
     "HTTP-Referer": "https://dashboard.kirito.server",
-    "X-Title": "Tiểu Bảo Bảo AI Agent",
+    "X-Title": "Tieu Bao Bao AI Agent",
     "Content-Type": "application/json",
 }
 

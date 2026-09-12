@@ -807,7 +807,7 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
         # Synthesis emits BLUF + bullets (~300-600 tokens).
         # Capping prevents Groq Token Bucket from rejecting requests with HTTP 413.
         _tok_tool    = 700  if _is_simple else 900
-        _tok_synth   = 900  if _is_simple else 1400
+        _tok_synth   = 2048 if _is_attachment else (900 if _is_simple else 1400)
 
         # Groq native reasoning mode: maps complexity → thinking budget.
         # "hidden" format keeps think tokens internal — safe for tool_calls.
@@ -821,7 +821,8 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
         for iteration in range(MAX_AGENT_ITERATIONS):
             # Enforce synthesis mode when loop reaches threshold (varies by complexity)
             force_synthesis = (
-                iteration >= _force_synth_threshold
+                _is_attachment
+                or iteration >= _force_synth_threshold
                 or len(executed_commands) >= _max_tools_threshold
             )
 

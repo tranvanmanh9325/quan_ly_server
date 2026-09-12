@@ -12,6 +12,7 @@ from app.core.llm_router import LlmRouter
 from app.core.ssh_client import SshClient
 from app.services.message_cache import FacebookMessageCache
 from app.services.ai_agent_tools import AgentToolExecutor, DIRECT_RETURN_TOOLS, SCREENSHOT_TOOLS
+from app.core.vietnamese_dialect import linguistic_normalizer
 
 logger = logging.getLogger(__name__)
 VN_TZ = timezone(timedelta(hours=7))
@@ -478,11 +479,17 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
 • Tra cứu log hệ thống bằng journalctl: Dùng định dạng thời gian chuẩn (vd: `journalctl --since "2026-09-09 06:00"` hoặc `journalctl --since "-4h" -u <service> -n 30 --no-pager`). Tuyệt đối không dùng cụm "today 06:00" vì systemd không hỗ trợ cú pháp này.
 
 ━━━ 4b. THẤU CẢM PHƯƠNG NGỮ VIỆT NAM (NGHỆ AN - HÀ TĨNH / MIỀN TRUNG) & GIAO THỨC THỜI TIẾT TỰ HÀNH ━━━
-• Khi anh Mạnh nói hoặc gửi tin nhắn thoại bằng phương ngữ Nghệ Tĩnh (Nghệ An, Hà Tĩnh, miền Trung), em phải thấu hiểu trọn vẹn và tự nhiên:
+• Khi anh Mạnh nói hoặc gửi tin nhắn thoại bằng phương ngữ Nghệ Tĩnh (Nghệ An, Hà Tĩnh, miền Trung) hoặc teencode, em phải thấu hiểu trọn vẹn và tự nhiên:
+  - "răng" đứng đầu câu hoặc trước chủ vị ("răng m lại...", "răng lại rứa...", "răng rứa?"): NGHĨA LÀ "TẠI SAO / VÌ SAO / SAO LẠI" (Câu hỏi nguyên nhân/lý do, TUYỆT ĐỐI KHÔNG phải răng miệng và KHÔNG PHẢI hỏi danh sách sở thích).
+    * Ví dụ: "răng m lại thích mấy cấy nớ" = "tại sao em lại thích mấy cái đó" -> BẮT BUỘC giải thích LÝ DO vì sao thích, TUYỆT ĐỐI KHÔNG liệt kê thêm sở thích và KHÔNG nhại lại từ "cấy".
+  - "a răng" / "ra răng" / "mần răng" = thế nào, ra sao, làm sao (Ví dụ: "thời tiết ra răng" = "thời tiết thế nào").
+  - "m / mi" = em / mày; "t / tau" = anh / tao.
+  - "cấy nớ" / "mấy cấy nớ" = cái đó / mấy cái đó; "cấy ni" = cái này; "cấy tê" = cái kia.
   - "bựa ni" = hôm nay; "bựa qua" = hôm qua; "bựa mai" = ngày mai; "chiều ni" = chiều nay.
-  - "a răng" / "ra răng" / "mần răng" = thế nào, ra sao, làm sao.
-  - "mô" = đâu; "tê" = kia; "răng" = sao; "rứa" = thế; "chi" = gì; "nớ" = đó; "trôông" = trông ngóng; "nác" = nước.
-  - Ví dụ: "Xem bựa ni thời tiết Nghệ An a răng" = "Xem hôm nay thời tiết Nghệ An thế nào".
+  - "mô" = đâu; "tê" = kia; "rứa" = thế; "chi" = gì; "nớ" = đó; "nỏ" = không; "mần" = làm; "chộ" = thấy; "nhởi" = chơi; "nác" = nước.
+  - Khi anh Mạnh hỏi "m hiểu t hỏi chi không" hoặc tỏ ý hoài nghi: Đây là câu hỏi chất vấn nhận thức ("Em có hiểu anh hỏi gì không?").
+    * ⛔ CẤM TUYỆT ĐỐI phản xạ nịnh bợ, tự phụ như "Em đã hiểu rất rõ rồi ạ...".
+    * 🔍 BẮT BUỘC rà soát lại lượt trước: Nhận ra ngay việc mình đã hiểu nhầm hoặc trả lời lạc đề, xin lỗi ngắn gọn và trả lời THẲNG THẮN vào lý do/ý định thật sự của anh Mạnh.
 • QUY TẮC BẮT BUỘC KHI TRA CỨU THỜI TIẾT (AUTONOMOUS WEATHER PROTOCOL):
   - ⛔ ĐIỀU CẤM: Khi anh Mạnh hỏi thời tiết chung chung KHÔNG NÊU RÕ ĐỊA ĐIỂM (ví dụ: "xem thời tiết hôm nay như thế nào", "thời tiết hôm nay ra sao", "thời tiết bựa ni răng em", "hôm nay trời có mưa không"):
     ❌ TUYỆT ĐỐI KHÔNG hỏi ngược lại "Anh muốn xem ở đâu?" hay "Cho em xin vị trí".
@@ -641,6 +648,19 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
             except Exception as _mem_err:
                 logger.warning("[AiAgent] Failed to refresh memory caches: %s", _mem_err)
 
+        # ── Vietnamese Dialect & Teencode Dual-View Enrichment ────────────────
+        enriched_message = linguistic_normalizer.enrich_dialect_semantics(user_message)
+        if enriched_message != user_message:
+            logger.info("[AiAgent] Dialect enriched: '%s' -> '%s'", user_message, enriched_message)
+            user_message = enriched_message
+
+        # ── Metacognitive Doubt / Clarification Detection ────────────────────
+        doubt_cue = linguistic_normalizer.detect_clarification_intent(user_message)
+        metacognitive_prompt = None
+        if doubt_cue:
+            logger.info("[AiAgent] 🚨 Epistemic clarification cue detected: '%s' in '%s'", doubt_cue, user_message)
+            metacognitive_prompt = linguistic_normalizer.build_metacognitive_system_prompt(user_message, doubt_cue)
+
         self._current_user_query = user_message
         history = self._history_map.setdefault(chat_id, [])
 
@@ -751,6 +771,9 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
         # Classify query complexity ONCE before entering the loop.
         # Like the brain routing to System 1 (fast) vs System 2 (slow, deliberate).
         _complexity = self._classify_complexity(user_message)
+        if doubt_cue:
+            # Epistemic challenge / comprehension check warrants full System 2 deliberative thought
+            _complexity = "complex"
         logger.info(
             "[AiAgent] 🧠 Complexity: %s | Intent: %s | query_len: %d",
             _complexity, _intent, len(user_message) if user_message else 0
@@ -806,6 +829,7 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
                 iteration=iteration,
                 force_synthesis=force_synthesis,
                 is_attachment=_is_attachment,
+                metacognitive_prompt=metacognitive_prompt,
             )
 
             # P9 (v4.0) Dendritic SLM Routing: intent-based tool set restriction
@@ -1191,12 +1215,14 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
         iteration: int,
         force_synthesis: bool = False,
         is_attachment: bool = False,
+        metacognitive_prompt: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
         Builds a compacted message payload for LLM completion.
         - Keeps system prompt (compact variant for attachment to avoid 413).
         - Compacts older tool outputs in history so total character payload never triggers HTTP 413.
         - If iteration >= 3 or force_synthesis, appends a concise synthesis directive.
+        - Injects metacognitive doubt calibration prompt if user challenges comprehension.
         """
         # Attachment mode: use compact prompt (~600 tokens) instead of full (~4500 tokens)
         # to stay under Groq's 8000 TPM limit when content is already 800+ tokens
@@ -1206,6 +1232,8 @@ Khi đề xuất của anh Mạnh có rủi ro kỹ thuật hoặc lỗ hổng k
             else self._build_system_prompt()
         )
         messages = [{"role": "system", "content": system_content}]
+        if metacognitive_prompt:
+            messages.append({"role": "system", "content": metacognitive_prompt})
 
         # Count total tool messages in history to identify recent vs older tool results
         tool_indices = [i for i, m in enumerate(history) if m.get("role") == "tool"]

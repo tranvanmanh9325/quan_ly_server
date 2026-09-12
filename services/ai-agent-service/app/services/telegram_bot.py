@@ -21,6 +21,7 @@ from app.services.media_processor import (
     MediaProcessor,
     extract_password_from_text,
 )
+from app.core.vietnamese_dialect import linguistic_normalizer
 
 logger = logging.getLogger(__name__)
 
@@ -1145,7 +1146,10 @@ class TelegramBot:
         else:
             try:
                 logger.info("[TelegramBot] Received message from %s (length=%d)", chat_id, len(text))
-                reply = await self.chat_with_agent(chat_id, text)
+                enriched_text = linguistic_normalizer.enrich_dialect_semantics(text)
+                if enriched_text != text:
+                    logger.info("[TelegramBot] Dialect enriched: '%s' -> '%s'", text, enriched_text)
+                reply = await self.chat_with_agent(chat_id, enriched_text)
                 logger.info("[TelegramBot] AI reply for %s sent successfully (length=%d)", chat_id, len(reply))
                 await self.send_message(chat_id, reply)
             except Exception as err:

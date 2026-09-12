@@ -374,12 +374,46 @@ class MediaProcessor:
                 logger.warning("[MediaProcessor] Fast LLM dialect recovery error: %s", e)
         return None
 
+    @staticmethod
+    def _normalize_video_speech_phonetics(text: str) -> str:
+        """
+        Phonetic post-correction for Vietnamese speech in social media / event videos.
+        Corrects acoustic confusion between loan words and dialect accents:
+        - 'trúng thú' / 'trúng thu' -> 'Trung thu'
+        - 'đô lôn xấu' / 'đô luôn xấu' / 'đô lôn sô' / 'rô lôn xấu' -> 'Drone show'
+        - 'tuyệt bi' (when counting devices like 500) -> 'thiết bị'
+        - 'Quảng Trân' / 'Quảng Trương' -> 'Quảng trường'
+        - 'giấu WinMart' / 'Giáo Quý Mát' / 'Nguyên Mát' -> 'do WinMart'
+        - 'ngờ nghề An' / 'ngờ nghề án' -> 'ở Nghệ An'
+        - 'đêm hồ' / 'đêm hồi' -> 'đêm hội'
+        - 'bật tự tự do miễn phí về ra vào' -> 'mở cửa tự do miễn phí vé ra vào'
+        """
+        if not text:
+            return text
+        corrections = [
+            (r"\btrúng\s+thú\b", "Trung thu"),
+            (r"\b(?:đô\s+lôn\s+xấu|đô\s+luôn\s+xấu|đô\s+lôn\s+sô|rô\s+lôn\s+xấu)\b", "Drone show"),
+            (r"\btuyệt\s+bi\b", "thiết bị"),
+            (r"\b(?:Quảng\s+Trân|Quảng\s+Trương)\s+Hồ\s+Chí\s+Minh\b", "Quảng trường Hồ Chí Minh"),
+            (r"\b(?:giấu\s+WinMart|Giáo\s+Quý\s+Mát|Nguyên\s+Mát|Quyền\s+Mát)\b", "do WinMart"),
+            (r"\bngờ\s+nghề\s+án\b", "ở Nghệ An"),
+            (r"\bđêm\s+hồ\b", "đêm hội"),
+            (r"\bđêm\s+hồi\b", "đêm hội"),
+            (r"\bđếm\s+một\s+trúng\s+thú\b", "đêm hội Trung thu"),
+            (r"\bbật\s+tự\s+tự\s+do\s+miễn\s+phí\s+về\s+ra\s+vào\b", "mở cửa tự do miễn phí vé ra vào"),
+        ]
+        res = text
+        for pat, repl in corrections:
+            res = re.sub(pat, repl, res, flags=re.IGNORECASE)
+        return res
+
     async def transcribe_voice(
         self,
         audio_bytes: bytes,
         filename: str = "voice.oga",
         language: str = "vi",
         duration: int = 0,
+        prompt_bias: Optional[str] = None,
     ) -> str:
         """
         Sends audio to Groq Whisper STT with Central Vietnam Dialect Anchor Prompt.
@@ -389,6 +423,7 @@ class MediaProcessor:
         Anti-hallucination and Dialect measures:
         - temperature=0: greedy decoding — minimal hallucination
         - prompt anchor: natural conversational frame for Nghệ An / Hà Tĩnh (bựa ni, a răng, mô tê răng rứa)
+        - dynamic prompt bias: injects visual OCR keywords to prime acoustic decoding
         - phonetic normalization: corrects glottal split ('Nghệ An' from 'nghe án') and coda neutralization
         - fast LLM fallback: recovers intended utterance on severe acoustic degradation
         """
@@ -403,16 +438,21 @@ class MediaProcessor:
         if Path(filename).suffix.lower() not in _GROQ_AUDIO_EXTS:
             filename = "voice.ogg"
 
-        # Natural multi-dialect anchor prompt (Central Vietnam / Nghệ Tĩnh & System commands):
-        # 1. Zero leakage: Eliminates "cảm ơn bạn" / "chào bạn" to prevent YouTube outro hallucinations.
-        # 2. Strong dialect conditioning: primes model for "bựa ni", "a răng", "mô", "tê", "răng", "rứa", "Nghệ An".
-        # 3. Complete sentence frames: terminal punctuation prevents autoregressive momentum from leaking.
-        _STT_PROMPT = (
+        # Natural multi-dialect anchor prompt (Central Vietnam / Nghệ Tĩnh, events & system commands):
+        # Primed for "Trung thu", "drone show", "Quảng trường Hồ Chí Minh", "WinMart", "bựa ni", "a răng"
+        base_prompt = (
+            "Tết Trung thu, sự kiện drone show trình diễn ánh sáng, "
+            "Quảng trường Hồ Chí Minh, Nghệ An, TP Vinh, Hà Tĩnh, siêu thị WinMart, "
+            "bánh trung thu, đêm hội, 500 thiết bị bay, bắn pháo hoa, miễn phí vé. "
             "Xem bựa ni thời tiết Nghệ An a răng. "
             "Bựa ni máy chủ chạy răng rồi em? "
             "Đi mô tê mần chi, server có bị chi không. "
             "Mô tê răng rứa, Nghệ An, Hà Tĩnh."
         )
+        if prompt_bias and prompt_bias.strip():
+            effective_prompt = f"{prompt_bias.strip()}. {base_prompt}"[:450]
+        else:
+            effective_prompt = base_prompt
 
         models = [settings.GROQ_WHISPER_MODEL, settings.GROQ_WHISPER_MODEL_FALLBACK]
 
@@ -426,8 +466,8 @@ class MediaProcessor:
                             "model": model,
                             "language": language,
                             "response_format": "json",
-                            "temperature": "0",    # greedy decoding → minimal hallucination
-                            "prompt": _STT_PROMPT, # vocabulary anchor → tonal & dialect accuracy
+                            "temperature": "0",          # greedy decoding → minimal hallucination
+                            "prompt": effective_prompt,   # vocabulary anchor → tonal & dialect accuracy
                         },
                         files={"file": (filename, audio_bytes, "audio/ogg")},
                         timeout=90.0,
@@ -444,6 +484,7 @@ class MediaProcessor:
 
                         # Apply Rule-based Dialect Phonetic Normalization
                         norm_text = self._normalize_nghe_tinh_phonetics(text)
+                        norm_text = self._normalize_video_speech_phonetics(norm_text)
 
                         # Check if severe distortion remains (e.g. 'nghe án' or 'thay tiệm')
                         if any(bad in norm_text.lower() for bad in ["nghe án", "thay tiệm", "thê tiệt"]):

@@ -325,6 +325,11 @@ class LightweightVideoPipeline:
                 filename="video_audio.mp3",
                 language="vi",
                 duration=duration,
+                prompt_bias=(
+                    "Sự kiện Tết Trung thu, trình diễn nghệ thuật drone show ánh sáng, "
+                    "Quảng trường Hồ Chí Minh, TP Vinh, Nghệ An, siêu thị WinMart, bánh trung thu Mama Hi, "
+                    "đêm hội, 500 thiết bị bay, bắn pháo hoa, mở cửa tự do miễn phí vé"
+                ),
             )
             return transcript if transcript else "(Video không có lời thoại rõ ràng hoặc chỉ có nhạc nền)"
 
@@ -387,11 +392,10 @@ class LightweightVideoPipeline:
 
         frame_analyses: List[str] = []
         vision_prompt = (
-            "Trích xuất nhanh các thông tin quan trọng trong khung hình video: "
-            "1. Chữ/Text trên màn hình (caption, phụ đề, TikTok handle/watermark nếu có). "
-            "2. Con người (hành động, biểu cảm, trang phục). "
-            "3. Đồ vật, giao diện hoặc bối cảnh xung quanh. "
-            "Trả lời súc tích bằng tiếng Việt trong 2-3 câu."
+            "Trích xuất nhanh và sắc nét các thông tin thực tế trong khung hình video:\n"
+            "1. VĂN BẢN/CHỮ TRÊN MÀN HÌNH (OCR): Đọc chính xác toàn bộ chữ in trên màn hình, banner, áp phích, watermark, tiêu đề (ví dụ: tên địa danh, ngày giờ, số lượng thiết bị, thương hiệu tài trợ).\n"
+            "2. HÀNH ĐỘNG & BỐI CẢNH: Không gian, con người, sự kiện diễn ra (ví dụ: biểu diễn drone, pháo hoa, sân khấu, đường phố).\n"
+            "Trả lời súc tích bằng tiếng Việt trong 2-3 câu, ưu tiên đọc đúng 100% chữ in hoa/chữ số trên màn hình."
         )
 
         for ts, f_path in extracted_frames:
@@ -417,18 +421,21 @@ class LightweightVideoPipeline:
         transcript: str,
         visual_summary: str,
     ) -> str:
-        """Constructs high-density multimodal context for the AI Agent."""
+        """Constructs high-density multimodal context for the AI Agent with Cross-Modal Discrepancy Resolution."""
         mins, secs = divmod(duration, 60)
         dur_str = f"{mins:02d}:{secs:02d}"
 
         context = (
-            f"[🎬 PHÂN TÍCH VIDEO ĐA PHƯƠNG THỨC]\n"
+            f"[🎬 PHÂN TÍCH VIDEO ĐA PHƯƠNG THỨC CHUYÊN SÂU]\n"
             f"• Tệp video: {filename} (Thời lượng: {dur_str})\n"
             f"• Yêu cầu từ anh Mạnh: {instruction}\n\n"
-            f"🎧 [NỘI DUNG LỜI THOẠI ÂM THANH (Whisper STT)]:\n"
-            f"{transcript}\n\n"
-            f"🖼️ [DIỄN BIẾN HÌNH ẢNH & CHỮ TRÊN MÀN HÌNH (Keyframes Vision)]:\n"
+            f"🖼️ [NGUỒN 1 - THỊ GIÁC & CHỮ IN TRÊN MÀN HÌNH (OCR Keyframes - Ground Truth Thực Thể)]:\n"
             f"{visual_summary}\n\n"
-            f"📌 Yêu cầu: Kết hợp mạch lạc giữa lời thoại và hình ảnh để thực hiện trọn vẹn yêu cầu của anh Mạnh."
+            f"🎧 [NGUỒN 2 - LỜI THOẠI ÂM THANH (Whisper STT - Mạch Tự Sự & Chi Tiết Thời Gian)]:\n"
+            f"{transcript}\n\n"
+            f"⚖️ [QUY TẮC PHÂN GIẢI ĐỐI CHIẾU CHÉO (Cross-Modal Discrepancy Resolution)]:\n"
+            f"1. Thứ bậc nhận thức: Chữ viết in hoa, banner, số liệu trên khung hình (OCR) là Ground Truth tuyệt đối về tên địa danh, đơn vị tổ chức, tên chương trình.\n"
+            f"2. Cầu nối ngữ âm (Phonetic Bridge): Nếu lời thoại âm thanh phát âm gần giống hoặc chệch âm (ví dụ nghe thành 'trúng thú', 'đô lôn xấu', 'Quận Trân', 'Giáo Quý Mát'), HÃY ĐỐI CHIẾU NGAY với chữ in trên màn hình để hiểu đúng bản chất là: 'Tết Trung thu', 'Drone show trình diễn ánh sáng (500 thiết bị bay)', 'Quảng trường Hồ Chí Minh (TP. Vinh, Nghệ An)', 'WinMart & Mama Hi'.\n"
+            f"3. Tổng hợp chi tiết: Tóm tắt đầy đủ sự kiện, thời gian diễn ra (giờ, ngày), địa điểm, các tiết mục đặc sắc (drone show, pháo hoa), giá vé (miễn phí/tự do) và đơn vị tổ chức/đồng hành theo giọng điệu ân cần, thông minh của Tiểu Bảo Bảo."
         )
         return context

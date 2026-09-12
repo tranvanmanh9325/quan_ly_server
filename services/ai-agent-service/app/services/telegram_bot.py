@@ -5,6 +5,9 @@ import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+import os
+import shutil
+import tempfile
 import httpx
 import psycopg
 
@@ -22,6 +25,12 @@ from app.services.media_processor import (
     extract_password_from_text,
 )
 from app.core.vietnamese_dialect import linguistic_normalizer
+from app.services.video_pipeline import (
+    LightweightVideoPipeline,
+    PendingVideoSession,
+    VideoDebounceManager,
+    VideoMetadata,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +51,12 @@ class TelegramBot:
         self._pending_archives: Dict[str, Dict[str, Any]] = {}
         # Reuse the singleton http_client to avoid spawning extra connection pools
         self._media = MediaProcessor(http_client=http_client_manager.get_client())
+        # Multimodal Video Pipeline with 5s debounce window and 5m interactive TTL
+        self._video_pipeline = LightweightVideoPipeline(self._media)
+        self._video_debounce = VideoDebounceManager(
+            on_debounce_timeout=self._on_video_debounce_timeout,
+            on_process_pipeline=self._on_video_process_pipeline,
+        )
         if hasattr(self.ai_agent, "set_telegram_bot"):
             self.ai_agent.set_telegram_bot(self)
 
@@ -467,6 +482,14 @@ class TelegramBot:
                 await self._trigger_archive_recovery(chat_id, message_id=message_id)
                 return
 
+        # Handle Video Analysis Actions
+        elif data.startswith("video_act:"):
+            action = data.split(":")[1]
+            await self.answer_callback_query(query_id, text="🎬 Đang xử lý video theo yêu cầu...")
+            await self.edit_message_text(chat_id, message_id, "🎬 <i>Đang phân tích video...</i>", reply_markup=None)
+            await self._video_debounce.handle_callback_action(chat_id, action)
+            return
+
         await self.answer_callback_query(query_id)
 
     async def _trigger_archive_recovery(
@@ -856,6 +879,134 @@ class TelegramBot:
             reply = await self.chat_with_agent(chat_id, command)
             await self.send_message(chat_id, reply)
 
+    async def _on_video_debounce_timeout(self, chat_id: str, session: PendingVideoSession) -> None:
+        """
+        Invoked when the 5-second debounce timer expires without subsequent text instruction.
+        Sends an interactive Inline Keyboard with 3 quick analysis options.
+        """
+        duration_str = f"{session.metadata.duration}s" if session.metadata.duration > 0 else "vừa gửi"
+        msg = (
+            f"🎬 <b>Tiểu Bảo Bảo đã nhận được video ({duration_str})!</b>\n\n"
+            f"Anh Mạnh muốn em giúp gì với video này ạ? Anh có thể chọn nhanh thao tác bên dưới hoặc nhắn trực tiếp câu hỏi/chỉ đạo cho em nhé! 👇"
+        )
+        reply_markup = {
+            "inline_keyboard": [
+                [
+                    {
+                        "text": "📝 Tóm tắt nội dung video",
+                        "callback_data": "video_act:summarize",
+                    },
+                    {
+                        "text": "🎙️ Bóc tách lời thoại (STT)",
+                        "callback_data": "video_act:transcribe",
+                    },
+                ],
+                [
+                    {
+                        "text": "🔍 Phân tích khung hình & hành động",
+                        "callback_data": "video_act:visual_analyze",
+                    },
+                ],
+            ]
+        }
+        await self.send_message(chat_id, msg, reply_markup=reply_markup)
+
+    async def _on_video_process_pipeline(
+        self, chat_id: str, session: PendingVideoSession, instruction: str
+    ) -> None:
+        """
+        Executes the Lightweight Video Pipeline and feeds multimodal context to AI Agent.
+        """
+        try:
+            await self.send_message(
+                chat_id,
+                f"⚡ <i>Đang phân tích video theo yêu cầu:</i> \"{instruction}\"...\n"
+                f"<i>(Tiểu Bảo Bảo đang trích xuất âm thanh và khung hình)</i>",
+            )
+            context = await self._video_pipeline.process_video(
+                video_path=session.video_path,
+                filename=session.metadata.filename,
+                duration=session.metadata.duration,
+                instruction=instruction,
+            )
+            prompt = f"{context}\n\n[Chỉ đạo/Yêu cầu từ anh Mạnh]: {instruction}"
+            reply = await self.chat_with_agent(chat_id, prompt)
+            await self.send_message(chat_id, reply)
+        except Exception as err:
+            logger.error("[TelegramBot] Error running video pipeline for %s: %s", chat_id, err, exc_info=True)
+            await self.send_message(
+                chat_id, f"Xin lỗi anh Mạnh, đã xảy ra lỗi trong quá trình phân tích video ({err})."
+            )
+
+    async def _handle_video_message(
+        self,
+        chat_id: str,
+        message: Dict[str, Any],
+        video_obj: Dict[str, Any],
+        is_video_note: bool = False,
+    ) -> None:
+        """
+        Ingests video/video_note from Telegram, verifies file size, streams to disk,
+        and registers with VideoDebounceManager.
+        """
+        file_id = video_obj.get("file_id", "")
+        file_size = video_obj.get("file_size", 0)
+        duration = video_obj.get("duration", 0)
+        width = video_obj.get("width", 0)
+        height = video_obj.get("height", 0)
+        filename = video_obj.get("file_name", "video_note.mp4" if is_video_note else "video.mp4")
+        caption = (message.get("caption") or "").strip()
+
+        logger.info(
+            "[TelegramBot] Video received from %s (file_id=%s, size=%d bytes, duration=%ds, caption='%s')",
+            chat_id,
+            file_id[:12] if file_id else "none",
+            file_size,
+            duration,
+            caption[:30],
+        )
+
+        # Telegram Bot API guard: 20MB download limit
+        if file_size > 20 * 1024 * 1024:
+            await self.send_message(
+                chat_id,
+                f"⚠️ Video <code>{filename}</code> quá lớn ({file_size // 1048576}MB).\n"
+                f"Telegram Bot API chỉ hỗ trợ bot tải tệp tối đa <b>20MB</b>. Anh vui lòng nén nhỏ lại giúp em nhé!",
+            )
+            return
+
+        # Prepare disk location
+        temp_dir = tempfile.mkdtemp(prefix="tg_video_")
+        dest_ext = Path(filename).suffix.lower() or ".mp4"
+        video_dest_path = Path(temp_dir) / f"input_video{dest_ext}"
+
+        try:
+            await self.send_chat_action(chat_id, "record_video")
+            await self._media.download_telegram_file_to_path(file_id, video_dest_path)
+        except Exception as dl_err:
+            logger.error("[TelegramBot] Failed downloading video %s: %s", file_id, dl_err, exc_info=True)
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            await self.send_message(
+                chat_id, f"❌ Không thể tải video từ Telegram ({dl_err}). Vui lòng thử lại sau."
+            )
+            return
+
+        metadata = VideoMetadata(
+            duration=duration,
+            width=width,
+            height=height,
+            filename=filename,
+            file_size=file_size,
+        )
+
+        await self._video_debounce.register_video(
+            chat_id=chat_id,
+            file_id=file_id,
+            temp_dir=temp_dir,
+            video_path=str(video_dest_path),
+            metadata=metadata,
+            caption=caption,
+        )
 
     async def _process_update(self, update: Dict[str, Any]) -> None:
         update_id = update.get("update_id")
@@ -927,7 +1078,14 @@ class TelegramBot:
                 await self.send_message(chat_id, "Xin lỗi, em không thể xử lý ảnh lúc này. Vui lòng thử lại sau.")
             return
 
-        # ── 2c. Document / File ───────────────────────────────────────────────
+        # ── 2c. Video / Video Note ────────────────────────────────────────────
+        video = message.get("video") or message.get("video_note")
+        if video:
+            is_note = bool(message.get("video_note"))
+            await self._handle_video_message(chat_id, message, video, is_video_note=is_note)
+            return
+
+        # ── 2d. Document / File ───────────────────────────────────────────────
         document = message.get("document")
         if document:
             file_id = document.get("file_id", "")
@@ -936,15 +1094,21 @@ class TelegramBot:
             file_size = document.get("file_size", 0)
             caption = (message.get("caption") or "").strip()
             logger.info("[TelegramBot] Document from %s: %s (%s, %d bytes)", chat_id, filename, mime_type, file_size)
+
+            ext = Path(filename).suffix.lower()
+            video_exts = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v", ".3gp"}
+            mime_lower = (mime_type or "").lower()
+            if mime_lower.startswith("video/") or ext in video_exts:
+                await self._handle_video_message(chat_id, message, document, is_video_note=False)
+                return
+
             # Telegram Bot API only allows downloading files up to 20MB
             if file_size > 20 * 1024 * 1024:
                 await self.send_message(chat_id, f"⚠️ File `{filename}` quá lớn ({file_size // 1048576}MB). Giới hạn tải là 20MB.")
                 return
             try:
                 file_bytes = await self._media.download_telegram_file(file_id)
-                ext = Path(filename).suffix.lower()
                 archive_exts = {".zip", ".rar", ".tar", ".gz", ".tgz", ".bz2", ".tbz2", ".xz", ".txz", ".7z", ".jar", ".war"}
-                mime_lower = (mime_type or "").lower()
                 is_archive = ext in archive_exts or any(t in mime_lower for t in ("zip", "rar", "tar", "7z", "compressed", "archive", "x-rar"))
 
                 if is_archive:
@@ -1054,9 +1218,13 @@ class TelegramBot:
                 await self.send_message(chat_id, f"Xin lỗi anh Mạnh, em không thể đọc tệp `{filename}` lúc này ({err}).")
             return
 
-        # ── 2d. Text Message ──────────────────────────────────────────────────
+        # ── 2e. Text Message ──────────────────────────────────────────────────
         text = (message.get("text") or "").strip()
         if not text:
+            return
+
+        # Check for active video debounce session waiting for instructions
+        if not text.startswith("/") and await self._video_debounce.handle_user_text(chat_id, text):
             return
 
         # Check for pending encrypted archive waiting for password (valid for 15 minutes)

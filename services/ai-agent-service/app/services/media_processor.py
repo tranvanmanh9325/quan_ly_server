@@ -166,6 +166,28 @@ class MediaProcessor:
         dl_resp.raise_for_status()
         return dl_resp.content
 
+    async def download_telegram_file_to_path(self, file_id: str, dest_path: Path) -> Path:
+        """
+        Streams Telegram file directly to disk to prevent RAM bloat (crucial for videos <= 20MB).
+        """
+        token = settings.TELEGRAM_BOT_TOKEN
+        get_file_url = f"https://api.telegram.org/bot{token}/getFile"
+        resp = await self._http.get(get_file_url, params={"file_id": file_id})
+        resp.raise_for_status()
+        data = resp.json()
+        if not data.get("ok"):
+            raise ValueError(f"Telegram getFile failed: {data.get('description')}")
+        file_path = data["result"]["file_path"]
+
+        cdn_url = f"https://api.telegram.org/file/bot{token}/{file_path}"
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+        async with self._http.stream("GET", cdn_url, timeout=120.0) as stream_resp:
+            stream_resp.raise_for_status()
+            with open(dest_path, "wb") as f:
+                async for chunk in stream_resp.aiter_bytes(chunk_size=131072):
+                    f.write(chunk)
+        return dest_path
+
     # ─── Modality 1: Voice → Groq Whisper STT ────────────────────────────────
 
     # Known Whisper hallucination patterns (trained on YouTube/podcast data).

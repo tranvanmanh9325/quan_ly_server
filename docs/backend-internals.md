@@ -1,4 +1,4 @@
-﻿# Backend Internals
+# Backend Internals
 
 An in-depth architectural look at the backend microservices architecture: **Spring Boot 4.1.0** (Java 21) services and the **FastAPI** (Python 3.11) AI Agent & 9Router service.
 
@@ -38,6 +38,7 @@ flowchart TD
 
         subgraph AgentRouters["FastAPI Routers"]
             R_Health["health.py"]
+            R_Brain["brain.py\n/api/ai/brain/*"]
             R_FB["facebook.py"]
             R_TT["tiktok.py"]
             R_GW["openai_gateway.py"]
@@ -45,18 +46,29 @@ flowchart TD
 
         subgraph AgentCore["Agent & Router Core Services"]
             S_Agent["AiAgentService (Tiểu Bảo Bảo)\nBLUF Engine | Loop Breaker | Compactor"]
+            S_Tools["AiAgentToolRegistry & Executor\nScoped Tool Dispatcher (ai_agent_tools.py)"]
+            S_Brain["ArtificialBrain & DreamEngine\n6 Neurotransmitters | FEP | 32GB HDC"]
+            S_Video["LightweightVideoPipeline & MediaProcessor\nDual-Track Audio & Keyframe OCR"]
+            S_Dialect["VietnameseLinguisticNormalizer\nNghệ Tĩnh Dialect & Envelope Guard"]
             S_Router["LlmRouter (9Router Engine)\nGroq Pool | OpenRouter Pool | RTK"]
-            S_Formatter["TelegramFormatter\nCard Transformer | Balanced HTML | Spelling"]
+            S_Formatter["TelegramFormatter v2.0\nTag Whitelisting | Card Transformer"]
             S_Memory["AgentMemoryService\nPostgreSQL Long-term Memory Brain"]
+            S_Archive["ArchiveRecoveryEngine\n4-Tier High-Speed Cracker"]
             S_FB["FacebookService (Playwright E2EE)\nPIN Unlock | Auto-Reply | Unsend"]
             S_TT["TikTokService (Playwright)\nDaily Streak Keeper"]
         end
 
         AgentRouters --> S_Agent
         AgentRouters --> S_Router
+        AgentRouters --> S_Brain
+        S_Agent <--> S_Tools
+        S_Agent <--> S_Brain
+        S_Agent <--> S_Video
+        S_Agent <--> S_Dialect
         S_Agent <--> S_Router
         S_Agent --> S_Formatter
         S_Agent <--> S_Memory
+        S_Agent <--> S_Archive
         S_Agent <--> S_FB
         S_Agent <--> S_TT
     end
@@ -139,3 +151,16 @@ flowchart TD
 - **Multi-Key Pool Rotation:** Round-robin balancing across Groq and OpenRouter keys with automatic 60s cooldown on 429 rate limits.
 - **Real-Time Token Compressor (RTK):** Achieves 40–85% reduction in prompt token volume with background persistence to PostgreSQL (`rtk_stats`).
 - **OpenAI-Compatible Gateway:** Fully compliant `/v1/chat/completions` endpoint for external client tooling.
+
+### Tool Architecture & Delegation (`ai_agent_tools.py`)
+
+To preserve maintainability and eliminate circular dependencies, tool definitions and execution logic are decoupled from `ai_agent.py`:
+- **`AgentToolRegistry`:** Manages scoped tool schema injection (`_TOOL_CLUSTER_CORE`, `_TOOL_CLUSTER_SERVER`, `_TOOL_CLUSTER_BROWSER`, `_TOOL_CLUSTER_ARCHIVE`, `_TOOL_CLUSTER_WEATHER`).
+- **`AgentToolExecutor`:** Delegates tool calls to concrete service instances (`ssh_client`, `fb_service`, `browser_agent`, `appointment_service`, `archive_recovery`).
+- **Scope Trimming:** Injects only query-relevant tools into LLM context, keeping total prompt schema size under 800 tokens.
+
+### Neuromorphic Brain Core & Deep References
+
+For complete low-level neuroscience formulas, hyperdimensional vector math, and media pipelines:
+- [**`docs/neuromorphic-brain.md`**](./neuromorphic-brain.md): 6 Neurotransmitters, Karl Friston FEP Active Inference, 10,000-bit HDC 32GB Virtual Cortex, and Sleep/Dream Consolidation.
+- [**`docs/multimodal-video-pipeline.md`**](./multimodal-video-pipeline.md): Parallel Audio/Visual pipeline, Whisper ASR biasing, and Cross-Modal Discrepancy Resolution.

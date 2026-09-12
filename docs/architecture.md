@@ -1,4 +1,4 @@
-﻿# Architecture & System Design
+# Architecture & System Design
 
 A detailed walkthrough of how the Mini Server Dashboard is structured, how data flows through the system, and the rationale behind key design decisions.
 
@@ -28,26 +28,26 @@ flowchart TD
 
         FileService["File Service\n(Spring Boot 4.1.0 / Java 21)\nPort: 8083\n• JSch SFTP Client\n• Directory Navigation\n• File Read / Write Ops"]
 
-        AgentService["AI Agent Service\n(FastAPI / Python 3.11)\nPort: 8084 & noVNC: 6080\n• 9Router Key Pool & RTK\n• BLUF Reasoning Engine\n• Playwright Chromium\n• AgentMemoryService"]
+        AgentService["AI Agent Service\n(FastAPI / Python 3.11)\nPort: 8084 & noVNC: 6080\n• 9Router Key Pool & RTK\n• Neuromorphic Brain Core (6 Neurotransmitters)\n• LightweightVideoPipeline & MediaProcessor\n• VietnameseDialectNormalizer\n• Playwright Chromium & ArchiveRecovery\n• AgentMemoryService & DreamEngine"]
 
-        PostgresDB[("PostgreSQL 17 Alpine\nPort: 5432\n• users & refresh tokens\n• telegram_configs\n• facebook_known_threads\n• tiktok_streaks\n• ai_chat_memories\n• rtk_stats")]
+        PostgresDB[("PostgreSQL 17 Alpine\nPort: 5432\n• users & refresh tokens\n• telegram_configs\n• facebook_known_threads\n• tiktok_streaks\n• ai_agent_lessons & memories\n• rtk_stats")]
     end
 
     subgraph TargetHostZone["Target Infrastructure"]
         TargetServer["Remote Linux Server (kirito-server)\nPort 22 SSH (Agentless Target)\nPhysical Location: Định Công, Hoàng Mai, Hà Nội\n• top, free, df, sensors, ps, systemctl, docker"]
 
-        GroqCloud["Tier 1: Groq AI Cloud\n(openai/gpt-oss-120b)"]
-        OpenRouterCloud["Tier 2: OpenRouter Cloud\n(nvidia/nemotron-3-super-120b)"]
+        GroqCloud["Tier 1: Groq AI Cloud\n(openai/gpt-oss-120b & whisper-large-v3-turbo)"]
+        OpenRouterCloud["Tier 2: OpenRouter Cloud\n(nvidia/nemotron-3-super-120b & gemma-4-26b-vl)"]
     end
 
     WebUser -->|HTTP Requests| Nginx
     Nginx -->|/api/auth/*| AuthService
     Nginx -->|/api/metrics/*| MetricsService
     Nginx -->|/api/files/*| FileService
-    Nginx -->|/api/facebook/*, /api/tiktok/*, /v1/*| AgentService
+    Nginx -->|/api/facebook/*, /api/tiktok/*, /api/ai/*, /v1/*| AgentService
     Nginx -->|/fb-vnc/* WebSocket| AgentService
 
-    TGUser <-->|Telegram Bot API Long-Polling| AgentService
+    TGUser <-->|Telegram Bot API (Text & Video Long-Polling)| AgentService
     FBClient <-->|Playwright E2EE Automation| AgentService
     TTClient <-->|Playwright DM & Streak Loop| AgentService
 
@@ -179,3 +179,15 @@ flowchart LR
 | **E2EE Decryption Strategy** | Headless Playwright | Interacts natively with client-side encrypted IndexedDB keys and DOM. |
 | **Context Management** | Active Turn Compactor | Prevents Groq `HTTP 413 Payload Too Large` in multi-step AI reasoning turns. |
 | **Physical Server Geolocation** | Explicit Ground Truth Metadata | Accurately identifies **Định Công, Hà Nội** despite dynamic ISP GeoIP shifts. |
+| **Video Processing Strategy** | Dual-Track Parallel Slicing + OCR | Replaces heavy GPU VideoLLMs with `ffmpeg` + cloud inference (<15MB RAM footprint). |
+| **Associative Cortex Storage** | 10,000-bit HDC on 32GB Swap via `mmap` | Achieves zero-copy demand-paged memory recall in <5ms without physical RAM exhaustion. |
+
+---
+
+## 6. Specialized Deep-Dive Subsystems
+
+For complete technical specifications of our cutting-edge subsystems:
+
+- [**`docs/neuromorphic-brain.md`**](./neuromorphic-brain.md): Neuromorphic Cognitive Brain Core, 6 Neurotransmitters, Karl Friston Active Inference, 32GB Virtual Memory Hyperdimensional Cortex, Russell Circumplex 2D Affect Space, Global Workspace Theory, and Subconscious Sleep/Dream Consolidation.
+- [**`docs/multimodal-video-pipeline.md`**](./multimodal-video-pipeline.md): Multimodal Video Pipeline, Dual-Track Audio & Vision Extraction, Visual-Informed Whisper ASR Biasing, Cross-Modal Discrepancy Resolution, and Vietnamese Dialect Normalization.
+- [**`docs/telegram-ai-agent.md`**](./telegram-ai-agent.md): Telegram Bot Automation, BLUF Engine, Tag-Whitelisting Formatter v2.0, 9Router RTK, Facebook E2EE, and TikTok Streak Keeper.

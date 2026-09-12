@@ -9,8 +9,9 @@ A comprehensive technical reference for the autonomous AI sysadmin assistant ("T
 ```mermaid
 flowchart TD
     subgraph InboundEvents["Inbound Multi-Channel Triggers"]
-        TGEvent["Telegram Chat Message / Command"]
-        FBEvent["Facebook Messenger Unread Message"]
+        TGEvent["Telegram Chat Message / Sysadmin Command"]
+        TGMedia["Telegram Video / Voice / File Upload"]
+        FBEvent["Facebook Messenger Unread Message (E2EE)"]
         TTEvent["TikTok DM / Daily Streak Deadline"]
         ApptEvent["1-Hour Appointment Scheduled Trigger"]
     end
@@ -18,11 +19,19 @@ flowchart TD
     subgraph CoreAgentService["AI Agent Microservice (FastAPI :8084)"]
         direction TB
 
-        subgraph ReasoningLayer["🧠 Autonomous Agent Brain ('Tiểu Bảo Bảo')"]
+        subgraph ReasoningLayer["🧠 Autonomous Cognitive Brain ('Tiểu Bảo Bảo')"]
             BLUF["Pyramid Principle (BLUF Engine)\nLine 1: Direct Executive Summary"]
-            ContextCompactor["Active Turn Context Compactor\nProgressive Tool Output Compression (<3,500 chars)"]
+            BrainCore["Neuromorphic Brain Core\n6 Neurotransmitters | Free Energy (FEP) | 32GB HDC Cortex"]
+            ContextCompactor["Active Turn Context Compactor\nProgressive Tool Compression (<3,500 chars / max 8,000 chars)"]
             LoopBreaker["Anti-Loop Stagnation Circuit Breaker\nIteration >= 4 -> Force tool_choice='none'"]
-            MemoryBrain["AgentMemoryService\nLessons, Preferences & Cross-Session Memory"]
+            DialectNorm["Vietnamese Dialect Normalizer\nNghệ Tĩnh dialect | Teencode | Envelope Guard"]
+            MemoryBrain["AgentMemoryService & DreamEngine\nSWS & REM Sleep Consolidation | Lessons DB"]
+        end
+
+        subgraph MediaPipeline["🎬 Multimodal Intelligence Engine"]
+            VideoPipeline["LightweightVideoPipeline\n5s Debounce | Audio/Vision Dual-Track | Cross-Modal Resolver"]
+            MediaProc["MediaProcessor\nGroq Whisper STT + Groq Qwen-VL / OpenRouter"]
+            ArchiveCracker["ArchiveRecoveryEngine\n4-Tier High-Speed RAR/ZIP Cracker"]
         end
 
         subgraph RouterLayer["🔀 9Router Multi-Provider Key Pool & RTK"]
@@ -31,10 +40,10 @@ flowchart TD
             Tier2["Tier 2: OpenRouter Key Pool\n(nvidia/nemotron-3-super-120b)\nZero-Downtime Auto-Failover"]
         end
 
-        subgraph FormattingLayer["🎨 TelegramFormatter Engine"]
+        subgraph FormattingLayer["🎨 TelegramFormatter Engine v2.0"]
             TableToCards["Table-to-Card Transformer\n|---|---| -> Visual Emoji Cards"]
-            HTMLSanitizer["Telegram HTML Sanitizer & Tag Balancer\n<b>, <i>, <code>, <pre>, <blockquote>"]
-            VietnameseNormalizer["Vietnamese Typography & Spelling Normalizer\nFixes 'KẾ THÚC' -> 'KẾT LUẬN', Strips Leaked Tokens"]
+            TagWhitelist["Valid Telegram HTML Tag Whitelist\n<b>, <i>, <code>, <pre>, <blockquote>, <a>"]
+            HTMLSanitizer["Safe HTML Sanitizer & Tag Balancer\nEscapes raw characters without breaking valid tags"]
             Chunker["Smart Message Chunker\nParagraph-safe boundary split <= 4,000 chars"]
         end
 
@@ -46,12 +55,18 @@ flowchart TD
     end
 
     subgraph StorageAndHost["External Services & Persistent Storage"]
-        PostgresDB[("PostgreSQL 17 Alpine\nrtk_stats, memories, threads")]
+        PostgresDB[("PostgreSQL 17 Alpine\nrtk_stats, memories, threads, configs")]
         TargetHost["🖥️ Target Linux Host (kirito-server)\nPhysical Location: Định Công, Hoàng Mai, Hà Nội"]
     end
 
     InboundEvents --> ReasoningLayer
+    TGMedia --> VideoPipeline
+    VideoPipeline --> MediaProc
+    MediaProc --> ReasoningLayer
     ReasoningLayer <--> RouterLayer
+    ReasoningLayer <--> BrainCore
+    ReasoningLayer <--> DialectNorm
+    ReasoningLayer <--> ArchiveCracker
     RouterLayer --> Tier1
     Tier1 -.->|429 / Quota Exhaustion| Tier2
     RouterLayer <--> RTK
@@ -254,7 +269,102 @@ flowchart LR
 
 ---
 
-## 9. Unit Testing & Verification
+## 9. Multimodal Video Intelligence Pipeline
+
+When users upload videos via Telegram, the **Lightweight Video Pipeline (`LightweightVideoPipeline`)** activates a dual-track parallel workflow with zero server bloat:
+
+```mermaid
+flowchart LR
+    VideoFile["Telegram Video Upload (.mp4)"] --> Debounce["5s Interactive Debounce Window\nInline Buttons: [⚡ Phân Tích Ngay]"]
+    Debounce --> Fork["Parallel asyncio.gather()"]
+    Fork --> Audio["🎧 Audio Stream:\nffmpeg slice -> Whisper STT\n(Visual-Informed Bias, Temp=0)"]
+    Fork --> Vision["🖼️ Vision Stream:\n5-Keyframe Uniform Sampling\n(Qwen-VL / Gemma-VL OCR)"]
+    Audio --> Fusion["⚖️ Cross-Modal Discrepancy Resolver\n(Visual OCR = Ground Truth Entities;\nAudio STT = Narrative Timeline)"]
+    Vision --> Fusion
+    Fusion --> Response["🎯 BLUF Formatted Telegram Response"]
+```
+
+- **Interactive 5-Second Debounce:** Holds for user follow-up text or immediate inline button click.
+- **Cross-Modal Discrepancy Resolution:** Automatically detects when speech is distorted (e.g. *"19h ngày 12"* misheard as *"19h22"*) and reconciles against visual on-screen text.
+- Complete documentation: [**`docs/multimodal-video-pipeline.md`**](./multimodal-video-pipeline.md).
+
+---
+
+## 10. Vietnamese Dialect & Linguistic Normalization Engine
+
+The `VietnameseLinguisticNormalizer` bridge (`vietnamese_dialect.py`) enables Tiểu Bảo Bảo to understand and converse fluently in regional Vietnamese dialects (specifically **Nghệ An, Hà Tĩnh, Quảng Bình**) and conversational teencode:
+
+```mermaid
+flowchart TD
+    RawUserQuery["User Input: 'bựa ni thời tiết Nghệ An a răng em'"] --> EnvelopeCheck{"Starts with special envelope?\n[📄, [📸, [🎤, [📍, [🎬"}
+    EnvelopeCheck -- Yes --> Bypass["Bypass dialect enrichment\n(Prevents doubling payload context)"]
+    EnvelopeCheck -- No --> DictMatch["Dictionary Pattern Matcher\n('bựa ni' -> 'hôm nay', 'a răng' -> 'như thế nào')"]
+    DictMatch --> Enrich["Append Semantic Clarification:\n[Ý định & Ngữ nghĩa: hôm nay thời tiết Nghệ An như thế nào em]"]
+    Enrich --> LLMPrompt["Forward to LLM with standard Vietnamese semantic anchor"]
+    Bypass --> LLMPrompt
+```
+
+- **Envelope Guard:** Strictly skips structured attachments (`[🎬`, `[📄`, `[📸`, `[🎤`, `[📍`) to avoid ballooning context lengths beyond Groq's token limits.
+- **Clarification Intent Detection (`detect_clarification_intent`):** Detects when a user questions understanding (*"ý anh là"*, *"không phải"*, *"nói chi rứa"*) to adjust explanation depth.
+
+---
+
+## 11. Telegram Formatter v2.0 & Tag Whitelisting Engine
+
+To eliminate raw HTML tag leakage (e.g. `<i>...</i>` or `<b>...</b>` rendered as plain text) while ensuring strict Telegram API compliance, `TelegramFormatter` implements a **Tag-Preserving Sanitization Pipeline**:
+
+```mermaid
+flowchart LR
+    InText["Raw LLM Output / Status Update"] --> Step1["1. Tag Whitelisting\nReplace valid tags (<b>, <i>, <code>, <pre>, <blockquote>, <a>)\nwith temporary tokens TGVALIDHTMLTAG_i_END"]
+    Step1 --> Step2["2. Table-to-Card Engine\nConvert markdown tables into emoji bullet cards"]
+    Step2 --> Step3["3. Safe html.escape()\nEscape raw <, >, & safely without breaking tags"]
+    Step3 --> Step4["4. Markdown Syntax Conversion\nConvert **, *, _, ~~ to Telegram HTML"]
+    Step4 --> Step5["5. Tag Restoration\nRe-inject protected tokens"]
+    Step5 --> Step6["6. Auto-Balancing & Chunking\nBalance unclosed tags, split messages <= 4,000 chars"]
+    Step6 --> OutText["Safe, High-Contrast Telegram HTML"]
+```
+
+---
+
+## 12. High-Speed Multi-Tier Archive Cracker Engine
+
+When users upload password-protected RAR, ZIP, or 7z archives and forget their password, Tiểu Bảo Bảo provides an autonomous password recovery engine (`archive_recovery.py`):
+
+```mermaid
+flowchart TD
+    Archive["Protected Archive File (RAR5 / ZIP / 7z)"] --> Tier1["Tier 1: Flash Check (<0.5s)\nTop 50 most common passwords (123456, admin, root...)"]
+    Tier1 --> Match1{"Found?"}
+    Match1 -- Yes --> Success["Extract & deliver archive contents"]
+    Match1 -- No --> Tier2["Tier 2: Context Clues (1s–5s)\nPermutations of user hints, names, birth years, leetspeak"]
+    Tier2 --> Match2{"Found?"}
+    Match2 -- Yes --> Success
+    Match2 -- No --> Tier3["Tier 3: PIN & Date Sweep (5s–15s)\n4-to-6 digit PINs (0000–9999), birth dates (DDMMYYYY)"]
+    Tier3 --> Match3{"Found?"}
+    Match3 -- Yes --> Success
+    Match3 -- No --> Tier4["Tier 4: Dictionary Sweep (15s–30s)\nExpanded 2,000 common passwords"]
+    Tier4 --> Match4{"Found?"}
+    Match4 -- Yes --> Success
+    Match4 -- No --> SafeExit["Notify user: Password requires deeper offline dictionary"]
+```
+
+- **Safe CPU Throttling:** Runs under `nice -n 19` priority with subprocess early-exit to prevent freezing the server.
+- **Intent Disambiguation:** Distinguishes between cracking requests (*"anh quên pass rồi bẻ khóa giúp"* vs. direct password attempts).
+
+---
+
+## 13. Neuromorphic Cognitive Brain Core Integration
+
+Tiểu Bảo Bảo's reasoning loop is continuously modulated by the **Neuromorphic Cognitive Brain Core (`brain_core.py`)**:
+
+- **Biological Homeostasis:** 6 simulated neurochemicals (Dopamine, Noradrenaline, Serotonin, Cortisol, Oxytocin, Endorphins) dynamically alter agent mood, patience, and vigilance according to a 24-hour Circadian Clock.
+- **Karl Friston Active Inference:** System 1 vs. System 2 deliberation threshold modulated by Variational Free Energy ($\mathcal{F}$).
+- **32GB Virtual Memory Hyperdimensional Cortex (HDC):** 10,000-bit binary hypervectors memory-mapped on Linux Swap space for instant associative recall.
+- **Subconscious Dream Engine:** Performs Slow-Wave Sleep (SWS) memory crystallization and REM creative synthesis during idle periods.
+- Complete documentation: [**`docs/neuromorphic-brain.md`**](./neuromorphic-brain.md).
+
+---
+
+## 14. Unit Testing & Verification
 
 Run the test suite inside the container:
 
@@ -264,5 +374,7 @@ docker exec dashboard_ai_agent python -m unittest discover -v -s /app/tests
 
 **Test Coverage Summary:**
 
-- `test_telegram_formatter.py` (11 tests): Markdown tables to cards, tag balancing, HTML sanitization, typography normalization, multilingual slip filter.
-- `test_agent_loop_breaker.py` (2 tests): Context compaction and synthesis directive injection.
+- `test_telegram_formatter.py` (11 tests): Markdown tables to cards, tag balancing, HTML sanitization, typography normalization, multilingual slip filter, valid tag whitelisting.
+- `test_agent_loop_breaker.py` (2 tests): Context compaction, synthesis directive injection, attachment token allocation.
+- `test_tool_call_resilience.py` (4 tests): Tool execution robustness, parameter repair, fallback recovery.
+- `test_video_pipeline.py`: Keyframe extraction, phonetic normalization, STT hallucination rejection.

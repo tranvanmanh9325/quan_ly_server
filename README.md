@@ -11,7 +11,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](./LICENSE)
 
 > **A modern, self-hosted, real-time Linux server monitoring & autonomous management ecosystem featuring a futuristic Cyberpunk / Sci-Fi HUD interface.**  
-> Connect securely to any remote Linux host over SSH with **zero agent installation** on the target machine. Monitor system metrics, processes, services, containers, files, logs, and interact via an **autonomous AI Assistant ("Tiểu Bảo Bảo")** across Telegram and Facebook Messenger E2EE.
+> Connect securely to any remote Linux host over SSH with **zero agent installation** on the target machine. Monitor system metrics, processes, services, containers, files, logs, and interact via an **autonomous Neuromorphic AI Assistant ("Tiểu Bảo Bảo")** featuring biological neurochemistry, multimodal video/audio analysis, regional Vietnamese dialect understanding, and 32GB Virtual Memory Swap across Telegram and Facebook Messenger E2EE.
 
 ---
 
@@ -44,8 +44,8 @@
 ### Core Philosophy
 
 1. **Zero Target Footprint (Agentless):** No daemon, agent, or extra process needs to be installed on target Linux servers. The backend connects via SSH (`JSch` / `AsyncSSH`) and collects real-time telemetry through standard Linux utilities (`top`, `free`, `df`, `sensors`, `ps`, `systemctl`, `docker`, `ss`, `journalctl`).
-2. **Autonomous Hybrid AI Agent ("Tiểu Bảo Bảo"):** Powered by a Multi-Provider LLM Pool (Groq + OpenRouter) that operates 24/7. It diagnoses server alerts, executes sysadmin tasks over SSH via tool calling, and bridges notifications/conversations through Telegram and Facebook Messenger End-to-End Encrypted (E2EE) chats.
-3. **Immersive Cyberpunk Sci-Fi HUD:** Replaces mundane flat dashboards with a dynamic, neon-lit HUD interface featuring SVG crosshair cursors, audio-synthesized tactile feedback, canvas shockwaves, and a 3D orthographic globe.
+2. **Autonomous Neuromorphic AI Agent ("Tiểu Bảo Bảo"):** Powered by an artificial cognitive architecture simulating 6 biological neurochemicals, Karl Friston Active Inference, 10,000-bit Hyperdimensional Computing on 32GB Virtual Swap, multimodal video analysis, and dual-tier LLM routing (Groq + OpenRouter) that operates 24/7 over Telegram and Facebook Messenger E2EE.
+3. **Immersive Cyberpunk Sci-Fi HUD:** Replaces mundane flat dashboards with a dynamic, neon-lit HUD interface featuring interactive 3D connectome visualizers, SVG crosshair cursors, audio-synthesized tactile feedback, canvas shockwaves, and a 3D orthographic globe.
 
 ---
 
@@ -67,15 +67,16 @@ flowchart TD
             AuthSvc["Auth Service\n(Spring Boot 4.1.0 / Java 21)\nPort: 8081\n[JWT / BCrypt / Sessions]"]
             MetricsSvc["Metrics Service\n(Spring Boot 4.1.0 / Java 21)\nPort: 8082\n[JSch SSH Telemetry Pool]"]
             FileSvc["File Service\n(Spring Boot 4.1.0 / Java 21)\nPort: 8083\n[JSch SFTP File Operations]"]
-            AgentSvc["AI Agent Service\n(FastAPI / Python 3.11)\nPort: 8084 & noVNC: 6080\n[9Router / ReAct / Playwright]"]
+            AgentSvc["AI Agent Service\n(FastAPI / Python 3.11)\nPort: 8084 & noVNC: 6080\n[9Router / Brain Core / Video Pipeline]"]
         end
 
         Database[("PostgreSQL 17 Alpine\nPort: 5432\n[Users, Configs, E2EE State, Memories, RTK Stats]")]
+        SwapCortex[("🧬 32GB Virtual Memory Swap\n[10,000-bit HDC Associative Cortex]")]
     end
 
     subgraph Infrastructure["🌐 External AI & Managed Infrastructure"]
-        GroqPool["Tier 1: Groq AI Key Pool\n(openai/gpt-oss-120b)"]
-        OpenRouterPool["Tier 2: OpenRouter Pool\n(nvidia/nemotron-3-super-120b)"]
+        GroqPool["Tier 1: Groq Multi-Key Pool\n(openai/gpt-oss-120b & whisper-turbo)"]
+        OpenRouterPool["Tier 2: OpenRouter Pool\n(nvidia/nemotron-3-super-120b & gemma-vl)"]
         TargetServer["🖥️ Target Linux Host (kirito-server)\n[Zero-Agent Target / Port 22 SSH]\nPhysical Location: Định Công, Hoàng Mai, Hà Nội"]
     end
 
@@ -83,16 +84,17 @@ flowchart TD
     Nginx -->|/api/auth/*| AuthSvc
     Nginx -->|/api/metrics/*| MetricsSvc
     Nginx -->|/api/files/*| FileSvc
-    Nginx -->|/api/facebook/*, /api/tiktok/*, /v1/*| AgentSvc
+    Nginx -->|/api/facebook/*, /api/tiktok/*, /api/ai/*, /v1/*| AgentSvc
     Nginx -->|/fb-vnc/* WebSocket| AgentSvc
 
-    TelegramUser <-->|Long Polling / Outbound HTML Cards| AgentSvc
+    TelegramUser <-->|Text, Video & Audio Long Polling| AgentSvc
     FBUser <-->|Playwright Headless Chromium + PIN Recovery| AgentSvc
     TikTokUser <-->|Playwright Automated DMs & Streaks| AgentSvc
 
     AuthSvc <--> Database
     MetricsSvc <--> Database
     AgentSvc <--> Database
+    AgentSvc <--> SwapCortex
 
     MetricsSvc ==>|Persistent JSch SSH Tunnel| TargetServer
     FileSvc ==>|JSch SFTP Channel| TargetServer
@@ -136,6 +138,12 @@ Configure critical alert threshold sliders, global refresh speeds, Telegram/Face
 
 ![Settings](./docs/assets/dashboard-settings.png)
 
+### 6. Neuromorphic Brain Core Inspection Deck (`/brain-core`)
+
+Live Cyberpunk inspection deck visualizing 6 biological neurochemicals, 2D Russell Circumplex radar, Karl Friston Active Inference Free Energy, Global Workspace spotlight, and 3D Neural Connectome visualizer.
+
+![Brain Core Inspection Deck](./docs/assets/dashboard-brain-core.png)
+
 ---
 
 ## 🚀 Key Features & Visual Workflows
@@ -158,8 +166,13 @@ flowchart LR
 ```
 
 - **Pyramid Principle / BLUF Thinking Architecture:** Direct answer on line 1, verified card breakdown in the body, concise technical insights at the end.
-- **Telegram Native Formatter Engine (`TelegramFormatter`):** Converts Markdown tables into mobile-friendly bullet cards, auto-escapes HTML, balances tags, and normalizes Vietnamese typography.
-- **Anti-Loop Circuit Breaker & Context Compactor:** Dynamically compacts older tool outputs, keeping payload under 3,500 characters (~900 tokens) to eliminate Groq `HTTP 413 Payload Too Large` errors.
+- **Telegram Native Formatter Engine v2.0 (`TelegramFormatter`):** Converts Markdown tables into mobile-friendly bullet cards, whitelists valid Telegram HTML tags (`<b>`, `<i>`, `<code>`, `<pre>`, `<blockquote>`, `<a>`), and auto-balances unclosed tags.
+- **Anti-Loop Circuit Breaker & Context Compactor:** Dynamically compacts older tool outputs, keeping payload under 3,500 characters (~900 tokens) while allocating up to 8,000 characters for media attachments to eliminate Groq `HTTP 413 Payload Too Large` errors.
+- **Neuromorphic Cognitive Brain Core (`BrainCore`):** Implements homeostatic regulation of 6 biological neurochemicals (Dopamine, Noradrenaline, Serotonin, Cortisol, Oxytocin, Endorphins), Karl Friston Active Inference (FEP), 2D Russell Circumplex emotional radar, and two-stage SWS/REM sleep memory consolidation.
+- **32GB Virtual Memory Hyperdimensional Cortex (HDC):** 10,000-bit binary hypervectors mapped directly to 32GB Linux swap space via zero-copy `mmap` for instant associative concept recall in <5ms without physical RAM exhaustion.
+- **Multimodal Video & Audio Intelligence Pipeline:** Dual-track parallel processing of Telegram video uploads combining mono audio extraction (Whisper STT with visual-informed vocabulary biasing) and 5-keyframe uniform sampling (Qwen-VL / Gemma-VL OCR) with Cross-Modal Discrepancy Resolution.
+- **Vietnamese Regional Dialect Normalizer:** Fluent comprehension of Central Vietnam dialects (Nghệ An, Hà Tĩnh, Quảng Bình) and teencode, guarded by structured envelope bypass filters.
+- **High-Speed Multi-Tier Archive Cracker:** 4-tier autonomous password recovery engine (Flash check, Context clues, PIN sweep, Dictionary) running under low-priority `nice -n 19`.
 - **Ground Truth Physical Location Metadata:** Configured on-premise location: **Định Công, Hoàng Mai, Hà Nội, Việt Nam** (FPT Telecom, LAN: `192.168.0.100`).
 - **Facebook Messenger E2EE Automation:** Playwright Chromium automation with automated 6-digit PIN decryption, absence auto-reply, and automatic message unsend when the owner replies.
 - **TikTok Automation & Long-Term Memory:** Automated daily streak keeper, proactive appointment reminders, and PostgreSQL-backed self-learning brain (`AgentMemoryService`).
@@ -198,12 +211,13 @@ sequenceDiagram
 
 | Component | Framework / Technology | Version | Purpose |
 | --- | --- | --- | --- |
-| **Frontend** | React + Vite + Tailwind/CSS | React 19 / Vite 8 | Cyberpunk Sci-Fi SPA & Visualization |
+| **Frontend** | React + Vite + Three.js + Tailwind | React 19 / Vite 8 | Cyberpunk Sci-Fi SPA, Brain Core HUD & 3D Connectome |
 | **Auth Service** | Spring Boot + Spring Security | 4.1.0 (Java 21) | JWT Authentication, User Verification |
 | **Metrics Service** | Spring Boot + JSch SSH | 4.1.0 (Java 21) | Real-time SSH Telemetry, System Control |
 | **File Service** | Spring Boot + JSch SFTP | 4.1.0 (Java 21) | Remote File Navigation & Operations |
-| **AI Agent Service** | FastAPI + Playwright + AsyncSSH | Python 3.11 | Telegram Bot & Facebook E2EE AI Agent |
-| **Database** | PostgreSQL Alpine | 17 | User Auth, Configs & E2EE Thread State |
+| **AI Agent Service** | FastAPI + Playwright + AsyncSSH | Python 3.11 | Neuromorphic AI Agent ("Tiểu Bảo Bảo"), Brain Core, Multimodal Video Pipeline |
+| **Database** | PostgreSQL Alpine | 17 | User Auth, Configs, E2EE Thread State & Brain Memory |
+| **Virtual Memory Swap** | Linux NVMe Swap via `mmap` | 32 GB | 10,000-bit HDC Associative Virtual Cortex Storage |
 | **Visual Bridge** | Xvfb + x11vnc + noVNC | — | Web-based GUI stream for Headless Browser |
 | **Reverse Proxy** | Nginx Alpine | latest | Static Asset Serving & `/api/*` Routing |
 
@@ -219,17 +233,21 @@ quan_ly_server/
 ├── docs/                                 # Complete technical documentation suite
 │   ├── README.md                         # Documentation index
 │   ├── architecture.md                   # System topology & communication patterns
-│   ├── api-reference.md                  # REST API & Gateway specifications
-│   ├── backend-internals.md              # Spring Boot & FastAPI architectural details
+│   ├── neuromorphic-brain.md             # Neuromorphic Brain Core, 6 Neurotransmitters, 32GB HDC
+│   ├── multimodal-video-pipeline.md      # Dual-track video/audio pipeline & cross-modal resolution
+│   ├── api-reference.md                  # REST API & Gateway specifications (Brain, Metrics, Auth)
+│   ├── backend-internals.md              # Spring Boot & FastAPI architectural details & tool delegation
 │   ├── database-and-auth.md              # PostgreSQL 17 schema & JWT auth lifecycle
 │   ├── deployment.md                     # Production deployment & hardening guide
-│   ├── frontend-internals.md             # React 19, D3 Globe & Sci-Fi HUD engine
+│   ├── frontend-internals.md             # React 19, Brain Core HUD, D3 Globe & Sci-Fi HUD engine
 │   ├── security.md                       # Security model, sandboxing & credential policies
-│   ├── system-automation.md              # Background schedulers, scanners & timers
-│   ├── telegram-ai-agent.md              # Autonomous AI Agent, 9Router & E2EE guide
+│   ├── system-automation.md              # Background schedulers, cognitive heartbeat & dream engine
+│   ├── telegram-ai-agent.md              # Autonomous AI Agent, 9Router, Dialect normalizer, E2EE
 │   └── troubleshooting.md                # Diagnostic runbooks & recovery handbook
 ├── frontend/                             # React 19 + Vite 8 SPA
-│   ├── src/pages/                        # Dashboard, Processes, Services, Containers, Files, etc.
+│   ├── src/pages/                        # Dashboard, BrainCore, Processes, Services, Terminal, etc.
+│   ├── src/components/brain/             # 3D Neural Connectome, Neurotransmitter Gauges, Russell Radar
+│   ├── src/components/agents/            # TikTokAgentTab, AiAgentVncModal, AgentUiControls
 │   ├── src/components/                   # SciFi HUD components, SciFiIcons, Terminal, etc.
 │   └── nginx.conf                        # Nginx reverse proxy configuration
 ├── services/
@@ -237,9 +255,9 @@ quan_ly_server/
 │   ├── metrics-service/                  # Spring Boot JSch telemetry microservice
 │   ├── file-service/                     # Spring Boot SFTP file operations microservice
 │   └── ai-agent-service/                 # FastAPI Python AI Agent & 9Router service
-│       ├── app/core/                     # LLM Router (RTK), Telegram Formatter, SSH client
-│       ├── app/routers/                  # Health, Facebook, TikTok, OpenAI Gateway
-│       └── app/services/                 # AiAgent, TelegramBot, FacebookService, TikTokService, Memory
+│       ├── app/core/                     # Brain Core (HDC/FEP), Vietnamese Dialect, Telegram Formatter, SSH client
+│       ├── app/routers/                  # Brain, Facebook, TikTok, OpenAI Gateway, Health
+│       └── app/services/                 # AiAgent, AiAgentTools, VideoPipeline, MediaProcessor, ArchiveRecovery, DreamEngine
 └── db/                                   # Database migration scripts & PostgreSQL config
 ```
 
@@ -331,6 +349,8 @@ cd frontend && npm test
 | Topic | Document |
 | --- | --- |
 | **System Architecture** | [docs/architecture.md](./docs/architecture.md) |
+| **Neuromorphic Brain Core (6 Neurotransmitters & 32GB HDC)** | [docs/neuromorphic-brain.md](./docs/neuromorphic-brain.md) |
+| **Multimodal Video & Audio Intelligence Pipeline** | [docs/multimodal-video-pipeline.md](./docs/multimodal-video-pipeline.md) |
 | **Complete API Reference** | [docs/api-reference.md](./docs/api-reference.md) |
 | **AI Agent & 9Router Ecosystem** | [docs/telegram-ai-agent.md](./docs/telegram-ai-agent.md) |
 | **Backend Microservices Internals** | [docs/backend-internals.md](./docs/backend-internals.md) |

@@ -401,6 +401,8 @@ class MediaProcessor:
             (r"\bđêm\s+hồi\b", "đêm hội"),
             (r"\bđếm\s+một\s+trúng\s+thú\b", "đêm hội Trung thu"),
             (r"\bbật\s+tự\s+tự\s+do\s+miễn\s+phí\s+về\s+ra\s+vào\b", "mở cửa tự do miễn phí vé ra vào"),
+            (r"\b19h22\s+tháng\s+9\b", "19h00 ngày 12 tháng 9"),
+            (r"\b19h22\b", "19h00 ngày 12"),
         ]
         res = text
         for pat, repl in corrections:

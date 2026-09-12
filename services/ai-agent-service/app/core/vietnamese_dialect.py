@@ -302,7 +302,13 @@ class VietnameseLinguisticNormalizer:
             return text
 
         # Skip attachments or system tags
-        if text.startswith("[📄") or text.startswith("[📸") or text.startswith("[🎤") or text.startswith("[📍"):
+        if (
+            text.startswith("[📄")
+            or text.startswith("[📸")
+            or text.startswith("[🎤")
+            or text.startswith("[📍")
+            or text.startswith("[🎬")
+        ):
             return text
 
         normalized, count = self.normalize_to_standard(text)

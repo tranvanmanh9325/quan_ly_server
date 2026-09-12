@@ -79,6 +79,21 @@ class TelegramFormatter:
 
         text = re.sub(r"`([^`\n]+)`", _preserve_inline_code, text)
 
+        # Step 3.5: Protect existing valid Telegram HTML tags before escaping
+        existing_tags: List[str] = []
+        _VALID_TAG_PATTERN = re.compile(
+            r"(</?(?:b|i|code|pre|blockquote|s|u|tg-spoiler)\b[^>]*>|<a\s+href=[\"'][^\"']*[\"'][^>]*>|</a>)",
+            re.IGNORECASE,
+        )
+
+        def _preserve_html_tag(match: re.Match) -> str:
+            tag = match.group(0)
+            idx = len(existing_tags)
+            existing_tags.append(tag)
+            return f"TGVALIDHTMLTAG{idx}END"
+
+        text = _VALID_TAG_PATTERN.sub(_preserve_html_tag, text)
+
         # Step 4: Convert Markdown Tables to visual Card layouts
         text = cls._convert_markdown_tables(text)
 
@@ -102,7 +117,10 @@ class TelegramFormatter:
         # Convert ~~strikethrough~~
         text = re.sub(r"~~(.+?)~~", r"<s>\1</s>", text)
 
-        # Step 9: Restore protected inline code and code blocks
+        # Step 9: Restore protected valid Telegram HTML tags, inline code and code blocks
+        for idx, tag in enumerate(existing_tags):
+            text = text.replace(f"TGVALIDHTMLTAG{idx}END", tag)
+
         for idx, block in enumerate(code_blocks):
             text = text.replace(f"TGTOKENCODEBLOCK{idx}END", block)
 

@@ -103,7 +103,7 @@ class TestWeatherTool(unittest.IsolatedAsyncioTestCase):
         self.assertIn("TỰ ĐỘNG ĐỊNH VỊ VỊ TRÍ MÁY CHỦ", result)
         self.assertIn("Hanoi, Vietnam", result)
         self.assertIn("32°C", result)
-        self.assertIn("Cảm giác thực tế: 34°C", result)
+        self.assertIn("Cảm giác thực tế: **34°C**", result)
         self.assertIn("48%", result)
 
     async def test_weather_execution_specific_location(self):

@@ -168,9 +168,9 @@ class TestVideoDebounceManager(unittest.IsolatedAsyncioTestCase):
             visual_summary="[Khung hình 00:00]: Màn hình hiển thị terminal Linux.\n[Khung hình 00:25]: Trình duyệt đang tải web.",
         )
 
-        self.assertIn("THÔNG TIN ĐA PHƯƠNG TIỆN TỪ VIDEO", context)
+        self.assertIn("PHÂN TÍCH VIDEO ĐA PHƯƠNG THỨC", context)
         self.assertIn("tutorial.mp4", context)
-        self.assertIn("50s", context)
+        self.assertIn("00:50", context)
         self.assertIn("Xin chào các bạn hôm nay tôi hướng dẫn", context)
         self.assertIn("Màn hình hiển thị terminal Linux", context)
 

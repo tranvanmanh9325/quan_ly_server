@@ -1,4 +1,5 @@
 import asyncio
+import html
 import logging
 import re
 import time
@@ -33,6 +34,12 @@ from app.services.video_pipeline import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _strip_html_tags(text: str) -> str:
+    """Loại bỏ thẻ HTML và unescape entities phục vụ fallback sang Plain Text."""
+    cleaned = re.sub(r"</?[a-zA-Z0-9]+.*?>", "", text)
+    return html.unescape(cleaned)
 
 
 class TelegramBot:
@@ -300,7 +307,13 @@ class TelegramBot:
             logger.error("[TelegramBot] Failed answering callback query: %s", e)
         return False
 
-    async def send_photo(self, chat_id: str, photo_path: str, caption: Optional[str] = None) -> bool:
+    async def send_photo(
+        self,
+        chat_id: str,
+        photo_path: str,
+        caption: Optional[str] = None,
+        parse_mode: Optional[str] = "HTML",
+    ) -> bool:
         if not self.token or not photo_path:
             return False
         try:
@@ -314,51 +327,96 @@ class TelegramBot:
                 photo_bytes = f.read()
 
             files = {"photo": (p.name, photo_bytes, "image/png")}
-            data = {"chat_id": chat_id}
+            data: Dict[str, Any] = {"chat_id": chat_id}
             if caption:
-                data["caption"] = caption
+                data["caption"] = caption[:1024]
+                if parse_mode:
+                    data["parse_mode"] = parse_mode
 
             res = await self._http_client.post(url, data=data, files=files, timeout=40.0)
             if res.status_code == 200:
                 logger.info("[TelegramBot] Photo successfully sent to %s (%s)", chat_id, photo_path)
                 return True
-            else:
-                logger.warning("[TelegramBot] sendPhoto error %d: %s", res.status_code, res.text)
+            elif parse_mode and "can't parse entities" in res.text.lower():
+                logger.warning("[TelegramBot] sendPhoto HTML parse error (%s). Retrying as plain text...", res.text[:120])
+                data.pop("parse_mode", None)
+                if caption:
+                    data["caption"] = _strip_html_tags(caption)[:1024]
+                res2 = await self._http_client.post(url, data=data, files=files, timeout=40.0)
+                if res2.status_code == 200:
+                    return True
+            logger.warning("[TelegramBot] sendPhoto error %d: %s", res.status_code, res.text)
         except Exception as e:
             logger.error("[TelegramBot] Failed sending photo: %s", e, exc_info=True)
         return False
 
-    async def send_photo_bytes(self, chat_id: str, photo_bytes: bytes, filename: str = "photo.png", caption: Optional[str] = None) -> bool:
+    async def send_photo_bytes(
+        self,
+        chat_id: str,
+        photo_bytes: bytes,
+        filename: str = "photo.png",
+        caption: Optional[str] = None,
+        parse_mode: Optional[str] = "HTML",
+    ) -> bool:
         if not self.token or not photo_bytes:
             return False
         try:
             url = f"{self.api_url}/sendPhoto"
             files = {"photo": (filename, photo_bytes, "image/png")}
-            data = {"chat_id": chat_id}
+            data: Dict[str, Any] = {"chat_id": chat_id}
             if caption:
-                data["caption"] = caption
+                data["caption"] = caption[:1024]
+                if parse_mode:
+                    data["parse_mode"] = parse_mode
 
             res = await self._http_client.post(url, data=data, files=files, timeout=40.0)
-            return res.status_code == 200
+            if res.status_code == 200:
+                return True
+            elif parse_mode and "can't parse entities" in res.text.lower():
+                logger.warning("[TelegramBot] send_photo_bytes HTML parse error. Retrying as plain text...")
+                data.pop("parse_mode", None)
+                if caption:
+                    data["caption"] = _strip_html_tags(caption)[:1024]
+                res2 = await self._http_client.post(url, data=data, files=files, timeout=40.0)
+                return res2.status_code == 200
         except Exception as e:
             logger.error("[TelegramBot] Failed sending photo bytes: %s", e)
-            return False
+        return False
 
-    async def send_document(self, chat_id: str, file_bytes: bytes, filename: str, caption: Optional[str] = None) -> bool:
+    async def send_document(
+        self,
+        chat_id: str,
+        file_bytes: bytes,
+        filename: str,
+        caption: Optional[str] = None,
+        parse_mode: Optional[str] = "HTML",
+    ) -> bool:
         if not self.token or not file_bytes:
             return False
         try:
             url = f"{self.api_url}/sendDocument"
             files = {"document": (filename, file_bytes, "application/octet-stream")}
-            data = {"chat_id": chat_id}
+            data: Dict[str, Any] = {"chat_id": chat_id}
             if caption:
-                data["caption"] = caption
+                data["caption"] = caption[:1024]
+                if parse_mode:
+                    data["parse_mode"] = parse_mode
 
             res = await self._http_client.post(url, data=data, files=files, timeout=60.0)
-            return res.status_code == 200
+            if res.status_code == 200:
+                return True
+            elif parse_mode and "can't parse entities" in res.text.lower():
+                logger.warning("[TelegramBot] send_document HTML parse error. Retrying as plain text...")
+                data.pop("parse_mode", None)
+                if caption:
+                    data["caption"] = _strip_html_tags(caption)[:1024]
+                res2 = await self._http_client.post(url, data=data, files=files, timeout=60.0)
+                return res2.status_code == 200
+            else:
+                logger.warning("[TelegramBot] sendDocument error %d: %s", res.status_code, res.text)
         except Exception as e:
             logger.error("[TelegramBot] Failed sending document bytes: %s", e)
-            return False
+        return False
 
     async def send_video(
         self,
@@ -369,8 +427,9 @@ class TelegramBot:
         width: int = 0,
         height: int = 0,
         supports_streaming: bool = True,
+        parse_mode: Optional[str] = "HTML",
     ) -> bool:
-        """Gửi tệp video MP4 trực tiếp qua Telegram Bot API với hỗ trợ streaming."""
+        """Gửi tệp video MP4 trực tiếp qua Telegram Bot API với hỗ trợ streaming và parse_mode HTML."""
         if not self.token or not video_path:
             return False
         try:
@@ -391,6 +450,8 @@ class TelegramBot:
             }
             if caption:
                 data["caption"] = caption[:1024]
+                if parse_mode:
+                    data["parse_mode"] = parse_mode
             if duration > 0:
                 data["duration"] = str(duration)
             if width > 0 and height > 0:
@@ -401,11 +462,26 @@ class TelegramBot:
                 files = {"video": (p.name, f, "video/mp4")}
                 res = await self._http_client.post(url, data=data, files=files, timeout=120.0)
 
-            if res.status_code == 200:
-                logger.info("[TelegramBot] Video successfully sent to %s (%s)", chat_id, video_path)
-                return True
-            else:
-                logger.warning("[TelegramBot] sendVideo error %d: %s", res.status_code, res.text)
+                if res.status_code == 200:
+                    logger.info("[TelegramBot] Video successfully sent to %s (%s)", chat_id, video_path)
+                    return True
+
+                # Resilient Fallback: Nếu Telegram báo lỗi parse entities, retry bằng Plain Text không tốn thêm RAM
+                if parse_mode and "can't parse entities" in res.text.lower():
+                    logger.warning("[TelegramBot] sendVideo HTML parse error (%s). Retrying as plain text...", res.text[:120])
+                    f.seek(0)
+                    data.pop("parse_mode", None)
+                    if caption:
+                        data["caption"] = _strip_html_tags(caption)[:1024]
+                    files = {"video": (p.name, f, "video/mp4")}
+                    res2 = await self._http_client.post(url, data=data, files=files, timeout=120.0)
+                    if res2.status_code == 200:
+                        logger.info("[TelegramBot] Video successfully sent via plain text fallback to %s", chat_id)
+                        return True
+                    else:
+                        logger.warning("[TelegramBot] sendVideo fallback error %d: %s", res2.status_code, res2.text)
+                else:
+                    logger.warning("[TelegramBot] sendVideo error %d: %s", res.status_code, res.text)
         except Exception as e:
             logger.error("[TelegramBot] Failed sending video: %s", e, exc_info=True)
         return False
@@ -1419,15 +1495,18 @@ class TelegramBot:
                 chat_id,
                 "⚡ <i>Tiểu Bảo Bảo đang tải video trực tiếp cho anh Mạnh, đợi em một xíu nhé...</i>"
             )
+            media_item = None
             try:
                 from app.services.media_downloader import MultiTierMediaPipeline, VideoTooLargeError
                 pipeline = MultiTierMediaPipeline(http_client=self._http_client)
                 media_item = await pipeline.download(media_url)
 
                 if media_item.media_type == "video" and media_item.file_path:
+                    safe_title = html.escape(media_item.title)
+                    safe_author = html.escape(media_item.author)
                     caption = (
-                        f"🎬 <b>{media_item.title}</b>\n"
-                        f"👤 Kênh: <code>@{media_item.author}</code>\n"
+                        f"🎬 <b>{safe_title}</b>\n"
+                        f"👤 Kênh: <code>@{safe_author}</code>\n"
                         f"⏱ Thời lượng: {media_item.duration}s | 📦 Dung lượng: {media_item.file_size / (1024*1024):.1f} MB\n\n"
                         f"✨ <i>Tiểu Bảo Bảo đã tải thành công video không logo cho anh Mạnh!</i>"
                     )
@@ -1438,7 +1517,7 @@ class TelegramBot:
                         duration=media_item.duration,
                     )
                     if not sent:
-                        # Fallback gửi qua sendDocument nếu format đặc thù
+                        # Fallback gửi qua sendDocument nếu định dạng đặc thù
                         with open(media_item.file_path, "rb") as vf:
                             vbytes = vf.read()
                         await self.send_document(
@@ -1448,11 +1527,12 @@ class TelegramBot:
                             caption=caption,
                         )
                 elif media_item.media_type == "images" and media_item.images:
-                    album_caption = f"📸 <b>{media_item.title}</b>\n👤 Kênh: <code>@{media_item.author}</code>"
+                    safe_title = html.escape(media_item.title)
+                    safe_author = html.escape(media_item.author)
+                    album_caption = f"📸 <b>{safe_title}</b>\n👤 Kênh: <code>@{safe_author}</code>"
                     for idx, img_url in enumerate(media_item.images[:10]):
                         await self.send_photo(chat_id, photo_path=img_url, caption=album_caption if idx == 0 else None)
 
-                media_item.cleanup()
                 if status_msg and status_msg.get("message_id"):
                     await self.delete_message(chat_id, status_msg["message_id"])
                 return
@@ -1471,6 +1551,9 @@ class TelegramBot:
                 await self.send_message(chat_id, f"❌ Xin lỗi anh Mạnh, em gặp sự cố khi tải video ({dl_err}). Em sẽ chuyển tiếp yêu cầu sang AI Agent.")
                 if status_msg and status_msg.get("message_id"):
                     await self.delete_message(chat_id, status_msg["message_id"])
+            finally:
+                if media_item:
+                    media_item.cleanup()
 
         if text.startswith("/"):
             if text == "/cancel":

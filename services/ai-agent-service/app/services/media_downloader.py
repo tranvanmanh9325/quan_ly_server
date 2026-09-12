@@ -63,6 +63,48 @@ class MediaItem:
             except Exception as err:
                 logger.warning("[MediaItem] Failed to clean up file %s: %s", self.file_path, err)
 
+    def __enter__(self) -> "MediaItem":
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.cleanup()
+
+    async def __aenter__(self) -> "MediaItem":
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.cleanup()
+
+
+def cleanup_expired_media(max_age_seconds: int = 600) -> int:
+    """
+    Quét dọn các tệp và thư mục tạm mồ côi trong TEMP_MEDIA_DIR cũ hơn max_age_seconds (mặc định 10 phút).
+    Bảo đảm dọn dẹp triệt để trong trường hợp container bị crash, OOM kill hoặc yt-dlp partial files.
+    """
+    if not TEMP_MEDIA_DIR.exists():
+        return 0
+    now = time.time()
+    cleaned_count = 0
+    try:
+        for entry in os.scandir(TEMP_MEDIA_DIR):
+            try:
+                stat = entry.stat()
+                age = now - stat.st_mtime
+                if age > max_age_seconds:
+                    if entry.is_dir(follow_symlinks=False):
+                        shutil.rmtree(entry.path, ignore_errors=True)
+                        cleaned_count += 1
+                        logger.info("[MediaCleanup] Cleaned expired directory: %s (age %.1fs)", entry.path, age)
+                    elif entry.is_file(follow_symlinks=False):
+                        os.unlink(entry.path)
+                        cleaned_count += 1
+                        logger.info("[MediaCleanup] Cleaned expired file: %s (age %.1fs)", entry.path, age)
+            except Exception as item_err:
+                logger.debug("[MediaCleanup] Error inspecting entry %s: %s", entry.name, item_err)
+    except Exception as scan_err:
+        logger.warning("[MediaCleanup] Failed scanning %s: %s", TEMP_MEDIA_DIR, scan_err)
+    return cleaned_count
+
 
 class MediaPipelineError(Exception):
     """Lỗi chung của pipeline tải media."""
@@ -99,6 +141,8 @@ class MultiTierMediaPipeline:
         )
 
         TEMP_MEDIA_DIR.mkdir(parents=True, exist_ok=True)
+        # Quét dọn các file mồ côi cũ từ các phiên làm việc trước khi khởi tạo
+        cleanup_expired_media(max_age_seconds=600)
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._external_client and not self._external_client.is_closed:
@@ -433,6 +477,9 @@ class MultiTierMediaPipeline:
         Phân giải và tải media qua hệ thống phân tầng thông minh:
           Tier 1 (TikWM) -> Tier 2 (yt-dlp) -> Tier 3 (Playwright)
         """
+        # Tự động dọn dẹp các tệp tạm mồ côi cũ hơn 10 phút trước khi bắt đầu phiên mới
+        cleanup_expired_media(max_age_seconds=600)
+
         clean_url = url.strip()
         is_tiktok_douyin = bool(self._tiktok_regex.search(clean_url))
 

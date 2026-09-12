@@ -3,6 +3,7 @@ Agent Tool Registry & Execution Subsystem (Gorilla RAT Scoped Tools)
 Tách rời toàn bộ định nghĩa Schema công cụ và Logic Dispatcher thực thi.
 """
 from datetime import datetime, timezone, timedelta
+import html
 import json
 import logging
 import re
@@ -1521,16 +1522,20 @@ class AgentToolExecutor:
                 if self.telegram_bot and chat_id:
                     await self.telegram_bot.send_chat_action(chat_id, "upload_video")
 
+                media_item = None
                 try:
                     from app.services.media_downloader import MultiTierMediaPipeline, VideoTooLargeError
                     client = getattr(self.telegram_bot, "_http_client", None)
                     pipeline = MultiTierMediaPipeline(http_client=client)
                     media_item = await pipeline.download(url)
 
+                    safe_title = html.escape(media_item.title)
+                    safe_author = html.escape(media_item.author)
+
                     if media_item.media_type == "video" and media_item.file_path:
                         cap = caption_override or (
-                            f"🎬 <b>{media_item.title}</b>\n"
-                            f"👤 Kênh: <code>@{media_item.author}</code>\n"
+                            f"🎬 <b>{safe_title}</b>\n"
+                            f"👤 Kênh: <code>@{safe_author}</code>\n"
                             f"⏱ Thời lượng: {media_item.duration}s | 📦 Dung lượng: {media_item.file_size / (1024*1024):.1f} MB\n\n"
                             f"✨ <i>Tiểu Bảo Bảo đã tải thành công video không logo cho anh Mạnh!</i>"
                         )
@@ -1550,24 +1555,24 @@ class AgentToolExecutor:
                                     filename=Path(media_item.file_path).name,
                                     caption=cap,
                                 )
-                        media_item.cleanup()
                         return f"🎬 Em đã tải video **{media_item.title}** thành công và gửi trực tiếp qua Telegram cho anh Mạnh rồi ạ!"
 
                     elif media_item.media_type == "images" and media_item.images:
-                        album_caption = caption_override or f"📸 <b>{media_item.title}</b>\n👤 Kênh: <code>@{media_item.author}</code>"
+                        album_caption = caption_override or f"📸 <b>{safe_title}</b>\n👤 Kênh: <code>@{safe_author}</code>"
                         if self.telegram_bot and chat_id:
                             for idx, img_url in enumerate(media_item.images[:10]):
                                 await self.telegram_bot.send_photo(chat_id, photo_path=img_url, caption=album_caption if idx == 0 else None)
-                        media_item.cleanup()
                         return f"📸 Em đã tải toàn bộ Album ảnh ({len(media_item.images)} ảnh) và gửi qua Telegram cho anh Mạnh rồi ạ!"
 
-                    media_item.cleanup()
                     return f"✅ Đã tải dữ liệu media từ {url} thành công."
                 except VideoTooLargeError as v_err:
                     return f"⚠️ Video có dung lượng vượt quá giới hạn 50MB của Telegram Bot ({v_err}). Anh Mạnh có thể xem hoặc tải trực tiếp tại: {url}"
                 except Exception as dl_err:
                     logger.error("[AiAgentTools] download_media_video error: %s", dl_err, exc_info=True)
                     return f"❌ Xin lỗi anh Mạnh, em gặp sự cố khi tải video từ liên kết này ({dl_err})."
+                finally:
+                    if media_item:
+                        media_item.cleanup()
 
             # ── Phase 5A: Prospective Memory Tools ──────────────────────────
             if tool_name == "remember_for_later":

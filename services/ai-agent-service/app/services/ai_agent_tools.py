@@ -22,6 +22,7 @@ DIRECT_RETURN_TOOLS = frozenset({
     "facebook_view_profile",
     "server_capture_screenshot",
     "browser_take_screenshot",
+    "download_media_video",
 })
 
 SCREENSHOT_TOOLS = frozenset({
@@ -173,11 +174,16 @@ class AgentToolExecutor:
         "remember_for_later",
         "complete_task",
     }
+    _TOOL_CLUSTER_MEDIA = {
+        "download_media_video",
+        "run_command",
+    }
     _TOOL_CLUSTER_CORE = {
         "run_command",
         "get_server_active_sessions",
         "get_server_location",
         "get_weather",
+        "download_media_video",
         "browser_search_google",
         "browser_navigate",
         "server_capture_screenshot",
@@ -208,6 +214,13 @@ class AgentToolExecutor:
                     if "browser_" in msg_str:
                         has_browser_history = True
                         break
+
+        is_media = any(k in q for k in (
+            "tiktok", "youtube", "douyin", "reels", "reel", "video", "tải", "clip", "mp4",
+            "shorts", "facebook.com/watch", "fb.watch", "youtu.be", "v.douyin.com",
+            "vt.tiktok.com", "media", "download", "down video", "lưu clip", "chuyển file",
+            "tải về", "tải video"
+        )) or any(link in q for link in ("tiktok.com", "youtu.be", "youtube.com", "fb.watch", "douyin.com"))
 
         is_server = any(k in q for k in (
             "server", "máy chủ", "cpu", "ram", "disk", "ổ đĩa", "dung lượng",
@@ -241,6 +254,9 @@ class AgentToolExecutor:
             "áp thấp", "mưa rào", "giông", "rét", "ấm", "sương mù",
             "wttr", "a răng", "bựa ni"
         ))
+
+        if is_media:
+            selected.update(self._TOOL_CLUSTER_MEDIA)
 
         if is_weather:
             selected.update(self._TOOL_CLUSTER_WEATHER)
@@ -330,6 +346,27 @@ class AgentToolExecutor:
                             }
                         },
                         "required": ["command"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "download_media_video",
+                    "description": "Tải video từ các nền tảng mạng xã hội (TikTok, Douyin, YouTube, Facebook Reel/Watch, Instagram Reels, Twitter/X) về máy chủ kirito-server và gửi trực tiếp tệp video MP4 qua Telegram cho anh Mạnh. Tự động bóc tách không watermark/logo cho TikTok và Douyin. Tuyệt đối không từ chối khi anh Mạnh gửi link video hoặc nhờ tải video.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "url": {
+                                "type": "string",
+                                "description": "Đường dẫn (URL) video công khai cần tải (TikTok, Facebook, YouTube, Douyin, Reels...).",
+                            },
+                            "caption": {
+                                "type": "string",
+                                "description": "Lời nhắn hoặc chú thích ngắn tùy chọn gửi kèm video.",
+                            },
+                        },
+                        "required": ["url"],
                     },
                 },
             },
@@ -1473,6 +1510,64 @@ class AgentToolExecutor:
                     )
                     return "🖥️ Đã chụp và gửi ảnh màn hình máy chủ qua Telegram!"
                 return "Đã thực hiện chụp màn hình máy chủ."
+
+            if tool_name == "download_media_video":
+                url = (tool_args.get("url") or "").strip()
+                caption_override = tool_args.get("caption") or ""
+                if not url:
+                    return "❌ Lỗi: Vui lòng cung cấp đường dẫn (URL) video hợp lệ."
+
+                logger.info("[AiAgentTools] Executing download_media_video for URL: %s", url)
+                if self.telegram_bot and chat_id:
+                    await self.telegram_bot.send_chat_action(chat_id, "upload_video")
+
+                try:
+                    from app.services.media_downloader import MultiTierMediaPipeline, VideoTooLargeError
+                    client = getattr(self.telegram_bot, "_http_client", None)
+                    pipeline = MultiTierMediaPipeline(http_client=client)
+                    media_item = await pipeline.download(url)
+
+                    if media_item.media_type == "video" and media_item.file_path:
+                        cap = caption_override or (
+                            f"🎬 <b>{media_item.title}</b>\n"
+                            f"👤 Kênh: <code>@{media_item.author}</code>\n"
+                            f"⏱ Thời lượng: {media_item.duration}s | 📦 Dung lượng: {media_item.file_size / (1024*1024):.1f} MB\n\n"
+                            f"✨ <i>Tiểu Bảo Bảo đã tải thành công video không logo cho anh Mạnh!</i>"
+                        )
+                        if self.telegram_bot and chat_id:
+                            sent = await self.telegram_bot.send_video(
+                                chat_id=chat_id,
+                                video_path=media_item.file_path,
+                                caption=cap,
+                                duration=media_item.duration,
+                            )
+                            if not sent:
+                                with open(media_item.file_path, "rb") as vf:
+                                    vbytes = vf.read()
+                                await self.telegram_bot.send_document(
+                                    chat_id=chat_id,
+                                    file_bytes=vbytes,
+                                    filename=Path(media_item.file_path).name,
+                                    caption=cap,
+                                )
+                        media_item.cleanup()
+                        return f"🎬 Em đã tải video **{media_item.title}** thành công và gửi trực tiếp qua Telegram cho anh Mạnh rồi ạ!"
+
+                    elif media_item.media_type == "images" and media_item.images:
+                        album_caption = caption_override or f"📸 <b>{media_item.title}</b>\n👤 Kênh: <code>@{media_item.author}</code>"
+                        if self.telegram_bot and chat_id:
+                            for idx, img_url in enumerate(media_item.images[:10]):
+                                await self.telegram_bot.send_photo(chat_id, photo_path=img_url, caption=album_caption if idx == 0 else None)
+                        media_item.cleanup()
+                        return f"📸 Em đã tải toàn bộ Album ảnh ({len(media_item.images)} ảnh) và gửi qua Telegram cho anh Mạnh rồi ạ!"
+
+                    media_item.cleanup()
+                    return f"✅ Đã tải dữ liệu media từ {url} thành công."
+                except VideoTooLargeError as v_err:
+                    return f"⚠️ Video có dung lượng vượt quá giới hạn 50MB của Telegram Bot ({v_err}). Anh Mạnh có thể xem hoặc tải trực tiếp tại: {url}"
+                except Exception as dl_err:
+                    logger.error("[AiAgentTools] download_media_video error: %s", dl_err, exc_info=True)
+                    return f"❌ Xin lỗi anh Mạnh, em gặp sự cố khi tải video từ liên kết này ({dl_err})."
 
             # ── Phase 5A: Prospective Memory Tools ──────────────────────────
             if tool_name == "remember_for_later":

@@ -60,6 +60,49 @@ class TelegramBot:
         if hasattr(self.ai_agent, "set_telegram_bot"):
             self.ai_agent.set_telegram_bot(self)
 
+    _MEDIA_URL_REGEX = re.compile(
+        r"https?://(?:www\.|vt\.|vm\.|v\.|m\.)?(?:"
+        r"tiktok\.com|"
+        r"douyin\.com|"
+        r"youtube\.com|youtu\.be|"
+        r"facebook\.com/(?:reel|watch|share)|fb\.watch|"
+        r"instagram\.com/(?:reel|p|tv)|"
+        r"twitter\.com|x\.com"
+        r")/[^\s]+",
+        re.IGNORECASE,
+    )
+
+    def _detect_fastpath_media_download(self, text: str) -> Optional[Tuple[str, str]]:
+        """Phát hiện ý định tải video trực tiếp để kích hoạt Fast-path bypass LLM."""
+        url_match = self._MEDIA_URL_REGEX.search(text)
+        if not url_match:
+            return None
+
+        media_url = url_match.group(0)
+        remaining_text = text.replace(media_url, "").strip().lower()
+
+        # TH 1: Chỉ gửi độc nhất link video
+        if not remaining_text:
+            return media_url, ""
+
+        # Nếu là câu hỏi phân tích nội dung -> Nhường cho AI Agent
+        analysis_keywords = (
+            "nói về gì", "tóm tắt", "dịch", "xem giùm", "giải thích", "ai đây",
+            "nội dung là", "chi tiết", "nói chi", "chi rứa", "hát bài gì", "ý nghĩa"
+        )
+        if any(k in remaining_text for k in analysis_keywords):
+            return None
+
+        # TH 2: Có từ khóa thể hiện ý định tải video
+        download_keywords = (
+            "tải", "down", "download", "lấy", "lưu", "save", "gửi cho anh",
+            "gửi em", "tải video", "tải clip", "kéo video", "tải về", "chuyển file"
+        )
+        if any(k in remaining_text for k in download_keywords):
+            return media_url, remaining_text
+
+        return None
+
     @property
     def _http_client(self) -> httpx.AsyncClient:
         return http_client_manager.get_client()
@@ -315,6 +358,69 @@ class TelegramBot:
             return res.status_code == 200
         except Exception as e:
             logger.error("[TelegramBot] Failed sending document bytes: %s", e)
+            return False
+
+    async def send_video(
+        self,
+        chat_id: str,
+        video_path: str,
+        caption: Optional[str] = None,
+        duration: int = 0,
+        width: int = 0,
+        height: int = 0,
+        supports_streaming: bool = True,
+    ) -> bool:
+        """Gửi tệp video MP4 trực tiếp qua Telegram Bot API với hỗ trợ streaming."""
+        if not self.token or not video_path:
+            return False
+        try:
+            p = Path(video_path)
+            if not p.exists():
+                logger.error("[TelegramBot] Video file not found: %s", video_path)
+                return False
+
+            file_size = p.stat().st_size
+            if file_size > 50 * 1024 * 1024:
+                logger.warning("[TelegramBot] Video exceeds 50MB limit (%d bytes)", file_size)
+                return False
+
+            url = f"{self.api_url}/sendVideo"
+            data: Dict[str, Any] = {
+                "chat_id": chat_id,
+                "supports_streaming": "true" if supports_streaming else "false",
+            }
+            if caption:
+                data["caption"] = caption[:1024]
+            if duration > 0:
+                data["duration"] = str(duration)
+            if width > 0 and height > 0:
+                data["width"] = str(width)
+                data["height"] = str(height)
+
+            with open(p, "rb") as f:
+                files = {"video": (p.name, f, "video/mp4")}
+                res = await self._http_client.post(url, data=data, files=files, timeout=120.0)
+
+            if res.status_code == 200:
+                logger.info("[TelegramBot] Video successfully sent to %s (%s)", chat_id, video_path)
+                return True
+            else:
+                logger.warning("[TelegramBot] sendVideo error %d: %s", res.status_code, res.text)
+        except Exception as e:
+            logger.error("[TelegramBot] Failed sending video: %s", e, exc_info=True)
+        return False
+
+    async def delete_message(self, chat_id: str, message_id: int) -> bool:
+        """Thu hồi hoặc xóa tin nhắn đã gửi trên Telegram."""
+        if not self.token or not message_id:
+            return False
+        try:
+            url = f"{self.api_url}/deleteMessage"
+            payload = {"chat_id": chat_id, "message_id": message_id}
+            res = await self._http_client.post(url, json=payload, timeout=10.0)
+            return res.status_code == 200
+        except Exception as e:
+            logger.debug("[TelegramBot] Failed deleting message %s: %s", message_id, e)
             return False
 
     async def _claim_update(self, update_id: int) -> bool:
@@ -1303,6 +1409,68 @@ class TelegramBot:
                     logger.warning("[TelegramBot] Decryption with provided text failed: %s, falling back to standard chat", ex_dec)
             else:
                 self._pending_archives.pop(chat_id, None)
+
+        # ── FAST-PATH: Media Download Auto-Intent Interceptor ────────────
+        media_intent = self._detect_fastpath_media_download(text)
+        if media_intent:
+            media_url, custom_caption = media_intent
+            logger.info("[TelegramBot] Fast-path intercepted media download URL: %s", media_url)
+            status_msg = await self.send_message_with_result(
+                chat_id,
+                "⚡ <i>Tiểu Bảo Bảo đang tải video trực tiếp cho anh Mạnh, đợi em một xíu nhé...</i>"
+            )
+            try:
+                from app.services.media_downloader import MultiTierMediaPipeline, VideoTooLargeError
+                pipeline = MultiTierMediaPipeline(http_client=self._http_client)
+                media_item = await pipeline.download(media_url)
+
+                if media_item.media_type == "video" and media_item.file_path:
+                    caption = (
+                        f"🎬 <b>{media_item.title}</b>\n"
+                        f"👤 Kênh: <code>@{media_item.author}</code>\n"
+                        f"⏱ Thời lượng: {media_item.duration}s | 📦 Dung lượng: {media_item.file_size / (1024*1024):.1f} MB\n\n"
+                        f"✨ <i>Tiểu Bảo Bảo đã tải thành công video không logo cho anh Mạnh!</i>"
+                    )
+                    sent = await self.send_video(
+                        chat_id=chat_id,
+                        video_path=media_item.file_path,
+                        caption=caption,
+                        duration=media_item.duration,
+                    )
+                    if not sent:
+                        # Fallback gửi qua sendDocument nếu format đặc thù
+                        with open(media_item.file_path, "rb") as vf:
+                            vbytes = vf.read()
+                        await self.send_document(
+                            chat_id=chat_id,
+                            file_bytes=vbytes,
+                            filename=Path(media_item.file_path).name,
+                            caption=caption,
+                        )
+                elif media_item.media_type == "images" and media_item.images:
+                    album_caption = f"📸 <b>{media_item.title}</b>\n👤 Kênh: <code>@{media_item.author}</code>"
+                    for idx, img_url in enumerate(media_item.images[:10]):
+                        await self.send_photo(chat_id, photo_path=img_url, caption=album_caption if idx == 0 else None)
+
+                media_item.cleanup()
+                if status_msg and status_msg.get("message_id"):
+                    await self.delete_message(chat_id, status_msg["message_id"])
+                return
+            except VideoTooLargeError as v_err:
+                logger.warning("[TelegramBot] Video exceeds 50MB: %s", v_err)
+                await self.send_message(
+                    chat_id,
+                    f"⚠️ <b>Video có dung lượng vượt quá giới hạn 50MB của Telegram Bot!</b>\n\n"
+                    f"🔗 Anh có thể mở hoặc tải trực tiếp tại liên kết: {media_url}"
+                )
+                if status_msg and status_msg.get("message_id"):
+                    await self.delete_message(chat_id, status_msg["message_id"])
+                return
+            except Exception as dl_err:
+                logger.error("[TelegramBot] Fast-path media download error: %s", dl_err, exc_info=True)
+                await self.send_message(chat_id, f"❌ Xin lỗi anh Mạnh, em gặp sự cố khi tải video ({dl_err}). Em sẽ chuyển tiếp yêu cầu sang AI Agent.")
+                if status_msg and status_msg.get("message_id"):
+                    await self.delete_message(chat_id, status_msg["message_id"])
 
         if text.startswith("/"):
             if text == "/cancel":

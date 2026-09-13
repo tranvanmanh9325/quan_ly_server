@@ -118,6 +118,7 @@ ACTION_TIER_3_LETHAL = "TIER_3_LETHAL"
 _SAFE_DIAGNOSTIC_COMMAND_PATTERN = re.compile(
     r"^(?:sudo\s+)?(?:free|df|uptime|top|htop|ps|docker\s+(?:ps|stats|logs|images|version|info)|"
     r"netstat|ss|ip\s+(?:addr|a|route|link)|ifconfig|journalctl|cat|ls|head|tail|grep|zgrep|"
+    r"awk|cut|sort|uniq|wc|tr|column|"
     r"systemctl\s+status|service\s+\S+\s+status|uname|whoami|w|last|date|vmstat|iostat|sensors|dmesg|"
     r"which|whereis|file|du(?!\s+.*-(?:delete))|cat\s+/proc/|cat\s+/etc/|crontab\s+-l)\b",
     re.IGNORECASE
@@ -130,26 +131,30 @@ _REVERSIBLE_OPERATIONAL_PATTERN = re.compile(
     re.IGNORECASE
 )
 
+_REDIRECTION_WRITE_PATTERN = re.compile(r"(?:>>?|\|\s*(?:sudo\s+)?tee\b)")
+
 
 def classify_command_risk(command: str) -> str:
     """
     Phân loại rủi ro của lệnh bash theo Action Risk Tri-Tier:
     - ACTION_TIER_3_LETHAL: Khớp Spinal Safety Veto (hủy diệt, không đảo ngược).
-    - ACTION_TIER_1_SAFE: Lệnh chẩn đoán, đọc dữ liệu, an toàn tuyệt đối.
-    - ACTION_TIER_2_REVERSIBLE: Thao tác có thể khôi phục (restart container, tạo file tạm, backup).
+    - ACTION_TIER_1_SAFE: Lệnh chẩn đoán, đọc dữ liệu, an toàn tuyệt đối (100% các nhánh đều đọc an toàn).
+    - ACTION_TIER_2_REVERSIBLE: Thao tác có thể khôi phục (restart container, tạo file tạm, backup) hoặc chứa lệnh ghi đĩa/nhánh không thuần đọc.
     """
     cmd = command.strip()
+    # 1. Kiểm tra Spinal Safety Veto (Tier 3) trên toàn bộ chuỗi trước
     for pattern in _SPINAL_VETO_PATTERNS:
         if pattern.search(cmd):
             return ACTION_TIER_3_LETHAL
 
-    if _SAFE_DIAGNOSTIC_COMMAND_PATTERN.search(cmd):
-        return ACTION_TIER_1_SAFE
-
-    if _REVERSIBLE_OPERATIONAL_PATTERN.search(cmd):
+    # 2. Kiểm tra toán tử ghi đĩa (>, >>, | tee) -> Không thể là Tier 1 Safe, nâng lên Tier 2
+    if _REDIRECTION_WRITE_PATTERN.search(cmd):
         return ACTION_TIER_2_REVERSIBLE
 
-    parts = [p.strip() for p in re.split(r"[|;&]", cmd) if p.strip()]
+    # 3. Phân tách chuỗi lệnh gộp (||, &&, |, ;) lên TRƯỚC
+    parts = [p.strip() for p in re.split(r"(?:\|\||&&|[|;])", cmd) if p.strip()]
+
+    # 4. Chỉ cấp Tier 1 khi có ít nhất 1 lệnh và 100% các nhánh đều là chẩn đoán đọc an toàn
     if parts and all(_SAFE_DIAGNOSTIC_COMMAND_PATTERN.search(p) for p in parts):
         return ACTION_TIER_1_SAFE
 
@@ -213,19 +218,50 @@ def classify_action_risk(tool_name: str, tool_args: Optional[Dict[str, Any]] = N
 def infer_default_diagnostic_command(query: str) -> Optional[str]:
     """
     Tự suy luận tham số lệnh an toàn mặc định (Default Parameter Heuristics)
-    khi người dùng đưa ra yêu cầu chẩn đoán chung chung.
+    khi người dùng đưa ra yêu cầu chẩn đoán chung chung hoặc câu hỏi tự nhiên / phương ngữ không có động từ.
     """
     q = query.lower()
-    if any(k in q for k in ("ram", "bộ nhớ")) and any(v in q for v in ("kiểm tra", "xem", "check", "tình trạng")):
-        return "free -h"
-    if any(k in q for k in ("ổ đĩa", "disk", "dung lượng")) and any(v in q for v in ("kiểm tra", "xem", "check")):
-        return "df -h /"
-    if any(k in q for k in ("docker", "container")) and any(v in q for v in ("kiểm tra", "xem", "check", "danh sách")):
-        return "docker ps --format \"table {{.Names}}\t{{.Status}}\t{{.Ports}}\""
-    if any(k in q for k in ("cpu", "load")) and any(v in q for v in ("kiểm tra", "xem", "check", "tải")):
-        return "top -b -n 1 | head -n 15"
-    if any(k in q for k in ("uptime", "hoạt động bao lâu", "chạy bao lâu")):
+
+    # 1. RAM / Bộ nhớ / Swap
+    if any(k in q for k in ("ram", "bộ nhớ", "swap")):
+        if any(v in q for v in (
+            "kiểm tra", "xem", "check", "tình trạng", "thế nào", "bao nhiêu", "răng", "sao",
+            "ổn không", "hết chưa", "hết", "trống", "đang dùng", "dùng bao nhiêu", "còn bao nhiêu",
+            "chừ", "hè", "máy em", "làm sao", "làm cách nào", "biết", "hiện tại", "sức khỏe"
+        )):
+            return "free -h"
+
+    # 2. Uptime / Thời gian bật / hoạt động của máy chủ
+    if any(k in q for k in (
+        "uptime", "bật bao lâu", "mở bao lâu", "chạy bao lâu", "hoạt động bao lâu",
+        "chạy từ khi nào", "bật từ khi nào", "máy đã bật", "máy bật", "server bật"
+    )):
         return "uptime"
+
+    # 3. Ổ đĩa / Dung lượng lưu trữ
+    if any(k in q for k in ("ổ đĩa", "disk", "dung lượng", "ổ cứng", "ổ ssd")):
+        if any(v in q for v in (
+            "kiểm tra", "xem", "check", "tình trạng", "còn trống", "trống", "đầy chưa",
+            "đầy không", "hết dung lượng", "bao nhiêu", "thế nào", "sao", "làm sao", "làm cách nào"
+        )):
+            return "df -h /"
+
+    # 4. Docker / Container
+    if any(k in q for k in ("docker", "container")):
+        if any(v in q for v in (
+            "kiểm tra", "xem", "check", "tình trạng", "danh sách", "đang chạy", "chạy không",
+            "làm sao", "làm cách nào", "thế nào", "có chạy"
+        )):
+            return "docker ps --format \"table {{.Names}}\t{{.Status}}\t{{.Ports}}\""
+
+    # 5. CPU / Tải hệ thống
+    if any(k in q for k in ("cpu", "load", "tải cpu", "tải hệ thống", "tải máy", "tải cao")):
+        if any(v in q for v in (
+            "kiểm tra", "xem", "check", "tải", "thế nào", "bao nhiêu", "cao không",
+            "sao", "ổn không", "tình trạng", "làm sao", "làm cách nào"
+        )):
+            return "top -b -n 1 | head -n 15"
+
     return None
 
 
@@ -369,20 +405,22 @@ class AgentToolExecutor:
                         has_browser_history = True
                         break
 
-        is_media = any(k in q for k in (
-            "tiktok", "youtube", "douyin", "reels", "reel", "video", "tải", "clip", "mp4",
-            "shorts", "short", "facebook.com/watch", "fb.watch", "youtu.be", "v.douyin.com",
-            "vt.tiktok.com", "threads", "threads.net", "facebook.com", "fb.com", "media", "download",
-            "down video", "lưu clip", "chuyển file", "tải về", "tải video",
-            "tai", "tai video", "tai clip", "tai ve", "lay video", "lay clip", "keo video"
-        )) or any(link in q for link in (
-            "tiktok.com", "youtu.be", "youtube.com", "fb.watch", "douyin.com", "facebook.com", "threads.net"
+        # Media download detection: strictly isolate from CPU load/system keywords
+        has_media_link = any(link in q for link in (
+            "tiktok.com", "youtu.be", "youtube.com", "fb.watch", "facebook.com/watch", "douyin.com", "threads.net"
+        ))
+        is_media = has_media_link or any(k in q for k in (
+            "tiktok", "youtube", "douyin", "reels", "reel", "video", "clip", "mp4",
+            "shorts", "down video", "lưu clip", "tải video", "tải clip", "tải về",
+            "download video", "download clip", "tai video", "tai clip", "tai ve",
+            "lay video", "lay clip", "keo video"
         ))
 
         is_server = bool(self._SHORT_SERVER_RE.search(q)) or any(k in q for k in (
             "server", "máy chủ", "bộ nhớ", "ổ đĩa", "dung lượng",
             "docker", "container", "tiến trình", "process", "htop", "cortex",
-            "trạng thái", "kiểm tra", "vị trí", "đăng nhập", "session", "reboot", "uptime", "sức khỏe"
+            "trạng thái", "kiểm tra", "vị trí", "đăng nhập", "session", "reboot", "uptime", "sức khỏe",
+            "bật bao lâu", "mở bao lâu", "chạy bao lâu", "hoạt động bao lâu", "máy đã bật", "máy em"
         ))
 
         is_archive = any(k in q for k in (
@@ -437,8 +475,13 @@ class AgentToolExecutor:
         if not selected:
             selected.update(self._TOOL_CLUSTER_CORE)
 
-        # Priority Pruning: Enforce strict token budget by capping active tools to max 8
-        if len(selected) > 8:
+        # Priority Pruning: Enforce strict token budget (max 6 tools when archive/facebook present, else max 8)
+        has_heavy_cluster = bool(
+            is_archive or is_fb or (selected & (self._TOOL_CLUSTER_ARCHIVE | self._TOOL_CLUSTER_FACEBOOK))
+        )
+        max_tools = 6 if has_heavy_cluster else 8
+
+        if len(selected) > max_tools:
             priority_order = [
                 "run_command", "download_media_video", "get_weather", "read_archive_file",
                 "extract_archive_file", "get_server_location", "browser_navigate",
@@ -451,9 +494,9 @@ class AgentToolExecutor:
             for t in priority_order:
                 if t in selected:
                     pruned.add(t)
-                    if len(pruned) == 8:
+                    if len(pruned) == max_tools:
                         break
-            selected = pruned if len(pruned) >= 4 else set(list(selected)[:8])
+            selected = pruned if len(pruned) >= 2 else set(list(selected)[:max_tools])
 
         return selected
 
@@ -477,7 +520,7 @@ class AgentToolExecutor:
                 "type": "function",
                 "function": {
                     "name": "get_server_active_sessions",
-                    "description": "Tra cứu tất cả máy tính và người dùng đang kết nối máy chủ kirito-server (gồm phiên Web Dashboard HTTP/HTTPS qua mạng và phiên SSH Terminal port 22/pts theo thời gian thực).",
+                    "description": "Tra cứu các phiên kết nối Web và SSH Terminal đang hoạt động trên máy chủ.",
                     "parameters": {"type": "object", "properties": {}},
                 },
             },
@@ -485,7 +528,7 @@ class AgentToolExecutor:
                 "type": "function",
                 "function": {
                     "name": "get_server_location",
-                    "description": "Tra cứu vị trí vật lý thực tế, tọa độ GPS và thông số mạng (ISP) của máy chủ kirito-server bằng Wi-Fi Positioning (WPS) và IP Geolocation.",
+                    "description": "Tra cứu vị trí địa lý thực tế và ISP của máy chủ qua Wi-Fi WPS và IP Geolocation.",
                     "parameters": {"type": "object", "properties": {}},
                 },
             },
@@ -493,13 +536,13 @@ class AgentToolExecutor:
                 "type": "function",
                 "function": {
                     "name": "get_weather",
-                    "description": "Tra cứu thời tiết thời gian thực và dự báo. Để trống location (null) để tự động định vị theo vị trí máy chủ qua Wi-Fi WPS / IP Geolocation.",
+                    "description": "Tra cứu thời tiết thời gian thực. Bỏ trống location để tự động định vị máy chủ.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "location": {
                                 "type": "string",
-                                "description": "Tên địa danh hoặc tọa độ. Bỏ trống để tự động định vị máy chủ.",
+                                "description": "Địa danh/tọa độ. Bỏ trống để tự định vị.",
                             },
                         },
                     },
@@ -509,7 +552,7 @@ class AgentToolExecutor:
                 "type": "function",
                 "function": {
                     "name": "run_command",
-                    "description": "Thực thi lệnh shell/bash an toàn trên kirito-server qua SSH để kiểm tra CPU, RAM, Disk, Docker, Network, Logs.",
+                    "description": "Thực thi lệnh shell an toàn trên server qua SSH (CPU, RAM, Disk, Docker, Logs).",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -526,17 +569,17 @@ class AgentToolExecutor:
                 "type": "function",
                 "function": {
                     "name": "download_media_video",
-                    "description": "Tải video đa nền tảng (TikTok, Douyin, YouTube, Facebook, Threads, Instagram) về server và gửi trực tiếp video MP4 qua Telegram không watermark.",
+                    "description": "Tải video đa nền tảng (TikTok, YouTube, Facebook, Threads) gửi Telegram.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "url": {
                                 "type": "string",
-                                "description": "Đường dẫn (URL) video công khai cần tải.",
+                                "description": "URL video cần tải.",
                             },
                             "caption": {
                                 "type": "string",
-                                "description": "Lời nhắn hoặc chú thích ngắn tùy chọn gửi kèm video.",
+                                "description": "Chú thích kèm video.",
                             },
                         },
                         "required": ["url"],
@@ -547,17 +590,17 @@ class AgentToolExecutor:
                 "type": "function",
                 "function": {
                     "name": "read_archive_file",
-                    "description": "Đọc và liệt kê danh mục tệp bên trong archive (ZIP, RAR, 7Z, TAR, GZ) trên máy chủ, có hỗ trợ mật khẩu giải mã.",
+                    "description": "Liệt kê tệp bên trong archive (ZIP, RAR, 7Z, TAR).",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "file_path": {
                                 "type": "string",
-                                "description": "Đường dẫn tuyệt đối hoặc tương đối tới tệp nén (ví dụ: '/home/kirito/data.zip').",
+                                "description": "Đường dẫn tệp nén.",
                             },
                             "password": {
                                 "type": "string",
-                                "description": "Mật khẩu giải mã nếu tệp nén được bảo vệ.",
+                                "description": "Mật khẩu nếu có.",
                             },
                         },
                         "required": ["file_path"],
@@ -568,21 +611,21 @@ class AgentToolExecutor:
                 "type": "function",
                 "function": {
                     "name": "extract_archive_file",
-                    "description": "Giải nén archive (ZIP, RAR, 7Z, TAR) ra thư mục chỉ định trên máy chủ, có hỗ trợ mật khẩu giải mã.",
+                    "description": "Giải nén archive (ZIP, RAR, 7Z, TAR) ra thư mục chỉ định.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "file_path": {
                                 "type": "string",
-                                "description": "Đường dẫn tới tệp nén cần giải nén.",
+                                "description": "Đường dẫn tệp nén.",
                             },
                             "destination_dir": {
                                 "type": "string",
-                                "description": "Thư mục đích lưu các tệp sau khi giải nén.",
+                                "description": "Thư mục đích.",
                             },
                             "password": {
                                 "type": "string",
-                                "description": "Mật khẩu giải mã tệp nén (nếu có).",
+                                "description": "Mật khẩu nếu có.",
                             },
                         },
                         "required": ["file_path", "destination_dir"],
@@ -593,23 +636,23 @@ class AgentToolExecutor:
                 "type": "function",
                 "function": {
                     "name": "recover_archive_password",
-                    "description": "Khôi phục mật khẩu tệp nén (RAR, ZIP, 7Z) 4 luồng song song dựa trên manh mối gợi nhớ hoặc thử danh sách mật khẩu.",
+                    "description": "Tìm mật khẩu tệp nén (RAR, ZIP, 7Z) qua gợi ý hoặc thử danh sách.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "file_path": {
                                 "type": "string",
-                                "description": "Đường dẫn tới tệp nén trên server hoặc để trống nếu là file vừa gửi qua Telegram.",
+                                "description": "Đường dẫn tệp nén.",
                             },
                             "clues": {
                                 "type": "array",
                                 "items": {"type": "string"},
-                                "description": "Danh sách từ khóa, manh mối gợi nhớ (ví dụ: ['Kirito', '2005', 'manh']).",
+                                "description": "Từ khóa gợi ý.",
                             },
                             "candidate_passwords": {
                                 "type": "array",
                                 "items": {"type": "string"},
-                                "description": "Danh sách các mật khẩu cụ thể muốn thử trực tiếp.",
+                                "description": "Danh sách mật khẩu thử.",
                             },
                         },
                     },
@@ -628,13 +671,13 @@ class AgentToolExecutor:
                 "type": "function",
                 "function": {
                     "name": "facebook_capture_screenshot",
-                    "description": "Chụp ảnh màn hình hội thoại Messenger với liên hệ cụ thể và gửi qua Telegram.",
+                    "description": "Chụp ảnh màn hình hội thoại Messenger với liên hệ.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "recipient_name": {
                                 "type": "string",
-                                "description": "Tên người nhận cần chụp màn hình hội thoại.",
+                                "description": "Tên người nhận.",
                             }
                         },
                         "required": ["recipient_name"],
@@ -645,7 +688,7 @@ class AgentToolExecutor:
                 "type": "function",
                 "function": {
                     "name": "facebook_send_reply",
-                    "description": "Gửi tin nhắn trả lời trực tiếp qua Facebook Messenger khi người dùng yêu cầu.",
+                    "description": "Gửi tin nhắn trả lời qua Facebook Messenger.",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -655,7 +698,7 @@ class AgentToolExecutor:
                             },
                             "message": {
                                 "type": "string",
-                                "description": "Nội dung tin nhắn cần gửi.",
+                                "description": "Nội dung tin nhắn.",
                             },
                         },
                         "required": ["recipient_name", "message"],
@@ -666,13 +709,13 @@ class AgentToolExecutor:
                 "type": "function",
                 "function": {
                     "name": "get_appointments",
-                    "description": "Lấy danh sách các lịch hẹn, cuộc gặp sắp tới hoặc đang chờ từ Facebook Messenger.",
+                    "description": "Lấy danh sách lịch hẹn từ Facebook Messenger.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "limit": {
                                 "type": "integer",
-                                "description": "Số lượng lịch hẹn tối đa (mặc định 10).",
+                                "description": "Số lượng lịch hẹn (mặc định 10).",
                             }
                         },
                     },
@@ -682,7 +725,7 @@ class AgentToolExecutor:
                 "type": "function",
                 "function": {
                     "name": "messenger_list_groups",
-                    "description": "Liệt kê các nhóm Messenger đã lưu trong hệ thống (tên nhóm, số thành viên, thời điểm quét).",
+                    "description": "Liệt kê các nhóm Messenger đã lưu.",
                     "parameters": {"type": "object", "properties": {}},
                 },
             },
@@ -690,13 +733,13 @@ class AgentToolExecutor:
                 "type": "function",
                 "function": {
                     "name": "messenger_get_group_members",
-                    "description": "Tra cứu danh sách thành viên của một nhóm Messenger cụ thể (tên, vai trò, link profile).",
+                    "description": "Tra cứu thành viên một nhóm Messenger.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "group_name": {
                                 "type": "string",
-                                "description": "Tên hoặc một phần tên nhóm cần tra cứu.",
+                                "description": "Tên nhóm cần tra cứu.",
                             }
                         },
                         "required": ["group_name"],
@@ -708,13 +751,13 @@ class AgentToolExecutor:
                 "type": "function",
                 "function": {
                     "name": "facebook_view_profile",
-                    "description": "Tìm kiếm và mở trang cá nhân Facebook của một người, trích xuất tiểu sử và chụp ảnh gửi Telegram.",
+                    "description": "Mở trang cá nhân Facebook và trích xuất tiểu sử.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "name_query": {
                                 "type": "string",
-                                "description": "Tên người cần tìm kiếm trên Facebook.",
+                                "description": "Tên người cần tìm kiếm.",
                             }
                         },
                         "required": ["name_query"],
@@ -725,13 +768,13 @@ class AgentToolExecutor:
                 "type": "function",
                 "function": {
                     "name": "browser_navigate",
-                    "description": "Mở trang web bằng Playwright Chromium headless, chụp ảnh màn hình và trích xuất nội dung.",
+                    "description": "Mở trang web bằng Chromium headless và trích xuất nội dung.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "url": {
                                 "type": "string",
-                                "description": "URL đầy đủ của trang web cần truy cập.",
+                                "description": "URL trang web cần truy cập.",
                             }
                         },
                         "required": ["url"],
@@ -742,7 +785,7 @@ class AgentToolExecutor:
                 "type": "function",
                 "function": {
                     "name": "browser_search_google",
-                    "description": "Tìm kiếm trên Google, chụp ảnh kết quả và trả về top 5 liên kết hàng đầu.",
+                    "description": "Tìm kiếm trên Google và trả về top kết quả.",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -759,7 +802,7 @@ class AgentToolExecutor:
                 "type": "function",
                 "function": {
                     "name": "browser_take_screenshot",
-                    "description": "Chụp ảnh màn hình trang web hiện tại đang mở trong trình duyệt.",
+                    "description": "Chụp ảnh màn hình trang web hiện tại.",
                     "parameters": {"type": "object", "properties": {}},
                 },
             },
@@ -768,13 +811,13 @@ class AgentToolExecutor:
                 "type": "function",
                 "function": {
                     "name": "browser_click",
-                    "description": "Click vào một phần tử trên trang web bằng CSS selector hoặc text hiển thị.",
+                    "description": "Click phần tử trên trang web bằng selector hoặc text.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "selector_or_text": {
                                 "type": "string",
-                                "description": "CSS selector hoặc text hiển thị của phần tử cần click.",
+                                "description": "Selector hoặc text cần click.",
                             }
                         },
                         "required": ["selector_or_text"],
@@ -785,13 +828,13 @@ class AgentToolExecutor:
                 "type": "function",
                 "function": {
                     "name": "browser_type",
-                    "description": "Gõ văn bản vào ô input/textarea trên trang hiện tại, tùy chọn nhấn Enter.",
+                    "description": "Gõ văn bản vào ô input trên trang web.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "selector": {
                                 "type": "string",
-                                "description": "CSS selector hoặc label của ô input.",
+                                "description": "Selector ô input.",
                             },
                             "text": {
                                 "type": "string",
@@ -799,7 +842,7 @@ class AgentToolExecutor:
                             },
                             "press_enter": {
                                 "type": "boolean",
-                                "description": "True nếu muốn nhấn Enter sau khi gõ xong (mặc định: false).",
+                                "description": "True nếu nhấn Enter sau khi gõ.",
                             },
                         },
                         "required": ["selector", "text"],
@@ -810,7 +853,7 @@ class AgentToolExecutor:
                 "type": "function",
                 "function": {
                     "name": "browser_scroll",
-                    "description": "Cuộn trang web ('up', 'down', 'top', 'bottom') để xem thêm nội dung.",
+                    "description": "Cuộn trang web ('up', 'down', 'top', 'bottom').",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -821,7 +864,7 @@ class AgentToolExecutor:
                             },
                             "pixels": {
                                 "type": "integer",
-                                "description": "Số pixel cần cuộn (mặc định 500).",
+                                "description": "Số pixel cuộn (mặc định 500).",
                             },
                         },
                         "required": ["direction"],
@@ -832,7 +875,7 @@ class AgentToolExecutor:
                 "type": "function",
                 "function": {
                     "name": "browser_go_back",
-                    "description": "Quay lại trang trước trong lịch sử trình duyệt.",
+                    "description": "Quay lại trang trước trong lịch sử duyệt web.",
                     "parameters": {"type": "object", "properties": {}},
                 },
             },
@@ -840,7 +883,7 @@ class AgentToolExecutor:
                 "type": "function",
                 "function": {
                     "name": "browser_go_forward",
-                    "description": "Tiến tới trang kế tiếp trong lịch sử trình duyệt.",
+                    "description": "Tiến tới trang kế tiếp trong lịch sử duyệt web.",
                     "parameters": {"type": "object", "properties": {}},
                 },
             },
@@ -848,13 +891,13 @@ class AgentToolExecutor:
                 "type": "function",
                 "function": {
                     "name": "browser_get_text",
-                    "description": "Đọc và trích xuất văn bản từ phần tử DOM cụ thể bằng CSS selector.",
+                    "description": "Đọc văn bản từ phần tử DOM bằng selector.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "selector": {
                                 "type": "string",
-                                "description": "CSS selector của phần tử cần đọc text.",
+                                "description": "Selector phần tử cần đọc.",
                             }
                         },
                         "required": ["selector"],
@@ -865,13 +908,13 @@ class AgentToolExecutor:
                 "type": "function",
                 "function": {
                     "name": "browser_press_key",
-                    "description": "Nhấn phím bàn phím trên trang web ('Enter', 'Tab', 'Escape', 'F5'...).",
+                    "description": "Nhấn phím bàn phím trên trang web.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "key": {
                                 "type": "string",
-                                "description": "Tên phím theo chuẩn Playwright: 'Enter', 'Tab', 'Escape', 'Space', 'ArrowDown', 'F5'...",
+                                "description": "Tên phím: 'Enter', 'Tab', 'Escape'...",
                             }
                         },
                         "required": ["key"],
@@ -882,13 +925,13 @@ class AgentToolExecutor:
                 "type": "function",
                 "function": {
                     "name": "browser_hover",
-                    "description": "Di chuyển con trỏ chuột hover lên một phần tử để kích hoạt tooltip hoặc dropdown menu.",
+                    "description": "Hover chuột lên phần tử trên trang web.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "selector_or_text": {
                                 "type": "string",
-                                "description": "CSS selector hoặc text hiển thị của phần tử cần hover.",
+                                "description": "Selector hoặc text của phần tử.",
                             }
                         },
                         "required": ["selector_or_text"],
@@ -899,17 +942,17 @@ class AgentToolExecutor:
                 "type": "function",
                 "function": {
                     "name": "browser_select_option",
-                    "description": "Chọn một option từ dropdown <select> bằng value, text hoặc index.",
+                    "description": "Chọn option từ dropdown select.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "selector": {
                                 "type": "string",
-                                "description": "CSS selector của thẻ <select>.",
+                                "description": "Selector thẻ select.",
                             },
                             "value": {
                                 "type": "string",
-                                "description": "Giá trị option (value) hoặc text hiển thị.",
+                                "description": "Giá trị value hoặc text.",
                             },
                         },
                         "required": ["selector", "value"],
@@ -920,13 +963,13 @@ class AgentToolExecutor:
                 "type": "function",
                 "function": {
                     "name": "browser_execute_js",
-                    "description": "Thực thi mã JavaScript tùy ý trên trang hiện tại và trả về kết quả.",
+                    "description": "Thực thi JavaScript trên trang hiện tại.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "script": {
                                 "type": "string",
-                                "description": "Mã JavaScript cần thực thi (dùng 'return' để trả kết quả).",
+                                "description": "Mã JavaScript cần chạy.",
                             }
                         },
                         "required": ["script"],
@@ -937,18 +980,18 @@ class AgentToolExecutor:
                 "type": "function",
                 "function": {
                     "name": "browser_fill_form",
-                    "description": "Điền nhiều trường form cùng lúc (dict CSS selector -> value) và tùy chọn submit.",
+                    "description": "Điền form (dict selector -> value) và submit.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "fields": {
                                 "type": "object",
-                                "description": "Object mapping CSS selector → giá trị cần điền.",
+                                "description": "Mapping selector -> giá trị.",
                                 "additionalProperties": {"type": "string"},
                             },
                             "submit_selector": {
                                 "type": "string",
-                                "description": "CSS selector nút Submit/Đăng nhập (nếu bỏ qua sẽ nhấn Enter).",
+                                "description": "Selector nút submit.",
                             },
                         },
                         "required": ["fields"],
@@ -959,22 +1002,22 @@ class AgentToolExecutor:
                 "type": "function",
                 "function": {
                     "name": "browser_wait_for",
-                    "description": "Chờ một phần tử DOM xuất hiện hoặc biến mất ('visible', 'hidden', 'attached').",
+                    "description": "Chờ một phần tử DOM xuất hiện hoặc biến mất.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "selector": {
                                 "type": "string",
-                                "description": "CSS selector cần chờ.",
+                                "description": "Selector cần chờ.",
                             },
                             "timeout_ms": {
                                 "type": "integer",
-                                "description": "Thời gian chờ tối đa ms (mặc định 10000).",
+                                "description": "Thời gian chờ ms.",
                             },
                             "state": {
                                 "type": "string",
                                 "enum": ["visible", "attached", "hidden", "detached"],
-                                "description": "Trạng thái cần chờ ('visible', 'hidden', 'attached').",
+                                "description": "Trạng thái: visible, hidden, attached, detached.",
                             },
                         },
                         "required": ["selector"],
@@ -986,7 +1029,7 @@ class AgentToolExecutor:
                 "type": "function",
                 "function": {
                     "name": "server_capture_screenshot",
-                    "description": "Chụp toàn bộ màn hình desktop/server Linux và gửi qua Telegram.",
+                    "description": "Chụp toàn bộ màn hình desktop/server Linux gửi Telegram.",
                     "parameters": {"type": "object", "properties": {}},
                 },
             },
@@ -995,13 +1038,13 @@ class AgentToolExecutor:
                 "type": "function",
                 "function": {
                     "name": "remember_for_later",
-                    "description": "Ghi nhớ một việc cần làm sau vào Prospective Memory để nhắc nhở trong các lượt sau.",
+                    "description": "Ghi nhớ việc cần làm vào Prospective Memory.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "task": {
                                 "type": "string",
-                                "description": "Mô tả ngắn gọn việc cần nhớ.",
+                                "description": "Mô tả việc cần nhớ.",
                             },
                             "remind_turns": {
                                 "type": "integer",
@@ -1017,13 +1060,13 @@ class AgentToolExecutor:
                 "type": "function",
                 "function": {
                     "name": "complete_task",
-                    "description": "Đánh dấu hoàn thành một việc đang chờ trong Prospective Memory theo task_id.",
+                    "description": "Đánh dấu hoàn thành việc trong Prospective Memory.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "task_id": {
                                 "type": "integer",
-                                "description": "ID của task cần đánh dấu hoàn thành.",
+                                "description": "ID của task cần hoàn thành.",
                             }
                         },
                         "required": ["task_id"],

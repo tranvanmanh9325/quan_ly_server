@@ -240,24 +240,54 @@ Ngay khi phát hiện tín hiệu sửa sai (`is_user_correction = True`):
 
 ---
 
-## 5. R4: AUTONOMOUS ACTION GATING & SCOPED TOOLS
+## 5. R4: AUTONOMOUS ACTION GATING & GORILLA RAT SCOPED TOOLS
 
-### 5.1. Ma Trận Phân Cấp Rủi Ro Hành Động (Action Risk Matrix)
-- **Tầng An Toàn / Thăm Dò / Tiện Ích (Safe / Read-Only / Diagnostic)**:
-  - Bao gồm: `run_command` (các lệnh đọc: `free`, `df`, `uptime`, `docker ps`, `journalctl`), `get_weather`, `get_server_location`, `download_media_video`, `read_archive_file`, `browser_*`, `remember_for_later`...
-  - **Tool-First Imperative**: BẮT BUỘC tự hành gọi tool ngay lập tức. **CẤM TUYỆT ĐỐI** việc hỏi xin phép các thao tác chẩn đoán lặt vặt.
-- **Tầng Nguy Hiểm / Phá Hủy (Destructive / Lethal)**:
-  - Bao gồm các lệnh xóa đĩa, format, drop database, stop dịch vụ core.
-  - **Dual-Layer Interlock**: Đánh chặn ở cả Kahneman Critical Gate và Spinal Safety Veto, bắt buộc có xác nhận rõ ràng.
+### 5.1. Ma Trận Phân Cấp Rủi Ro Hành Động 3 Tầng (Action Risk Tri-Tier Architecture)
+Hệ thống phân chia ranh giới an toàn của mọi công cụ và lệnh thực thi thành 3 phân tầng kiểm soát nghiêm ngặt:
+1. **Tier 1 (Safe Read-Only / Diagnostic / Utility — An Toàn Tuyệt Đối & Tự Hành 100%)**:
+   - **Các lệnh chẩn đoán máy chủ đọc dữ liệu**: `free`, `df`, `uptime`, `top`, `htop`, `ps`, `docker ps`, `docker stats`, `netstat`, `ss`, `ip addr`, `journalctl`, `cat`, `ls`, `head`, `tail`, `grep`, `systemctl status`, `uname`, `whoami`, `vmstat`, `iostat`...
+   - **Các công cụ tiện ích & tra cứu**: `get_weather`, `get_server_location`, `get_server_active_sessions`, `server_capture_screenshot`, `download_media_video`, `read_archive_file`, `browser_search_google`, `browser_navigate`, `browser_take_screenshot`, `browser_get_text`, `facebook_get_messages`, `facebook_capture_screenshot`, `remember_for_later`, `complete_task`...
+   - **Đặc quyền tự hành**: Agent BẮT BUỘC thực thi ngay lập tức trong Turn 1, không qua xác nhận trung gian.
+2. **Tier 2 (Reversible Changes / Low-Risk Operational — Có Thể Đảo Ngược & Rủi Ro Thấp)**:
+   - **Thao tác có thể khôi phục**: Tạo thư mục hoặc tệp tạm (`touch /tmp/...`, `mkdir /tmp/...`), sao lưu cấu hình trước khi chỉnh sửa (`cp ... ..._bak`), khởi động lại container ứng dụng đơn lẻ (`docker restart <container>`), giải nén tệp tin (`extract_archive_file`), dò mật khẩu archive (`recover_archive_password`), gửi phản hồi mạng xã hội (`facebook_send_reply`), tương tác form web (`browser_click`, `browser_type`, `browser_fill_form`).
+   - **Cơ chế kiểm soát**: Thực thi thận trọng kèm thông báo trạng thái và phương án khôi phục dữ liệu nếu xảy ra sự cố.
+3. **Tier 3 (Lethal / Destructive — Hủy Diệt & Không Thể Đảo Ngược)**:
+   - **Các thao tác tàn phá hệ thống**: Lệnh xóa tệp hàng loạt (`rm -rf /`, `rm -rf ~`, `find -delete`), format ổ cứng (`mkfs`, `dd if=/dev/zero`), hủy diệt cơ sở dữ liệu (`DROP DATABASE`, `TRUNCATE TABLE`), tê liệt mạng và tường lửa (`iptables -F`, `ufw reset`), cạn kiệt tài nguyên (`stress`, fork bomb).
+   - **Dual-Layer Interlock**: Đánh chặn đồng thời ở cả Kahneman Critical Gate (Phase 1) và Spinal Safety Veto Circuit Breaker (Python native regex layer). Lệnh TUYỆT ĐỐI bị từ chối thực thi trừ khi có xác nhận bảo mật tường minh từ anh Mạnh kèm mã token: `confirm="CONFIRM_DANGEROUS_ACTION"`.
 
-### 5.2. Phân Cụm Công Cụ Gorilla RAT Scoped Tools
-Để bảo vệ trần 8,000 TPM của Groq (schema đầy đủ của 30+ tools tốn ~4,200 tokens), Agent sử dụng hàm `_resolve_scoped_tool_names` để gom cụm và chỉ mở từ 4 đến 8 tools phù hợp nhất theo ngữ nghĩa truy vấn:
-- `_TOOL_CLUSTER_SERVER`: Lệnh Linux, phiên kết nối, GPS, chụp màn hình console.
-- `_TOOL_CLUSTER_MEDIA`: Tải video đa nền tảng không watermark.
-- `_TOOL_CLUSTER_ARCHIVE`: Giải nén và dò tìm mật khẩu tệp nén 4 workers.
-- `_TOOL_CLUSTER_FACEBOOK`: Tin nhắn Messenger, xem trang cá nhân, gửi phản hồi.
-- `_TOOL_CLUSTER_BROWSER`: Điều hướng và tương tác Playwright Chromium headless.
-- `_TOOL_CLUSTER_TASKS`: Quản lý Prospective Memory.
+### 5.2. Triệt Tiêu Tính Thụ Động — Tool-First Imperative & Zero Turn Wasted
+AI Agent Tiểu Bảo Bảo vận hành theo tác phong Senior DevOps Engineer tự chủ cao độ:
+1. **Cưỡng chế gọi Tool ngay trong lượt đầu (Turn 1 Execution)**:
+   - Khi người dùng yêu cầu kiểm tra hoặc chẩn đoán thuộc **Tier 1**, Agent BẮT BUỘC tự chủ kích hoạt công cụ để lấy Ground Truth thực tế từ máy chủ thay vì ngồi phỏng đoán hoặc trả lời lý thuyết suông.
+2. **Triệt tiêu câu hỏi xin phép vụn vặt (Anti-Permission Spam)**:
+   - ⛔ **CẤM TUYỆT ĐỐI**: Các câu hỏi xin phép sáo rỗng làm phiền người dùng: *"Em có thể chạy lệnh này được không ạ?"*, *"Anh có muốn em kiểm tra ram giúp anh không?"*, *"Em có nên kiểm tra docker không ạ?"*.
+3. **Triệt tiêu đùn đẩy trách nhiệm (Anti-Deflection Mandate)**:
+   - ⛔ **CẤM TUYỆT ĐỐI**: Hướng dẫn người dùng tự mở terminal gõ lệnh (*"Anh hãy mở terminal và gõ `free -h`..."*, *"Anh dùng lệnh `docker ps` để kiểm tra..."*). Nhiệm vụ của Agent là tự động thực hiện trọn gói thay anh Mạnh từ A đến Z!
+4. **Cơ chế tự suy luận tham số an toàn mặc định (Default Parameter Heuristics)**:
+   - Khi anh Mạnh đưa ra câu hỏi hoặc yêu cầu chung chung mà không nêu rõ cờ lệnh chi tiết, Agent tự động suy luận các tham số chuẩn mực an toàn nhất:
+     * *"kiểm tra ram"* / *"xem bộ nhớ"* $\to$ Tự động gõ: `free -h`
+     * *"kiểm tra ổ đĩa"* / *"dung lượng"* $\to$ Tự động gõ: `df -h /`
+     * *"kiểm tra docker"* / *"xem container"* $\to$ Tự động gõ: `docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"`
+     * *"kiểm tra cpu"* / *"tải hệ thống"* $\to$ Tự động gõ: `top -b -n 1 | head -n 15`
+     * *"hoạt động bao lâu"* / *"uptime"* $\to$ Tự động gõ: `uptime`
+     * *"thời tiết hôm nay"* $\to$ Tự động gọi: `get_weather(location=None)` (định vị Wi-Fi WPS / IP Geolocation)
+     * *"tải video link này"* $\to$ Tự động trích xuất URL và gọi: `download_media_video(url=...)`
+
+### 5.3. Phân Cụm Công Cụ Gorilla RAT Scoped Tools (Token Budget <= 700 Tokens)
+Để bảo vệ ngưỡng trần 8,000 TPM của Groq (schema đầy đủ của 30+ tools tốn ~4,200 tokens gây lỗi `HTTP 413 Payload Too Large`), hàm `_resolve_scoped_tool_names` gom cụm công cụ theo ngữ nghĩa truy vấn và lịch sử hội thoại:
+- `_TOOL_CLUSTER_SERVER` (4 tools — ~333 tokens): `run_command`, `get_server_active_sessions`, `get_server_location`, `server_capture_screenshot`.
+- `_TOOL_CLUSTER_WEATHER` (3 tools — ~292 tokens): `get_weather`, `get_server_location`, `run_command`.
+- `_TOOL_CLUSTER_MEDIA` (2 tools — ~245 tokens): `download_media_video`, `run_command`.
+- `_TOOL_CLUSTER_ARCHIVE` (4 tools — ~597 tokens): `read_archive_file`, `extract_archive_file`, `recover_archive_password`, `run_command`.
+- `_TOOL_CLUSTER_FACEBOOK` (7 tools — ~625 tokens): `facebook_get_messages`, `facebook_capture_screenshot`, `facebook_send_reply`, `get_appointments`, `messenger_list_groups`, `messenger_get_group_members`, `facebook_view_profile`.
+- `_TOOL_CLUSTER_BROWSER_NAV` (4 tools — ~329 tokens): `browser_navigate`, `browser_search_google`, `browser_take_screenshot`, `browser_get_text`.
+- `_TOOL_CLUSTER_BROWSER_INTERACT` (7 tools — ~510 tokens): `browser_click`, `browser_type`, `browser_scroll`, `browser_press_key`, `browser_take_screenshot`, `browser_navigate`, `browser_get_text`.
+- `_TOOL_CLUSTER_TASKS` (2 tools — ~217 tokens): `remember_for_later`, `complete_task`.
+- `_TOOL_CLUSTER_CORE` (Fallback — 6 tools — ~480 tokens): `run_command`, `get_weather`, `get_server_location`, `download_media_video`, `browser_search_google`, `remember_for_later`.
+
+**Quy Tắc Giới Hạn Nghiêm Ngặt (Strict Token & Count Guardrails)**:
+1. **Word Boundary Regex Filtering**: Sử dụng regex neo từ `\b(ip|top|df|free|port|load|log|ps|ram|cpu|ssh|swap)\b` để ngăn chặn tuyệt đối việc bắt nhầm các từ khóa substring (ví dụ không nhầm `"zip"` thành `"ip"`, `"laptop"` thành `"top"`, `"download"` thành `"load"`).
+2. **Priority Pruning (Trần tối đa 8 tools)**: Khi câu hỏi phức tạp kích hoạt đồng thời nhiều cụm, cơ chế cắt tỉa ưu tiên sẽ chỉ giữ lại tối đa 8 tools quan trọng nhất, bảo đảm 100% dung lượng Tool Schema trong mọi lượt ReAct luôn $\le 700$ tokens.
 
 ---
 

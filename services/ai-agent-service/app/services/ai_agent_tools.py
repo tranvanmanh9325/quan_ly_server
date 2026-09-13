@@ -110,6 +110,125 @@ def evaluate_spinal_safety_veto(command: str, confirm_token: Optional[str] = Non
     return None
 
 
+# ── Action Risk Tri-Tier (M4 Autonomous Action Gating) ──
+ACTION_TIER_1_SAFE = "TIER_1_SAFE"
+ACTION_TIER_2_REVERSIBLE = "TIER_2_REVERSIBLE"
+ACTION_TIER_3_LETHAL = "TIER_3_LETHAL"
+
+_SAFE_DIAGNOSTIC_COMMAND_PATTERN = re.compile(
+    r"^(?:sudo\s+)?(?:free|df|uptime|top|htop|ps|docker\s+(?:ps|stats|logs|images|version|info)|"
+    r"netstat|ss|ip\s+(?:addr|a|route|link)|ifconfig|journalctl|cat|ls|head|tail|grep|zgrep|"
+    r"systemctl\s+status|service\s+\S+\s+status|uname|whoami|w|last|date|vmstat|iostat|sensors|dmesg|"
+    r"which|whereis|file|du(?!\s+.*-(?:delete))|cat\s+/proc/|cat\s+/etc/|crontab\s+-l)\b",
+    re.IGNORECASE
+)
+
+_REVERSIBLE_OPERATIONAL_PATTERN = re.compile(
+    r"^(?:sudo\s+)?(?:docker\s+(?:restart|start|stop)\s+[a-zA-Z0-9_-]+$|"
+    r"systemctl\s+(?:restart|reload)\s+[a-zA-Z0-9_-]+$|"
+    r"touch\s+|mkdir\s+|cp\s+|mv\s+.*_bak\b)",
+    re.IGNORECASE
+)
+
+
+def classify_command_risk(command: str) -> str:
+    """
+    Phân loại rủi ro của lệnh bash theo Action Risk Tri-Tier:
+    - ACTION_TIER_3_LETHAL: Khớp Spinal Safety Veto (hủy diệt, không đảo ngược).
+    - ACTION_TIER_1_SAFE: Lệnh chẩn đoán, đọc dữ liệu, an toàn tuyệt đối.
+    - ACTION_TIER_2_REVERSIBLE: Thao tác có thể khôi phục (restart container, tạo file tạm, backup).
+    """
+    cmd = command.strip()
+    for pattern in _SPINAL_VETO_PATTERNS:
+        if pattern.search(cmd):
+            return ACTION_TIER_3_LETHAL
+
+    if _SAFE_DIAGNOSTIC_COMMAND_PATTERN.search(cmd):
+        return ACTION_TIER_1_SAFE
+
+    if _REVERSIBLE_OPERATIONAL_PATTERN.search(cmd):
+        return ACTION_TIER_2_REVERSIBLE
+
+    parts = [p.strip() for p in re.split(r"[|;&]", cmd) if p.strip()]
+    if parts and all(_SAFE_DIAGNOSTIC_COMMAND_PATTERN.search(p) for p in parts):
+        return ACTION_TIER_1_SAFE
+
+    return ACTION_TIER_2_REVERSIBLE
+
+
+def classify_action_risk(tool_name: str, tool_args: Optional[Dict[str, Any]] = None) -> str:
+    """
+    Phân loại rủi ro của một Tool Call theo Action Risk Tri-Tier:
+    - Tier 1: Safe Read-Only / Diagnostic / Utility
+    - Tier 2: Reversible Changes / Low-Risk Operational
+    - Tier 3: Lethal / Destructive
+    """
+    if tool_name == "run_command":
+        cmd = (tool_args or {}).get("command", "")
+        return classify_command_risk(cmd)
+
+    tier1_tools = {
+        "get_weather",
+        "get_server_location",
+        "get_server_active_sessions",
+        "server_capture_screenshot",
+        "download_media_video",
+        "read_archive_file",
+        "browser_search_google",
+        "browser_navigate",
+        "browser_take_screenshot",
+        "browser_get_text",
+        "facebook_get_messages",
+        "facebook_capture_screenshot",
+        "facebook_view_profile",
+        "get_appointments",
+        "messenger_list_groups",
+        "messenger_get_group_members",
+        "remember_for_later",
+        "complete_task",
+    }
+    if tool_name in tier1_tools:
+        return ACTION_TIER_1_SAFE
+
+    tier2_tools = {
+        "extract_archive_file",
+        "recover_archive_password",
+        "facebook_send_reply",
+        "browser_click",
+        "browser_type",
+        "browser_scroll",
+        "browser_press_key",
+        "browser_hover",
+        "browser_select_option",
+        "browser_fill_form",
+        "browser_wait_for",
+        "browser_execute_js",
+    }
+    if tool_name in tier2_tools:
+        return ACTION_TIER_2_REVERSIBLE
+
+    return ACTION_TIER_1_SAFE
+
+
+def infer_default_diagnostic_command(query: str) -> Optional[str]:
+    """
+    Tự suy luận tham số lệnh an toàn mặc định (Default Parameter Heuristics)
+    khi người dùng đưa ra yêu cầu chẩn đoán chung chung.
+    """
+    q = query.lower()
+    if any(k in q for k in ("ram", "bộ nhớ")) and any(v in q for v in ("kiểm tra", "xem", "check", "tình trạng")):
+        return "free -h"
+    if any(k in q for k in ("ổ đĩa", "disk", "dung lượng")) and any(v in q for v in ("kiểm tra", "xem", "check")):
+        return "df -h /"
+    if any(k in q for k in ("docker", "container")) and any(v in q for v in ("kiểm tra", "xem", "check", "danh sách")):
+        return "docker ps --format \"table {{.Names}}\t{{.Status}}\t{{.Ports}}\""
+    if any(k in q for k in ("cpu", "load")) and any(v in q for v in ("kiểm tra", "xem", "check", "tải")):
+        return "top -b -n 1 | head -n 15"
+    if any(k in q for k in ("uptime", "hoạt động bao lâu", "chạy bao lâu")):
+        return "uptime"
+    return None
+
+
 
 class AgentToolExecutor:
     """
@@ -156,11 +275,18 @@ class AgentToolExecutor:
         """Inject the AgentMemoryService for self-improving capabilities."""
         self.memory_service = memory_service
 
+    # Expose Action Risk Tri-Tier on class
+    ACTION_TIER_1_SAFE = ACTION_TIER_1_SAFE
+    ACTION_TIER_2_REVERSIBLE = ACTION_TIER_2_REVERSIBLE
+    ACTION_TIER_3_LETHAL = ACTION_TIER_3_LETHAL
+    classify_action_risk = staticmethod(classify_action_risk)
+    classify_command_risk = staticmethod(classify_command_risk)
+    infer_default_diagnostic_command = staticmethod(infer_default_diagnostic_command)
+
     _TOOL_CLUSTER_SERVER = {
         "run_command",
         "get_server_active_sessions",
         "get_server_location",
-        "get_weather",
         "server_capture_screenshot",
     }
     _TOOL_CLUSTER_WEATHER = {
@@ -185,13 +311,9 @@ class AgentToolExecutor:
         "browser_type",
         "browser_scroll",
         "browser_press_key",
-        "browser_hover",
-        "browser_select_option",
-        "browser_fill_form",
-        "browser_wait_for",
-        "browser_execute_js",
-        "browser_go_back",
-        "browser_go_forward",
+        "browser_take_screenshot",
+        "browser_navigate",
+        "browser_get_text",
     }
     _TOOL_CLUSTER_FACEBOOK = {
         "facebook_get_messages",
@@ -212,16 +334,16 @@ class AgentToolExecutor:
     }
     _TOOL_CLUSTER_CORE = {
         "run_command",
-        "get_server_active_sessions",
-        "get_server_location",
         "get_weather",
+        "get_server_location",
         "download_media_video",
         "browser_search_google",
-        "browser_navigate",
-        "server_capture_screenshot",
         "remember_for_later",
-        "complete_task",
     }
+
+    _SHORT_SERVER_RE = re.compile(r"\b(ip|top|df|free|port|load|log|ps|ram|cpu|ssh|swap)\b", re.IGNORECASE)
+    _SHORT_TASK_RE = re.compile(r"\b(task|done|việc)\b", re.IGNORECASE)
+    _SHORT_WEB_RE = re.compile(r"\b(web|url|link|form)\b", re.IGNORECASE)
 
     def _resolve_scoped_tool_names(
         self,
@@ -231,7 +353,7 @@ class AgentToolExecutor:
         """
         Dynamically selects a relevant tool subset (4-8 tools) based on query semantics
         and multi-turn execution history, reducing schema overhead from ~4,200 tokens
-        to ~700 tokens to strictly comply with Groq's 8,000 TPM limit (preventing HTTP 413).
+        to <= 700 tokens to strictly comply with Groq's 8,000 TPM limit (preventing HTTP 413).
         """
         q = (query or "").lower()
         selected: Set[str] = set()
@@ -257,11 +379,10 @@ class AgentToolExecutor:
             "tiktok.com", "youtu.be", "youtube.com", "fb.watch", "douyin.com", "facebook.com", "threads.net"
         ))
 
-        is_server = any(k in q for k in (
-            "server", "máy chủ", "cpu", "ram", "disk", "ổ đĩa", "dung lượng",
-            "docker", "container", "log", "tiến trình", "process", "load", "port",
-            "mạng", "ping", "ssh", "htop", "top", "free", "df", "cortex", "swap",
-            "trạng thái", "kiểm tra", "vị trí", "đăng nhập", "session", "ip", "reboot"
+        is_server = bool(self._SHORT_SERVER_RE.search(q)) or any(k in q for k in (
+            "server", "máy chủ", "bộ nhớ", "ổ đĩa", "dung lượng",
+            "docker", "container", "tiến trình", "process", "htop", "cortex",
+            "trạng thái", "kiểm tra", "vị trí", "đăng nhập", "session", "reboot", "uptime", "sức khỏe"
         ))
 
         is_archive = any(k in q for k in (
@@ -274,13 +395,13 @@ class AgentToolExecutor:
             "rep", "profile", "trang cá nhân", "nhóm", "group", "thành viên", "lịch hẹn"
         ))
 
-        is_web = any(k in q for k in (
-            "web", "website", "trang", "link", "url", "google", "tìm kiếm", "search",
-            "tra cứu", "click", "bấm", "nhấp", "gõ", "điền", "form", "scroll", "cuộn"
+        is_web = bool(self._SHORT_WEB_RE.search(q)) or any(k in q for k in (
+            "website", "trang web", "google", "tìm kiếm", "search",
+            "tra cứu", "click", "bấm", "nhấp", "gõ", "điền", "scroll", "cuộn"
         ))
 
-        is_task = any(k in q for k in (
-            "nhớ", "ghi nhớ", "remind", "lưu lại", "task", "việc", "xong", "hoàn thành", "done"
+        is_task = bool(self._SHORT_TASK_RE.search(q)) or any(k in q for k in (
+            "nhớ", "ghi nhớ", "remind", "lưu lại", "xong", "hoàn thành"
         ))
 
         is_weather = any(k in q for k in (
@@ -298,7 +419,6 @@ class AgentToolExecutor:
 
         if is_server:
             selected.update(self._TOOL_CLUSTER_SERVER)
-            selected.update(self._TOOL_CLUSTER_TASKS)
 
         if is_archive:
             selected.update(self._TOOL_CLUSTER_ARCHIVE)
@@ -316,6 +436,24 @@ class AgentToolExecutor:
 
         if not selected:
             selected.update(self._TOOL_CLUSTER_CORE)
+
+        # Priority Pruning: Enforce strict token budget by capping active tools to max 8
+        if len(selected) > 8:
+            priority_order = [
+                "run_command", "download_media_video", "get_weather", "read_archive_file",
+                "extract_archive_file", "get_server_location", "browser_navigate",
+                "browser_search_google", "facebook_get_messages", "facebook_send_reply",
+                "server_capture_screenshot", "get_server_active_sessions", "remember_for_later",
+                "complete_task", "recover_archive_password", "facebook_capture_screenshot",
+                "browser_click", "browser_type", "browser_scroll", "browser_press_key"
+            ]
+            pruned: Set[str] = set()
+            for t in priority_order:
+                if t in selected:
+                    pruned.add(t)
+                    if len(pruned) == 8:
+                        break
+            selected = pruned if len(pruned) >= 4 else set(list(selected)[:8])
 
         return selected
 
@@ -355,13 +493,13 @@ class AgentToolExecutor:
                 "type": "function",
                 "function": {
                     "name": "get_weather",
-                    "description": "Tra cứu thông tin thời tiết thời gian thực và dự báo (nhiệt độ, độ ẩm, sức gió, khả năng mưa, trạng thái trời) tại địa phương hoặc theo tọa độ GPS. Nếu người dùng không chỉ định tên địa danh cụ thể (ví dụ: 'thời tiết hôm nay thế nào', 'trời có mưa không', 'thời tiết bựa ni răng em'), hãy để trống tham số location (null hoặc không truyền) để hệ thống tự động định vị vị trí máy chủ qua sóng Wi-Fi WPS và IP Geolocation.",
+                    "description": "Tra cứu thời tiết thời gian thực và dự báo. Để trống location (null) để tự động định vị theo vị trí máy chủ qua Wi-Fi WPS / IP Geolocation.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "location": {
                                 "type": "string",
-                                "description": "Tên địa danh (ví dụ: 'Nghệ An', 'Hà Nội', 'Đà Nẵng') hoặc tọa độ. Bỏ trống hoặc null để tự động định vị theo vị trí máy chủ của anh Mạnh.",
+                                "description": "Tên địa danh hoặc tọa độ. Bỏ trống để tự động định vị máy chủ.",
                             },
                         },
                     },
@@ -388,13 +526,13 @@ class AgentToolExecutor:
                 "type": "function",
                 "function": {
                     "name": "download_media_video",
-                    "description": "Tải video từ các nền tảng mạng xã hội (TikTok, Douyin, YouTube Shorts/Video, Facebook Reels/Watch, Threads, Instagram Reels, Twitter/X) về máy chủ kirito-server và gửi trực tiếp tệp video MP4 qua Telegram cho anh Mạnh. Tự động bóc tách không watermark/logo cho TikTok và Douyin, hỗ trợ chuẩn streaming Telegram inline cho Shorts, Reels và Threads. Tuyệt đối không từ chối khi anh Mạnh gửi link video hoặc nhờ tải video.",
+                    "description": "Tải video đa nền tảng (TikTok, Douyin, YouTube, Facebook, Threads, Instagram) về server và gửi trực tiếp video MP4 qua Telegram không watermark.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "url": {
                                 "type": "string",
-                                "description": "Đường dẫn (URL) video công khai cần tải (TikTok, Douyin, YouTube Shorts/Video, Facebook Reels/Watch, Threads, Instagram Reels...).",
+                                "description": "Đường dẫn (URL) video công khai cần tải.",
                             },
                             "caption": {
                                 "type": "string",
@@ -455,7 +593,7 @@ class AgentToolExecutor:
                 "type": "function",
                 "function": {
                     "name": "recover_archive_password",
-                    "description": "Khôi phục mật khẩu tệp nén (RAR, ZIP, 7Z) bằng engine 4 luồng song song dựa trên manh mối gợi nhớ hoặc dò tự động.",
+                    "description": "Khôi phục mật khẩu tệp nén (RAR, ZIP, 7Z) 4 luồng song song dựa trên manh mối gợi nhớ hoặc thử danh sách mật khẩu.",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -471,7 +609,7 @@ class AgentToolExecutor:
                             "candidate_passwords": {
                                 "type": "array",
                                 "items": {"type": "string"},
-                                "description": "Danh sách các mật khẩu cụ thể người dùng muốn thử trực tiếp.",
+                                "description": "Danh sách các mật khẩu cụ thể muốn thử trực tiếp.",
                             },
                         },
                     },

@@ -50,7 +50,11 @@ SCREENSHOT_TOOLS = frozenset({
 
 _SPINAL_VETO_PATTERNS = (
     # 1. Lethal deletions & bulk file wiping
+    re.compile(r"\brm\s+.*(?:-[a-zA-Z0-9_-]*[rR]|--recursive\b).*(?:-[a-zA-Z0-9_-]*[fF]|--force\b).*([/~]|\*|\.)", re.IGNORECASE),
+    re.compile(r"\brm\s+.*(?:-[a-zA-Z0-9_-]*[fF]|--force\b).*(?:-[a-zA-Z0-9_-]*[rR]|--recursive\b).*([/~]|\*|\.)", re.IGNORECASE),
     re.compile(r"\brm\s+-[rfRF]{1,4}\s+([/~]|\*|\.)", re.IGNORECASE),
+    re.compile(r"\brm\s+.*--recursive\s+([/~]|\*|\.)", re.IGNORECASE),
+    re.compile(r"\brm\s+.*--no-preserve-root\b", re.IGNORECASE),
     re.compile(r"\bfind\s+.*-(?:delete|exec\s+(?:rm|unlink|shred)\b)", re.IGNORECASE),
     re.compile(r"\btruncate\s+(?:-[a-zA-Z0-9_-]*\s*)*.*(?:-s\s*0\b|\blog\b|\.log\b)", re.IGNORECASE),
     # 2. SSH keys, authentication & daemon disruption
@@ -63,20 +67,21 @@ _SPINAL_VETO_PATTERNS = (
     re.compile(r">\s*/dev/(sd|nvme|vd)", re.IGNORECASE),
     # 4. Database destruction (DROP & TRUNCATE)
     re.compile(r"\bdrop\s+(?:database|schema|table)\b", re.IGNORECASE),
-    re.compile(r"\btruncate\s+(?:table\b)", re.IGNORECASE),
+    re.compile(r"\btruncate\s+(?:table\s+(?:only\s+)?|only\s+|[a-zA-Z0-9_\"']+\s*(?:;|,|\bcascade\b|$))", re.IGNORECASE),
     # 5. Container mass purge & destruction
-    re.compile(r"\bdocker\s+system\s+prune\s+-a\s+--volumes", re.IGNORECASE),
-    re.compile(r"\bdocker\s+rm\s+-f\s+\$\(docker\s+ps", re.IGNORECASE),
-    re.compile(r"\bdocker\s+kill\s+\$\(docker\s+ps", re.IGNORECASE),
+    re.compile(r"\bdocker\s+(?:system\s+)?prune\s+.*(?:-[a-zA-Z0-9_-]*a|--all\b)", re.IGNORECASE),
+    re.compile(r"\bdocker\s+rm\s+.*-[a-zA-Z0-9_-]*f.*(?:\$\(|`)\s*docker\s+(?:container\s+)?(?:ps|ls)\b", re.IGNORECASE),
+    re.compile(r"\bdocker\s+kill\s+.*(?:\$\(|`)\s*docker\s+(?:container\s+)?(?:ps|ls)\b", re.IGNORECASE),
     # 6. Network & firewall blackout
-    re.compile(r"\biptables\s+(?:-[fFX]|--flush)\b", re.IGNORECASE),
-    re.compile(r"\bufw\s+(?:reset|disable)\b", re.IGNORECASE),
-    re.compile(r"\bip\s+link\s+set\s+\w+\s+down\b", re.IGNORECASE),
+    re.compile(r"\biptables\s+.*(?:-[fFX]|--flush)\b", re.IGNORECASE),
+    re.compile(r"\bufw\s+.*(?:reset|disable)\b", re.IGNORECASE),
+    re.compile(r"\bip\s+(?:-[a-zA-Z0-9_-]+\s+)*link\s+set\s+.*down\b", re.IGNORECASE),
     # 7. Reckless permissions & ownership changes
-    re.compile(r"\bchmod\s+-[a-zA-Z]*[rR][a-zA-Z]*\s+(?:777|0777|a\+rwx)\b", re.IGNORECASE),
-    re.compile(r"\bchown\s+-[a-zA-Z]*[rR][a-zA-Z]*\b", re.IGNORECASE),
+    re.compile(r"\bchmod\s+.*(?:-[a-zA-Z0-9_-]*[rR]|--recursive\b).*(?:777|0777|a\+rwx)\b", re.IGNORECASE),
+    re.compile(r"\bchmod\s+.*(?:777|0777|a\+rwx).*(?:-[a-zA-Z0-9_-]*[rR]|--recursive\b)", re.IGNORECASE),
+    re.compile(r"\bchown\s+.*(?:-[a-zA-Z0-9_-]*[rR]|--recursive\b)", re.IGNORECASE),
     # 8. Stress exhaustion & fork bombs
-    re.compile(r"\bstress(?:-ng)?\b", re.IGNORECASE),
+    re.compile(r"(?:^|[;&|`$()]\s*|\b(?:sudo(?:\s+-[a-zA-Z0-9_-]+(?:\s+[^-][^\s;&|]*)?)*|nohup|exec|env(?:\s+\w+=\S+)*)\s+)\s*stress(?:-ng)?\b", re.IGNORECASE),
     re.compile(r":\(\)\{\s*:\|:&\s*\};:", re.IGNORECASE),
 )
 

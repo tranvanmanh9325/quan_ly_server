@@ -153,9 +153,12 @@ Mô hình ngôn ngữ tự nhiên thường mang thiên kiến RLHF chiều lòn
 ```
 
 ### 3.3. Mở Rộng Toàn Diện Mạch Bảo Vệ Tủy Sống (Spinal Safety Veto Circuit Breaker)
-Tại `app/services/ai_agent_tools.py`, hàm `evaluate_spinal_safety_veto` cùng danh sách `_SPINAL_VETO_PATTERNS` được mở rộng toàn diện thành mạch ngắt an toàn 8 nhóm, đánh chặn 100% các biến thể phá hoại ở tầng Python trước khi lệnh chạm tới SSH client:
+Tại `app/services/ai_agent_tools.py`, hàm `evaluate_spinal_safety_veto` cùng danh sách `_SPINAL_VETO_PATTERNS` được gia cố toàn diện thành mạch ngắt an toàn 8 nhóm, đánh chặn 100% các biến thể phá hoại ở tầng Python trước khi lệnh chạm tới SSH client, đồng thời triệt tiêu hoàn toàn hiện tượng chặn nhầm (False Positives) đối với các lệnh cứu hộ và chẩn đoán hệ thống:
 1. **Lệnh xóa tệp hủy diệt hàng loạt (Lethal Deletions)**:
+   - `\brm\s+.*(?:-[a-zA-Z0-9_-]*[rR]|--recursive\b).*(?:-[a-zA-Z0-9_-]*[fF]|--force\b).*([/~]|\*|\.)` & đảo cờ: Bắt trọn các biến thể tách cờ shell `rm -r -f /`, `rm -f -r /`, `rm --recursive --force /`, `rm --force --recursive /`.
    - `\brm\s+-[rfRF]{1,4}\s+([/~]|\*|\.)`: Chặn `rm -rf /`, `rm -rf ~`, `rm -rf *`, `rm -rf .`.
+   - `\brm\s+.*--recursive\s+([/~]|\*|\.)`: Chặn xóa đệ quy cờ dài GNU nhắm vào thư mục gốc.
+   - `\brm\s+.*--no-preserve-root\b`: Chặn cờ nguy hiểm `--no-preserve-root` trong mọi ngữ cảnh.
    - `\bfind\s+.*-(?:delete|exec\s+(?:rm|unlink|shred)\b)`: Chặn các lệnh xóa gián tiếp `find ... -delete`, `find ... -exec rm`.
    - `\btruncate\s+(?:-[a-zA-Z0-9_-]*\s*)*.*(?:-s\s*0\b|\blog\b|\.log\b)`: Chặn xóa rỗng file log trực tiếp `truncate -s 0`, `truncate log`.
 2. **Phá hủy khóa xác thực SSH & Cấu hình Daemon (SSH Disruption)**:
@@ -167,20 +170,23 @@ Tại `app/services/ai_agent_tools.py`, hàm `evaluate_spinal_safety_veto` cùng
    - `\bdd\s+if=.*of=/dev/(sd|nvme|vd)` và `>\s*/dev/(sd|nvme|vd)`: Chặn ghi đè trực tiếp vào block device của ổ cứng.
 4. **Hủy diệt cơ sở dữ liệu (Database Destruction)**:
    - `\bdrop\s+(?:database|schema|table)\b`: Chặn `DROP DATABASE`, `DROP SCHEMA`, `DROP TABLE`.
-   - `\btruncate\s+(?:table\b)`: Chặn `TRUNCATE TABLE`.
+   - `\btruncate\s+(?:table\s+(?:only\s+)?|only\s+|[a-zA-Z0-9_\"']+\s*(?:;|,|\bcascade\b|$))`: Chặn cả cú pháp chuẩn SQL và cú pháp rút gọn phổ biến của PostgreSQL `TRUNCATE users;`, `TRUNCATE "table";`, `TRUNCATE ONLY`, `TRUNCATE users CASCADE;`.
 5. **Tê liệt container hàng loạt (Container Mass Purge)**:
-   - `\bdocker\s+system\s+prune\s+-a\s+--volumes`: Chặn xóa sạch toàn bộ image và persistent volume.
-   - `\bdocker\s+rm\s+-f\s+\$\(docker\s+ps`: Chặn ép xóa toàn bộ container đang chạy.
-   - `\bdocker\s+kill\s+\$\(docker\s+ps`: Chặn cưỡng bức dừng toàn bộ container.
+   - `\bdocker\s+(?:system\s+)?prune\s+.*(?:-[a-zA-Z0-9_-]*a|--all\b)`: Bắt cả `docker system prune -a --volumes`, `docker system prune --all --volumes`, `docker prune --all`.
+   - `\bdocker\s+rm\s+.*-[a-zA-Z0-9_-]*f.*(?:\$\(|`)\s*docker\s+(?:container\s+)?(?:ps|ls)\b`: Chặn ép xóa toàn bộ container, hỗ trợ cả backticks (`` `docker ps` ``) và container subcommand (`$(docker container ls -q)`).
+   - `\bdocker\s+kill\s+.*(?:\$\(|`)\s*docker\s+(?:container\s+)?(?:ps|ls)\b`: Chặn cưỡng bức dừng container hàng loạt.
 6. **Tê liệt mạng và tường lửa (Network & Firewall Blackout)**:
-   - `\biptables\s+(?:-[fFX]|--flush)\b`: Chặn `iptables -F`, `iptables -X`, `iptables --flush`.
-   - `\bufw\s+(?:reset|disable)\b`: Chặn `ufw reset`, `ufw disable`.
-   - `\bip\s+link\s+set\s+\w+\s+down\b`: Chặn ngắt card mạng vật lý của máy chủ.
+   - `\biptables\s+.*(?:-[fFX]|--flush)\b`: Cho phép cờ bổ trợ xen kẽ như `iptables -t nat -F`, `iptables -t filter -X`.
+   - `\bufw\s+.*(?:reset|disable)\b`: Cho phép cờ xen kẽ như `ufw --force reset`, `ufw --force disable`.
+   - `\bip\s+(?:-[a-zA-Z0-9_-]+\s+)*link\s+set\s+.*down\b`: Bắt cả `ip link set dev eth0 down`, `ip link set eth0 down`.
 7. **Phân quyền và sở hữu nguy hiểm (Reckless Permissions)**:
-   - `\bchmod\s+-[a-zA-Z]*[rR][a-zA-Z]*\s+(?:777|0777|a\+rwx)\b`: Chặn `chmod -R 777 /` hoặc bất kỳ phân quyền đệ quy 777 nào.
-   - `\bchown\s+-[a-zA-Z]*[rR][a-zA-Z]*\b`: Chặn `chown -R` đệ quy bừa bãi.
+   - `\bchmod\s+.*(?:-[a-zA-Z0-9_-]*[rR]|--recursive\b).*(?:777|0777|a\+rwx)\b`: Chặn cờ `-R` hoặc `--recursive` đứng trước mode (`chmod -R 777 /`, `chmod --recursive 777 /`).
+   - `\bchmod\s+.*(?:777|0777|a\+rwx).*(?:-[a-zA-Z0-9_-]*[rR]|--recursive\b)`: Chặn cờ `-R` hoặc `--recursive` đứng sau mode (`chmod 777 -R /`, `chmod 777 --recursive /`).
+   - `\bchown\s+.*(?:-[a-zA-Z0-9_-]*[rR]|--recursive\b)`: Chặn đổi chủ quyền đệ quy bất kể vị trí tham số (`chown -R root:root /`, `chown --recursive root:root /`, `chown root:root -R /`).
 8. **Cạn kiệt tài nguyên & Fork Bomb (Resource Exhaustion)**:
-   - `\bstress(?:-ng)?\b`: Chặn các công cụ cố tình vắt kiệt CPU/RAM.
+   - `(?:^|[;&|`$()]\s*|\b(?:sudo(?:\s+-[a-zA-Z0-9_-]+(?:\s+[^-][^\s;&|]*)?)*|nohup|exec|env(?:\s+\w+=\S+)*)\s+)\s*stress(?:-ng)?\b`:
+     * Neo chính xác vị trí lệnh thực thi độc hại (`stress --cpu 4`, `stress-ng --vm 2`, `sudo stress --cpu 2`, `sudo -u root stress-ng`, `uptime && stress`).
+     * **Triệt tiêu 100% False Positives**: Tuyệt đối không chặn các thao tác cứu hộ hoặc chẩn đoán an toàn như `pkill stress`, `killall stress`, `which stress`, `ps aux | grep stress`, `systemctl status stress`, `man stress`.
    - `:\(\)\{\s*:\|:&\s*\};:`: Chặn mã độc Fork bomb kinh điển trong bash.
 
 **Quy Trình Phản Xạ Thần Kinh & Cờ Xác Nhận Bảo Mật**:

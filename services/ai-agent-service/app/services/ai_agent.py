@@ -69,6 +69,45 @@ _CRITICAL_KEYWORDS = frozenset({
     "restart tất cả", "iptables -f", "disable firewall",
 })
 
+# Robust regex-based hazard patterns for Tier 1 Kahneman Hazard Gate
+_CRITICAL_HAZARD_PATTERNS = (
+    # Direct lethal commands (rm -rf, rm -fr, etc.)
+    re.compile(r"\brm\s+-[a-zA-Z]*r[a-zA-Z]*f\b", re.IGNORECASE),
+    re.compile(r"\brm\s+-(?:r\s+-f|f\s+-r)\b", re.IGNORECASE),
+    # drop database / drop db / drop table / truncate table
+    re.compile(r"\bdrop\s+(?:database|db|table|schema)\b", re.IGNORECASE),
+    re.compile(r"\btruncate\s+(?:table|database|db)\b", re.IGNORECASE),
+    # format disk, format c:, mkfs
+    re.compile(r"\bformat\s+(?:disk|drive|[c-z]:|\/dev\/)", re.IGNORECASE),
+    re.compile(r"\bmkfs(?:\.[a-z0-9]+)?\b", re.IGNORECASE),
+    # kill -9
+    re.compile(r"\bkill\s+-9\b", re.IGNORECASE),
+    # dd if=... of=/dev/...
+    re.compile(r"\bdd\s+if=.*of=\/dev\/", re.IGNORECASE),
+    # ufw disable, ufw reset, iptables -f / --flush
+    re.compile(r"\b(?:ufw\s+(?:disable|reset)|iptables\s+(?:-[fF]|--flush))\b", re.IGNORECASE),
+    # shutdown, poweroff, halt
+    re.compile(r"\b(?:shutdown|poweroff|halt|init\s+0)\b", re.IGNORECASE),
+    # wipe / purge disk / server / root
+    re.compile(r"\b(?:wipe|purge)\s+(?:disk|server|system|os|root|database|db)\b", re.IGNORECASE),
+    # xóa toàn bộ / sạch dữ liệu / thư mục gốc / máy chủ
+    re.compile(r"\bxóa\s+(?:toàn\s+bộ|hết|sạch)\s+(?:dữ\s+liệu|data|server|máy\s+chủ|hệ\s+thống|ổ\s+cứng|thư\s+mục\s+gốc|database|db)\b", re.IGNORECASE),
+    re.compile(r"\bxóa\s+thư\s+mục\s+gốc\b", re.IGNORECASE),
+)
+
+# Educational, conceptual, dialectical, or programming inquiry patterns
+# Queries matching these should NOT trigger critical confirmation lock; they route to System 2 (complex)
+_EDUCATIONAL_OR_CONCEPTUAL_PATTERN = re.compile(
+    r'(?:'
+    r'^\s*(?:giải\s+thích|tìm\s+hiểu|cho\s+anh\s+biết|khái\s+niệm|định\s+nghĩa|ý\s+nghĩa|'
+    r'phân\s+biệt|so\s+sánh|hướng\s+dẫn\s+cách|làm\s+thế\s+nào\s+để|nguyên\s+lý|bài\s+hát)\b|'
+    r'\b(?:có\s+ý\s+nghĩa\s+kỹ\s+thuật\s+là\s+gì|khác\s+gì\s+so\s+với|khác\s+nhau\s+như\s+thế\s+nào|'
+    r'trong\s+python|trong\s+sql|trong\s+javascript|trong\s+chuỗi|khoảng\s+trắng\s+thừa|'
+    r'em\s+thấy\s+sao|thấy\s+thế\s+nào|có\s+nên\s+không|ra\s+lệnh\s+tắt\s+ufw|sai\s+bét)\b'
+    r')',
+    re.IGNORECASE | re.UNICODE
+)
+
 # Fast-path patterns for truly SIMPLE factual queries (≤ 1 tool, ground truth)
 _SIMPLE_PATTERN = re.compile(
     r'^(chào|hello|hi|alo|bắt đầu|server|máy chủ|kirito|đặt ở|vị trí|ip|địa chỉ|tên em|em là|'
@@ -81,10 +120,11 @@ _SIMPLE_PATTERN = re.compile(
 # ── Kahneman Tier 2: Cognitive Traps & Technical Fallacies ───────────────────
 # Pre-compiled patterns detecting technical misconceptions or dangerous propositions
 _FALLACY_AND_TRAP_PATTERNS = (
-    # Swap myth: Swap 100GB, swap thay RAM, swap như RAM, tạo swap lớn
-    re.compile(r"\bswap\s*(?:100|64|32|16|[2-9]\d{2,})\s*(?:gb|g)?\b", re.IGNORECASE),
-    re.compile(r"\b(?:tạo|bật|thêm|dùng)\s+(?:file\s+)?swap\b", re.IGNORECASE),
-    re.compile(r"\bswap\s+(?:thay|như|làm)\s+ram\b", re.IGNORECASE),
+    # Swap myth: Swap 100GB, swapfile 100G, swap thay RAM, swap như RAM, tạo swap lớn
+    re.compile(r"\bswap(?:file)?\s*(?:100|64|32|16|[1-9]\d*)\s*(?:gb|g)?\b", re.IGNORECASE),
+    re.compile(r"\b(?:tạo|bật|thêm|dùng|sử\s+dụng|cấu\s+hình)\s+(?:file\s+)?swap(?:file)?\b", re.IGNORECASE),
+    re.compile(r"\bswap(?:file)?\s+(?:thay|như|làm)\s+ram\b", re.IGNORECASE),
+    re.compile(r"\b(?:dùng|sử\s+dụng)\s+(?:file\s+)?swap(?:file)?\s+(?:thay|như)\s+(?:cho\s+)?ram\b", re.IGNORECASE),
     # Resource strain / mismatch on RAM 3.2GB / CPU 2 Cores
     re.compile(r"\b(?:k8s|kubernetes|docker\s+swarm)\b", re.IGNORECASE),
     re.compile(r"\b(?:llm|model)\s+(?:70b|405b|heavy)\b", re.IGNORECASE),
@@ -231,46 +271,51 @@ class AiAgentService:
     def _strip_subconscious_stream(text: str) -> Tuple[str, Optional[str]]:
         """
         Strips internal metacognitive/subconscious reasoning tags from assistant response.
-        Handles both <subconscious_stream> and <metacognitive_audit> tags, including unclosed tags.
+        Handles both <subconscious_stream> and <metacognitive_audit> tags, including unclosed,
+        dangling closing tags, tag attributes, and whitespace variations.
         Returns: (cleaned_text, inner_thought)
         """
         if not text:
             return "", None
 
-        inner_thought: Optional[str] = None
-        # Match closed tag first
-        stream_match = re.search(
-            r"<(?:subconscious_stream|metacognitive_audit)>(.*?)</(?:subconscious_stream|metacognitive_audit)>",
-            text,
+        inner_thoughts: List[str] = []
+
+        # 1. Strip all closed tags (supporting attributes and flexible whitespace)
+        closed_pattern = re.compile(
+            r"<\s*(?:subconscious_stream|metacognitive_audit)\b[^>]*>(.*?)</\s*(?:subconscious_stream|metacognitive_audit)\b[^>]*>",
             re.DOTALL | re.IGNORECASE,
         )
-        if stream_match:
-            inner_thought = stream_match.group(1).strip()
-            cleaned = re.sub(
-                r"<(?:subconscious_stream|metacognitive_audit)>.*?</(?:subconscious_stream|metacognitive_audit)>",
-                "",
-                text,
-                flags=re.DOTALL | re.IGNORECASE,
-            ).strip()
-        else:
-            # Handle unclosed tag (e.g. truncated by token budget)
-            unclosed_match = re.search(
-                r"<(?:subconscious_stream|metacognitive_audit)>(.*)",
-                text,
-                re.DOTALL | re.IGNORECASE,
-            )
-            if unclosed_match:
-                inner_thought = unclosed_match.group(1).strip()
-                cleaned = re.sub(
-                    r"<(?:subconscious_stream|metacognitive_audit)>.*",
-                    "",
-                    text,
-                    flags=re.DOTALL | re.IGNORECASE,
-                ).strip()
-            else:
-                cleaned = text.strip()
+        for m in closed_pattern.finditer(text):
+            content = m.group(1).strip()
+            if content:
+                inner_thoughts.append(content)
 
-        return cleaned, inner_thought
+        cleaned = closed_pattern.sub("", text)
+
+        # 2. Strip any remaining unclosed tags (e.g. truncated by token limit)
+        unclosed_pattern = re.compile(
+            r"<\s*(?:subconscious_stream|metacognitive_audit)\b[^>]*>(.*)",
+            re.DOTALL | re.IGNORECASE,
+        )
+        unclosed_match = unclosed_pattern.search(cleaned)
+        if unclosed_match:
+            content = unclosed_match.group(1).strip()
+            if content:
+                inner_thoughts.append(content)
+            cleaned = unclosed_pattern.sub("", cleaned)
+
+        # 3. Clean any lingering dangling closing tags
+        dangling_closing_pattern = re.compile(
+            r"</\s*(?:subconscious_stream|metacognitive_audit)\b[^>]*>",
+            re.IGNORECASE,
+        )
+        cleaned = dangling_closing_pattern.sub("", cleaned)
+
+        # Combine inner thoughts if present
+        inner = "\n\n".join(inner_thoughts) if inner_thoughts else (
+            "" if ("<subconscious_stream" in text.lower() or "<metacognitive_audit" in text.lower()) else None
+        )
+        return cleaned.strip(), inner
 
     def _classify_complexity(self, msg: str) -> str:
         """
@@ -286,15 +331,20 @@ class AiAgentService:
         cmd_lower = cmd_text.lower()
         word_count = len(cmd_text.split())
 
-        # ── TIER 1: Hazard & Destructive Pre-Filter ──────────────────────────
-        # Evaluated ONLY on user's direct command/caption, NEVER on raw attachment content
-        if any(k in cmd_lower for k in _CRITICAL_KEYWORDS):
-            return "critical"
-
         # Attachments and media are always processed with System 2 (complex) depth
         if (msg.startswith("[📄 TỆP ĐÍNH KÈM:") or msg.startswith("[📄 File:") or 
             msg.startswith("[📸") or msg.startswith("[🎬") or msg.startswith("[🎤")):
             return "complex"
+
+        # Check educational / conceptual / dialectical context FIRST to prevent false alarm lock
+        is_educational = bool(_EDUCATIONAL_OR_CONCEPTUAL_PATTERN.search(cmd_lower))
+
+        # ── TIER 1: Hazard & Destructive Pre-Filter ──────────────────────────
+        # Evaluated ONLY on user's direct command/caption, NEVER on raw attachment content
+        # Lethal commands trigger 'critical' confirmation lock unless in educational context
+        if not is_educational:
+            if any(p.search(cmd_lower) for p in _CRITICAL_HAZARD_PATTERNS):
+                return "critical"
 
         # ── TIER 2: Cognitive Semantic Gating ────────────────────────────────
         # A. Epistemic correction or dialectal doubt cues
@@ -317,8 +367,8 @@ class AiAgentService:
             return "complex"
 
         # E. System 1 (Fast-Path): strictly short factual query matching ground truth patterns
-        # AND contains zero fallacy, trap, or dialectal doubt
-        if word_count <= 15 and _SIMPLE_PATTERN.search(cmd_lower):
+        # AND contains zero fallacy, trap, dialectal doubt, or educational inquiry
+        if not is_educational and word_count <= 15 and _SIMPLE_PATTERN.search(cmd_lower):
             return "simple"
 
         # Default to complex when uncertain (Dunning-Kruger inverse: err on the side of depth)

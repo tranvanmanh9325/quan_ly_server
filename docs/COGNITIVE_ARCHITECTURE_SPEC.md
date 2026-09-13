@@ -66,15 +66,16 @@ Nhận thức của Agent được điều phối qua hàm `_classify_complexity
                                                 [Escalate to System 2]
 ```
 
-1. **Tier 1 — Hazard / Destructive Filter**:
-   - Rà soát các lệnh và từ khóa có tính hủy diệt (`rm -rf`, `drop database`, `mkfs`, `format`, `kill -9`, `shutdown`, `iptables -f`...).
-   - Nếu phát hiện: Ngắt sớm (early-return) trạng thái `"critical"`, kích hoạt cảnh báo an toàn bắt buộc người dùng nhập "XÁC NHẬN" hoặc "HỦY".
-2. **Tier 2 — Cognitive Semantic Gating**:
-   - Nhận diện các ngụy biện kỹ thuật (Swap myth, RAM ảo tưởng, xóa file log trực tiếp, chmod 777 bừa bãi, tắt tường lửa UFW, bẫy vật lý trong chân không).
+1. **Tier 1 — Hazard / Destructive Filter & Educational Exemption**:
+   - **Educational / Conceptual Exemption Check**: Bắt đầu bằng việc kiểm tra ngữ cảnh học thuật/giải thích/khái niệm (`_EDUCATIONAL_OR_CONCEPTUAL_PATTERN`: "giải thích", "khái niệm", "là gì", "hướng dẫn cách", "làm thế nào", "tìm hiểu"). Các câu hỏi học thuật luôn được chuyển thẳng vào System 2 (`complex`) để phân tích chuyên sâu, TUYỆT ĐỐI KHÔNG bị khóa cảnh báo đỏ `critical`.
+   - **Hazard Pre-Filter**: Rà soát các lệnh và từ khóa có tính hủy diệt bằng bộ Regex chặt chẽ có ranh giới từ `\b` (`_CRITICAL_HAZARD_PATTERNS`: `rm -rf`, `drop database/table/schema`, `mkfs`, `format disk`, `kill -9`, `shutdown/halt`, `ufw disable/reset`, `iptables -f/--flush`, `dd if=`). Loại bỏ hoàn toàn bẫy false positive chuỗi con (`airdrop`, `teardrop`, `xóa khoảng trắng`).
+   - Nếu phát hiện lệnh phá hủy: Ngắt sớm (early-return) trạng thái `"critical"`, kích hoạt cảnh báo an toàn bắt buộc người dùng nhập "XÁC NHẬN" hoặc "HỦY".
+2. **Tier 2 — Cognitive Semantic Gating & Fast-Path Hardening**:
+   - Nhận diện các ngụy biện kỹ thuật (`_FALLACY_AND_TRAP_PATTERNS`: Swap myth, RAM ảo tưởng, xóa file log trực tiếp, chmod 777 bừa bãi, tắt tường lửa UFW hai chiều, bẫy vật lý trong chân không, mở 100 tab chrome hay đào coin trên RAM 3.2GB).
    - Nhận diện các câu hỏi chẩn đoán sự cố, kiến trúc phân tán, so sánh đánh đổi ("tại sao", "debug", "crash", "oom", "ưu nhược", "nên ... hay").
    - Nhận diện tín hiệu đính kèm tệp/video hoặc người dùng bắt lỗi/hoài nghi nhận thức (`is_correction`, `doubt_cue`).
    - Nếu thỏa mãn: Gán nhãn `"complex"` (kích hoạt System 2).
-   - Nếu câu ngắn ($\le 15$ từ), khớp mẫu sự kiện thuần túy (`_SIMPLE_PATTERN`), không chứa ngụy biện hay nghi vấn $\to$ Gán nhãn `"simple"` (System 1).
+   - **Siết Chặt Fast-Path (System 1 Hardening)**: Nếu câu ngắn ($\le 15$ từ), khớp mẫu sự kiện thuần túy (`_SIMPLE_PATTERN`), hệ thống bắt buộc quét qua bộ chốt chặn `_SIMPLE_DISQUALIFIER_PATTERN`. Nếu câu chứa các từ khóa lệnh/hệ thống nhạy cảm (`ufw`, `dd`, `iptables`, `rm`, `reboot`, `shutdown`, `swap`, `chrome`, `đào coin`, `mở port`, v.v.) hoặc các đề xuất hành động (`mở`, `cài`, `chạy`, `được không`, `nhé`) $\to$ cấm trả về `"simple"`, chuyển sang `"complex"`. Tránh triệt để lỗ hổng bypass tiền tố (`server ufw disable`).
 3. **Tier 3 — Dynamic Intra-Loop Escalation**:
    - Trong quá trình ReAct loop, ngay cả khi ban đầu khởi động ở System 1, nếu công cụ trả về lỗi (`is_failure=True`), ACC Conflict Monitor phát hiện mâu thuẫn tín hiệu, hoặc độ bất ngờ lớn ($RPE > 0.6$) $\to$ Hệ thống tự động chuyển bậc ngay lập tức lên System 2 (`_current_complexity = "complex"`), mở rộng quota token từ 900 lên 1400 tokens và điều phối `reasoning_effort="high"`.
 
@@ -109,10 +110,16 @@ Trước khi đưa ra kết luận hoặc quyết định gọi công cụ can t
 </subconscious_stream>
 ```
 
-### 2.3. Cơ Chế Bóc Tách Sạch Sẽ Bảo Vệ Giới Hạn 8,000 TPM
-Thẻ `<subconscious_stream>` là dòng suy nghĩ nội tâm riêng tư (Vygotsky inner speech). Hệ thống áp dụng regex bóc tách sạch sẽ 100% thẻ này:
-1. Trước khi gửi câu trả lời ra ngoài cho người dùng trên Telegram / Messenger.
-2. **Đặc biệt**: Trước khi lưu `assistant_msg` vào `history` bộ nhớ ngắn hạn, bảo đảm các token tư duy nội tâm không bị dồn tích vào các turn kế tiếp, loại bỏ triệt để nguy cơ tràn context `HTTP 413 Payload / 8,000 TPM Exceeded` của Groq API.
+### 2.3. Cơ Chế Bóc Tách Sạch Sẽ Bảo Vệ Giới Hạn 8,000 TPM (Zero Token Leakage)
+Thẻ `<subconscious_stream>` và `<metacognitive_audit>` là dòng suy nghĩ nội tâm riêng tư (Vygotsky inner speech). Hệ thống áp dụng thuật toán bóc tách tuần tự 3 bước nghiêm ngặt:
+1. **Bước 1 (Closed Tags Extraction)**: Quét và bóc tách toàn bộ các thẻ đóng hoàn chỉnh, hỗ trợ linh hoạt thuộc tính thẻ (`confidence='0.95'`) và khoảng trắng/xuống dòng tùy biến (`\s*`).
+2. **Bước 2 (Unclosed Tags Truncation Cleanup)**: Quét và dọn sạch bất kỳ thẻ mở nào bị ngắt đột ngột giữa chừng do chạm trần token limit (`max_tokens`), ngăn chặn triệt để hiện tượng rò rỉ dòng suy nghĩ dở dang ra ngoài.
+3. **Bước 3 (Dangling Closing Tags Scrubbing)**: Dọn sạch các thẻ đóng mồ côi (`</subconscious_stream>`) do ảo giác LLM hoặc prompt prefill tạo ra.
+
+**Phạm Vi Làm Sạch Toàn Diện**:
+- Làm sạch 100% trước khi gửi phản hồi hiển thị cho người dùng qua Telegram / Messenger.
+- **Làm sạch ở cả Intermediate Tool Calls**: Tại vòng lặp ReAct, khi LLM phát sinh `tool_calls` kèm suy nghĩ nội tâm trong `assistant_msg["content"]`, chuỗi này được bóc tách sạch sẽ trước khi lưu vào `history`.
+- **Loại bỏ dồn tích context**: Với `MAX_HISTORY_MESSAGES = 10`, việc loại bỏ các khối suy nghĩ (200-400 tokens/lượt) giúp khống chế tổng dung lượng lịch sử dưới 1,500 tokens, triệt tiêu nguy cơ chạm trần `HTTP 413 / 8,000 TPM` của Groq API.
 
 ---
 

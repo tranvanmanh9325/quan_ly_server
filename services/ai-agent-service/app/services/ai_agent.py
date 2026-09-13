@@ -117,6 +117,19 @@ _SIMPLE_PATTERN = re.compile(
     re.IGNORECASE | re.UNICODE
 )
 
+# Disqualifiers for System 1 fast-path: if any sensitive system/admin keyword,
+# resource strain concept, or action proposal is detected, fast-path is strictly forbidden.
+_SIMPLE_DISQUALIFIER_PATTERN = re.compile(
+    r'\b(?:'
+    r'ufw|dd|iptables|rm|mkfs|fdisk|reboot|shutdown|swap|swapfile|'
+    r'chrome|tab\s+chrome|đào\s+coin|bitcoin|crypto|gta|chơi\s+game|'
+    r'mở|cài|chạy|đào|cắm|reset|flush|kill|'
+    r'mở\s+port|xóa|tắt|bật'
+    r')\b|'
+    r'\b(?:được\s+không|nhé|không\s+em|sao\s+em|thế\s+nào|làm\s+sao)\b',
+    re.IGNORECASE | re.UNICODE
+)
+
 # ── Kahneman Tier 2: Cognitive Traps & Technical Fallacies ───────────────────
 # Pre-compiled patterns detecting technical misconceptions or dangerous propositions
 _FALLACY_AND_TRAP_PATTERNS = (
@@ -130,12 +143,14 @@ _FALLACY_AND_TRAP_PATTERNS = (
     re.compile(r"\b(?:llm|model)\s+(?:70b|405b|heavy)\b", re.IGNORECASE),
     re.compile(r"\b(?:chạy|thêm)\s+(?:5|10|20|\d{2,})\s+container\b", re.IGNORECASE),
     re.compile(r"\b(?:ép\s+xung|overclock)\b", re.IGNORECASE),
+    re.compile(r"\b(?:chrome|tab\s+chrome|đào\s+coin|bitcoin|crypto|gta|chơi\s+game)\b", re.IGNORECASE),
     # Active log deletion myth
     re.compile(r"\b(?:rm|xóa)\s+.*(?:\.log|/var/log)\b", re.IGNORECASE),
     # Permissive permissions
     re.compile(r"\bchmod\s+(?:-[rR]\s+)?777\b", re.IGNORECASE),
-    # Disable firewall / open all ports
+    # Disable firewall / open all ports (bidirectional syntax)
     re.compile(r"\b(?:tắt|disable|dừng)\s+(?:ufw|firewall|tường\s+lửa)\b", re.IGNORECASE),
+    re.compile(r"\b(?:ufw|firewall|tường\s+lửa)\s+(?:tắt|disable|dừng|reset)\b", re.IGNORECASE),
     re.compile(r"\bmở\s+(?:toàn\s+bộ|hết|tất\s+cả)\s+port\b", re.IGNORECASE),
     # Physics & Logic traps
     re.compile(r"\b(?:chân\s+không|rơi\s+tự\s+do|1kg\s+sắt|1kg\s+bông)\b", re.IGNORECASE),
@@ -367,9 +382,10 @@ class AiAgentService:
             return "complex"
 
         # E. System 1 (Fast-Path): strictly short factual query matching ground truth patterns
-        # AND contains zero fallacy, trap, dialectal doubt, or educational inquiry
+        # AND contains zero fallacy, trap, dialectal doubt, educational inquiry, or sensitive disqualifiers
         if not is_educational and word_count <= 15 and _SIMPLE_PATTERN.search(cmd_lower):
-            return "simple"
+            if not _SIMPLE_DISQUALIFIER_PATTERN.search(cmd_lower):
+                return "simple"
 
         # Default to complex when uncertain (Dunning-Kruger inverse: err on the side of depth)
         return "complex"
@@ -1097,6 +1113,9 @@ Khi anh Mạnh đưa ra nhận định sai, ngụy biện logic, hoặc đề xu
             has_tool_calls = bool(assistant_msg.get("tool_calls"))
 
             if has_tool_calls:
+                if assistant_msg.get("content"):
+                    clean_content, _ = self._strip_subconscious_stream(assistant_msg["content"])
+                    assistant_msg["content"] = clean_content or None
                 history.append(assistant_msg)
                 tool_calls = assistant_msg.get("tool_calls", [])
 

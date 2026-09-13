@@ -171,6 +171,8 @@ CLARIFICATION_PATTERNS = [
     r"hiểu\s+(?:lạ|kỳ|chi|mô\s+tê)\s+rứa",
     r"răng\s+(?:mi\s+|em\s+|m\s+)?hiểu\s+(?:sai|lạ|rứa)",
     r"anh\s+(?:có\s+)?hỏi\s+(?:rứa|thế|vậy|cái\s+nớ|cái\s+đó)\s+mô",
+    r"tau\s+(?:có\s+)?hỏi\s+(?:cấy\s+nớ|cấy\s+ni|rứa|đó)\s+mô",
+    r"tau\s+hỏi\s+một\s+đằng\s+(?:m|mi|em)\s+trả\s+lời\s+một\s+nẻo",
     r"anh\s+(?:đâu\s+có|không)\s+hỏi\s+(?:cái|về)",
     r"ý\s+(?:anh|tao|t)\s+(?:là|muốn\s+nói)",
     r"anh\s+(?:bảo|nói|nhờ)\s+(?:là|cơ\s+mà)",
@@ -180,6 +182,10 @@ CLARIFICATION_PATTERNS = [
     r"nhầm\s+(?:rồi|to|tai\s+hại)",
     r"nỏ\s+đúng",
     r"nỏ\s+trúng",
+    r"lạc\s+đề\s+(?:rồi|quá)",
+    r"chả\s+liên\s+quan",
+    r"nói\s+chi\s+rứa\s+hè",
+    r"m\s+hiểu\s+t\s+nói\s+chi\s+(?:ko|k|không)",
 ]
 
 

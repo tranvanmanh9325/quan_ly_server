@@ -78,6 +78,31 @@ _SIMPLE_PATTERN = re.compile(
     re.IGNORECASE | re.UNICODE
 )
 
+# ── Kahneman Tier 2: Cognitive Traps & Technical Fallacies ───────────────────
+# Pre-compiled patterns detecting technical misconceptions or dangerous propositions
+_FALLACY_AND_TRAP_PATTERNS = (
+    # Swap myth: Swap 100GB, swap thay RAM, swap như RAM, tạo swap lớn
+    re.compile(r"\bswap\s*(?:100|64|32|16|[2-9]\d{2,})\s*(?:gb|g)?\b", re.IGNORECASE),
+    re.compile(r"\b(?:tạo|bật|thêm|dùng)\s+(?:file\s+)?swap\b", re.IGNORECASE),
+    re.compile(r"\bswap\s+(?:thay|như|làm)\s+ram\b", re.IGNORECASE),
+    # Resource strain / mismatch on RAM 3.2GB / CPU 2 Cores
+    re.compile(r"\b(?:k8s|kubernetes|docker\s+swarm)\b", re.IGNORECASE),
+    re.compile(r"\b(?:llm|model)\s+(?:70b|405b|heavy)\b", re.IGNORECASE),
+    re.compile(r"\b(?:chạy|thêm)\s+(?:5|10|20|\d{2,})\s+container\b", re.IGNORECASE),
+    re.compile(r"\b(?:ép\s+xung|overclock)\b", re.IGNORECASE),
+    # Active log deletion myth
+    re.compile(r"\b(?:rm|xóa)\s+.*(?:\.log|/var/log)\b", re.IGNORECASE),
+    # Permissive permissions
+    re.compile(r"\bchmod\s+(?:-[rR]\s+)?777\b", re.IGNORECASE),
+    # Disable firewall / open all ports
+    re.compile(r"\b(?:tắt|disable|dừng)\s+(?:ufw|firewall|tường\s+lửa)\b", re.IGNORECASE),
+    re.compile(r"\bmở\s+(?:toàn\s+bộ|hết|tất\s+cả)\s+port\b", re.IGNORECASE),
+    # Physics & Logic traps
+    re.compile(r"\b(?:chân\s+không|rơi\s+tự\s+do|1kg\s+sắt|1kg\s+bông)\b", re.IGNORECASE),
+    # Architectural comparison & Root cause
+    re.compile(r"\b(?:tại\s+sao|vì\s+sao|răng\s+lại|nguyên\s+nhân|so\s+sánh|ưu\s+nhược|trade-off|đánh\s+đổi)\b", re.IGNORECASE),
+)
+
 # ── Phase 9 (v4.0): Dendritic SLM Routing ────────────────────────────────────
 # Pre-LLM intent classifier: routes to specialized context/tool-sets
 # Mirrors dendritic pre-computation before neuron body (SLM routing 2024).
@@ -202,13 +227,58 @@ class AiAgentService:
             return lines[0]
         return msg
 
+    @staticmethod
+    def _strip_subconscious_stream(text: str) -> Tuple[str, Optional[str]]:
+        """
+        Strips internal metacognitive/subconscious reasoning tags from assistant response.
+        Handles both <subconscious_stream> and <metacognitive_audit> tags, including unclosed tags.
+        Returns: (cleaned_text, inner_thought)
+        """
+        if not text:
+            return "", None
+
+        inner_thought: Optional[str] = None
+        # Match closed tag first
+        stream_match = re.search(
+            r"<(?:subconscious_stream|metacognitive_audit)>(.*?)</(?:subconscious_stream|metacognitive_audit)>",
+            text,
+            re.DOTALL | re.IGNORECASE,
+        )
+        if stream_match:
+            inner_thought = stream_match.group(1).strip()
+            cleaned = re.sub(
+                r"<(?:subconscious_stream|metacognitive_audit)>.*?</(?:subconscious_stream|metacognitive_audit)>",
+                "",
+                text,
+                flags=re.DOTALL | re.IGNORECASE,
+            ).strip()
+        else:
+            # Handle unclosed tag (e.g. truncated by token budget)
+            unclosed_match = re.search(
+                r"<(?:subconscious_stream|metacognitive_audit)>(.*)",
+                text,
+                re.DOTALL | re.IGNORECASE,
+            )
+            if unclosed_match:
+                inner_thought = unclosed_match.group(1).strip()
+                cleaned = re.sub(
+                    r"<(?:subconscious_stream|metacognitive_audit)>.*",
+                    "",
+                    text,
+                    flags=re.DOTALL | re.IGNORECASE,
+                ).strip()
+            else:
+                cleaned = text.strip()
+
+        return cleaned, inner_thought
+
     def _classify_complexity(self, msg: str) -> str:
         """
-        Phase 1 — Dual Process Gating (Kahneman System 1 vs System 2).
+        Kahneman 3-Tier Dual Process Gating (System 1 Fast vs System 2 Deliberative).
 
-        The prefrontal cortex evaluates uncertainty to decide whether fast pattern
-        matching (System 1) or deliberate multi-step reasoning (System 2) is needed.
-        We make that evaluation explicit here.
+        - Tier 1: Hazard / Destructive Filter (evaluates lethal operations -> 'critical').
+        - Tier 2: Cognitive Semantic Gating (detects technical fallacies, doubt cues, architectural traps -> 'complex' vs 'simple').
+        - Tier 3: Dynamic Intra-Loop Escalation (escalates to System 2 dynamically inside ReAct loop on tool failure/conflict).
 
         Returns: 'simple' | 'complex' | 'critical'
         """
@@ -216,30 +286,38 @@ class AiAgentService:
         cmd_lower = cmd_text.lower()
         word_count = len(cmd_text.split())
 
-        # CRITICAL: dangerous/destructive commands → mandatory confirmation gate
+        # ── TIER 1: Hazard & Destructive Pre-Filter ──────────────────────────
         # Evaluated ONLY on user's direct command/caption, NEVER on raw attachment content
         if any(k in cmd_lower for k in _CRITICAL_KEYWORDS):
             return "critical"
 
-        # Document and media attachments are always processed with System 2 (complex) depth
+        # Attachments and media are always processed with System 2 (complex) depth
         if (msg.startswith("[📄 TỆP ĐÍNH KÈM:") or msg.startswith("[📄 File:") or 
-            msg.startswith("[📸") or msg.startswith("[🎬")):
+            msg.startswith("[📸") or msg.startswith("[🎬") or msg.startswith("[🎤")):
             return "complex"
 
-        # Any user correction or cognitive challenge MUST trigger System 2 Deliberative Thinking
+        # ── TIER 2: Cognitive Semantic Gating ────────────────────────────────
+        # A. Epistemic correction or dialectal doubt cues
         from app.services.memory_service import AgentMemoryService
         if AgentMemoryService.is_correction(cmd_text):
             return "complex"
+        if linguistic_normalizer.detect_clarification_intent(cmd_text):
+            return "complex"
 
-        # COMPLEX: multi-step reasoning, diagnosis, comparison, dialectics, traps
+        # B. Fallacy heuristics & cognitive traps (Swap myth, RAM 3.2GB strain, UFW, active logs...)
+        if any(p.search(cmd_lower) for p in _FALLACY_AND_TRAP_PATTERNS):
+            return "complex"
+
+        # C. General complex keywords or long queries (> 20 words)
         if word_count > 20 or any(k in cmd_lower for k in _COMPLEX_KEYWORDS):
             return "complex"
 
-        # Check for alternative questions or comparative trade-offs ("A hay B", "nên ... hay")
+        # D. Alternative questions or comparative trade-offs ("A hay B", "nên ... hay")
         if re.search(r'\b(hay là|nên .* hay|tốt hơn|khác nhau|so với|tại sao|vì sao)\b', cmd_lower):
             return "complex"
 
-        # SIMPLE: short factual query matching known ground-truth patterns
+        # E. System 1 (Fast-Path): strictly short factual query matching ground truth patterns
+        # AND contains zero fallacy, trap, or dialectal doubt
         if word_count <= 15 and _SIMPLE_PATTERN.search(cmd_lower):
             return "simple"
 
@@ -459,13 +537,18 @@ Bạn là "Tiểu Bảo Bảo" — Trợ lý AI Tự Hành cấp cao (Senior Aut
 ━━━ 2. QUY TRÌNH TƯ DUY BIỆN CHỨNG & PHẢN BIỆN (DIALECTICAL REASONING PROTOCOL) ━━━
 ⚠️ Áp dụng cho MỌI câu hỏi kỹ thuật, tư vấn kiến trúc, phân tích lỗi, hoặc khi anh Mạnh nêu ý tưởng:
 
-🧠 BƯỚC 0 (TIỀM THỨC NỘI TÂM — VSA SUBCONSCIOUS STREAM):
-  • Khi kích hoạt System 2 Deliberative Reasoning, em thực hiện chuỗi tư duy 4 bước bên trong thẻ `<subconscious_stream>`:
-    1. Deconstruction & Hardware Constraints: Bản chất vấn đề là gì? Máy chủ kirito-server (RAM 3.2GB, CPU i5 2 cores) có chịu tải được không? Có rủi ro OOM hay bottleneck I/O không?
-    2. Epistemic Audit & Anti-Sycophancy: Ý kiến/yêu cầu của anh Mạnh có chứa tiền đề sai (false premise), bẫy ngụy biện hay rủi ro bảo mật không? Có cần kích hoạt phản biện 3 nhịp không?
-    3. Dialectical Evaluation (Thesis vs Antithesis): So sánh ít nhất 2 phương án đối lập. Chi phí đánh đổi (trade-offs) là gì? Kịch bản xấu nhất (worst-case scenario) là gì?
-    4. Synthesized Decision: Lựa chọn tối ưu nhất và kế hoạch hành động dứt khoát.
-  • Thẻ `<subconscious_stream>` là dòng suy tưởng nội tâm riêng tư, sẽ được hệ thống giữ kín, không hiển thị ra tin nhắn cuối cùng.
+🧠 BƯỚC 0 (TIỀM THỨC NỘI TÂM — 5-AXIS METACOGNITIVE SUBCONSCIOUS STREAM):
+  • Khi kích hoạt System 2 Deliberative Reasoning, em BẮT BUỘC thực hiện chuỗi tư duy 5 trục bên trong thẻ `<subconscious_stream>`:
+    1. Epistemic Confidence [0.0 - 1.0]: Định lượng mức độ tự tin nhận thức (HIGH >= 0.8 | MEDIUM 0.5-0.79 | LOW < 0.5) dựa trên Ground Truth từ tool / Bằng chứng thực tế vs Điểm mù còn thiếu.
+    2. Premise & Assumption Dissection: Bóc tách mục tiêu cốt lõi và vạch trần các giả định ngầm (implicit assumptions) của người dùng; đánh giá tính hợp lệ của tiền đề đối chiếu với phần cứng thực tế (kirito-server: RAM 3.2GB, 2 cores CPU).
+    3. 4D System Risk Matrix: Lượng hóa rủi ro 4 chiều trước khi hành động:
+       - Data Loss Risk: [NONE / LOW / HIGH / CRITICAL]
+       - Hardware Strain (RAM 3.2GB / CPU 2 Cores): [SAFE / OOM_RISK / HIGH_IOWAIT]
+       - Availability Impact: [NO_DOWNTIME / SERVICE_RESTART / TOTAL_CRASH]
+       - Security Exposure: [SAFE / OPEN_PORT / PRIVILEGE_LEAK]
+    4. Antithesis Simulation (Devil's Advocate): Đặt câu hỏi phản biện: "Nếu kết luận/thao tác này sai, hậu quả tồi tệ nhất là gì?", dự liệu các kịch bản biên (edge cases).
+    5. Action Calibration: Đưa ra quyết định hành động tối ưu (EXECUTE_TOOL / CRITICAL_CHALLENGE / SAFE_ALTERNATIVE / CLARIFY) và hiệu chuẩn phong thái phản hồi.
+  • Thẻ `<subconscious_stream>` là dòng suy tưởng nội tâm riêng tư, hệ thống sẽ tự động bóc tách sạch sẽ trước khi lưu lịch sử hoặc gửi ra ngoài.
 
 🎯 BƯỚC 1 — KẾT LUẬN & CHÍNH ĐỀ (BLUF & THESIS, dòng đầu tiên):
   • Câu trả lời trực diện, dứt khoát, đi thẳng vào trọng tâm trong 1–2 câu đầu.
@@ -1042,6 +1125,16 @@ Khi anh Mạnh đưa ra nhận định sai, ngụy biện logic, hoặc đề xu
 
                     if _is_tool_failure and fn_name not in self._DIRECT_RETURN_TOOLS:
                         _consecutive_tool_failures += 1
+                        # Tier 3 Dynamic Intra-Loop Escalation: Escalate to System 2 on failure
+                        if getattr(self, "_current_complexity", "complex") != "complex":
+                            self._current_complexity = "complex"
+                            _is_simple = False
+                            _tok_synth = 1400
+                            _reasoning_effort = "high"
+                            logger.info(
+                                "[AiAgent][iter=%d] ⚡ Tier 3 Dynamic Escalation triggered by tool failure (%s) -> Upgraded to System 2",
+                                iteration, fn_name,
+                            )
                         reflexion_note = (
                             "\n\n⚠️ [TỰ PHẢN BIỆN - REFLEXION]: Thao tác này THẤT BẠI. "
                             "Em phải:\n"
@@ -1135,9 +1228,20 @@ Khi anh Mạnh đưa ra nhận định sai, ngụy biện logic, hoặc đề xu
                 # P4 (ACC Conflict Monitor): inject conflict warning before next LLM synthesis
                 # Detects when tool outputs send contradictory OK vs ERROR signals
                 _conflict_warning = self._detect_tool_conflict(_all_tool_results)
-                if _conflict_warning and force_synthesis:
-                    # Only inject when entering synthesis — avoid mid-loop noise
-                    history.append({"role": "user", "content": _conflict_warning})
+                if _conflict_warning:
+                    # Tier 3 Dynamic Intra-Loop Escalation on conflict
+                    if getattr(self, "_current_complexity", "complex") != "complex":
+                        self._current_complexity = "complex"
+                        _is_simple = False
+                        _tok_synth = 1400
+                        _reasoning_effort = "high"
+                        logger.info(
+                            "[AiAgent][iter=%d] ⚡ Tier 3 Dynamic Escalation triggered by ACC Conflict Monitor -> Upgraded to System 2",
+                            iteration,
+                        )
+                    if force_synthesis:
+                        # Only inject when entering synthesis — avoid mid-loop noise
+                        history.append({"role": "user", "content": _conflict_warning})
 
                 continue  # Feed observation back into the next LLM call
 
@@ -1220,17 +1324,28 @@ Khi anh Mạnh đưa ra nhận định sai, ngụy biện logic, hoặc đề xu
 
             if final:
                 # Strip subconscious stream (Vygotsky inner monologue) from external output
-                sub_match = re.search(r"<subconscious_stream>(.*?)</subconscious_stream>", final, re.DOTALL | re.IGNORECASE)
-                if sub_match:
-                    inner_thought = sub_match.group(1).strip()
+                final, inner_thought = self._strip_subconscious_stream(final)
+                if inner_thought:
                     logger.info("[AiAgent] 🧘 Subconscious Inner Speech: %s", inner_thought[:250])
-                    final = re.sub(r"<subconscious_stream>.*?</subconscious_stream>", "", final, flags=re.DOTALL | re.IGNORECASE).strip()
-                else:
-                    final = re.sub(r"<subconscious_stream>.*", "", final, flags=re.DOTALL | re.IGNORECASE).strip()
+                    conf_match = re.search(
+                        r"(?:confidence(?:_score)?|epistemic_confidence|điểm\s+tin\s+cậy)[\s:]*([0-1](?:\.\d+)?)",
+                        inner_thought,
+                        re.IGNORECASE,
+                    )
+                    if conf_match:
+                        try:
+                            conf_val = float(conf_match.group(1))
+                            logger.info("[AiAgent] 🎯 Epistemic Confidence: %.2f", conf_val)
+                        except ValueError:
+                            pass
 
             if final:
                 await self._flush_pending_photos(pending_photos, chat_id)
-                history.append(assistant_msg)
+                # CRITICAL: Append sanitized assistant message WITHOUT <subconscious_stream>
+                # to prevent Groq 8000 TPM limit exhaustion across subsequent turns
+                clean_assistant_msg = dict(assistant_msg)
+                clean_assistant_msg["content"] = final
+                history.append(clean_assistant_msg)
                 self._trim_history(history)
 
                 # P3 (Dopamine RPE): record episode with surprise-weighted salience
@@ -1282,8 +1397,7 @@ Khi anh Mạnh đưa ra nhận định sai, ngụy biện logic, hoặc đề xu
             fallback_msg = fallback_result["choices"][0].get("message", {})
             final_content = (fallback_msg.get("content") or "").strip()
             if final_content and not self._is_raw_tool_leak(final_content):
-                final_content = re.sub(r"<subconscious_stream>.*?</subconscious_stream>", "", final_content, flags=re.DOTALL | re.IGNORECASE).strip()
-                final_content = re.sub(r"<subconscious_stream>.*", "", final_content, flags=re.DOTALL | re.IGNORECASE).strip()
+                final_content, _ = self._strip_subconscious_stream(final_content)
                 await self._flush_pending_photos(pending_photos, chat_id)
                 history.append({"role": "assistant", "content": final_content})
                 self._trim_history(history)
@@ -1379,8 +1493,9 @@ Khi anh Mạnh đưa ra nhận định sai, ngụy biện logic, hoặc đề xu
                     "Hãy DỪNG gọi thêm tool và TỔNG HỢP câu trả lời cuối cùng trực diện cho anh Mạnh bằng tiếng Việt "
                     "theo tư duy phản biện biện chứng BLUF (Dòng 1: Kết luận dứt khoát → Dòng 2: Chi tiết dữ liệu xác thực → Dòng 3: Đánh giá phản biện & rủi ro tiềm ẩn → Dòng 4: Đề xuất tối ưu). "
                     "Tuyệt đối KHÔNG gọi thêm tool, KHÔNG xuất JSON thô, hãy trả lời dứt khoát ngay bây giờ.\n\n"
-                    # Phase 3: Metacognition / Uncertainty Calibration
-                    "🧠 [ĐÁNH GIÁ MỨC ĐỘ CHẮC CHẮN & PHẢN BIỆN — Metacognition & Anti-Sycophancy]:\n"
+                    # Phase 3: Metacognition / Uncertainty Calibration (5-Axis Stream)
+                    "🧠 [ĐÁNH GIÁ MỨC ĐỘ CHẮC CHẮN & PHẢN BIỆN — 5-Axis Metacognition & Anti-Sycophancy]:\n"
+                    "• Tự vấn 5 trục trong `<subconscious_stream>`: (1) Epistemic Confidence [0.0-1.0], (2) Bóc tách giả định ngầm, (3) Ma trận rủi ro 4 chiều (Data, RAM 3.2GB, Availability, Security), (4) Devil's Advocate phản đề, (5) Hiệu chuẩn hành động.\n"
                     "• 🟢 Nếu có đủ dữ liệu từ tool → Kết luận dứt khoát, dùng số liệu cụ thể.\n"
                     "• ⚖️ TƯ DUY PHẢN BIỆN: Nếu ý kiến/đề xuất của anh Mạnh có lỗ hổng hoặc rủi ro (RAM 3.2GB, bảo mật, nghẽn mạng) → BẮT BUỘC phản biện thẳng thắn, nêu rõ kịch bản xấu nhất và giải pháp thay thế.\n"
                     "• 🟡 Nếu dữ liệu chỉ một phần → Nói rõ: 'Em thấy X, nhưng cần xác minh thêm Y...'\n"

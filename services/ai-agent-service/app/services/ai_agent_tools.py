@@ -58,7 +58,7 @@ _SPINAL_VETO_PATTERNS = (
     re.compile(r"\bdocker\s+rm\s+-f\s+\$\(docker\s+ps", re.IGNORECASE),
     re.compile(r"\biptables\s+-F\b", re.IGNORECASE),
     re.compile(r"\bufw\s+reset\b", re.IGNORECASE),
-    re.compile(r"\bchmod\s+-R\s+777\s+/\b", re.IGNORECASE),
+    re.compile(r"\bchmod\s+-[a-zA-Z]*[rR][a-zA-Z]*\s+(?:777|0777|a\+rwx)\s*([/~*.]|\s|$)", re.IGNORECASE),
     re.compile(r":\(\)\{\s*:\|:&\s*\};:", re.IGNORECASE),
 )
 

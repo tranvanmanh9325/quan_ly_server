@@ -49,13 +49,25 @@ def _to_vn_dt(val: Any) -> Optional[datetime]:
         return val.astimezone(VN_TZ)
     return None
 
-# Keywords that signal the user is correcting the bot
+# Keywords that signal the user is correcting the bot or challenging logic
 CORRECTION_TRIGGERS = [
+    # Tiếng Việt toàn dân & khẩu ngữ
     "sai rồi", "sai roi", "không phải", "khong phai", "nhầm rồi", "nham roi",
-    "không đúng", "khong dung", "bị sai", "bi sai", "không chính xác",
-    "sửa lại", "sua lai", "anh không hỏi", "nhầm người", "nham nguoi",
-    "nhầm tên", "nham ten", "không phải vậy", "không phải thế",
-    "đó không phải", "bạn đã nhầm", "em nhầm rồi", "hiểu sai",
+    "không đúng", "khong dung", "bị sai", "bi sai", "không chính xác", "khong chinh xac",
+    "sửa lại", "sua lai", "anh không hỏi", "anh khong hoi", "nhầm người", "nham nguoi",
+    "nhầm tên", "nham ten", "không phải vậy", "không phải thế", "đó không phải",
+    "bạn đã nhầm", "em nhầm rồi", "hiểu sai", "hieu sai", "sai bét", "sai bet",
+    "sai bét nhè", "vớ vẩn", "vo van", "tào lao", "tao lao", "lạc đề", "lac de",
+    "bậy nào", "tầm bậy", "tam bay", "chả liên quan", "không liên quan", "trật lất", "trat lat",
+    # Phương ngữ Nghệ Tĩnh & Miền Trung
+    "răng lại rứa", "rang lai rua", "nói chi rứa", "noi chi rua", "nói chi rứa hè",
+    "tau có hỏi cấy nớ mô", "tau co hoi cay no mo", "tau hỏi một đằng", "tau hoi mot dang",
+    "m hiểu t nói chi ko", "m hiểu t hỏi chi không", "m co hieu khong", "m có hiểu không",
+    "có hiểu không", "co hieu khong", "m hiểu không", "m hieu khong",
+    "hỏi một đằng trả lời một nẻo", "hỏi một đằng", "nỏ đúng", "nỏ phải",
+    # Bắt bẻ ngụy biện & logic
+    "sao lại trả lời thế", "logic kiểu gì", "ai dạy em thế", "ai bảo thế",
+    "anh bảo là", "anh nói là", "chưa đúng trọng tâm", "trả lời lạc đề",
 ]
 
 # Max characters of search results to include in lesson extraction prompt

@@ -199,24 +199,43 @@ Tại `app/services/ai_agent_tools.py`, hàm `evaluate_spinal_safety_veto` cùng
 
 ## 4. R3: REFLEXION & HONEST FORENSIC ERROR RECOVERY (5 WHYS & HEBBIAN)
 
-### 4.1. Quy Trình Pháp Y Lỗi 3 Bước (3-Step Forensic Error Recovery)
-Khi người dùng phát tín hiệu bắt lỗi ("sai rồi", "nhầm rồi", "tau hỏi một đằng m trả lời một nẻo", "lạc đề"...), Agent kích hoạt kiểm điểm pháp y:
-1. **Thành thực nhận sai**: Nêu cụ thể ở lượt trước đã sai ở điểm nào. CẤM tự ái, CẤM ngụy biện, CẤM bao biện "em đã hiểu rất rõ".
-2. **Phân tích nguyên nhân gốc rễ (Root Cause - 5 Whys)**: Phân loại theo Taxonomy chuẩn mực:
-   - `DIALECT_CONFUSION`: Hiểu nhầm phương ngữ miền Trung / từ lóng teencode.
-   - `HALLUCINATION`: Suy đoán thông số kỹ thuật khi chưa gọi tool.
-   - `UNVERIFIED_ASSUMPTION`: Giả định sai về tài nguyên máy chủ.
-   - `PARAMETRIC_MISMATCH`: Đọc lướt hoặc trích xuất sai tham số lệnh.
-   - `TOOL_EXECUTION_FAILURE`: Lỗi môi trường, mạng hoặc phân quyền hệ thống.
-3. **Khắc phục trực diện**: Trả lời chính xác 100% vào đúng câu hỏi và nhu cầu thực tế của anh Mạnh.
+### 4.1. Quy Trình Pháp Y Lỗi Trực Diện & Chống Ngụy Biện (Anti-Defensiveness & BLUF Protocol)
+Khi người dùng phát tín hiệu bắt lỗi ("sai rồi", "nhầm rồi", "tau hỏi một đằng m trả lời một nẻo", "lạc đề", "chả liên quan"...), Agent lập tức kích hoạt quy trình kiểm điểm pháp y 3 bước không ngụy biện:
+1. **Thành thực nhận sai trực diện (BLUF - Bottom Line Up Front)**:
+   - Mở đầu trực diện ngay câu đầu tiên: *"Dạ em thành thật nhận sai với anh Mạnh..."*.
+   - **CẤM TUYỆT ĐỐI**: Chối quanh, ngụy biện, lấp liếm bằng các câu như *"Dạ đúng rồi ạ"*, *"Như em đã nói ở trên..."*, *"Em đã hiểu rất rõ rồi ạ"*.
+   - Nêu cụ thể ở lượt trước em đã trả lời sai hoặc hiểu nhầm câu hỏi ở điểm nào.
+2. **Bóc tách nguyên nhân gốc rễ theo 5 Whys (Root Cause Analysis Taxonomy)**:
+   Phân loại tường minh theo Taxonomy 5 nhóm chuẩn mực (`root_cause_category`):
+   - `DIALECT_CONFUSION`: Hiểu lầm tiếng lóng, teencode, hoặc phương ngữ Nghệ Tĩnh / Miền Trung ("răng", "rứa", "cấy nớ", "tau hỏi một đằng").
+   - `RESOURCE_ASSUMPTION`: Giả định sai về tài nguyên máy chủ vật lý (máy Intel i5-4310U 2 cores, RAM trần 3.2GB DDR3L, giả định Swap 100GB thay RAM).
+   - `PARAM_OMISSION`: Bỏ sót tham số bắt buộc, cờ lệnh Linux hoặc truyền tham số sai cú pháp.
+   - `TOOL_FAILURE`: Công cụ bị lỗi thực thi, exit code khác 0, trả về rỗng hoặc timeout mạng.
+   - `HALLUCINATION`: Suy đoán thông số ảo giác chủ quan thay vì kiểm chứng dữ liệu thực tế bằng công cụ.
+3. **Khắc phục trực diện & Đưa ra giải pháp chính xác (Immediate Remediation)**:
+   - Đưa ra giải pháp và câu trả lời chính xác 100% vào đúng câu hỏi và nhu cầu thực tế của anh Mạnh mà không lặp lại sai lầm cũ.
 
-### 4.2. Search-Grounded Reflexion & Tái Củng Cố Bộ Nhớ (LTP vs LTD)
-- **Bounded Self-Correction**: Để tránh bẫy tự củng cố niềm tin sai (Confirmation Bias), khi tool thất bại liên tiếp hoặc người dùng sửa sai, hệ thống chạy tiến trình độc lập tìm kiếm bằng chứng bên ngoài qua DuckDuckGo (cô lập subprocess) hoặc Jina Reader.
-- **Cổng tái củng cố ký ức hồi hải mã (Hippocampal Reconsolidation)**:
-  - Khi phát hiện bài học mới chứa từ phủ định đối lập với bài học cũ $\to$ Thực hiện **LTD (Long-Term Depression)**: Giảm 15% điểm tin cậy bài học cũ và thay thế bằng bài học mới.
-  - Khi bài học mới củng cố tri thức cũ $\to$ Thực hiện **LTP (Long-Term Potentiation)**: Tăng điểm tin cậy bài học (`+0.05`).
-- **Đường cong quên Ebbinghaus & Synaptic Pruning**: Ban đêm tự động phân rã độ tin cậy của các bài học không sử dụng và cắt tỉa (prune) bài học có `confidence < 0.25`.
-- **Global Workspace Theory (GWT) Broadcast**: Lọc Top-7 bài học có điểm tương đồng Jaccard cao nhất với ngữ cảnh hiện tại để tiêm vào System Prompt.
+### 4.2. Kích Thích Dẫn Truyền Thần Kinh Nhận Thức (Neuromorphic Brain Stimulation)
+Ngay khi phát hiện tín hiệu sửa sai (`is_user_correction = True`):
+- Hệ thống kích hoạt xung thần kinh sinh học trong `ArtificialBrain`:
+  $$\text{brain.stimulate\_neurotransmitters}(\text{noradrenaline}=+0.25, \text{dopamine}=-0.20, \text{acetylcholine}=+0.30)$$
+- **Ý nghĩa sinh học nhận thức**:
+  - `noradrenaline` ($+0.25$): Tăng cảnh giác, báo động nhận thức và tập trung cao độ vào lỗi sai.
+  - `dopamine` ($-0.20$): Phạt lỗi sai lệch kỳ vọng (Negative Reward Prediction Error - RPE penalty), dập tắt xu hướng tự mãn hoặc ảo giác tiếp diễn.
+  - `acetylcholine` ($+0.30$): Tăng tính dẻo khớp thần kinh (Synaptic Plasticity), mở rộng cửa sổ tiếp thu bài học mới và tái cấu trúc mạng liên tưởng.
+
+### 4.3. Search-Grounded Reflexion & Tái Củng Cố Ký Ức Hồi Hải Mã (LTP vs LTD)
+- **Lưu vết có cấu trúc (Structured Episodic Trace)**:
+  - Bảng `agent_memories` lưu vết sự kiện kèm trường `root_cause_category VARCHAR(50)`, phục vụ thống kê tần suất lỗi và tinh chỉnh nhận thức dài hạn.
+- **Bounded Self-Correction**:
+  - Chạy pipeline nền độc lập qua DuckDuckGo (cô lập subprocess) hoặc Jina Fallbacks A/B để tìm bằng chứng thực tế từ Internet, tránh bẫy Confirmation Bias.
+- **Cổng tái củng cố ký ức (Memory Reconsolidation)**:
+  - **LTD (Long-Term Depression)**: Khi bài học mới chứa từ phủ định đối lập với bài học cũ ($\ge 68\%$ Jaccard) $\to$ Giảm $15\%$ độ tin cậy của bài học cũ (`confidence - 0.15`), chèn bài học mới làm niềm tin thống trị.
+  - **LTP (Long-Term Potentiation)**: Khi bài học mới củng cố tri thức cũ $\to$ Tăng điểm tin cậy bài học (`+0.05`, trần $0.92$).
+- **Đường cong quên Ebbinghaus & Synaptic Pruning**:
+  - Ban đêm tự động phân rã độ tin cậy của các bài học không sử dụng và cắt tỉa (`confidence < 0.25`, không dùng $> 7$ ngày).
+- **Global Workspace Theory (GWT) Broadcast**:
+  - Tính toán độ nổi bật Salience (Jaccard token similarity) giữa câu truy vấn hiện tại và kho bài học, đưa Top-7 bài học chiến thắng vào System Prompt.
 
 ---
 

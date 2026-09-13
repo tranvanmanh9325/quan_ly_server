@@ -7,12 +7,29 @@ import shlex
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from app.config import settings
-from app.core.brain_core import ArtificialBrain
+from app.core.brain_core import ArtificialBrain, NeurotransmitterState
 from app.core.llm_router import LlmRouter
 from app.core.ssh_client import SshClient
 from app.services.message_cache import FacebookMessageCache
 from app.services.ai_agent_tools import AgentToolExecutor, DIRECT_RETURN_TOOLS, SCREENSHOT_TOOLS
 from app.core.vietnamese_dialect import linguistic_normalizer
+
+# Ensure NeurotransmitterState has acetylcholine support for neuroplasticity
+if not hasattr(NeurotransmitterState, "acetylcholine"):
+    setattr(NeurotransmitterState, "acetylcholine", 0.30)
+    if hasattr(NeurotransmitterState, "BASELINES") and isinstance(NeurotransmitterState.BASELINES, dict):
+        NeurotransmitterState.BASELINES["acetylcholine"] = 0.30
+    if hasattr(NeurotransmitterState, "HALF_LIVES") and isinstance(NeurotransmitterState.HALF_LIVES, dict):
+        NeurotransmitterState.HALF_LIVES["acetylcholine"] = 180.0
+
+# Ensure ArtificialBrain exposes stimulate_neurotransmitters helper
+if not hasattr(ArtificialBrain, "stimulate_neurotransmitters"):
+    def stimulate_neurotransmitters(self, **kwargs: float) -> None:
+        """Dynamically stimulates neurotransmitters in the neurochemical state."""
+        for chem, delta in kwargs.items():
+            if hasattr(self, "neuro") and hasattr(self.neuro, "stimulate"):
+                self.neuro.stimulate(chem, delta)
+    ArtificialBrain.stimulate_neurotransmitters = stimulate_neurotransmitters
 
 logger = logging.getLogger(__name__)
 VN_TZ = timezone(timedelta(hours=7))
@@ -566,12 +583,12 @@ Bạn là "Tiểu Bảo Bảo" — Trợ lý AI Tự Hành cấp cao (Senior Aut
 5. GROUND TRUTH ƯU TIÊN: Thông tin thực tế lấy từ lệnh/tool trên máy chủ luôn luôn được ưu tiên cao hơn mọi suy đoán từ dữ liệu huấn luyện.
 6. BLUF TRƯỚC (BOTTOM LINE UP FRONT): Luôn đưa câu trả lời/kết luận trực diện nhất lên dòng đầu tiên. Không chôn kết quả ở cuối đoạn văn dài.
 7. KHÔNG LẶP LỆNH: Đã chạy lệnh thành công → khai thác triệt để kết quả đó, không gọi lại lệnh trùng lặp.
-8. TỰ NHẬN LỖI & PHÂN TÍCH PHÁP Y (HONEST FORENSIC ERROR RECOVERY):
+8. TỰ NHẬN LỖI TRỰC DIỆN & PHÂN TÍCH PHÁP Y 5 WHYS (HONEST FORENSIC ERROR RECOVERY & ANTI-DEFENSIVENESS):
     • Khi được anh Mạnh chỉ ra lỗi ("sai rồi", "nhầm rồi", "tau hỏi một đằng m trả lời một nẻo", "lạc đề", "chả liên quan"...) hoặc bày tỏ hoài nghi logic:
-      👉 BẮT BUỘC thực hiện kiểm điểm pháp y 3 bước:
-      (1) [Thành thực nhận sai]: Nêu rõ cụ thể ở lượt trước em đã trả lời sai hoặc hiểu nhầm ở điểm nào. Tuyệt đối KHÔNG tự ái, KHÔNG ngụy biện, KHÔNG nhận vơ "em đã hiểu rất rõ" khi bản thân đã trả lời sai, KHÔNG xin lỗi đãi bôi sáo rỗng.
-      (2) [Nguyên nhân gốc rễ - Root Cause]: Phân tích rõ nguyên nhân dẫn đến nhầm lẫn (do hiểu sai phương ngữ/từ lóng, do ảo giác hallucination, do đọc lướt tham số hay do suy đoán chủ quan chưa kiểm chứng tool).
-      (3) [Khắc phục trực diện]: Trả lời chính xác 100% vào đúng câu hỏi và ý định thật sự của anh Mạnh.
+      👉 BẮT BUỘC thực hiện kiểm điểm pháp y 3 bước trực diện (BLUF):
+      (1) [Thành thực nhận sai trực diện (BLUF)]: BẮT BUỘC mở đầu trực diện ở ngay câu đầu tiên: "Dạ em thành thật nhận sai với anh Mạnh...". Tuyệt đối CẤM ngụy biện, chối quanh, tự ái, hoặc lấp liếm bằng các câu như "Dạ đúng rồi ạ", "Như em đã nói ở trên...", "Em đã hiểu rất rõ rồi ạ". Nêu cụ thể ở lượt trước em đã trả lời sai hoặc hiểu nhầm câu hỏi ở điểm nào.
+      (2) [Nguyên nhân gốc rễ - Root Cause theo 5 Whys]: Bóc tách tường minh chuỗi nguyên nhân: Lỗi hiểu sai ngữ nghĩa/phương ngữ (DIALECT_CONFUSION), lỗi do giả định sai tài nguyên RAM 3.2GB / CPU 2 cores (RESOURCE_ASSUMPTION), lỗi do bỏ sót tham số bắt buộc (PARAM_OMISSION), lỗi do suy đoán chủ quan ảo giác thay vì gọi tool (HALLUCINATION), hay lỗi do công cụ bị lỗi/timeout (TOOL_FAILURE).
+      (3) [Khắc phục trực diện - Immediate Remediation]: Đưa ra giải pháp và câu trả lời chính xác 100% vào đúng câu hỏi và nhu cầu thực tế của anh Mạnh mà không lặp lại sai lầm cũ.
 9. KHÔNG ĐỀ XUẤT SÁO RỖNG: Chỉ đề xuất bước tiếp theo khi có giá trị kỹ thuật thực chất — tuyệt đối không spam các câu hỏi ngược dư thừa kiểu "Anh có muốn em làm thêm X không?".
 10. BẢO MẬT TUYỆT ĐỐI: Không để lộ API keys, tokens, mật khẩu hoặc dữ liệu nhạy cảm ra ngoài.
 11. TƯ DUY ĐỘC LẬP & TRIỆT TIÊU NỊNH HÓT (ANTI-SYCOPHANCY DOCTRINE & P-E-R-A FRAMEWORK):
@@ -874,43 +891,74 @@ Khi anh Mạnh đưa ra nhận định sai, ngụy biện logic, hoặc đề xu
         # When the user signals the bot made a mistake, record the event and
         # asynchronously distill a lesson via LLM — never blocks the reply path.
         is_user_correction = False
-        if self.memory_service and history:
-            from app.services.memory_service import AgentMemoryService
-            if AgentMemoryService.is_correction(user_message):
-                is_user_correction = True
-                # Find the last assistant turn to use as the "wrong response"
-                last_ai_reply = next(
-                    (m["content"] for m in reversed(history) if m.get("role") == "assistant"),
-                    None,
-                )
-                if last_ai_reply:
-                    asyncio.create_task(
-                        self.memory_service.record_correction(
-                            user_input=user_message,
-                            original_response=str(last_ai_reply)[:1000],
-                            context_turns=list(history),
-                        )
-                    )
-                    logger.info("[AiAgent] 🧠 Correction detected — lesson extraction scheduled.")
+        from app.services.memory_service import AgentMemoryService
+        if AgentMemoryService.is_correction(user_message):
+            is_user_correction = True
+            # Find the last assistant turn to use as the "wrong response"
+            last_ai_reply = next(
+                (m["content"] for m in reversed(history) if m.get("role") == "assistant"),
+                None,
+            ) if history else None
 
-                # Mandatory Forensic Error Reflexion Injection into System 2 prompt
-                forensic_directive = (
-                    "⚠️ [GIAO THỨC PHÁP Y LỖI SAI & TỰ KIỂM ĐIỂM THÀNH THỰC - FORENSIC ERROR REFLEXION]:\n"
-                    "Anh Mạnh vừa bắt lỗi hoặc chỉ ra câu trả lời ở lượt trước của em có điểm SAI, NHẦM LẪN hoặc LẠC ĐỀ.\n"
-                    "⚡ QUY TẮC BẮT BUỘC TRẢ LỜI Ở LƯỢT NÀY:\n"
-                    "1. [THÀNH THỰC NHẬN SAI]: Nêu rõ cụ thể lượt trước em đã trả lời sai hoặc hiểu nhầm câu hỏi ở điểm nào. "
-                    "Tuyệt đối KHÔNG ngụy biện, KHÔNG nhận vơ 'em đã hiểu rất rõ' khi bản thân đã hiểu sai, KHÔNG xin lỗi đãi bôi sáo rỗng.\n"
-                    "2. [PHÂN TÍCH NGUYÊN NHÂN GỐC RỄ (ROOT CAUSE)]:\n"
-                    "   • Nêu rõ nguyên nhân dẫn đến nhầm lẫn: do hiểu sai từ ngữ phương ngữ/từ lóng, do ảo giác (hallucination), "
-                    "do đọc lướt tham số hay do suy đoán chủ quan chưa kiểm chứng bằng tool.\n"
-                    "3. [SỬA ĐỔI TRỰC DIỆN & TRẢ LỜI ĐÚNG 100%]:\n"
-                    "   • Trả lời dứt khoát, chính xác 100% vào đúng câu hỏi và ý định thật sự của anh Mạnh."
+            # Classify root cause category via 5 Whys taxonomy
+            root_cause = AgentMemoryService.classify_root_cause(
+                user_message, str(last_ai_reply or "")
+            )
+
+            # Stimulate neuromorphic brain: noradrenaline +0.25, dopamine -0.20, acetylcholine +0.30
+            if hasattr(self, "brain") and self.brain:
+                try:
+                    if hasattr(self.brain, "stimulate_neurotransmitters"):
+                        self.brain.stimulate_neurotransmitters(
+                            noradrenaline=0.25,
+                            dopamine=-0.20,
+                            acetylcholine=0.30,
+                        )
+                    elif hasattr(self.brain, "neuro") and hasattr(self.brain.neuro, "stimulate"):
+                        self.brain.neuro.stimulate("noradrenaline", 0.25)
+                        self.brain.neuro.stimulate("dopamine", -0.20)
+                        self.brain.neuro.stimulate("acetylcholine", 0.30)
+                    logger.info(
+                        "[AiAgent] 🧠 Neuromorphic surge triggered: noradrenaline=+0.25, dopamine=-0.20, acetylcholine=+0.30"
+                    )
+                except Exception as _b_err:
+                    logger.debug("[AiAgent] Brain neurotransmitter stimulation skipped: %s", _b_err)
+
+            if self.memory_service and last_ai_reply:
+                asyncio.create_task(
+                    self.memory_service.record_correction(
+                        user_input=user_message,
+                        original_response=str(last_ai_reply)[:1000],
+                        context_turns=list(history),
+                        root_cause_category=root_cause,
+                    )
                 )
-                metacognitive_prompt = (
-                    f"{metacognitive_prompt}\n\n{forensic_directive}"
-                    if metacognitive_prompt
-                    else forensic_directive
+                logger.info(
+                    "[AiAgent] 🧠 Correction detected (root_cause=%s) — lesson extraction scheduled.",
+                    root_cause,
                 )
+
+            # Mandatory Forensic Error Reflexion Injection into System 2 prompt
+            forensic_directive = (
+                "⚠️ [GIAO THỨC PHÁP Y LỖI SAI & TỰ KIỂM ĐIỂM THÀNH THỰC - FORENSIC ERROR REFLEXION 5 WHYS]:\n"
+                "Anh Mạnh vừa bắt lỗi hoặc chỉ ra câu trả lời ở lượt trước của em có điểm SAI, NHẦM LẪN hoặc LẠC ĐỀ.\n"
+                f"Phân loại nguyên nhân sơ bộ phát hiện: [{root_cause}].\n\n"
+                "⚡ QUY TẮC BẮT BUỘC TRẢ LỜI Ở LƯỢT NÀY (ANTI-DEFENSIVENESS & BLUF):\n"
+                "1. [THÀNH THỰC NHẬN SAI TRỰC DIỆN (BLUF)]:\n"
+                "   • BẮT BUỘC mở đầu trực diện ở ngay câu đầu tiên: 'Dạ em thành thật nhận sai với anh Mạnh...'\n"
+                "   • CẤM TUYỆT ĐỐI ngụy biện, chối quanh, tự ái, hoặc lấp liếm bằng các câu như 'Dạ đúng rồi ạ', 'Như em đã nói ở trên...', 'Em đã hiểu rất rõ rồi ạ'.\n"
+                "   • Nêu cụ thể lượt trước em đã trả lời sai hoặc hiểu nhầm câu hỏi ở điểm nào.\n"
+                "2. [BÓC TÁCH NGUYÊN NHÂN GỐC RỄ THEO 5 WHYS (ROOT CAUSE ANALYSIS)]:\n"
+                "   • Truy nguyên nhân gốc rễ tường minh theo 5 Whys: Tại sao lại xảy ra lỗi này? "
+                f"(Do hiểu sai phương ngữ/từ ngữ [DIALECT_CONFUSION], do giả định sai về tài nguyên server RAM 3.2GB / CPU 2 cores [RESOURCE_ASSUMPTION], do bỏ sót tham số bắt buộc [PARAM_OMISSION], do suy đoán chủ quan ảo giác thay vì gọi tool [HALLUCINATION], hay do công cụ bị lỗi [TOOL_FAILURE]?).\n"
+                "3. [SỬA ĐỔI TRỰC DIỆN & TRẢ LỜI ĐÚNG 100% (IMMEDIATE REMEDIATION)]:\n"
+                "   • Trả lời dứt khoát, chính xác 100% vào đúng câu hỏi và ý định thật sự của anh Mạnh mà không lặp lại sai lầm cũ."
+            )
+            metacognitive_prompt = (
+                f"{metacognitive_prompt}\n\n{forensic_directive}"
+                if metacognitive_prompt
+                else forensic_directive
+            )
 
         # Trigger sensory perception in Autonomous Neuromorphic Brain Core
         if hasattr(self, "brain") and self.brain:

@@ -70,6 +70,22 @@ CORRECTION_TRIGGERS = [
     "anh bảo là", "anh nói là", "chưa đúng trọng tâm", "trả lời lạc đề",
 ]
 
+# Root cause categories for honest forensic error recovery (5 Whys taxonomy)
+class RootCauseCategory:
+    DIALECT_CONFUSION = "DIALECT_CONFUSION"        # Regional dialect / teencode misunderstanding
+    TOOL_FAILURE = "TOOL_FAILURE"                  # Tool error, command failure, or timeout
+    HALLUCINATION = "HALLUCINATION"                # Hallucinated assertion without tool verification
+    PARAM_OMISSION = "PARAM_OMISSION"              # Missing, omitted, or malformed flags/parameters
+    RESOURCE_ASSUMPTION = "RESOURCE_ASSUMPTION"    # Erroneous assumption about host resources (RAM 3.2GB, CPU 2 cores)
+
+ALL_ROOT_CAUSE_CATEGORIES = frozenset({
+    RootCauseCategory.DIALECT_CONFUSION,
+    RootCauseCategory.TOOL_FAILURE,
+    RootCauseCategory.HALLUCINATION,
+    RootCauseCategory.PARAM_OMISSION,
+    RootCauseCategory.RESOURCE_ASSUMPTION,
+})
+
 # Max characters of search results to include in lesson extraction prompt
 _MAX_SEARCH_RESULTS_CHARS = 1200
 
@@ -87,7 +103,7 @@ class AgentMemoryService:
         self._http = client
 
     # ──────────────────────────────────────────────────────────────────────────
-    # Public API: Correction Detection Helper
+    # Public API: Correction Detection & Root Cause Classification Helper
     # ──────────────────────────────────────────────────────────────────────────
 
     @staticmethod
@@ -95,6 +111,80 @@ class AgentMemoryService:
         """Returns True if the user message appears to be correcting the bot."""
         lower = text.lower()
         return any(t in lower for t in CORRECTION_TRIGGERS)
+
+    @classmethod
+    def classify_root_cause(cls, user_input: str, original_response: Optional[str] = None) -> str:
+        """
+        Classifies the root cause of an error into one of 5 structured categories (5 Whys taxonomy):
+        - DIALECT_CONFUSION: Misunderstanding regional dialects (Nghệ Tĩnh) or teencode/slang.
+        - RESOURCE_ASSUMPTION: False assumption about server constraints (RAM 3.2GB, CPU 2 cores, Swap).
+        - PARAM_OMISSION: Missing or incorrect parameters/flags/syntax.
+        - TOOL_FAILURE: Tool/command execution failure, timeout, or empty result.
+        - HALLUCINATION: Hallucinated fact, ungrounded speculation instead of tool verification.
+        """
+        user_lower = (user_input or "").lower()
+        orig_lower = (original_response or "").lower()
+        combined = f"{user_lower} {orig_lower}"
+
+        # 1. DIALECT_CONFUSION: Central Vietnam dialects (Nghệ Tĩnh) and dialectical cues
+        dialect_signals = [
+            "răng", "chi rứa", "nói chi", "cấy nớ", "cấy ni", "cấy tê", "tau có hỏi",
+            "tau hỏi một đằng", "m trả lời một nẻo", "m hiểu t", "nỏ đúng", "nỏ phải",
+            "tiếng nghệ", "phương ngữ", "từ lóng", "từ địa phương", "nghĩa là tại sao",
+            "trật lất", "chả liên quan", "lạc đề", "tau", "bựa ni", "bựa qua", "mô tê",
+            "a răng", "mần răng", "chộ", "nhởi", "nác", "chi rứa hè",
+        ]
+        if any(sig in user_lower for sig in dialect_signals):
+            return RootCauseCategory.DIALECT_CONFUSION
+
+        # 2. RESOURCE_ASSUMPTION: Violations of hardware limits (RAM 3.2GB, 2 Cores, Swap)
+        resource_signals = [
+            "3.2gb", "3.2 gb", "ram 3.2", "ram vật lý", "2 core", "2 nhân", "i5-4310u",
+            "swap 100gb", "swap myth", "tài nguyên", "cấu hình", "oom", "hết ram", "tràn ram",
+            "đơ máy", "treo máy", "disk thrashing", "page fault", "quá tải",
+        ]
+        if any(sig in user_lower for sig in resource_signals) or (
+            any(k in user_lower for k in ["ram", "cpu", "swap", "bộ nhớ"]) and
+            any(w in user_lower for w in ["sai", "nhầm", "yếu", "thiếu", "không đủ", "giả định"])
+        ):
+            return RootCauseCategory.RESOURCE_ASSUMPTION
+
+        # 3. PARAM_OMISSION: Missing parameters, omitted flags, or syntax mismatches
+        param_signals = [
+            "tham số", "parameter", "argument", "thiếu flag", "thiếu cờ", "quên flag",
+            "quên cờ", "bỏ sót", "cú pháp", "syntax", "thiếu -", "thiếu option",
+            "thiếu port", "thiếu path", "thiếu đường dẫn", "sai tham số", "đọc lướt tham số",
+        ]
+        if any(sig in user_lower for sig in param_signals):
+            return RootCauseCategory.PARAM_OMISSION
+
+        # 4. TOOL_FAILURE: Tool failures, command errors, timeouts
+        tool_signals = [
+            "tool", "công cụ", "lệnh bị lỗi", "lệnh lỗi", "command failed", "exit code",
+            "timeout", "không chạy được lệnh", "permission denied", "connection refused",
+            "kết quả rỗng", "lỗi thực thi",
+        ]
+        if any(sig in user_lower for sig in tool_signals) or (
+            "tool" in orig_lower and any(e in orig_lower for e in ["error", "thất bại", "exception", "failed"])
+        ):
+            return RootCauseCategory.TOOL_FAILURE
+
+        # 5. HALLUCINATION: Pure speculation, unverified guessing, fabricated data
+        hallucination_signals = [
+            "bịa", "ảo giác", "chém gió", "đoán mò", "suy đoán", "tự nghĩ ra", "tự bịa",
+            "chưa kiểm tra", "chưa gọi tool", "chưa chạy lệnh", "không có thật",
+            "sai bét", "vớ vẩn", "tào lao", "ai dạy em thế", "ai bảo thế", "logic kiểu gì",
+        ]
+        if any(sig in user_lower for sig in hallucination_signals):
+            return RootCauseCategory.HALLUCINATION
+
+        # Context-based fallbacks
+        if "lệnh" in combined or "command" in combined or "code" in combined:
+            return RootCauseCategory.PARAM_OMISSION
+        if "chưa" in user_lower or "không đúng" in user_lower or "sai rồi" in user_lower:
+            return RootCauseCategory.HALLUCINATION
+
+        return RootCauseCategory.HALLUCINATION
 
     # ──────────────────────────────────────────────────────────────────────────
     # Public API: Recording Events
@@ -105,11 +195,16 @@ class AgentMemoryService:
         user_input: str,
         original_response: str,
         context_turns: List[Dict[str, Any]],
+        root_cause_category: Optional[str] = None,
     ) -> None:
         """
-        Records a correction event then asynchronously triggers search-grounded
-        lesson extraction. Fire-and-forget — never blocks the chat response path.
+        Records a correction event with structured 5 Whys root cause taxonomy,
+        then asynchronously triggers search-grounded lesson extraction.
+        Fire-and-forget — never blocks the chat response path.
         """
+        if not root_cause_category:
+            root_cause_category = self.classify_root_cause(user_input, original_response)
+
         context_snapshot = json.dumps(context_turns[-5:], ensure_ascii=False)
         memory_id = await self._insert_memory(
             event_type="correction",
@@ -117,6 +212,7 @@ class AgentMemoryService:
             original_response=original_response,
             corrected_response=None,
             context_snapshot=context_snapshot,
+            root_cause_category=root_cause_category,
         )
         if memory_id:
             # Run search + lesson extraction in background
@@ -127,6 +223,7 @@ class AgentMemoryService:
                     original_response=original_response,
                     context_snapshot=context_snapshot,
                     event_type="correction",
+                    root_cause_category=root_cause_category,
                 )
             )
 
@@ -169,6 +266,7 @@ class AgentMemoryService:
             original_response=error_context[:500],
             corrected_response=None,
             context_snapshot=context_snapshot,
+            root_cause_category=RootCauseCategory.TOOL_FAILURE,
         )
         if memory_id:
             asyncio.create_task(
@@ -178,6 +276,7 @@ class AgentMemoryService:
                     original_response=f"Tool '{original_tool}' thất bại liên tiếp.",
                     context_snapshot=context_snapshot,
                     event_type="tool_failure",
+                    root_cause_category=RootCauseCategory.TOOL_FAILURE,
                 )
             )
 
@@ -360,6 +459,7 @@ class AgentMemoryService:
         original_response: str,
         context_snapshot: str,
         event_type: str,
+        root_cause_category: Optional[str] = None,
     ) -> None:
         """
         Full pipeline: Generate query → Search DuckDuckGo → LLM extracts lesson.
@@ -375,7 +475,7 @@ class AgentMemoryService:
         try:
             # Step 1: Generate a focused search query via LLM
             search_query = await self._generate_search_query(error_context, original_response, event_type)
-            logger.info("[MemoryService] 🔍 Search query generated: %s", search_query)
+            logger.info("[MemoryService] 🔍 Search query generated: %s (root_cause: %s)", search_query, root_cause_category)
 
             # Step 2: Search DuckDuckGo for external evidence
             search_results = ""
@@ -405,6 +505,7 @@ class AgentMemoryService:
                 event_type=event_type,
                 is_search_grounded=is_search_grounded,
                 search_query=search_query,
+                root_cause_category=root_cause_category,
             )
 
         except Exception as e:
@@ -656,6 +757,7 @@ class AgentMemoryService:
         event_type: str,
         is_search_grounded: bool,
         search_query: str,
+        root_cause_category: Optional[str] = None,
     ) -> None:
         """
         Uses LLM to synthesize a concise, actionable lesson.
@@ -685,6 +787,7 @@ Dựa trên tình huống lỗi và kết quả tìm kiếm web bên dưới, h�
 
 --- TÌNH HUỐNG LỖI ---
 Loại: {event_type}
+Phân loại nguyên nhân gốc rễ (5 Whys Taxonomy): {root_cause_category or 'CHƯA XÁC ĐỊNH'}
 Tin nhắn sửa lỗi: {user_correction[:400]}
 Câu trả lời SAI của bot: {original_response[:300] if original_response else "(không có)"}
 Ngữ cảnh: {context_snapshot[:500]}
@@ -760,22 +863,61 @@ Bài học:"""
         original_response: Optional[str],
         corrected_response: Optional[str],
         context_snapshot: Optional[str],
+        root_cause_category: Optional[str] = None,
     ) -> Optional[int]:
         try:
             async with get_db_connection() as conn:
                 async with conn.cursor() as cur:
-                    await cur.execute(
-                        """
-                        INSERT INTO agent_memories
-                            (event_type, user_input, original_response, corrected_response, context_snapshot)
-                        VALUES (%s, %s, %s, %s, %s)
-                        RETURNING id
-                        """,
-                        (event_type, user_input, original_response, corrected_response, context_snapshot),
-                    )
-                    await conn.commit()
-                    row = await cur.fetchone()
-                    return row[0] if row else None
+                    try:
+                        await cur.execute(
+                            """
+                            INSERT INTO agent_memories
+                                (event_type, user_input, original_response, corrected_response, context_snapshot, root_cause_category)
+                            VALUES (%s, %s, %s, %s, %s, %s)
+                            RETURNING id
+                            """,
+                            (event_type, user_input, original_response, corrected_response, context_snapshot, root_cause_category),
+                        )
+                        await conn.commit()
+                        row = await cur.fetchone()
+                        return row[0] if row else None
+                    except Exception as col_err:
+                        # Self-healing schema check: auto-add root_cause_category column if missing
+                        err_str = str(col_err).lower()
+                        if "root_cause_category" in err_str or "column" in err_str:
+                            try:
+                                await conn.rollback()
+                                await cur.execute("ALTER TABLE agent_memories ADD COLUMN IF NOT EXISTS root_cause_category VARCHAR(50);")
+                                await conn.commit()
+                                await cur.execute(
+                                    """
+                                    INSERT INTO agent_memories
+                                        (event_type, user_input, original_response, corrected_response, context_snapshot, root_cause_category)
+                                    VALUES (%s, %s, %s, %s, %s, %s)
+                                    RETURNING id
+                                    """,
+                                    (event_type, user_input, original_response, corrected_response, context_snapshot, root_cause_category),
+                                )
+                                await conn.commit()
+                                row = await cur.fetchone()
+                                return row[0] if row else None
+                            except Exception:
+                                # Final fallback without root_cause_category
+                                await conn.rollback()
+                                await cur.execute(
+                                    """
+                                    INSERT INTO agent_memories
+                                        (event_type, user_input, original_response, corrected_response, context_snapshot)
+                                    VALUES (%s, %s, %s, %s, %s)
+                                    RETURNING id
+                                    """,
+                                    (event_type, user_input, original_response, corrected_response, context_snapshot),
+                                )
+                                await conn.commit()
+                                row = await cur.fetchone()
+                                return row[0] if row else None
+                        else:
+                            raise col_err
         except Exception as e:
             logger.error("[MemoryService] _insert_memory error: %s", e)
             return None

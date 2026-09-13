@@ -98,7 +98,7 @@ class ProactiveIntelligenceService:
         # Run all checks concurrently for speed (all 9 SRE vitals)
         scan_results = await asyncio.gather(
             self._check_disk(),
-            self._check_memory(),
+            self._check_memory(threshold_pct=_SRE_RAM_ALERT_PCT),
             self._check_ssl_certs(),
             self._check_oom_kills(),
             self._check_container_restarts(),
@@ -117,6 +117,7 @@ class ProactiveIntelligenceService:
         try:
             brain = ArtificialBrain.get_instance()
             ram_pct = 0.0
+            mem_alert = scan_results[1] if len(scan_results) > 1 and not isinstance(scan_results[1], Exception) else None
             if isinstance(mem_alert, str) and mem_alert:
                 ram_match = re.search(r"(\d+)%", mem_alert)
                 if ram_match:

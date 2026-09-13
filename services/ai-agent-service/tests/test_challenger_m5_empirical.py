@@ -523,6 +523,92 @@ class TestChallengerM5EmpiricalSuite(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(report["alerts"]), 0)
         self.assertEqual(report["total_checks"], 9)
 
+    async def test_16_proactive_sre_background_scan_cycle(self) -> None:
+        """_run_scan_cycle executes full background scan without exceptions and triggers brain.step_pulse with parsed ram_usage."""
+        mem_mock = MagicMock()
+        mem_mock.should_send_proactive_alert = AsyncMock(return_value=True)
+        mem_mock.upsert_proactive_check = AsyncMock()
+        mem_mock.record_episode = AsyncMock()
+
+        tg_mock = MagicMock()
+        tg_mock.send_message = AsyncMock()
+        tg_mock.chat_id = "test_chat_m5"
+
+        proactive = ProactiveIntelligenceService(
+            ssh_client=MagicMock(),
+            memory_service=mem_mock,
+            telegram_bot=tg_mock,
+        )
+
+        # Case 1: RAM exceeds 85% threshold (e.g. 89%) -> triggers alert, passes 89.0 to step_pulse
+        async def mock_exec_high_ram(cmd: str) -> str:
+            if "df -h --output" in cmd:
+                return " 40% /\n 30% /data"
+            if "free |" in cmd:
+                return "89"  # High RAM -> triggers alert with '89%'
+            if "sites-enabled" in cmd:
+                return ""
+            if "journalctl" in cmd:
+                return "0"
+            if "docker ps --format" in cmd:
+                return ""
+            if "loadavg" in cmd:
+                return "1.05 1.10 0.95 1/120 7890"
+            if "Swap:" in cmd:
+                return "100"
+            if "df -h /" in cmd:
+                return "45"
+            if "docker ps -a" in cmd:
+                return "\n".join([f"{c}\tUp 6 hours\trunning" for c in _CORE_CONTAINERS])
+            return ""
+
+        proactive._ssh.run_command = AsyncMock(side_effect=mock_exec_high_ram)
+
+        with patch.object(self.brain, "step_pulse", wraps=self.brain.step_pulse) as spy_step_pulse, \
+             patch.object(ArtificialBrain, "get_instance", return_value=self.brain):
+            await proactive._run_scan_cycle()
+
+            # Assert brain.step_pulse received ram_usage = 89.0
+            spy_step_pulse.assert_called_once()
+            called_metrics = spy_step_pulse.call_args[0][0]
+            self.assertEqual(called_metrics.get("ram_usage"), 89.0)
+            self.assertEqual(called_metrics.get("cpu_usage"), 0.0)
+
+            # Assert Telegram message sent with RAM alert
+            tg_mock.send_message.assert_awaited_once()
+            sent_msg = tg_mock.send_message.call_args[0][1]
+            self.assertIn("RAM đang cao", sent_msg)
+            self.assertIn("89%", sent_msg)
+
+        # Case 2: Healthy RAM (e.g. 60%) -> ram_pct is 0.0, no exceptions, no alerts sent
+        tg_mock.send_message.reset_mock()
+        async def mock_exec_healthy(cmd: str) -> str:
+            if "free |" in cmd:
+                return "60"  # Below 85%
+            if "df -h --output" in cmd:
+                return " 40% /\n 30% /data"
+            if "df -h /" in cmd:
+                return "45"
+            if "Swap:" in cmd:
+                return "100"
+            if "loadavg" in cmd:
+                return "1.00 1.00 1.00"
+            if "docker ps -a" in cmd:
+                return "\n".join([f"{c}\tUp 6 hours\trunning" for c in _CORE_CONTAINERS])
+            return ""
+
+        proactive._ssh.run_command = AsyncMock(side_effect=mock_exec_healthy)
+
+        with patch.object(self.brain, "step_pulse", wraps=self.brain.step_pulse) as spy_step_pulse, \
+             patch.object(ArtificialBrain, "get_instance", return_value=self.brain):
+            await proactive._run_scan_cycle()
+
+            # Assert step_pulse called with ram_usage = 0.0
+            spy_step_pulse.assert_called_once()
+            called_metrics = spy_step_pulse.call_args[0][0]
+            self.assertEqual(called_metrics.get("ram_usage"), 0.0)
+            tg_mock.send_message.assert_not_awaited()
+
 
 if __name__ == "__main__":
     unittest.main()

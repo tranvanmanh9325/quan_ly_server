@@ -1,12 +1,11 @@
 """
 media_download.py — High-Throughput Direct Server Download & Metadata Router.
 
-Exposes endpoints for streaming full-resolution videos with native HTTP 206 Range support,
-enabling video seeking, multi-threaded acceleration, and download pause/resumption:
-  - GET /api/ai/media/download/{token}
-  - GET /api/ai/media/download/{token}/{filename}
-  - GET /api/ai/media/info/{token}
-  - POST /api/ai/media/sweep
+Fortified with:
+  - In-Memory Token Bucket Rate Limiter & Anti-Bruteforce IP Jail (app.core.rate_limiter).
+  - OWASP 'X-Content-Type-Options: nosniff' header protection.
+  - Native HTTP 206 Partial Content byte-range support.
+  - Cryptographic token TTL validation.
 """
 
 from __future__ import annotations
@@ -15,9 +14,10 @@ import logging
 from typing import Any, Dict, Optional
 import urllib.parse
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
 from starlette.responses import FileResponse, JSONResponse
 
+from app.core.rate_limiter import download_guard
 from app.services.media_storage_manager import media_storage_manager
 
 logger = logging.getLogger(__name__)
@@ -36,19 +36,27 @@ router = APIRouter(prefix="/api/ai/media", tags=["Media Download"])
     response_description="Direct video stream with HTTP 206 Partial Content support",
 )
 async def download_media_file(
+    request: Request,
     token: str,
     filename: Optional[str] = None,
 ):
     """
     Serves a published media file using Starlette FileResponse:
-      - Validates cryptographic token and verifies TTL on-access (Layer 2 Defense).
-      - Automatically supports HTTP 206 Partial Content for byte-range requests.
-      - Sets media_type='video/mp4' to bypass GZipMiddleware memory buffering.
-      - Includes 'ngrok-skip-browser-warning' header to prevent Ngrok interstitial landing page.
+      - Layer 1: In-Memory Token Bucket Rate Limiter & Anti-Bruteforce IP Jail.
+      - Layer 2: Validates cryptographic token and verifies TTL on-access.
+      - Layer 3: Native HTTP 206 Partial Content for byte-range requests.
+      - Layer 4: OWASP Security Headers (X-Content-Type-Options: nosniff).
     """
+    # 1. Rate Limit & Anti-Bruteforce Jail Check
+    client_ip = download_guard.check_rate_limit(request)
+
     try:
         file_path, metadata = media_storage_manager.get_download_file(token)
+        # Success: register successful attempt to lower fail counter
+        download_guard.record_successful_attempt(client_ip)
     except FileNotFoundError as exc:
+        # Failure: penalize IP attempt to defend against token scanning
+        download_guard.record_failed_attempt(client_ip)
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(exc),
@@ -60,12 +68,13 @@ async def download_media_file(
             detail="Failed to serve media file.",
         )
 
-    # Use original or requested sanitized filename for Content-Disposition
+    # 2. Use original or requested sanitized filename for Content-Disposition
     effective_filename = metadata.get("filename") or filename or file_path.name
     headers = {
         "Cache-Control": "private, max-age=14400",
         "ngrok-skip-browser-warning": "1",
         "Accept-Ranges": "bytes",
+        "X-Content-Type-Options": "nosniff",
     }
 
     return FileResponse(
@@ -82,19 +91,22 @@ async def download_media_file(
     summary="Get download metadata and TTL status",
     response_model=None,
 )
-async def get_download_info(token: str) -> Dict[str, Any]:
+async def get_download_info(request: Request, token: str) -> Dict[str, Any]:
     """
     Returns public metadata and remaining validity duration for a download token.
+    Protected by download_guard rate limiting.
     """
+    client_ip = download_guard.check_rate_limit(request)
     try:
         file_path, metadata = media_storage_manager.get_download_file_info(token)
+        download_guard.record_successful_attempt(client_ip)
     except FileNotFoundError as exc:
+        download_guard.record_failed_attempt(client_ip)
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(exc),
         )
 
-    time_remaining = max(0, int(metadata.get("expires_at", 0) - metadata.get("created_at", 0)))
     import time
     now = time.time()
     expires_at = metadata.get("expires_at", 0)

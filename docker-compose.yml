@@ -27,6 +27,14 @@ services:
       timeout: 5s
       retries: 5
       start_period: 20s
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 768M
+        reservations:
+          memory: 512M
+    cpu_shares: 2048
 
   auth-service:
     build:
@@ -34,11 +42,11 @@ services:
       dockerfile: Dockerfile
     container_name: dashboard_auth_service
     ports:
-      - "8081:8081"
+      - "127.0.0.1:8081:8081"
     env_file:
       - .env
     environment:
-      JAVA_TOOL_OPTIONS: "-XX:+UseSerialGC -XX:MaxRAMPercentage=70.0 -XX:+UseStringDeduplication -XX:+ExitOnOutOfMemoryError -XX:+TieredCompilation -XX:TieredStopAtLevel=1"
+      JAVA_TOOL_OPTIONS: "-XX:+UseSerialGC -XX:MaxRAMPercentage=65.0 -XX:+UseStringDeduplication -XX:+ExitOnOutOfMemoryError -XX:+TieredCompilation -XX:TieredStopAtLevel=1"
     restart: unless-stopped
     stop_grace_period: 15s
     networks:
@@ -57,10 +65,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '0.5'
-          memory: 384M
+          cpus: '1.0'
+          memory: 320M
         reservations:
           memory: 192M
+    cpu_shares: 512
 
   metrics-service:
     build:
@@ -68,11 +77,11 @@ services:
       dockerfile: Dockerfile
     container_name: dashboard_metrics_service
     ports:
-      - "8082:8082"
+      - "127.0.0.1:8082:8082"
     env_file:
       - .env
     environment:
-      JAVA_TOOL_OPTIONS: "-XX:+UseSerialGC -XX:MaxRAMPercentage=70.0 -XX:+UseStringDeduplication -XX:+ExitOnOutOfMemoryError -XX:+TieredCompilation -XX:TieredStopAtLevel=1"
+      JAVA_TOOL_OPTIONS: "-XX:+UseSerialGC -XX:MaxRAMPercentage=65.0 -XX:+UseStringDeduplication -XX:+ExitOnOutOfMemoryError -XX:+TieredCompilation -XX:TieredStopAtLevel=1"
       TELEGRAM_POLLING_ENABLED: "false"
     restart: unless-stopped
     stop_grace_period: 15s
@@ -95,10 +104,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '0.6'
-          memory: 384M
+          cpus: '1.0'
+          memory: 350M
         reservations:
           memory: 192M
+    cpu_shares: 512
 
   ai-agent-service:
     init: true
@@ -118,9 +128,9 @@ services:
     networks:
       - dashboard-network
     ports:
-      - "8084:8084"
-      - "6080:6080"
-    shm_size: '1gb'
+      - "127.0.0.1:8084:8084"
+      - "127.0.0.1:6080:6080"
+    shm_size: '512m'
     volumes:
       # Mount application source code for instant updates without rebuilding container
       - ./services/ai-agent-service/app:/app/app
@@ -141,7 +151,7 @@ services:
       resources:
         limits:
           cpus: '3.0'
-          memory: 1800M
+          memory: 1350M
         reservations:
           memory: 384M
     cpu_shares: 1024
@@ -152,11 +162,11 @@ services:
       dockerfile: Dockerfile
     container_name: dashboard_file_service
     ports:
-      - "8083:8083"
+      - "127.0.0.1:8083:8083"
     env_file:
       - .env
     environment:
-      JAVA_TOOL_OPTIONS: "-XX:+UseSerialGC -XX:MaxRAMPercentage=70.0 -XX:+UseStringDeduplication -XX:+ExitOnOutOfMemoryError -XX:+TieredCompilation -XX:TieredStopAtLevel=1"
+      JAVA_TOOL_OPTIONS: "-XX:+UseSerialGC -XX:MaxRAMPercentage=65.0 -XX:+UseStringDeduplication -XX:+ExitOnOutOfMemoryError -XX:+TieredCompilation -XX:TieredStopAtLevel=1"
     restart: unless-stopped
     stop_grace_period: 15s
     networks:
@@ -175,10 +185,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '0.5'
-          memory: 384M
+          cpus: '1.0'
+          memory: 320M
         reservations:
           memory: 192M
+    cpu_shares: 512
 
   frontend:
     build:
@@ -213,10 +224,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '0.5'
-          memory: 256M
+          cpus: '0.8'
+          memory: 128M
         reservations:
           memory: 64M
+    cpu_shares: 256
 
 networks:
   dashboard-network:

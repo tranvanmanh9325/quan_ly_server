@@ -1,3 +1,15 @@
+"""
+app/core/db.py — High-Performance Async PostgreSQL Connection Pool Manager.
+
+Engineered with Psycopg 3 AsyncConnectionPool:
+- min_size: 2 (reduces idle server RAM footprint on 3.2GB host)
+- max_size: 10 (concurrency limiter, protects Postgres from connection storms)
+- timeout: 10.0s (fail-fast timeout preventing coroutine starvation)
+- max_idle: 300.0s (reclaims inactive connections down to min_size)
+- max_lifetime: 1800.0s (recycles long-lived connections against memory creep)
+- check: check_connection (validates socket health before checkout)
+"""
+
 import logging
 from contextlib import asynccontextmanager
 from typing import Any, AsyncGenerator, Dict, Optional
@@ -11,12 +23,6 @@ logger = logging.getLogger("app.core.db")
 
 
 class DatabasePoolManager:
-    """
-    Singleton high-throughput AsyncPG/Psycopg3 Connection Pool Manager:
-    - min_size: 4 warm connections ready for instant query execution (<0.8ms)
-    - max_size: 20 connections max concurrency limit
-    - max_idle: 300s timeout before pruning idle connections
-    """
     _instance: Optional["DatabasePoolManager"] = None
     _pool: Optional[AsyncConnectionPool] = None
 
@@ -27,25 +33,27 @@ class DatabasePoolManager:
 
     async def initialize(self) -> None:
         if self._pool is None:
-            logger.info("[DB-Pool] Initializing AsyncConnectionPool (min=4, max=20)...")
+            logger.info("[DB-Pool] Initializing AsyncConnectionPool (min=2, max=10, timeout=10.0s)...")
             self._pool = AsyncConnectionPool(
                 conninfo=settings.database_url,
-                min_size=4,
-                max_size=20,
+                min_size=2,
+                max_size=10,
                 max_idle=300.0,
-                timeout=30.0,
+                max_lifetime=1800.0,
+                timeout=10.0,
+                check=AsyncConnectionPool.check_connection,
                 open=False,
                 kwargs={"autocommit": True},
             )
             await self._pool.open()
-            logger.info("[DB-Pool] AsyncConnectionPool opened successfully")
+            logger.info("[DB-Pool] AsyncConnectionPool opened successfully ✓")
 
     async def close(self) -> None:
         if self._pool is not None:
             logger.info("[DB-Pool] Closing AsyncConnectionPool...")
             await self._pool.close()
             self._pool = None
-            logger.info("[DB-Pool] AsyncConnectionPool closed cleanly")
+            logger.info("[DB-Pool] AsyncConnectionPool closed cleanly ✓")
 
     @asynccontextmanager
     async def connection(self) -> AsyncGenerator[psycopg.AsyncConnection, None]:

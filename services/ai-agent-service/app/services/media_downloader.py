@@ -31,6 +31,9 @@ import urllib.parse
 
 import httpx
 
+from app.core.http_client import http_client_manager
+from app.core.memory_reclaimer import reclaim_memory_background
+
 logger = logging.getLogger(__name__)
 
 # Giới hạn 50MB của Telegram Bot API dùng cho phân phối (Milestone 2), không dùng để ngắt tải máy chủ
@@ -228,24 +231,14 @@ class MultiTierMediaPipeline:
     async def _get_client(self) -> httpx.AsyncClient:
         if self._external_client and not self._external_client.is_closed:
             return self._external_client
-        transport = httpx.AsyncHTTPTransport(local_address="0.0.0.0")
-        return httpx.AsyncClient(
-            transport=transport,
-            timeout=httpx.Timeout(connect=10.0, read=35.0, write=35.0, pool=35.0),
-            follow_redirects=True,
-            headers={
-                "User-Agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
-                )
-            },
-        )
+        return http_client_manager.get_media_client()
 
     async def _resolve_redirect_url(self, url: str) -> str:
         """
         Tầng 2 (Động): Phân giải URL Facebook rút gọn động (fb.watch, fb.me...) bằng httpx stream ngắt sớm.
 
         Ưu điểm kỹ thuật:
+          - Tái sử dụng HTTP connection pool qua http_client_manager.get_media_client(), tiết kiệm 150-300ms TLS handshake.
           - Ép IPv4 (local_address='0.0.0.0') loại bỏ lỗi [Errno 101] Network is unreachable trên Docker bridge.
           - Sử dụng User-Agent chính thức 'facebookexternalhit/1.1' được Meta white-list, loại bỏ triệt để HTTP 400 WAF.
           - Dùng client.stream('GET', follow_redirects=True, max_redirects=5) ngắt sớm (early abort): đọc xong HTTP headers
@@ -257,22 +250,20 @@ class MultiTierMediaPipeline:
         """
         logger.info("[RedirectResolver] Resolving potential redirect URL: %s", url)
         try:
-            transport = httpx.AsyncHTTPTransport(local_address="0.0.0.0")
-            timeout = httpx.Timeout(connect=5.0, read=5.0, write=5.0, pool=5.0)
+            client = await self._get_client()
             headers = {
                 "User-Agent": "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)",
                 "Accept": "*/*",
                 "Accept-Language": "en-US,en;q=0.9",
             }
-            async with httpx.AsyncClient(
-                transport=transport,
-                timeout=timeout,
+            async with client.stream(
+                "GET",
+                url,
+                headers=headers,
                 follow_redirects=True,
                 max_redirects=5,
-                headers=headers,
-            ) as client:
-                async with client.stream("GET", url) as resp:
-                    resolved_url = str(resp.url)
+            ) as resp:
+                resolved_url = str(resp.url)
                     status_code = resp.status_code
 
                     # Kiểm tra nếu Facebook redirect về trang login hoặc checkpoint (bài viết/video riêng tư)
@@ -810,63 +801,67 @@ class MultiTierMediaPipeline:
 
         clean_url = url.strip()
 
-        # 1. Định tuyến Threads chuyên biệt (yt-dlp không hỗ trợ Threads, đi thẳng vào Playwright Sniffer)
-        if self._threads_regex.search(clean_url):
+        try:
+            # 1. Định tuyến Threads chuyên biệt (yt-dlp không hỗ trợ Threads, đi thẳng vào Playwright Sniffer)
+            if self._threads_regex.search(clean_url):
+                try:
+                    item = await self._download_threads_playwright(clean_url)
+                    if item:
+                        item.source_url = clean_url
+                        logger.info("[Pipeline] Threads Playwright Sniffer succeeded!")
+                        return item
+                except VideoTooLargeError:
+                    raise
+                except Exception as err:
+                    logger.error("[Pipeline] Threads extraction failed: %s", err)
+                    raise MediaPipelineError(f"Không thể tải video từ Threads: {err}")
+
+            # 2. Tiền xử lý Facebook URLs: Kết hợp 2 tầng (Tầng 1 Tĩnh -> Tầng 2 Động)
+            target_url = canonicalize_facebook_url(clean_url)
+            if self._facebook_redirect_regex.search(target_url):
+                resolved = await self._resolve_redirect_url(target_url)
+                target_url = canonicalize_facebook_url(resolved)
+
+            # 3. Định tuyến TikTok / Douyin (Tier 1: TikWM -> Tier 2: yt-dlp -> Tier 3: Playwright)
+            is_tiktok_douyin = bool(self._tiktok_regex.search(clean_url))
+
+            if is_tiktok_douyin:
+                try:
+                    item = await self._download_tikwm(clean_url)
+                    if item:
+                        item.source_url = clean_url
+                        logger.info("[Pipeline] Tier 1 (TikWM) succeeded!")
+                        return item
+                except VideoTooLargeError:
+                    raise
+                except Exception as err:
+                    logger.warning("[Pipeline] Tier 1 failed, falling back to Tier 2: %s", err)
+
+            # 4. Tier 2: yt-dlp Universal Downloader (YouTube, Facebook Reels/Watch, Douyin...)
             try:
-                item = await self._download_threads_playwright(clean_url)
+                item = await self._download_ytdlp(target_url)
                 if item:
                     item.source_url = clean_url
-                    logger.info("[Pipeline] Threads Playwright Sniffer succeeded!")
+                    logger.info("[Pipeline] Tier 2 (yt-dlp) succeeded for URL: %s", target_url)
                     return item
             except VideoTooLargeError:
                 raise
             except Exception as err:
-                logger.error("[Pipeline] Threads extraction failed: %s", err)
-                raise MediaPipelineError(f"Không thể tải video từ Threads: {err}")
+                logger.warning("[Pipeline] Tier 2 failed, falling back to Tier 3: %s", err)
 
-        # 2. Tiền xử lý Facebook URLs: Kết hợp 2 tầng (Tầng 1 Tĩnh -> Tầng 2 Động)
-        target_url = canonicalize_facebook_url(clean_url)
-        if self._facebook_redirect_regex.search(target_url):
-            resolved = await self._resolve_redirect_url(target_url)
-            target_url = canonicalize_facebook_url(resolved)
-
-        # 3. Định tuyến TikTok / Douyin (Tier 1: TikWM -> Tier 2: yt-dlp -> Tier 3: Playwright)
-        is_tiktok_douyin = bool(self._tiktok_regex.search(clean_url))
-
-        if is_tiktok_douyin:
+            # 5. Tier 3: Playwright Sniffer Fallback
             try:
-                item = await self._download_tikwm(clean_url)
+                item = await self._download_playwright_sniff(clean_url)
                 if item:
                     item.source_url = clean_url
-                    logger.info("[Pipeline] Tier 1 (TikWM) succeeded!")
+                    logger.info("[Pipeline] Tier 3 (Playwright Sniffer) succeeded!")
                     return item
             except VideoTooLargeError:
                 raise
             except Exception as err:
-                logger.warning("[Pipeline] Tier 1 failed, falling back to Tier 2: %s", err)
+                logger.error("[Pipeline] Tier 3 failed: %s", err)
 
-        # 4. Tier 2: yt-dlp Universal Downloader (YouTube, Facebook Reels/Watch, Douyin...)
-        try:
-            item = await self._download_ytdlp(target_url)
-            if item:
-                item.source_url = clean_url
-                logger.info("[Pipeline] Tier 2 (yt-dlp) succeeded for URL: %s", target_url)
-                return item
-        except VideoTooLargeError:
-            raise
-        except Exception as err:
-            logger.warning("[Pipeline] Tier 2 failed, falling back to Tier 3: %s", err)
-
-        # 5. Tier 3: Playwright Sniffer Fallback
-        try:
-            item = await self._download_playwright_sniff(clean_url)
-            if item:
-                item.source_url = clean_url
-                logger.info("[Pipeline] Tier 3 (Playwright Sniffer) succeeded!")
-                return item
-        except VideoTooLargeError:
-            raise
-        except Exception as err:
-            logger.error("[Pipeline] Tier 3 failed: %s", err)
-
-        raise MediaPipelineError(f"Không thể trích xuất video từ liên kết: {clean_url}")
+            raise MediaPipelineError(f"Không thể trích xuất video từ liên kết: {clean_url}")
+        finally:
+            # Chủ động thu hồi RAM nền (glibc malloc_trim + gc.collect) sau khi xử lý media xong
+            await reclaim_memory_background(delay_seconds=0.2)

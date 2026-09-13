@@ -258,13 +258,20 @@ class TestThresholdAndZeroDiskLeak(unittest.TestCase):
             f"DISK LEAK DETECTED! Leftover files in {TEMP_MEDIA_DIR}: {leaked_files}"
         )
 
-    def test_content_length_oversized_raises_and_creates_zero_files(self):
-        """Kiểm tra Content-Length > 48MB: ngắt ngay lập tức, không tạo bất kỳ file tạm nào."""
+    def test_content_length_oversized_streams_successfully_without_abort(self):
+        """Kiểm chứng Milestone 1: Content-Length lớn (52MB) không bị ngắt sớm, stream hoàn tất an toàn."""
         async def run():
             mock_resp = MagicMock()
             mock_resp.status_code = 200
             # Giả lập video 52MB
             mock_resp.headers = {"content-length": str(52 * 1024 * 1024)}
+
+            chunk_64kb = b"X" * (64 * 1024)
+            async def _chunk_gen(*args, **kwargs):
+                for _ in range(5):
+                    yield chunk_64kb
+
+            mock_resp.aiter_bytes = _chunk_gen
 
             mock_stream_ctx = MagicMock()
             mock_stream_ctx.__aenter__ = AsyncMock(return_value=mock_resp)
@@ -273,15 +280,22 @@ class TestThresholdAndZeroDiskLeak(unittest.TestCase):
             mock_client = MagicMock()
             mock_client.stream = MagicMock(return_value=mock_stream_ctx)
 
-            with self.assertRaises(VideoTooLargeError):
-                await self.pipeline._stream_url_to_file("https://cdn.example.com/huge.mp4", mock_client)
+            temp_path, total_bytes = await self.pipeline._stream_url_to_file(
+                "https://cdn.example.com/huge.mp4", mock_client
+            )
+            try:
+                self.assertTrue(os.path.exists(temp_path))
+                self.assertEqual(total_bytes, 5 * 64 * 1024)
+            finally:
+                if os.path.exists(temp_path):
+                    os.unlink(temp_path)
 
         asyncio.run(run())
 
-    def test_chunked_streaming_oversized_unlinks_temp_file_immediately(self):
+    def test_chunked_streaming_oversized_streams_successfully_without_abort(self):
         """
-        Kiểm tra stream không có Content-Length nhưng dung lượng thực tế vượt 48MB:
-        phải ném VideoTooLargeError VÀ lập tức xóa sạch file tạm (Zero-Disk-Leak).
+        Kiểm chứng Milestone 1: Stream không có Content-Length và dung lượng thực tế vượt 48MB (50.46MB)
+        không bị ngắt tải, được ghi trọn vẹn ra SSD tạm và dọn dẹp sạch sẽ khi hoàn tất (Zero-Disk-Leak).
         """
         async def run():
             mock_resp = MagicMock()
@@ -304,8 +318,15 @@ class TestThresholdAndZeroDiskLeak(unittest.TestCase):
             mock_client = MagicMock()
             mock_client.stream = MagicMock(return_value=mock_stream_ctx)
 
-            with self.assertRaises(VideoTooLargeError):
-                await self.pipeline._stream_url_to_file("https://cdn.example.com/oversized_stream.mp4", mock_client)
+            temp_path, total_bytes = await self.pipeline._stream_url_to_file(
+                "https://cdn.example.com/oversized_stream.mp4", mock_client
+            )
+            try:
+                self.assertTrue(os.path.exists(temp_path))
+                self.assertEqual(total_bytes, 770 * 64 * 1024)
+            finally:
+                if os.path.exists(temp_path):
+                    os.unlink(temp_path)
 
         asyncio.run(run())
 
@@ -474,19 +495,22 @@ class TestIPv4EnforcementAndYtDlpConfig(unittest.TestCase):
             self.pipeline._sync_ytdlp_download("https://www.youtube.com/shorts/test123")
 
         self.assertEqual(captured_opts.get("source_address"), "0.0.0.0")
-        self.assertEqual(captured_opts.get("max_filesize"), TELEGRAM_MAX_FILE_SIZE)
+        self.assertNotIn("max_filesize", captured_opts)
         self.assertEqual(captured_opts.get("merge_output_format"), "mp4")
-        self.assertIn("filesize<=48M", captured_opts.get("format", ""))
+        self.assertEqual(captured_opts.get("format"), "bestvideo+bestaudio/best")
+        self.assertEqual(
+            captured_opts.get("postprocessor_args"),
+            {"merger": ["-movflags", "+faststart"]},
+        )
 
-        # Kiểm tra match_filter reject duration > 1800s
+        # Kiểm tra match_filter reject duration > 7200s (2 giờ)
         match_filter = captured_opts.get("match_filter")
         self.assertIsNotNone(match_filter)
-        with self.assertRaises(VideoTooLargeError):
-            match_filter({"duration": 1801})
-        self.assertIsNone(match_filter({"duration": 60}))
+        self.assertIsNotNone(match_filter({"duration": 7201}))
+        self.assertIsNone(match_filter({"duration": 1800}))
 
-    def test_ytdlp_part_files_trigger_video_too_large_and_cleanup(self):
-        """yt-dlp để lại file .part (do vượt max_filesize) phải ném VideoTooLargeError và xóa thư mục tạm."""
+    def test_ytdlp_part_files_trigger_pipeline_error_and_cleanup(self):
+        """yt-dlp để lại file .part dở dang (do lỗi mạng/tải không hoàn tất) phải ném MediaPipelineError và xóa thư mục tạm."""
         created_temp_dirs = []
 
         class PartFileSimYDL:
@@ -517,21 +541,21 @@ class TestIPv4EnforcementAndYtDlpConfig(unittest.TestCase):
         mock_ytdlp_module.YoutubeDL = PartFileSimYDL
 
         with patch.dict(sys.modules, {"yt_dlp": mock_ytdlp_module}):
-            with self.assertRaises(VideoTooLargeError):
-                self.pipeline._sync_ytdlp_download("https://www.youtube.com/watch?v=large")
+            with self.assertRaises(MediaPipelineError):
+                self.pipeline._sync_ytdlp_download("https://www.youtube.com/watch?v=broken")
 
         # Xác thực thư mục tạm đã bị dọn sạch
         for td in created_temp_dirs:
             self.assertFalse(os.path.exists(td), f"Temporary directory {td} was not cleaned up!")
 
-    def test_ytdlp_download_error_max_filesize_triggers_video_too_large(self):
-        """yt-dlp ném DownloadError 'larger than max-filesize' phải chuyển hóa thành VideoTooLargeError."""
+    def test_ytdlp_download_error_handles_gracefully_and_cleans_up(self):
+        """yt-dlp ném DownloadError phải xử lý an toàn (trả về None) và xóa thư mục tạm."""
         class DummyDownloadError(Exception):
             pass
 
         class DownloadErrorSimYDL:
             def __init__(self, opts):
-                pass
+                self.opts = opts
 
             def __enter__(self):
                 return self
@@ -540,7 +564,7 @@ class TestIPv4EnforcementAndYtDlpConfig(unittest.TestCase):
                 pass
 
             def extract_info(self, url, download=True):
-                raise DummyDownloadError("File is larger than max-filesize (55000000 > 50331648)")
+                raise DummyDownloadError("Network connection reset by peer")
 
         mock_utils = MagicMock()
         mock_utils.DownloadError = DummyDownloadError
@@ -549,8 +573,8 @@ class TestIPv4EnforcementAndYtDlpConfig(unittest.TestCase):
         mock_ytdlp_module.utils = mock_utils
 
         with patch.dict(sys.modules, {"yt_dlp": mock_ytdlp_module, "yt_dlp.utils": mock_utils}):
-            with self.assertRaises(VideoTooLargeError):
-                self.pipeline._sync_ytdlp_download("https://www.youtube.com/watch?v=too_big")
+            result = self.pipeline._sync_ytdlp_download("https://www.youtube.com/watch?v=error_case")
+            self.assertIsNone(result)
 
 
 class TestPipelineDownloadRouting(unittest.TestCase):

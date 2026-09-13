@@ -2,17 +2,24 @@
 Agent Tool Registry & Execution Subsystem (Gorilla RAT Scoped Tools)
 Tách rời toàn bộ định nghĩa Schema công cụ và Logic Dispatcher thực thi.
 """
+import asyncio
 from datetime import datetime, timezone, timedelta
 import html
 import json
 import logging
+import os
+from pathlib import Path
 import re
 import shlex
+import shutil
+import tempfile
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from app.config import settings
 from app.core.ssh_client import SshClient
 from app.services.message_cache import FacebookMessageCache
+from app.services.video_chunker import VideoChunker
+from app.services.media_storage_manager import media_storage_manager
 
 logger = logging.getLogger(__name__)
 VN_TZ = timezone(timedelta(hours=7))
@@ -1539,29 +1546,120 @@ class AgentToolExecutor:
                     safe_author = html.escape(media_item.author or "Unknown")
 
                     if media_item.media_type == "video" and media_item.file_path:
-                        cap = caption_override or (
-                            f"🎬 <b>{safe_title}</b>\n"
-                            f"👤 Kênh: <code>@{safe_author}</code>\n"
-                            f"⏱ Thời lượng: {media_item.duration}s | 📦 Dung lượng: {media_item.file_size / (1024*1024):.1f} MB\n\n"
-                            f"✨ <i>Tiểu Bảo Bảo đã tải thành công video không logo cho anh Mạnh!</i>"
-                        )
-                        if self.telegram_bot and chat_id:
-                            sent = await self.telegram_bot.send_video(
-                                chat_id=chat_id,
-                                video_path=media_item.file_path,
-                                caption=cap,
-                                duration=media_item.duration,
+                        file_size = media_item.file_size
+                        total_mb = file_size / (1024 * 1024)
+
+                        if file_size <= 50 * 1024 * 1024:
+                            # Video <= 50MB: Gửi trực tiếp 1 video duy nhất qua Telegram
+                            cap = caption_override or (
+                                f"🎬 <b>{safe_title}</b>\n"
+                                f"👤 Kênh: <code>@{safe_author}</code>\n"
+                                f"⏱ Thời lượng: {media_item.duration}s | 📦 Dung lượng: {total_mb:.1f} MB\n\n"
+                                f"✨ <i>Tiểu Bảo Bảo đã tải thành công video không logo cho anh Mạnh!</i>"
                             )
-                            if not sent:
-                                with open(media_item.file_path, "rb") as vf:
-                                    vbytes = vf.read()
-                                await self.telegram_bot.send_document(
+                            if self.telegram_bot and chat_id:
+                                sent = await self.telegram_bot.send_video(
                                     chat_id=chat_id,
-                                    file_bytes=vbytes,
-                                    filename=Path(media_item.file_path).name,
+                                    video_path=media_item.file_path,
                                     caption=cap,
+                                    duration=media_item.duration,
                                 )
-                        return f"🎬 Em đã tải video **{media_item.title}** thành công và gửi trực tiếp qua Telegram cho anh Mạnh rồi ạ!"
+                                if not sent:
+                                    # Fallback stream trực tiếp từ đĩa (Zero-RAM Leak)
+                                    if hasattr(self.telegram_bot, "send_document_file"):
+                                        await self.telegram_bot.send_document_file(
+                                            chat_id=chat_id,
+                                            file_path=media_item.file_path,
+                                            filename=Path(media_item.file_path).name,
+                                            caption=cap,
+                                        )
+                            return f"🎬 Em đã tải video **{media_item.title}** ({total_mb:.1f} MB) thành công và gửi trực tiếp qua Telegram cho anh Mạnh rồi ạ!"
+                        else:
+                            # Video > 50MB: Kích hoạt Phân phối video kép (Dual-Track Large Video Distribution)
+                            # Thông báo chuẩn bị chia phần nếu có telegram bot
+                            if self.telegram_bot and chat_id:
+                                await self.telegram_bot.send_message(
+                                    chat_id,
+                                    f"📦 <b>Video chất lượng gốc có dung lượng lớn ({total_mb:.1f} MB)!</b>\n"
+                                    f"⚡ <i>Tiểu Bảo Bảo đang chia thành các phần chuẩn HD để gửi qua Telegram và tạo liên kết tải trực tiếp cho anh Mạnh...</i>"
+                                )
+
+                            # Kênh 2: Chuyển quyền sở hữu tệp gốc sang media_storage_manager để phục vụ Direct Download
+                            clean_filename = Path(media_item.file_path).name
+                            download_rec = media_storage_manager.publish_download_item(
+                                file_path=media_item.file_path,
+                                filename=clean_filename,
+                                title=raw_title,
+                                duration=media_item.duration,
+                                ttl_seconds=4 * 3600,
+                            )
+                            media_item.is_temp_file = False
+
+                            # Kênh 1: Cắt tệp gốc (tại download_rec.file_path) bằng VideoChunker.split_video()
+                            parts_dir = Path(tempfile.mkdtemp(prefix="media_parts_", dir=str(media_storage_manager.temp_dir)))
+                            try:
+                                parts = await VideoChunker.split_video(
+                                    video_path=str(download_rec.file_path),
+                                    output_dir=parts_dir,
+                                )
+                                total_parts = len(parts)
+
+                                if self.telegram_bot and chat_id:
+                                    for p_info in parts:
+                                        p_idx = p_info["part_index"]
+                                        p_path = p_info["path"]
+                                        p_dur = p_info["duration"]
+                                        p_size_mb = p_info["size"] / (1024 * 1024)
+
+                                        part_caption = (
+                                            f"🎬 <b>{safe_title}</b> (Phần {p_idx}/{total_parts})\n"
+                                            f"👤 Kênh: <code>@{safe_author}</code>\n"
+                                            f"⏱ Thời lượng: {p_dur}s | 📦 Dung lượng: {p_size_mb:.1f} MB (Gốc: {total_mb:.1f} MB)\n\n"
+                                            f"✨ <i>Chất lượng gốc 100% không suy hao (Lossless)!</i>"
+                                        )
+                                        sent_part = await self.telegram_bot.send_video(
+                                            chat_id=chat_id,
+                                            video_path=p_path,
+                                            caption=part_caption,
+                                            duration=p_dur,
+                                            width=p_info.get("width", 0),
+                                            height=p_info.get("height", 0),
+                                        )
+                                        if not sent_part and hasattr(self.telegram_bot, "send_document_file"):
+                                            await self.telegram_bot.send_document_file(
+                                                chat_id=chat_id,
+                                                file_path=p_path,
+                                                filename=Path(p_path).name,
+                                                caption=part_caption,
+                                            )
+
+                                        # Streaming Purge: Xóa ngay part vừa gửi để bảo đảm Zero-Disk-Leak
+                                        try:
+                                            os.unlink(p_path)
+                                        except Exception:
+                                            pass
+
+                                        if p_idx < total_parts:
+                                            await asyncio.sleep(1.0)
+
+                                    await self.telegram_bot.send_message(
+                                        chat_id,
+                                        f"✨ <b>Đã gửi trọn vẹn {total_parts}/{total_parts} phần lên Telegram!</b>\n\n"
+                                        f"🔗 Hoặc anh Mạnh có thể bấm tải trực tiếp toàn bộ video gốc nguyên khối ({total_mb:.1f} MB) tại:\n"
+                                        f"🌐 <b>Link Internet (Ngrok):</b> {download_rec.internet_url}\n"
+                                        f"🏠 <b>Link Nội Bộ (LAN):</b> {download_rec.lan_url}\n\n"
+                                        f"<i>(Đường link trực tiếp có hiệu lực trong vòng 4 giờ)</i>"
+                                    )
+
+                                return (
+                                    f"🎬 Em đã tải video **{raw_title}** ({total_mb:.1f} MB) chất lượng cao nhất thành công!\n"
+                                    f"📦 Video dung lượng lớn đã được chia thành {total_parts} phần lossless gửi qua Telegram.\n"
+                                    f"🔗 Đường link tải trực tiếp nguyên khối (hạn 4 giờ):\n"
+                                    f"- Internet: {download_rec.internet_url}\n"
+                                    f"- LAN nội bộ: {download_rec.lan_url}"
+                                )
+                            finally:
+                                shutil.rmtree(parts_dir, ignore_errors=True)
 
                     elif media_item.media_type == "images" and media_item.images:
                         album_caption = caption_override or f"📸 <b>{safe_title}</b>\n👤 Kênh: <code>@{safe_author}</code>"

@@ -5,7 +5,7 @@ import re
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Set
+from typing import Any, Dict, List, Optional, Tuple, Set, Union
 import os
 import shutil
 import tempfile
@@ -32,6 +32,8 @@ from app.services.video_pipeline import (
     VideoDebounceManager,
     VideoMetadata,
 )
+from app.services.video_chunker import VideoChunker
+from app.services.media_storage_manager import media_storage_manager
 
 logger = logging.getLogger(__name__)
 
@@ -447,6 +449,51 @@ class TelegramBot:
                 logger.warning("[TelegramBot] sendDocument error %d: %s", res.status_code, res.text)
         except Exception as e:
             logger.error("[TelegramBot] Failed sending document bytes: %s", e)
+        return False
+
+    async def send_document_file(
+        self,
+        chat_id: str,
+        file_path: Union[str, Path],
+        filename: Optional[str] = None,
+        caption: Optional[str] = None,
+        parse_mode: Optional[str] = "HTML",
+    ) -> bool:
+        """Gửi tệp tin trực tiếp bằng streaming từ đĩa (Zero-RAM Leak) thay vì nạp toàn bộ vào RAM."""
+        if not self.token or not file_path:
+            return False
+        try:
+            p = Path(file_path)
+            if not p.exists() or not p.is_file():
+                logger.error("[TelegramBot] Document file not found: %s", file_path)
+                return False
+            name = filename or p.name
+            url = f"{self.api_url}/sendDocument"
+            data: Dict[str, Any] = {"chat_id": chat_id}
+            if caption:
+                data["caption"] = caption[:1024]
+                if parse_mode:
+                    data["parse_mode"] = parse_mode
+
+            with open(p, "rb") as f:
+                files = {"document": (name, f, "application/octet-stream")}
+                res = await self._http_client.post(url, data=data, files=files, timeout=120.0)
+
+                if res.status_code == 200:
+                    return True
+                elif parse_mode and "can't parse entities" in res.text.lower():
+                    logger.warning("[TelegramBot] send_document_file HTML parse error. Retrying as plain text...")
+                    f.seek(0)
+                    data.pop("parse_mode", None)
+                    if caption:
+                        data["caption"] = _strip_html_tags(caption)[:1024]
+                    files = {"document": (name, f, "application/octet-stream")}
+                    res2 = await self._http_client.post(url, data=data, files=files, timeout=120.0)
+                    return res2.status_code == 200
+                else:
+                    logger.warning("[TelegramBot] send_document_file error %d: %s", res.status_code, res.text)
+        except Exception as e:
+            logger.error("[TelegramBot] Failed sending document file: %s", e, exc_info=True)
         return False
 
     async def send_video(
@@ -1538,28 +1585,110 @@ class TelegramBot:
                         raw_title = raw_title[:347] + "..."
                     safe_title = html.escape(raw_title)
                     safe_author = html.escape(media_item.author or "Unknown")
-                    caption = (
-                        f"🎬 <b>{safe_title}</b>\n"
-                        f"👤 Kênh: <code>@{safe_author}</code>\n"
-                        f"⏱ Thời lượng: {media_item.duration}s | 📦 Dung lượng: {media_item.file_size / (1024*1024):.1f} MB\n\n"
-                        f"✨ <i>Tiểu Bảo Bảo đã tải thành công video không logo cho anh Mạnh!</i>"
-                    )
-                    sent = await self.send_video(
-                        chat_id=chat_id,
-                        video_path=media_item.file_path,
-                        caption=caption,
-                        duration=media_item.duration,
-                    )
-                    if not sent:
-                        # Fallback gửi qua sendDocument nếu định dạng đặc thù
-                        with open(media_item.file_path, "rb") as vf:
-                            vbytes = vf.read()
-                        await self.send_document(
-                            chat_id=chat_id,
-                            file_bytes=vbytes,
-                            filename=Path(media_item.file_path).name,
-                            caption=caption,
+                    file_size = media_item.file_size
+                    total_mb = file_size / (1024 * 1024)
+
+                    if file_size <= 50 * 1024 * 1024:
+                        # Video <= 50MB: Gửi 1 video duy nhất qua send_video
+                        caption = (
+                            f"🎬 <b>{safe_title}</b>\n"
+                            f"👤 Kênh: <code>@{safe_author}</code>\n"
+                            f"⏱ Thời lượng: {media_item.duration}s | 📦 Dung lượng: {total_mb:.1f} MB\n\n"
+                            f"✨ <i>Tiểu Bảo Bảo đã tải thành công video không logo cho anh Mạnh!</i>"
                         )
+                        sent = await self.send_video(
+                            chat_id=chat_id,
+                            video_path=media_item.file_path,
+                            caption=caption,
+                            duration=media_item.duration,
+                        )
+                        if not sent:
+                            # Fallback stream trực tiếp từ đĩa (Zero-RAM Leak) thay vì nạp toàn bộ vào RAM
+                            await self.send_document_file(
+                                chat_id=chat_id,
+                                file_path=media_item.file_path,
+                                filename=Path(media_item.file_path).name,
+                                caption=caption,
+                            )
+                    else:
+                        # Video > 50MB: Kích hoạt Phân phối video kép (Dual-Track Large Video Distribution)
+                        # Thông báo chuẩn bị chia phần
+                        await self.send_message(
+                            chat_id,
+                            f"📦 <b>Video chất lượng gốc có dung lượng lớn ({total_mb:.1f} MB)!</b>\n"
+                            f"⚡ <i>Tiểu Bảo Bảo đang chia thành các phần chuẩn HD để gửi qua Telegram và tạo liên kết tải trực tiếp cho anh Mạnh...</i>"
+                        )
+
+                        # Kênh 2: Chuyển quyền sở hữu tệp gốc sang media_storage_manager để phục vụ Direct Download
+                        clean_filename = Path(media_item.file_path).name
+                        download_rec = media_storage_manager.publish_download_item(
+                            file_path=media_item.file_path,
+                            filename=clean_filename,
+                            title=raw_title,
+                            duration=media_item.duration,
+                            ttl_seconds=4 * 3600,
+                        )
+                        # Đánh dấu tệp gốc đã chuyển giao quyền sở hữu sang public storage (quản lý bởi TTL sweeper)
+                        media_item.is_temp_file = False
+
+                        # Kênh 1: Cắt tệp gốc (tại download_rec.file_path) bằng VideoChunker.split_video() trong thư mục tạm
+                        parts_dir = Path(tempfile.mkdtemp(prefix="media_parts_", dir=str(media_storage_manager.temp_dir)))
+                        try:
+                            parts = await VideoChunker.split_video(
+                                video_path=str(download_rec.file_path),
+                                output_dir=parts_dir,
+                            )
+                            total_parts = len(parts)
+
+                            for p_info in parts:
+                                p_idx = p_info["part_index"]
+                                p_path = p_info["path"]
+                                p_dur = p_info["duration"]
+                                p_size_mb = p_info["size"] / (1024 * 1024)
+
+                                part_caption = (
+                                    f"🎬 <b>{safe_title}</b> (Phần {p_idx}/{total_parts})\n"
+                                    f"👤 Kênh: <code>@{safe_author}</code>\n"
+                                    f"⏱ Thời lượng: {p_dur}s | 📦 Dung lượng: {p_size_mb:.1f} MB (Gốc: {total_mb:.1f} MB)\n\n"
+                                    f"✨ <i>Chất lượng gốc 100% không suy hao (Lossless)!</i>"
+                                )
+                                sent_part = await self.send_video(
+                                    chat_id=chat_id,
+                                    video_path=p_path,
+                                    caption=part_caption,
+                                    duration=p_dur,
+                                    width=p_info.get("width", 0),
+                                    height=p_info.get("height", 0),
+                                )
+                                if not sent_part:
+                                    await self.send_document_file(
+                                        chat_id=chat_id,
+                                        file_path=p_path,
+                                        filename=Path(p_path).name,
+                                        caption=part_caption,
+                                    )
+
+                                # Streaming Purge: Xóa ngay part vừa gửi để bảo đảm Zero-Disk-Leak
+                                try:
+                                    os.unlink(p_path)
+                                except Exception:
+                                    pass
+
+                                # Chống Telegram 429 FloodWait
+                                if p_idx < total_parts:
+                                    await asyncio.sleep(1.0)
+
+                            # Gửi thông báo hoàn tất kèm cả 2 đường link tải trực tiếp nguyên khối (Ngrok & LAN)
+                            await self.send_message(
+                                chat_id,
+                                f"✨ <b>Đã gửi trọn vẹn {total_parts}/{total_parts} phần lên Telegram!</b>\n\n"
+                                f"🔗 Hoặc anh Mạnh có thể bấm tải trực tiếp toàn bộ video gốc nguyên khối ({total_mb:.1f} MB) tại:\n"
+                                f"🌐 <b>Link Internet (Ngrok):</b> {download_rec.internet_url}\n"
+                                f"🏠 <b>Link Nội Bộ (LAN):</b> {download_rec.lan_url}\n\n"
+                                f"<i>(Đường link trực tiếp có hiệu lực trong vòng 4 giờ)</i>"
+                            )
+                        finally:
+                            shutil.rmtree(parts_dir, ignore_errors=True)
                 elif media_item.media_type == "images" and media_item.images:
                     safe_title = html.escape(media_item.title)
                     safe_author = html.escape(media_item.author)

@@ -93,6 +93,44 @@ class TestMediaPipelineConcurrencyStress(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(self.pipeline._ytdlp_semaphore._value, 2, "Semaphore(2) must not leak on exceptions")
 
+    async def test_semaphore_queue_cancellation_preserves_permits_and_prevents_deadlock(self):
+        """Kiểm chứng thực nghiệm: Khi 10 tác vụ đang chờ trong hàng đợi Semaphore bị hủy, Semaphore không bị mất permit và các tác vụ sau chạy bình thường."""
+        acquired_count = 0
+        started_barrier = asyncio.Event()
+
+        async def slow_holder():
+            async with self.pipeline._ytdlp_semaphore:
+                started_barrier.set()
+                await asyncio.sleep(0.15)
+
+        async def queued_worker():
+            nonlocal acquired_count
+            async with self.pipeline._ytdlp_semaphore:
+                acquired_count += 1
+                await asyncio.sleep(0.01)
+
+        holder1 = asyncio.create_task(slow_holder())
+        holder2 = asyncio.create_task(slow_holder())
+        await started_barrier.wait()
+
+        tasks = [asyncio.create_task(queued_worker()) for _ in range(10)]
+        await asyncio.sleep(0.02)
+
+        # Hủy 5 tác vụ đang chờ
+        for i in range(5):
+            tasks[i].cancel()
+
+        for i in range(5):
+            with self.assertRaises(asyncio.CancelledError):
+                await tasks[i]
+
+        await holder1
+        await holder2
+        await asyncio.gather(*tasks[5:])
+
+        self.assertEqual(acquired_count, 5, "5 non-cancelled tasks must have acquired the semaphore")
+        self.assertEqual(self.pipeline._ytdlp_semaphore._value, 2, "Semaphore value must return to 2 after completion")
+
 
 class TestZeroDiskLeakUnderExceptions(unittest.IsolatedAsyncioTestCase):
     """Kiểm chứng thực nghiệm bảo vệ 100% Zero-Disk-Leak khi gặp các sự cố bất ngờ."""
@@ -111,8 +149,8 @@ class TestZeroDiskLeakUnderExceptions(unittest.IsolatedAsyncioTestCase):
             return 0
         return len(list(TEMP_MEDIA_DIR.iterdir()))
 
-    async def test_stream_aborted_when_file_exceeds_threshold_removes_temp_file(self):
-        """Khi stream vượt quá ngưỡng 48MB, file tạm phải bị unlink ngay lập tức."""
+    async def test_stream_large_file_completes_and_cleanup_leaves_zero_leaks(self):
+        """Khi stream video lớn (> 50MB), ghi trọn vẹn ra SSD tạm và dọn dẹp không để rò rỉ file."""
         initial_count = self.count_temp_items()
 
         async def fake_aiter_bytes(chunk_size=64 * 1024):
@@ -129,10 +167,15 @@ class TestZeroDiskLeakUnderExceptions(unittest.IsolatedAsyncioTestCase):
         mock_client.stream.return_value.__aenter__.return_value = mock_resp
         mock_client.stream.return_value.__aexit__.return_value = None
 
-        with self.assertRaises(VideoTooLargeError):
-            await self.pipeline._stream_url_to_file("https://example.com/big.mp4", mock_client)
+        temp_path, total_bytes = await self.pipeline._stream_url_to_file("https://example.com/big.mp4", mock_client)
+        try:
+            self.assertTrue(os.path.exists(temp_path))
+            self.assertEqual(total_bytes, 800 * 64 * 1024)
+        finally:
+            if os.path.exists(temp_path):
+                os.unlink(temp_path)
 
-        self.assertEqual(self.count_temp_items(), initial_count, "No temp file should leak on VideoTooLargeError")
+        self.assertEqual(self.count_temp_items(), initial_count, "No temp file should leak after cleanup")
 
     async def test_stream_aborted_on_network_error_removes_temp_file(self):
         """Khi kết nối mạng đứt giữa chừng lúc stream, file tạm phải bị xóa sạch."""
@@ -221,6 +264,51 @@ class TestZeroDiskLeakUnderExceptions(unittest.IsolatedAsyncioTestCase):
         else:
             self.assertFalse(file_still_exists, "Temp file successfully unlinked on cancellation")
 
+    async def test_stream_disk_write_oserror_cleans_up_immediately(self):
+        """Khi gặp lỗi ghi đĩa OSError (ví dụ ENOSPC - hết dung lượng ổ đĩa), file dở dang phải được dọn sạch."""
+        initial_count = self.count_temp_items()
+
+        async def dummy_chunks(chunk_size=64 * 1024):
+            for _ in range(5):
+                yield b"chunk" * 1024
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.headers = {}
+        mock_resp.aiter_bytes = dummy_chunks
+
+        mock_client = MagicMock()
+        mock_client.stream.return_value.__aenter__.return_value = mock_resp
+        mock_client.stream.return_value.__aexit__.return_value = None
+
+        with patch("builtins.open", side_effect=OSError(28, "No space left on device")):
+            with self.assertRaises(OSError):
+                await self.pipeline._stream_url_to_file("https://example.com/enospc.mp4", mock_client)
+
+        self.assertEqual(self.count_temp_items(), initial_count, "No leftover file when disk write throws OSError")
+
+    async def test_stream_timeout_cleans_up_immediately(self):
+        """Khi stream bị timeout giữa chừng, file tạm phải bị xóa sạch."""
+        initial_count = self.count_temp_items()
+
+        async def timeout_chunks(chunk_size=64 * 1024):
+            yield b"initial partial chunk"
+            raise asyncio.TimeoutError("Stream read timed out")
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.headers = {}
+        mock_resp.aiter_bytes = timeout_chunks
+
+        mock_client = MagicMock()
+        mock_client.stream.return_value.__aenter__.return_value = mock_resp
+        mock_client.stream.return_value.__aexit__.return_value = None
+
+        with self.assertRaises(asyncio.TimeoutError):
+            await self.pipeline._stream_url_to_file("https://example.com/timeout.mp4", mock_client)
+
+        self.assertEqual(self.count_temp_items(), initial_count, "No leftover file when stream times out")
+
     def test_sync_ytdlp_download_cleans_up_part_files_and_temp_dir_on_failure(self):
         """yt-dlp khi tải dở bị ngắt phải xóa sạch thư mục tạm và các file .part."""
         pipeline = MultiTierMediaPipeline()
@@ -293,10 +381,10 @@ class TestZeroDiskLeakUnderExceptions(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(os.path.exists(created_file), "Tệp mồ côi phải được xóa sạch sau khi thread hoàn tất!")
             self.assertFalse(os.path.exists(created_dir), "Thư mục tạm media_ytdlp_* phải được xóa sạch!")
 
-    def test_sync_ytdlp_download_split_stream_m4a_residual_triggers_video_too_large(self):
+    def test_sync_ytdlp_download_split_stream_m4a_residual_triggers_pipeline_error(self):
         """
         Kiểm chứng thực nghiệm: yt-dlp khi tải video DASH tách luồng bị ngắt video nhưng còn sót tệp audio .m4a
-        phải kích hoạt VideoTooLargeError và dọn dẹp 100% thư mục tạm thay vì trả về None.
+        phải kích hoạt MediaPipelineError và dọn dẹp 100% thư mục tạm thay vì trả về None.
         """
         pipeline = MultiTierMediaPipeline()
         fake_url = "https://facebook.com/reel/fake_dash_split"
@@ -327,7 +415,7 @@ class TestZeroDiskLeakUnderExceptions(unittest.IsolatedAsyncioTestCase):
         mock_ytdlp.utils = mock_utils
 
         with patch.dict("sys.modules", {"yt_dlp": mock_ytdlp, "yt_dlp.utils": mock_utils}):
-            with self.assertRaises(VideoTooLargeError):
+            with self.assertRaises(MediaPipelineError):
                 pipeline._sync_ytdlp_download(fake_url)
 
         remaining_subdirs = [p for p in TEMP_MEDIA_DIR.iterdir() if p.is_dir() and p.name.startswith("media_ytdlp_")]

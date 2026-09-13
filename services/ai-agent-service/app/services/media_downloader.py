@@ -8,8 +8,8 @@ Kiến trúc phân tầng chuyên biệt cho 'quan_ly_server' trên hạ tầng 
 
 Tính năng an toàn:
   • Zero-RAM chunked disk streaming (64KB chunks trực tiếp ra đĩa SSD tạm)
-  • Kiểm tra ngưỡng dung lượng nghiêm ngặt (<= 48MB) tuân thủ giới hạn 50MB của Telegram Bot API
-  • Format MP4 chuẩn AVC1/H.264 + AAC để xem inline mượt mà trên ứng dụng Telegram di động/máy tính
+  • Tải chất lượng cao nhất (Best Video + Best Audio / 1080p, 2K, 4K lossless), không giới hạn dung lượng tải về máy chủ
+  • Format MP4 chuẩn tương thích phát trực tiếp hoặc phân phối kép cho Telegram
   • Giới hạn tác vụ song song bằng asyncio.Semaphore bảo vệ CPU máy chủ
   • Tự động dọn dẹp file tạm triệt để trong khối try...finally
 """
@@ -33,7 +33,9 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-TELEGRAM_MAX_FILE_SIZE = 48 * 1024 * 1024
+# Giới hạn 50MB của Telegram Bot API dùng cho phân phối (Milestone 2), không dùng để ngắt tải máy chủ
+TELEGRAM_MAX_FILE_SIZE = 50 * 1024 * 1024
+TELEGRAM_CHUNK_SIZE = 48 * 1024 * 1024
 TEMP_MEDIA_DIR = Path("/tmp/media_downloads")
 
 
@@ -355,6 +357,9 @@ class MultiTierMediaPipeline:
                 logger.warning("[Tier 1: TikWM] No playable stream URL in response")
                 return None
 
+            # Chuẩn hóa URL tuyệt đối để phòng trường hợp TikWM trả về relative path
+            stream_url = urllib.parse.urljoin("https://www.tikwm.com", stream_url)
+
             temp_file_path, file_size = await self._stream_url_to_file(stream_url, client)
 
             return MediaItem(
@@ -413,38 +418,31 @@ class MultiTierMediaPipeline:
         temp_dir = tempfile.mkdtemp(prefix="media_ytdlp_", dir=str(TEMP_MEDIA_DIR))
         out_tmpl = os.path.join(temp_dir, "media_%(id)s.%(ext)s")
 
-        # 1. Định dạng ưu tiên tuyệt đối MP4 AVC1/H.264 + AAC để xem inline Telegram
-        # Tự động chọn độ phân giải tốt nhất trong ngưỡng an toàn 48MB
-        format_chain = (
-            "bestvideo[vcodec^=avc1][filesize<=48M][ext=mp4]+bestaudio[acodec^=mp4a]/"
-            "bestvideo[vcodec^=avc1][filesize_approx<=48M][ext=mp4]+bestaudio[acodec^=mp4a]/"
-            "bestvideo[vcodec^=avc1][ext=mp4]+bestaudio[acodec^=mp4a]/"
-            "bestvideo[ext=mp4]+bestaudio[ext=m4a]/"
-            "best[ext=mp4]/best"
-        )
+        # 1. Cấu hình Best Quality: Video tốt nhất + Audio tốt nhất, tự động mux lossless sang MP4
+        format_chain = "bestvideo+bestaudio/best"
 
-        # 2. Bộ lọc ngắt sớm trước khi tải nếu thời lượng video quá dài (> 30 phút)
+        # 2. Bộ lọc bảo vệ: chỉ từ chối video quá dài (> 2 giờ = 7200s) để chống DoS
         def _match_filter_duration(info_dict: Dict[str, Any], *, incomplete: bool = False) -> Optional[str]:
             duration = info_dict.get("duration")
-            if duration and duration > 1800:
-                raise VideoTooLargeError(
-                    f"Thời lượng video ({duration // 60} phút) vượt quá giới hạn dung lượng 50MB của Telegram Bot."
-                )
+            if duration and duration > 7200:
+                return "Thời lượng video vượt quá giới hạn an toàn tối đa 2 giờ của hệ thống."
             return None
 
         ydl_opts: Dict[str, Any] = {
             "format": format_chain,
             "merge_output_format": "mp4",
             "outtmpl": out_tmpl,
-            "max_filesize": TELEGRAM_MAX_FILE_SIZE,
-            # Bắt buộc bind IPv4 0.0.0.0 để triệt tiêu lỗi [Errno 101] Network is unreachable trên Docker bridge
+            # Bỏ hoàn toàn max_filesize: cho phép tải trọn vẹn mọi dung lượng về máy chủ
             "source_address": "0.0.0.0",
             "noplaylist": True,
-            "socket_timeout": 25,
+            "socket_timeout": 30,
             "quiet": True,
             "no_warnings": True,
             "nocheckcertificate": True,
             "match_filter": _match_filter_duration,
+            "postprocessor_args": {
+                "merger": ["-movflags", "+faststart"],
+            },
             "http_headers": {
                 "User-Agent": (
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -469,17 +467,11 @@ class MultiTierMediaPipeline:
                     residual_files = list(Path(temp_dir).iterdir())
                     shutil.rmtree(temp_dir, ignore_errors=True)
                     if residual_files:
-                        logger.info("[Tier 2: yt-dlp] Incomplete download detected (%s). Video rejected.", residual_files)
-                        raise VideoTooLargeError("Dung lượng video vượt quá giới hạn 50MB của Telegram Bot.")
+                        logger.warning("[Tier 2: yt-dlp] Incomplete download detected (%s).", residual_files)
+                        raise MediaPipelineError(f"Tải video không hoàn tất, phát hiện tệp dở dang: {residual_files}")
                     return None
 
                 size = os.path.getsize(final_path)
-                if size > TELEGRAM_MAX_FILE_SIZE:
-                    shutil.rmtree(temp_dir, ignore_errors=True)
-                    raise VideoTooLargeError(
-                        f"Dung lượng video ({size / (1024*1024):.1f}MB) vượt quá giới hạn 50MB của Telegram Bot."
-                    )
-
                 return MediaItem(
                     file_path=final_path,
                     title=info.get("title") or "Social Video",
@@ -494,14 +486,11 @@ class MultiTierMediaPipeline:
         except VideoTooLargeError:
             shutil.rmtree(temp_dir, ignore_errors=True)
             raise
+        except MediaPipelineError:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            raise
         except yt_dlp.utils.DownloadError as err:
             shutil.rmtree(temp_dir, ignore_errors=True)
-            err_str = str(err).lower()
-            if "larger than max-filesize" in err_str or "requested format is not available" in err_str:
-                logger.info("[Tier 2: yt-dlp] Video rejected due to size/format limits: %s", err)
-                raise VideoTooLargeError(
-                    "Dung lượng video vượt quá giới hạn 50MB của Telegram Bot."
-                )
             logger.warning("[Tier 2: yt-dlp] Download error: %s", err)
             return None
         except Exception as err:
@@ -779,17 +768,10 @@ class MultiTierMediaPipeline:
     # ──────────────────────────────────────────────────────────────────────────
 
     async def _stream_url_to_file(self, url: str, client: httpx.AsyncClient) -> Tuple[str, int]:
-        """Ghi stream trực tiếp từng chunk 64KB ra đĩa SSD, bảo vệ RAM 3.2GB."""
+        """Ghi stream trực tiếp từng chunk 64KB ra đĩa SSD tạm, bảo vệ RAM 3.2GB."""
         async with client.stream("GET", url) as response:
             if response.status_code != 200:
                 raise MediaPipelineError(f"HTTP stream status {response.status_code}")
-
-            content_length_str = response.headers.get("content-length")
-            if content_length_str and int(content_length_str) > TELEGRAM_MAX_FILE_SIZE:
-                size_mb = int(content_length_str) / (1024 * 1024)
-                raise VideoTooLargeError(
-                    f"Dung lượng video ({size_mb:.1f}MB) vượt quá giới hạn 50MB của Telegram Bot."
-                )
 
             with tempfile.NamedTemporaryFile(suffix=".mp4", dir=str(TEMP_MEDIA_DIR), delete=False) as tf:
                 temp_path = tf.name
@@ -800,11 +782,6 @@ class MultiTierMediaPipeline:
                 with open(temp_path, "wb") as f:
                     async for chunk in response.aiter_bytes(chunk_size=64 * 1024):
                         total_bytes += len(chunk)
-                        if total_bytes > TELEGRAM_MAX_FILE_SIZE:
-                            size_mb = total_bytes / (1024 * 1024)
-                            raise VideoTooLargeError(
-                                f"Dung lượng tải xuống vượt quá ngưỡng an toàn ({size_mb:.1f}MB > 48MB)."
-                            )
                         f.write(chunk)
                 download_success = True
             finally:

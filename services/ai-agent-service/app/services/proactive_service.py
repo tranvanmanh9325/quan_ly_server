@@ -36,6 +36,20 @@ _MEM_ALERT_PCT  = 90
 _SSL_WARN_DAYS  = 14
 _CONTAINER_RESTART_THRESHOLD = 3
 
+# Milestone 5 SRE Constants
+_SRE_RAM_ALERT_PCT = 85
+_SRE_CPU_LOAD_THRESHOLD = 3.5
+_SRE_SWAP_ALERT_MB = 500
+_SRE_ROOT_DISK_ALERT_PCT = 90
+_CORE_CONTAINERS = [
+    "dashboard_ai_agent",
+    "dashboard_frontend",
+    "dashboard_metrics_service",
+    "dashboard_auth_service",
+    "dashboard_file_service",
+    "dashboard_db",
+]
+
 
 class ProactiveIntelligenceService:
     """
@@ -81,17 +95,21 @@ class ProactiveIntelligenceService:
         logger.info("[Proactive] Running health scan cycle...")
         alerts: list[str] = []
 
-        # Run all checks concurrently for speed
-        disk_alert, mem_alert, ssl_alert, oom_alert, restart_alert = await asyncio.gather(
+        # Run all checks concurrently for speed (all 9 SRE vitals)
+        scan_results = await asyncio.gather(
             self._check_disk(),
             self._check_memory(),
             self._check_ssl_certs(),
             self._check_oom_kills(),
             self._check_container_restarts(),
+            self._check_cpu_load(),
+            self._check_swap(),
+            self._check_root_disk(),
+            self._check_core_containers(),
             return_exceptions=True,
         )
 
-        for result in [disk_alert, mem_alert, ssl_alert, oom_alert, restart_alert]:
+        for result in scan_results:
             if isinstance(result, str) and result:
                 alerts.append(result)
 
@@ -176,8 +194,9 @@ class ProactiveIntelligenceService:
             logger.debug("[Proactive] _check_disk error: %s", e)
             return ""
 
-    async def _check_memory(self) -> str:
-        """Check RAM usage. Alert if > threshold."""
+    async def _check_memory(self, threshold_pct: Optional[int] = None) -> str:
+        """Check RAM usage. Alert if >= threshold."""
+        limit_pct = threshold_pct if threshold_pct is not None else _MEM_ALERT_PCT
         try:
             result = await self._ssh.run_command(
                 "free | awk 'NR==2{printf \"%.0f\", $3*100/$2}'"
@@ -186,7 +205,7 @@ class ProactiveIntelligenceService:
                 return ""
 
             pct = int(result.strip())
-            if pct < _MEM_ALERT_PCT:
+            if pct < limit_pct:
                 return ""
 
             check_key = "memory:high_usage"
@@ -195,7 +214,7 @@ class ProactiveIntelligenceService:
                 return ""
 
             await self._mem.upsert_proactive_check(check_key, f"{pct}%", send_alert=True)
-            return f"🧠 <b>RAM đang cao:</b> {pct}% đã sử dụng (ngưỡng cảnh báo: {_MEM_ALERT_PCT}%)"
+            return f"🧠 <b>RAM đang cao:</b> {pct}% đã sử dụng (ngưỡng cảnh báo: {limit_pct}%)"
         except Exception as e:
             logger.debug("[Proactive] _check_memory error: %s", e)
             return ""
@@ -308,3 +327,151 @@ class ProactiveIntelligenceService:
         except Exception as e:
             logger.debug("[Proactive] _check_container_restarts error: %s", e)
             return ""
+
+    async def _check_cpu_load(self, threshold: float = _SRE_CPU_LOAD_THRESHOLD) -> str:
+        """Check CPU Load Average. Alert if 1-minute load > threshold (vượt trần 2 nhân 4 luồng i5-4310U)."""
+        try:
+            result = await self._ssh.run_command("cat /proc/loadavg")
+            if not result or not result.strip():
+                return ""
+
+            parts = result.strip().split()
+            if not parts:
+                return ""
+
+            load1 = float(parts[0])
+            load5 = float(parts[1]) if len(parts) > 1 else load1
+            if load1 <= threshold:
+                return ""
+
+            check_key = "cpu:high_load"
+            should_alert = await self._mem.should_send_proactive_alert(check_key, cooldown_hours=2)
+            if not should_alert:
+                return ""
+
+            await self._mem.upsert_proactive_check(check_key, f"load1={load1:.2f}, load5={load5:.2f}", send_alert=True)
+            return (
+                f"🔥 <b>CPU Load Average cao:</b> load1={load1:.2f}, load5={load5:.2f} > {threshold} "
+                f"(vượt trần 2 nhân 4 luồng Intel Core i5-4310U, nguy cơ nghẽn CPU)"
+            )
+        except Exception as e:
+            logger.debug("[Proactive] _check_cpu_load error: %s", e)
+            return ""
+
+    async def _check_swap(self, threshold_mb: int = _SRE_SWAP_ALERT_MB) -> str:
+        """Check Swap usage. Alert if swap used > threshold_mb (báo động Disk Thrashing trên SSD)."""
+        try:
+            result = await self._ssh.run_command("free -m | awk '/Swap:/ {print $3}'")
+            if not result or not result.strip().isdigit():
+                return ""
+
+            swap_used_mb = int(result.strip())
+            if swap_used_mb <= threshold_mb:
+                return ""
+
+            check_key = "swap:high_usage"
+            should_alert = await self._mem.should_send_proactive_alert(check_key, cooldown_hours=3)
+            if not should_alert:
+                return ""
+
+            await self._mem.upsert_proactive_check(check_key, f"{swap_used_mb}MB", send_alert=True)
+            return (
+                f"⚠️ <b>Dung lượng Swap cao:</b> {swap_used_mb}MB > {threshold_mb}MB "
+                f"(cảnh báo nguy cơ Disk Thrashing trên SSD)"
+            )
+        except Exception as e:
+            logger.debug("[Proactive] _check_swap error: %s", e)
+            return ""
+
+    async def _check_root_disk(self, threshold_pct: int = _SRE_ROOT_DISK_ALERT_PCT) -> str:
+        """Check root partition (/) usage. Alert if >= threshold_pct."""
+        try:
+            result = await self._ssh.run_command("df -h / | awk 'NR==2 {print $5}' | tr -d '%'")
+            if not result or not result.strip().isdigit():
+                return ""
+
+            pct = int(result.strip())
+            if pct < threshold_pct:
+                return ""
+
+            check_key = "disk:root_high"
+            should_alert = await self._mem.should_send_proactive_alert(check_key, cooldown_hours=4)
+            if not should_alert:
+                return ""
+
+            await self._mem.upsert_proactive_check(check_key, f"{pct}%", send_alert=True)
+            return f"💽 <b>Phân vùng root (/) sắp đầy:</b> {pct}% (ngưỡng an toàn < {threshold_pct}%, nguy cơ crash dịch vụ)"
+        except Exception as e:
+            logger.debug("[Proactive] _check_root_disk error: %s", e)
+            return ""
+
+    async def _check_core_containers(self, core_containers: Optional[list[str]] = None) -> str:
+        """Check status of core docker containers. Alert if any container is down or unhealthy."""
+        targets = core_containers or _CORE_CONTAINERS
+        try:
+            result = await self._ssh.run_command("docker ps -a --format '{{.Names}}\t{{.Status}}\t{{.State}}'")
+            if not result:
+                return ""
+
+            container_map: dict[str, tuple[str, str]] = {}
+            for line in result.strip().splitlines():
+                parts = line.strip().split("\t")
+                if len(parts) >= 3:
+                    c_name, c_status, c_state = parts[0].strip(), parts[1].strip(), parts[2].strip()
+                    container_map[c_name] = (c_status, c_state)
+                elif len(parts) == 2:
+                    c_name, c_status = parts[0].strip(), parts[1].strip()
+                    c_state = "running" if "Up" in c_status else "exited"
+                    container_map[c_name] = (c_status, c_state)
+
+            failed_cores = []
+            for target in targets:
+                if target not in container_map:
+                    failed_cores.append(f"<code>{target}</code>: Không tìm thấy (Missing/Not created)")
+                else:
+                    status, state = container_map[target]
+                    if state.lower() != "running" or "exit" in status.lower() or "restarting" in status.lower():
+                        failed_cores.append(f"<code>{target}</code>: {status} (State: {state})")
+
+            if not failed_cores:
+                return ""
+
+            check_key = "docker:core_containers_unhealthy"
+            should_alert = await self._mem.should_send_proactive_alert(check_key, cooldown_hours=1)
+            if not should_alert:
+                return ""
+
+            await self._mem.upsert_proactive_check(check_key, "; ".join(failed_cores), send_alert=True)
+            return "🚨 <b>Core Container gặp sự cố:</b>\n  " + "\n  ".join(failed_cores)
+        except Exception as e:
+            logger.debug("[Proactive] _check_core_containers error: %s", e)
+            return ""
+
+    async def run_patrol_scan(self) -> dict[str, Any]:
+        """
+        Executes an on-demand SRE curiosity patrol scan across all 9 vital metrics.
+        Returns detailed structured findings without waiting for the 6-hour cron loop.
+        """
+        alerts: list[str] = []
+        checks = await asyncio.gather(
+            self._check_disk(),
+            self._check_memory(threshold_pct=_SRE_RAM_ALERT_PCT),
+            self._check_ssl_certs(),
+            self._check_oom_kills(),
+            self._check_container_restarts(),
+            self._check_cpu_load(),
+            self._check_swap(),
+            self._check_root_disk(),
+            self._check_core_containers(),
+            return_exceptions=True,
+        )
+        for r in checks:
+            if isinstance(r, str) and r:
+                alerts.append(r)
+
+        return {
+            "status": "healthy" if not alerts else "warning",
+            "alerts": alerts,
+            "total_checks": len(checks),
+            "timestamp": datetime.now(timezone(timedelta(hours=7))).isoformat(),
+        }

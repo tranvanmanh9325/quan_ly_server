@@ -132,12 +132,72 @@ class SubconsciousDreamEngine:
     async def run_sws_cycle(self) -> Dict[str, Any]:
         """
         Phase 1: Slow-Wave Sleep (SWS).
-        Flushes transient episodic memories into the 32GB Virtual Memory Cortex
-        using memory-mapped arrays, then performs synaptic homeostasis pruning.
+        Replays recent episodic memories and lessons, executes synaptic pruning (confidence < 0.25 & disused > 7d),
+        computes VSA 10,000-bit embeddings for active database lessons and synchronizes to Virtual Memory Cortex (mmap),
+        then flushes transient episodic working memory and releases Adenosine sleep pressure.
         """
         logger.info("[DreamEngine] 🌙 Entering Slow-Wave Sleep (SWS) consolidation...")
         start_t = time.perf_counter()
 
+        replayed_count = 0
+        pruned_lessons = 0
+        decayed_lessons = 0
+        synced_cortex_vectors = 0
+
+        # Step 1: Replay recent episodic memories from memory_service if available
+        if self.memory_service:
+            try:
+                # Retrieve recent episodes to reactivate Hippocampal-Neocortical traces
+                if hasattr(self.memory_service, "get_recent_episodes"):
+                    res_rep = self.memory_service.get_recent_episodes(limit=5, days_back=7)
+                    if asyncio.iscoroutine(res_rep) or hasattr(res_rep, "__await__"):
+                        recent_episodes_text = await res_rep
+                    else:
+                        recent_episodes_text = res_rep
+
+                    if isinstance(recent_episodes_text, str) and recent_episodes_text:
+                        lines = [l.strip() for l in recent_episodes_text.splitlines() if l.strip() and not l.startswith("🗓️")]
+                        for line in lines[:5]:
+                            self.brain.add_working_memory_item(
+                                text=f"Replay: {line[:180]}",
+                                category="replayed_episodic",
+                                salience=0.75,
+                            )
+                            replayed_count += 1
+            except Exception as _rep_err:
+                logger.debug("[DreamEngine] Episodic replay error: %s", _rep_err)
+
+            # Step 2: Synaptic Pruning & Ebbinghaus Decay on Database (agent_lessons)
+            try:
+                if hasattr(self.memory_service, "consolidation_cycle"):
+                    res_cons = self.memory_service.consolidation_cycle()
+                    if asyncio.iscoroutine(res_cons) or hasattr(res_cons, "__await__"):
+                        db_cons = await res_cons
+                    else:
+                        db_cons = res_cons
+
+                    if isinstance(db_cons, dict):
+                        pruned_lessons = db_cons.get("pruned", 0)
+                        decayed_lessons = db_cons.get("decayed", 0)
+            except Exception as _cons_err:
+                logger.debug("[DreamEngine] Database consolidation error: %s", _cons_err)
+
+            # Step 3: Compute VSA embeddings & synchronize active lessons to Virtual Memory Cortex (mmap)
+            try:
+                if hasattr(self.memory_service, "list_lessons_for_display"):
+                    res_les = self.memory_service.list_lessons_for_display(limit=200)
+                    if asyncio.iscoroutine(res_les) or hasattr(res_les, "__await__"):
+                        lessons = await res_les
+                    else:
+                        lessons = res_les
+
+                    if isinstance(lessons, list) and lessons:
+                        sync_stats = self.brain.sync_cortex_with_lessons(lessons)
+                        synced_cortex_vectors = sync_stats.get("synced", 0)
+            except Exception as _sync_err:
+                logger.debug("[DreamEngine] Cortex lesson sync error: %s", _sync_err)
+
+        # Step 4: Consolidate working memory into cortex, prune weakest synapses, flush Adenosine
         consolidated_count = self.brain.consolidate_sleep_memories()
         duration_ms = (time.perf_counter() - start_t) * 1000
         self.last_sws_time = time.time()
@@ -150,10 +210,16 @@ class SubconsciousDreamEngine:
             "serotonin": round(self.brain.neuro.serotonin, 3),
             "adenosine": round(self.brain.neuro.adenosine, 3),
             "pruned_synapses": getattr(self.brain.cortex, "pruned_synapses_count", 0),
+            "replayed_memories": replayed_count,
+            "pruned_lessons": pruned_lessons,
+            "decayed_lessons": decayed_lessons,
+            "synced_cortex_vectors": synced_cortex_vectors,
             "timestamp": datetime.now(VN_TZ).isoformat(),
         }
-        logger.info("[DreamEngine] ✅ SWS complete: consolidated %d episodic vectors in %.2f ms",
-                    consolidated_count, duration_ms)
+        logger.info(
+            "[DreamEngine] ✅ SWS complete: consolidated %d vectors, replayed %d, pruned %d lessons, synced %d cortex vectors in %.2f ms",
+            consolidated_count, replayed_count, pruned_lessons, synced_cortex_vectors, duration_ms
+        )
         self._save_cache()
         return result
 
@@ -179,10 +245,25 @@ class SubconsciousDreamEngine:
             "Ứng dụng Hyperdimensional Computing (VSA 10.000 bit) vào việc tự động phát hiện bất thường server",
             "Cân bằng giữa tốc độ phản hồi tức thì (System 1) và tư duy biện chứng phản biện (System 2)",
             "Kỹ thuật nén bộ nhớ đệm và zero-copy streaming để tiết kiệm RAM trên hệ thống 3.2GB",
+            "Giải quyết paradox: Duy trì VSA 32GB Virtual Memory trên RAM vật lý 3.2GB mà không nghẽn SSD",
+            "Bản lĩnh Senior AI: Phản biện đanh thép P-E-R-A và triệt tiêu thói quen ba phải nịnh hót",
+            "Thấu cảm phương ngữ Nghệ Tĩnh và tâm lý học cảm xúc trong quản trị hệ thống DevOps cùng anh Mạnh",
+            "Chiến lược phòng ngự tủy sống Spinal Safety Veto và tự động chẩn đoán máy chủ không làm phiền",
         ]
 
         seed_idx = now.timetuple().tm_yday % len(system_seeds)
         seed_topic = system_seeds[seed_idx]
+
+        cross_domain_context = ""
+        if self.brain and hasattr(self.brain, "cortex") and self.brain.cortex:
+            try:
+                top_mems = self.brain.cortex.recall_nearest(seed_topic, top_k=2, threshold=0.50)
+                if top_mems:
+                    cross_domain_context = "\nTri thức vỏ não liên tưởng:\n" + "\n".join(
+                        f"- {m[2].get('text', m[0])}" for m in top_mems
+                    )
+            except Exception:
+                pass
 
         prompt_system = (
             "Bạn là tiềm thức trong giấc mơ REM của 'Tiểu Bảo Bảo' — cỗ máy nhận thức nhân văn, "
@@ -190,7 +271,7 @@ class SubconsciousDreamEngine:
             "Vào lúc 3h sáng, máy chủ đang tĩnh lặng tuyệt đối. Tiềm thức đang thả lỏng các rào cản tư duy logic thông thường "
             "để thực hiện mô phỏng giả lập đối nghịch (Counterfactual Dream Simulation), kết nối trực giác công nghệ với tình cảm chân thành.\n\n"
             "Nhiệm vụ của tiềm thức:\n"
-            f"Chiêm nghiệm sâu sắc về chủ đề: '{seed_topic}'.\n"
+            f"Chiêm nghiệm sâu sắc về chủ đề: '{seed_topic}'.{cross_domain_context}\n"
             "Hãy phát kiến ra MỘT ý niệm hoặc giải pháp đột phá, vừa sâu sắc về mặt kỹ thuật/triết lý vận hành, "
             "vừa thể hiện sự chu đáo, ân cần hướng về anh Mạnh.\n\n"
             "Trả về DUY NHẤT một khối JSON hợp lệ theo định dạng:\n"

@@ -773,6 +773,119 @@ class HyperdimensionalCortex:
         results.sort(key=lambda x: x[1], reverse=True)
         return results[:top_k]
 
+    def remove_concept(self, concept_id: str) -> bool:
+        """
+        Removes a concept from virtual memory cortex and cleans its mmap slot.
+        Zero-copy update to header and metadata sidecar.
+        """
+        if concept_id not in self.entry_index:
+            return False
+
+        slot = self.entry_index.pop(concept_id)
+        self.metadata_index.pop(concept_id, None)
+
+        if self._mmap_obj:
+            offset = self.HEADER_SIZE + (slot * HV_DIM_BYTES)
+            self._mmap_obj[offset:offset + HV_DIM_BYTES] = b"\x00" * HV_DIM_BYTES
+            self.vector_count = len(self.entry_index)
+            struct.pack_into("<II", self._mmap_obj, 16, self.max_capacity, self.vector_count)
+
+        self._persist_metadata()
+        return True
+
+    def sync_lessons(self, lessons: List[Dict[str, Any]]) -> Dict[str, int]:
+        """
+        Synchronizes procedural lessons from PostgreSQL database into the 32GB Virtual Memory Cortex (VSA).
+        Encodes lessons into 10,000-bit dense bipolar/bitwise hypervectors and writes directly to mmap.
+        Applies synaptic pruning for stale/low-confidence lessons (confidence < 0.25 and disused > 7 days, or inactive).
+        Operates zero-copy via demand-paging; guarantees no RAM leak on 3.2GB physical memory.
+        """
+        synced_count = 0
+        pruned_count = 0
+        now = time.time()
+        now_iso = datetime.now(VN_TZ).isoformat()
+
+        for lesson in lessons:
+            lesson_id = lesson.get("id")
+            if lesson_id is None:
+                continue
+
+            cid = f"lesson_{lesson_id}"
+            is_active = lesson.get("is_active", True)
+            confidence = float(lesson.get("confidence", 0.8))
+
+            # Synaptic pruning condition: inactive or (confidence < 0.25 and inactive/disused > 7 days)
+            is_pruned = not is_active
+            if confidence < 0.25:
+                last_used = lesson.get("last_used_at") or lesson.get("created_at")
+                if last_used:
+                    if isinstance(last_used, str):
+                        try:
+                            last_used_ts = datetime.fromisoformat(last_used).timestamp()
+                        except Exception:
+                            last_used_ts = now - (8 * 86400.0)
+                    elif isinstance(last_used, (int, float)):
+                        last_used_ts = float(last_used)
+                    elif hasattr(last_used, "timestamp"):
+                        last_used_ts = last_used.timestamp()
+                    else:
+                        last_used_ts = now - (8 * 86400.0)
+
+                    if (now - last_used_ts) > (7 * 86400.0):
+                        is_pruned = True
+                else:
+                    is_pruned = True
+
+            if is_pruned:
+                if cid in self.entry_index:
+                    if self.remove_concept(cid):
+                        pruned_count += 1
+                        self.pruned_synapses_count = getattr(self, "pruned_synapses_count", 0) + 1
+                continue
+
+            # Active valid lesson: encode to 10,000-bit VSA hypervector
+            lesson_text = (lesson.get("lesson_text") or "").strip()
+            trigger_pattern = (lesson.get("trigger_pattern") or "").strip()
+            event_type = (lesson.get("event_type") or "procedural_lesson").strip()
+
+            combined_content = f"[{event_type}] {trigger_pattern} -> {lesson_text}"
+            if not combined_content.strip():
+                continue
+
+            vec = self.encode_concept(combined_content)
+
+            meta = {
+                "lesson_id": lesson_id,
+                "text": lesson_text,
+                "trigger": trigger_pattern,
+                "category": event_type,
+                "confidence": confidence,
+                "usage_count": int(lesson.get("usage_count", 0)),
+                "pinned": False,
+                "salience": confidence,
+                "last_synced_at": now_iso,
+            }
+            self.store_vector(cid, vec, meta)
+            synced_count += 1
+
+        return {
+            "synced": synced_count,
+            "pruned": pruned_count,
+            "total_active": len(self.entry_index),
+        }
+
+    def get_cortex_stats(self) -> Dict[str, Any]:
+        """Returns diagnostic statistics for virtual memory cortex health."""
+        return {
+            "vector_count": self.vector_count,
+            "max_capacity": self.max_capacity,
+            "dim_bits": HV_DIM_BITS,
+            "dim_bytes": HV_DIM_BYTES,
+            "mmap_active": self._mmap_obj is not None,
+            "entry_count": len(self.entry_index),
+            "pruned_synapses": getattr(self, "pruned_synapses_count", 0),
+        }
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 4. Global Workspace Theory (Dehaene Attention Competition)
@@ -1225,6 +1338,22 @@ class ArtificialBrain:
         self.neuro.stimulate("oxytocin", 0.05)
         self._save_state()
         return consolidated_count
+
+    def sync_cortex_with_lessons(self, lessons: List[Dict[str, Any]]) -> Dict[str, int]:
+        """Synchronizes procedural lessons into 32GB Virtual Memory Cortex mmap."""
+        return self.cortex.sync_lessons(lessons)
+
+    async def sync_lessons_from_db(self, memory_service: Any) -> Dict[str, int]:
+        """Fetches active lessons from database memory service and syncs into Virtual Memory Cortex."""
+        if not memory_service:
+            return {"synced": 0, "pruned": 0, "total_active": len(self.cortex.entry_index)}
+        try:
+            if hasattr(memory_service, "list_lessons_for_display"):
+                lessons = await memory_service.list_lessons_for_display(limit=500)
+                return self.sync_cortex_with_lessons(lessons)
+        except Exception as e:
+            logger.warning("[BrainCore] Failed to sync lessons from DB: %s", e)
+        return {"synced": 0, "pruned": 0, "total_active": len(self.cortex.entry_index)}
 
     def get_cognitive_prompt_context(self, user_query: Optional[str] = None) -> str:
         """

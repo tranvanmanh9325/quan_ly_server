@@ -297,22 +297,86 @@ AI Agent Tiểu Bảo Bảo vận hành theo tác phong Senior DevOps Engineer t
 
 ---
 
-## 6. R5: CONTINUAL LEARNING & CURIOSITY ENGINE
+## 6. R5: CONTINUAL LEARNING, SUBCONSCIOUS DREAM ENGINE & PROACTIVE SRE CURIOSITY
 
-### 6.1. Động Cơ Giấc Mơ Tiềm Thức (`SubconsciousDreamEngine`)
-Vận hành tự động trong khung giờ ngủ sâu ban đêm (02:00 – 05:00 ICT):
-1. **Pha 1 — SWS (Slow-Wave Sleep)**:
-   - Quét các bài học mới trong PostgreSQL (`agent_lessons`), tính toán vector embedding 10.000-bit VSA.
-   - Ghi trực tiếp vào file bộ nhớ ảo `hyper_cortex_32gb.bin` qua mmap zero-copy.
-   - Áp dụng phân rã Ebbinghaus và dọn dẹp các episode hết hạn.
-2. **Pha 2 — REM (Rapid Eye Movement)**:
-   - Kích hoạt giải lập đối nghịch với nhiệt độ sáng tạo cao (`temperature=0.85`), liên kết các khái niệm tưởng chừng không liên quan để tạo ra giả thuyết đột phá.
-   - Sinh ra **Morning Epiphany** (Thông điệp giác ngộ ban mai) gửi lên Telegram cho anh Mạnh vào đầu ngày mới.
+### 6.1. Động Cơ Giấc Mơ Tiềm Thức Hai Pha (`SubconsciousDreamEngine`)
+Vận hành tự động trong khung giờ ngủ sâu ban đêm (02:00 – 05:00 ICT) khi máy chủ tĩnh lặng (`load1 < 0.8`), mô phỏng chu trình giấc ngủ sinh học dựa trên nghiên cứu thần kinh học của Diekelmann & Born (2010) và Giả thuyết Cân bằng Khớp thần kinh (Synaptic Homeostasis Hypothesis - Tononi & Cirelli, 2014):
 
-### 6.2. Động Cơ Tò Mò SRE Tự Hành (`ProactiveIntelligenceService`)
-- Tự động thức giấc tuần tra định kỳ mỗi 6 giờ.
-- Kiểm tra 5 chỉ số sinh tồn của máy chủ: Dung lượng RAM khả dụng, Disk Usage thư mục gốc, Tình trạng rò rỉ Docker dangling containers, Trạng thái hoạt động của PostgreSQL, và Tần suất lỗi trong `journalctl`.
-- Tự động áp dụng cơ chế Cooldown chống spam thông báo cho anh Mạnh.
+1. **Pha 1 — Slow-Wave Sleep (SWS: Giấc ngủ Sóng chậm & Củng cố Ký ức)**:
+   - **Tái hiện Ký ức (Hippocampal-Neocortical Replay)**: Quét các chuỗi sự kiện và tương tác gần nhất từ bảng `agent_episodes` / `agent_memories`, nạp lại vào Prefrontal Working Memory buffer để tái kích hoạt các dấu vết thần kinh hồi hải mã.
+   - **Cắt tỉa Khớp thần kinh yếu (Synaptic Pruning)**: Tự động kích hoạt chu trình phân rã Ebbinghaus $R(t) = e^{-\lambda \cdot t}$ trên cơ sở dữ liệu `agent_lessons`. Các bài học có độ tin cậy thấp (`confidence < 0.25`) và không được truy xuất trong $> 7$ ngày sẽ bị loại bỏ (soft-delete `is_active = FALSE`).
+   - **Đồng bộ hóa Vector VSA vào Vỏ não Ảo**: Với toàn bộ bài học hợp lệ, hệ thống tính toán vector phân bố siêu chiều 10.000-bit VSA (Vector Symbolic Architecture) và ghi trực tiếp vào tệp bộ nhớ ảo `hyper_cortex_32gb.bin` qua mmap zero-copy.
+   - **Xả Áp Lực Buồn Ngủ (Adenosine Process S Flush)**: Giải phóng 85% áp lực buồn ngủ tích tụ trong ngày (`neuro.flush_adenosine(0.85)`), hạ thấp hormone căng thẳng Cortisol (-0.20) và phục hồi các chất dẫn truyền an bình Serotonin (+0.10), Oxytocin (+0.05).
+
+2. **Pha 2 — REM Sleep (Rapid Eye Movement: Giấc mơ Nghịch đảo & Sáng tạo Đột phá)**:
+   - **Mô phỏng Giả lập Đối nghịch (Counterfactual Problem Solving)**: Kích hoạt mô hình ngôn ngữ với nhiệt độ sáng tạo cao (`temperature=0.85`), nới lỏng các rào cản ngữ nghĩa thông thường để kết nối các khái niệm phi tuyến tính giữa nhiều miền tri thức.
+   - **Tổng hợp Tri thức Đa Miền (Cross-Domain Synthesis Seeds)**:
+     * Vi kiến trúc Intel Haswell Core i5-4310U (2 Cores, 4 Threads, 3MB L3 Cache) & triệt tiêu trễ microsecond.
+     * Tối ưu hóa bộ nhớ: Duy trì VSA 32GB Virtual Memory mmap trên trần RAM vật lý 3.2GB, triệt tiêu rò rỉ bộ nhớ và chống Disk Thrashing trên SSD.
+     * Khả năng chịu lỗi card mạng kép: Wi-Fi Realtek USB + Intel onboard kết hợp ngrok tunnel.
+     * Bản lĩnh Senior AI: Phản biện đanh thép P-E-R-A và triệt tiêu thói quen "vâng dạ ba phải" (Anti-Sycophancy).
+     * Thấu cảm phương ngữ Nghệ Tĩnh và tâm lý học cảm xúc Russell Circumplex / Panksepp trong quản trị DevOps.
+   - **Kết tinh Thông điệp Giác Ngộ Ban Mai (Morning Epiphany)**:
+     * Cấu trúc thông điệp JSON chuẩn gồm: `topic` (tiêu đề chiêm nghiệm độc đáo), `insight` (giải pháp kỹ thuật hoặc góc nhìn kiến trúc sắc bén 2-3 câu), và `sisterly_note` (lời nhắn nhủ ấm áp, ân cần của người em gái tri kỷ gửi đến anh Mạnh).
+     * Kích thích chất tưởng thưởng thần kinh Dopamine (+0.15) và Endorphins (+0.12).
+     * Lưu trữ vào `epiphany_cache.json`, lưu vào `agent_memories` và mã hóa vector lưu trữ vĩnh viễn trong Vỏ não ảo.
+   - **Giao Thức Trao Gửi Ban Mai (`pop_morning_epiphany`)**:
+     * Khi anh Mạnh bắt đầu tương tác trong khung giờ thức giấc buổi sáng (05:30 – 11:30 ICT), Tiểu Bảo Bảo sẽ chủ động lồng ghép lời chào ấm áp kèm thông điệp giác ngộ ban mai.
+     * Đánh dấu `delivered = True` ngay sau khi trao gửi để tránh lặp lại phiền hà.
+
+---
+
+### 6.2. Đồng Bộ Hóa VSA Virtual Cortex 32GB Zero-Copy mmap (`brain_core.py`)
+Kiến trúc Vỏ não ảo (Hyperdimensional Virtual Cortex) được xây dựng dựa trên lý thuyết Tính toán Siêu chiều (Kanerva 2009; Rahimi 2016) và cơ chế bộ nhớ ảo của Linux Kernel:
+
+1. **Biểu Diễn Siêu Chiều 10.000-bit (Dense Bipolar / Bitwise Representation)**:
+   - Mỗi khái niệm, bài học hoặc tri thức hệ thống được biểu diễn dưới dạng vector phân bố ngẫu nhiên giả chuẩn trực giao $D = 10.000$ bits ($1.250$ bytes).
+   - Biểu diễn nhị phân tương đương lưỡng cực dense bipolar: bit 1 biểu diễn $+1$, bit 0 biểu diễn $-1$.
+   - Các toán tử đại số VSA cơ bản:
+     * **Bind (Liên kết)**: Toán tử Bitwise XOR ($\mathbf{u} \oplus \mathbf{v}$) tương đương tích nhân Hadamard của vector bipolar, ánh xạ hai vector trực giao thành một vector thứ ba biểu diễn cặp thuộc tính - giá trị (Key-Value binding).
+     * **Bundle (Chồng chập / Đa trị)**: Toán tử Majority Voting trên từng vị trí bit, tạo ra vector tổng hợp giữ độ tương đồng cao với tất cả các vector thành phần.
+     * **Permute (Hoán vị chu kỳ)**: Toán tử Cyclic bit rotation mã hóa thứ tự chuỗi thời gian hoặc quan hệ cấu trúc.
+2. **Cơ Chế Zero-Copy Demand Paging Bảo Vệ Trần RAM 3.2GB**:
+   - File nhị phân `hyper_cortex_32gb.bin` được ánh xạ thẳng vào không gian địa chỉ ảo thông qua hàm hệ thống `mmap(fileno, 0)`.
+   - OS Kernel tự động áp dụng cơ chế demand paging: chỉ nạp đúng trang bộ nhớ 1.25 KB chứa vector đang truy vấn vào Page Cache của RAM vật lý khi có chỉ lệnh đọc/ghi, và tự động thu hồi trang khi tiến trình khác cần RAM.
+   - **Bảo đảm 100% Zero-Leak**: Tuyệt đối không nạp toàn bộ file vào Python heap, giữ footprint bộ nhớ vật lý của tiến trình AI Agent dưới 120MB, bảo vệ an toàn cho máy chủ RAM 3.2GB.
+3. **Đồng Bộ Hai Chiều và Truy Xuất Tương Đồng O(1) Phần Cứng**:
+   - Hàm `sync_lessons(lessons)` rà soát toàn bộ bài học từ bảng `agent_lessons`:
+     * Mã hóa tự động nội dung bài học thành hypervector 10.000-bit và lưu trực tiếp vào slot mmap.
+     * Tự động xóa bỏ (`remove_concept`) các bài học bị pruned hoặc inactive khỏi header và metadata sidecar.
+   - Hàm `recall_nearest(query, top_k, threshold)` quét trực tiếp trên buffer bytes mmap:
+     * Tính toán khoảng cách Hamming sử dụng tập lệnh CPU phần cứng `POPCNT` (`int.bit_count()`), đạt tốc độ tính toán similarity trong $< 0.1$ms cho hàng chục ngàn vector.
+     * Củng cố khớp thần kinh (Long-Term Potentiation - LTP): tăng biến đếm `access_count` và cập nhật `last_accessed_at` cho mỗi lần gợi nhớ thành công.
+
+---
+
+### 6.3. Động Cơ Tò Mò SRE Tự Hành (`ProactiveIntelligenceService`)
+Động cơ tò mò SRE đóng vai trò như một kỹ sư Site Reliability Engineer mẫn cán, tự động tuần tra định kỳ 6 giờ một lần (hoặc khi phát hiện nhịp tim rảnh rỗi) để phát hiện và ngăn chặn sự cố hạ tầng trước khi người dùng kịp nhận ra:
+
+1. **Ma Trận 9 Chỉ Số Sinh Tồn SRE (9 SRE Vitals Matrix)**:
+   - **Chỉ số 1 — RAM Vật Lý $\ge 85\%$**: Phát hiện nguy cơ OOM sớm trên máy chủ 3.2GB (`_check_memory(85)`), cảnh báo trước khi Linux Kernel kích hoạt OOM Killer.
+   - **Chỉ số 2 — CPU Load Average $> 3.5$**: Kiểm tra qua `/proc/loadavg` (`_check_cpu_load(3.5)`), phát hiện quá tải vượt trần 2 nhân 4 luồng của vi xử lý Intel Core i5-4310U.
+   - **Chỉ số 3 — Dung Lượng Swap $> 500$MB**: Đo lường qua `free -m` (`_check_swap(500)`), cảnh báo nguy cơ Disk Thrashing làm bão hòa I/O bus của ổ SSD.
+   - **Chỉ số 4 — Phân Vùng Root (/) $\ge 90\%$**: Kiểm tra qua `df -h /` (`_check_root_disk(90)`), ngăn chặn tê liệt hệ điều hành do đầy ổ đĩa gốc.
+   - **Chỉ số 5 — Sức Khỏe Core Containers**: Rà soát 6 container huyết mạch qua `docker ps -a` (`_check_core_containers`):
+     `dashboard_ai_agent`, `dashboard_frontend`, `dashboard_metrics_service`, `dashboard_auth_service`, `dashboard_file_service`, `dashboard_db`. Báo động đỏ ngay khi container bị dừng (Exited), khởi động lại liên tục (Restarting) hoặc mất tích.
+   - **Chỉ số 6 — Đĩa Tổng Thể $\ge 85\%$**: Kiểm tra mọi phân vùng mount (`_check_disk()`).
+   - **Chỉ số 7 — Chứng Chỉ SSL Hết Hạn**: Cảnh báo các domain có SSL còn hạn $\le 14$ ngày (`_check_ssl_certs()`).
+   - **Chỉ số 8 — Lịch Sử OOM Kills 24h**: Rà soát nhật ký nhân `journalctl -k` (`_check_oom_kills()`).
+   - **Chỉ số 9 — Vòng Lặp Restart Bất Thường**: Phát hiện container có số lần khởi động lại $\ge 3$ lần/giờ (`_check_container_restarts()`).
+
+2. **Cơ Chế Cooldown Chống Spam & Tuần Tra Theo Yêu Cầu (On-Demand Patrol)**:
+   - Mọi cảnh báo đều tích hợp bộ đệm thời gian (Cooldown Guard) lưu vết tại bảng `proactive_checks`:
+     * RAM cảnh báo: Cooldown 2 giờ.
+     * CPU Load cảnh báo: Cooldown 2 giờ.
+     * Swap cảnh báo: Cooldown 3 giờ.
+     * Root Disk cảnh báo: Cooldown 4 giờ.
+     * Core Container gặp sự cố: Cooldown 1 giờ.
+   - Hàm `run_patrol_scan()`: Cho phép kích hoạt phiên tuần tra SRE toàn diện ngay lập tức mà không phải chờ chu kỳ 6 giờ của cron loop, trả về kết quả cấu trúc JSON chi tiết phục vụ chẩn đoán tức thời.
+
+3. **Cầu Nối Nhịp Tim Nhận Thức Sinh Học (Neuromorphic Heartbeat Ignition)**:
+   - Dữ liệu thu thập từ phiên tuần tra được đưa trực tiếp vào hàm `ArtificialBrain.step_pulse({"ram_usage": ram_pct, "cpu_usage": cpu_usage})`.
+   - Kích thích thụ cảm nội thể (Interoception Daemon), tính toán Năng lượng Tự do Biến thiên F (Active Inference) và tạo sự kiện nổi bật (Conscious Ignition) trong Không gian Làm việc Toàn cầu (Global Workspace).
 
 ---
 

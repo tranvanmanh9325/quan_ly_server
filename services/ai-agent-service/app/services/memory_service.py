@@ -68,6 +68,9 @@ CORRECTION_TRIGGERS = [
     # Bắt bẻ ngụy biện & logic
     "sao lại trả lời thế", "logic kiểu gì", "ai dạy em thế", "ai bảo thế",
     "anh bảo là", "anh nói là", "chưa đúng trọng tâm", "trả lời lạc đề",
+    # Lỗi thực thi lệnh shell & công cụ (Shell execution / Command errors)
+    "lệnh bị lỗi", "lenh bi loi", "lệnh lỗi", "lenh loi", "command failed", "exit code",
+    "lỗi thực thi", "loi thuc thi", "chạy không được", "chay khong duoc", "không chạy được", "khong chay duoc",
 ]
 
 # Root cause categories for honest forensic error recovery (5 Whys taxonomy)
@@ -158,9 +161,24 @@ class AgentMemoryService:
         if any(sig in user_lower for sig in param_signals):
             return RootCauseCategory.PARAM_OMISSION
 
-        # 4. TOOL_FAILURE: Tool failures, command errors, timeouts
+        # 4. HALLUCINATION (Tool Negation & Unverified Signals First to Eliminate Dead Code)
+        # Evaluated before tool_signals so negative claims like 'chưa gọi tool' or 'chứ có gọi tool'
+        # are accurately classified as hallucination rather than tool failure.
+        hallucination_signals = [
+            "chưa gọi tool", "không gọi tool", "chứ có gọi tool", "chưa dùng tool",
+            "không dùng tool", "chưa chạy lệnh", "không chạy lệnh", "chưa kiểm tra",
+            "bịa", "ảo giác", "chém gió", "đoán mò", "suy đoán", "tự nghĩ ra", "tự bịa",
+            "không có thật", "sai bét", "vớ vẩn", "tào lao", "ai dạy em thế", "ai bảo thế", "logic kiểu gì",
+        ]
+        if any(sig in user_lower for sig in hallucination_signals):
+            return RootCauseCategory.HALLUCINATION
+
+        # 5. TOOL_FAILURE: Tool failures, command execution errors, timeouts
+        # Uses explicit multi-word triggers; bare words 'tool' or 'công cụ' are strictly omitted.
         tool_signals = [
-            "tool", "công cụ", "lệnh bị lỗi", "lệnh lỗi", "command failed", "exit code",
+            "lỗi tool", "tool bị lỗi", "tool error", "tool failed", "tool timeout", "tool gọi lỗi",
+            "công cụ bị lỗi", "lỗi công cụ", "công cụ execute",
+            "lệnh bị lỗi", "lệnh lỗi", "command failed", "exit code",
             "timeout", "không chạy được lệnh", "permission denied", "connection refused",
             "kết quả rỗng", "lỗi thực thi",
         ]
@@ -168,15 +186,6 @@ class AgentMemoryService:
             "tool" in orig_lower and any(e in orig_lower for e in ["error", "thất bại", "exception", "failed"])
         ):
             return RootCauseCategory.TOOL_FAILURE
-
-        # 5. HALLUCINATION: Pure speculation, unverified guessing, fabricated data
-        hallucination_signals = [
-            "bịa", "ảo giác", "chém gió", "đoán mò", "suy đoán", "tự nghĩ ra", "tự bịa",
-            "chưa kiểm tra", "chưa gọi tool", "chưa chạy lệnh", "không có thật",
-            "sai bét", "vớ vẩn", "tào lao", "ai dạy em thế", "ai bảo thế", "logic kiểu gì",
-        ]
-        if any(sig in user_lower for sig in hallucination_signals):
-            return RootCauseCategory.HALLUCINATION
 
         # Context-based fallbacks
         if "lệnh" in combined or "command" in combined or "code" in combined:

@@ -210,8 +210,9 @@ Khi người dùng phát tín hiệu bắt lỗi ("sai rồi", "nhầm rồi", "
    - `DIALECT_CONFUSION`: Hiểu lầm tiếng lóng, teencode, hoặc phương ngữ Nghệ Tĩnh / Miền Trung ("răng", "rứa", "cấy nớ", "tau hỏi một đằng").
    - `RESOURCE_ASSUMPTION`: Giả định sai về tài nguyên máy chủ vật lý (máy Intel i5-4310U 2 cores, RAM trần 3.2GB DDR3L, giả định Swap 100GB thay RAM).
    - `PARAM_OMISSION`: Bỏ sót tham số bắt buộc, cờ lệnh Linux hoặc truyền tham số sai cú pháp.
-   - `TOOL_FAILURE`: Công cụ bị lỗi thực thi, exit code khác 0, trả về rỗng hoặc timeout mạng.
-   - `HALLUCINATION`: Suy đoán thông số ảo giác chủ quan thay vì kiểm chứng dữ liệu thực tế bằng công cụ.
+   - `TOOL_FAILURE`: Công cụ bị lỗi thực thi, exit code khác 0, trả về rỗng hoặc timeout mạng ("lỗi tool", "tool bị lỗi", "tool failed", "command failed", "exit code", "permission denied", "connection refused", "kết quả rỗng", "lỗi thực thi"). Tuyệt đối không dùng từ khóa trần đơn lẻ `"tool"` để tránh bắt nhầm các câu phủ định công cụ.
+   - `HALLUCINATION`: Suy đoán thông số ảo giác chủ quan thay vì kiểm chứng dữ liệu thực tế bằng công cụ. Được ưu tiên đánh giá các tín hiệu phủ định công cụ ("chưa gọi tool", "không gọi tool", "chứ có gọi tool", "chưa dùng tool", "chưa chạy lệnh") trước `TOOL_FAILURE` nhằm loại bỏ triệt để hiện tượng dead code và nhận diện chính xác lỗi ảo giác chủ quan.
+   - **Tập Kích Hoạt Nhận Diện Sửa Sai (Correction Triggers Expansion)**: Bổ sung các cụm từ lỗi thực thi lệnh shell ("lệnh bị lỗi", "command failed", "exit code", "lỗi thực thi", "chạy không được", "không chạy được") vào `CORRECTION_TRIGGERS` để kích hoạt toàn diện chuỗi phản xạ nhận lỗi và phân tích 5 Whys.
 3. **Khắc phục trực diện & Đưa ra giải pháp chính xác (Immediate Remediation)**:
    - Đưa ra giải pháp và câu trả lời chính xác 100% vào đúng câu hỏi và nhu cầu thực tế của anh Mạnh mà không lặp lại sai lầm cũ.
 

@@ -162,6 +162,30 @@ TEENCODE_WORDS: Dict[str, str] = {
     "sv": "máy chủ",
 }
 
+# Standard Sino-Vietnamese / technical compound words to exempt from dialect substitution
+# Prevents single-word dialect collision (e.g., 'chi' in 'chi tiết', 'khu' in 'khu vực', 'mô' in 'mô hình')
+STANDARD_COMPOUND_EXEMPTIONS: List[str] = [
+    # Compound words containing 'chi' (avoid replacing with 'gì')
+    "chi tiết", "chi tiết hóa", "chi phí", "chi tiêu", "chi trả",
+    "chi nhánh", "chi phối", "chi viện", "chi bộ", "chi đoàn",
+    "chi hội", "chi phiếu", "chi ủy", "thu chi", "chiết khấu",
+    # Compound words containing 'khu' (avoid replacing with 'mông')
+    "khu vực", "khu phố", "khu công nghiệp", "khu dân cư", "khu chế xuất",
+    "khu đất", "khu đô thị", "khu bảo tồn", "khu sinh thái", "khu du lịch",
+    "khu nghỉ dưỡng", "khu quân sự", "khu kinh tế", "phân khu", "nội khu", "ngoại khu",
+    # Compound words containing 'mô' (avoid replacing with 'đâu')
+    "mô hình", "mô hình hóa", "mô tả", "mô phỏng", "quy mô", "mô thức", "mô phạm",
+    "mô tế bào", "mô sụn", "mô mềm", "mô cơ", "mô liên kết", "mô mỡ", "mô bệnh học",
+    # Compound words containing 'bổ' (avoid replacing with 'ngã')
+    "bổ sung", "bổ nhiệm", "bồi bổ", "bổ trợ", "bổ ích", "bổ túc", "bổ dưỡng",
+    # Compound words containing 'tê' (avoid replacing with 'kia')
+    "tê liệt", "tê giác", "gây tê", "thuốc tê", "tê buốt", "tê rần", "tê tái",
+    # Compound words containing 'cấy' (avoid replacing with 'cái')
+    "cấy ghép", "cấy lúa", "cấy vi khuẩn", "nuôi cấy",
+    # Compound words containing 'ni' (avoid replacing with 'này')
+    "ni cô", "niêm yết",
+]
+
 # Patterns indicating user doubt, challenge, or correction of AI's comprehension
 CLARIFICATION_PATTERNS = [
     r"(?:có\s+)?hiểu\s+(?:anh\s+nói\s+|tao\s+nói\s+|t\s+hỏi\s+|anh\s+hỏi\s+)?(?:chi|gì|được)\s+(?:không|ko|k)",
@@ -205,6 +229,13 @@ class VietnameseLinguisticNormalizer:
     """
 
     def __init__(self) -> None:
+        # 0. Standard Sino-Vietnamese & technical compound exemptions regex (longest-first)
+        sorted_exemptions = sorted(STANDARD_COMPOUND_EXEMPTIONS, key=len, reverse=True)
+        exemption_str = "|".join(_build_boundary_pattern(e) for e in sorted_exemptions)
+        self._exemption_regex: Optional[Pattern[str]] = (
+            re.compile(exemption_str, re.IGNORECASE | re.UNICODE) if sorted_exemptions else None
+        )
+
         # 1. Multi-word phrases regex (greedy: longest first)
         sorted_phrases = sorted(NGHE_TINH_PHRASES.keys(), key=len, reverse=True)
         phrase_str = "|".join(_build_boundary_pattern(p) for p in sorted_phrases)
@@ -243,11 +274,22 @@ class VietnameseLinguisticNormalizer:
         """
         Translates dialect and teencode into standard Vietnamese.
         Returns (normalized_text, replacements_count).
+        Exempts standard Sino-Vietnamese compound words (chi tiết, khu vực, mô hình...).
         """
         if not text:
             return text, 0
 
         replacements = 0
+
+        # Step 0: Mask standard Sino-Vietnamese compound exemptions to prevent accidental dialect collision
+        saved_exemptions: List[str] = []
+
+        def _mask_exemption(match: re.Match) -> str:
+            idx = len(saved_exemptions)
+            saved_exemptions.append(match.group(0))
+            return f"__DIALECT_EXEMPTION_{idx}__"
+
+        processed = self._exemption_regex.sub(_mask_exemption, text) if self._exemption_regex else text
 
         # Step 1: Multi-word phrase substitution
         def _sub_phrase(match: re.Match) -> str:
@@ -256,7 +298,7 @@ class VietnameseLinguisticNormalizer:
             replacements += 1
             return NGHE_TINH_PHRASES.get(val, match.group(0))
 
-        processed = self._phrase_regex.sub(_sub_phrase, text) if self._phrase_regex else text
+        processed = self._phrase_regex.sub(_sub_phrase, processed) if self._phrase_regex else processed
 
         # Step 2: Syntax-aware "răng" resolution
         # 2a. "răng" as cause (at start or before pronoun/verb) -> "tại sao"
@@ -286,10 +328,15 @@ class VietnameseLinguisticNormalizer:
 
         processed = self._word_regex.sub(_sub_word, processed) if self._word_regex else processed
 
+        # Step 4: Restore masked standard compound exemptions
+        for idx, original_str in enumerate(saved_exemptions):
+            processed = processed.replace(f"__DIALECT_EXEMPTION_{idx}__", original_str)
+
         # Normalize spaces
         processed = re.sub(r"\s+", " ", processed).strip()
 
         return processed, replacements
+
 
     def enrich_dialect_semantics(self, text: str) -> str:
         """

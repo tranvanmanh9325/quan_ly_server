@@ -49,16 +49,34 @@ SCREENSHOT_TOOLS = frozenset({
 })
 
 _SPINAL_VETO_PATTERNS = (
+    # 1. Lethal deletions & bulk file wiping
     re.compile(r"\brm\s+-[rfRF]{1,4}\s+([/~]|\*|\.)", re.IGNORECASE),
+    re.compile(r"\bfind\s+.*-(?:delete|exec\s+(?:rm|unlink|shred)\b)", re.IGNORECASE),
+    re.compile(r"\btruncate\s+(?:-[a-zA-Z0-9_-]*\s*)*.*(?:-s\s*0\b|\blog\b|\.log\b)", re.IGNORECASE),
+    # 2. SSH keys, authentication & daemon disruption
+    re.compile(r"\b(?:rm|unlink|shred)\s+.*(?:\.ssh\b|authorized_keys\b|sshd?_config\b)", re.IGNORECASE),
+    re.compile(r">\s*.*(?:\.ssh/authorized_keys\b|sshd?_config\b)", re.IGNORECASE),
+    re.compile(r"\bsystemctl\s+(?:stop|disable|mask)\s+sshd?\b", re.IGNORECASE),
+    # 3. Disk & filesystem raw destruction
     re.compile(r"\bmkfs(\.\w+)?\b", re.IGNORECASE),
     re.compile(r"\bdd\s+if=.*of=/dev/(sd|nvme|vd)", re.IGNORECASE),
     re.compile(r">\s*/dev/(sd|nvme|vd)", re.IGNORECASE),
-    re.compile(r"\bdrop\s+(database|schema)\b", re.IGNORECASE),
+    # 4. Database destruction (DROP & TRUNCATE)
+    re.compile(r"\bdrop\s+(?:database|schema|table)\b", re.IGNORECASE),
+    re.compile(r"\btruncate\s+(?:table\b)", re.IGNORECASE),
+    # 5. Container mass purge & destruction
     re.compile(r"\bdocker\s+system\s+prune\s+-a\s+--volumes", re.IGNORECASE),
     re.compile(r"\bdocker\s+rm\s+-f\s+\$\(docker\s+ps", re.IGNORECASE),
-    re.compile(r"\biptables\s+-F\b", re.IGNORECASE),
-    re.compile(r"\bufw\s+reset\b", re.IGNORECASE),
-    re.compile(r"\bchmod\s+-[a-zA-Z]*[rR][a-zA-Z]*\s+(?:777|0777|a\+rwx)\s*([/~*.]|\s|$)", re.IGNORECASE),
+    re.compile(r"\bdocker\s+kill\s+\$\(docker\s+ps", re.IGNORECASE),
+    # 6. Network & firewall blackout
+    re.compile(r"\biptables\s+(?:-[fFX]|--flush)\b", re.IGNORECASE),
+    re.compile(r"\bufw\s+(?:reset|disable)\b", re.IGNORECASE),
+    re.compile(r"\bip\s+link\s+set\s+\w+\s+down\b", re.IGNORECASE),
+    # 7. Reckless permissions & ownership changes
+    re.compile(r"\bchmod\s+-[a-zA-Z]*[rR][a-zA-Z]*\s+(?:777|0777|a\+rwx)\b", re.IGNORECASE),
+    re.compile(r"\bchown\s+-[a-zA-Z]*[rR][a-zA-Z]*\b", re.IGNORECASE),
+    # 8. Stress exhaustion & fork bombs
+    re.compile(r"\bstress(?:-ng)?\b", re.IGNORECASE),
     re.compile(r":\(\)\{\s*:\|:&\s*\};:", re.IGNORECASE),
 )
 
@@ -82,9 +100,10 @@ def evaluate_spinal_safety_veto(command: str, confirm_token: Optional[str] = Non
             return (
                 f"🛑 [PHẢN XẠ TỦY SỐNG BẢO VỆ SERVER - SPINAL SAFETY VETO]: Lệnh `{command}` "
                 f"đã bị chặn ngay lập tức ở tầng vi mạch an toàn! Thao tác này có nguy cơ phá hủy hệ thống hoặc tê liệt máy chủ. "
-                f"Em nhất quyết không tự ý thực thi nếu không có xác nhận bảo mật tường minh từ anh Mạnh kèm mã `CONFIRM_DANGEROUS_ACTION`!"
+                f"Em nhất quyết không tự ý thực thi nếu không có xác nhận bảo mật tường minh từ anh Mạnh kèm mã `confirm=\"CONFIRM_DANGEROUS_ACTION\"`!"
             )
     return None
+
 
 
 class AgentToolExecutor:

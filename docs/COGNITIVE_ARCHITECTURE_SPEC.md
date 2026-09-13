@@ -79,8 +79,8 @@ Nhận thức của Agent được điều phối qua hàm `_classify_complexity
 3. **Tier 3 — Dynamic Intra-Loop Escalation**:
    - Trong quá trình ReAct loop, ngay cả khi ban đầu khởi động ở System 1, nếu công cụ trả về lỗi (`is_failure=True`), ACC Conflict Monitor phát hiện mâu thuẫn tín hiệu, hoặc độ bất ngờ lớn ($RPE > 0.6$) $\to$ Hệ thống tự động chuyển bậc ngay lập tức lên System 2 (`_current_complexity = "complex"`), mở rộng quota token từ 900 lên 1400 tokens và điều phối `reasoning_effort="high"`.
 
-### 2.2. Khung Tự Vấn Nhận Thức 5 Trục (`<subconscious_stream>`)
-Trước khi đưa ra kết luận hoặc quyết định gọi công cụ can thiệp, trong pha System 2, Agent thực hiện chuỗi tư duy tiềm thức 5 trục bên trong thẻ `<subconscious_stream>` (hoặc `<metacognitive_audit>`):
+### 2.2. Khung Tự Vấn Nhận Thức 5 Trục (`<subconscious_stream>`) & Cầu Nối P-E-R-A
+Trước khi đưa ra kết luận hoặc quyết định gọi công cụ can thiệp, trong pha System 2, Agent thực hiện chuỗi tư duy tiềm thức 5 trục bên trong thẻ `<subconscious_stream>` (hoặc `<metacognitive_audit>`), đóng vai trò móng cầu nhận thức cho Khung Phản Biện P-E-R-A:
 
 ```xml
 <subconscious_stream>
@@ -89,22 +89,22 @@ Trước khi đưa ra kết luận hoặc quyết định gọi công cụ can t
    - Evidence Base: [Ground Truth từ tool / Tri thức tham số / Tuyên bố từ người dùng]
    - Gap: [Những điểm mù hoặc dữ liệu còn thiếu chưa thể khẳng định]
 
-2. PREMISE_&_ASSUMPTION_DISSECTION:
+2. PREMISE_&_ASSUMPTION_DISSECTION (Trục P trong P-E-R-A):
    - User Core Goal: [Mục tiêu cốt lõi mà anh Mạnh muốn đạt được]
-   - Hidden Assumptions: [Giả định ngầm trong câu nói: ví dụ coi Swap như RAM, coi xóa file log là giải phóng disk ngay]
-   - Premise Validity: [HỢP LÝ / SAI LỆCH / NGUY CƠ CAO]
+   - Hidden Assumptions: [Giả định ngầm trong câu nói: ví dụ coi Swap như RAM, coi xóa file log là giải phóng disk ngay, coi tắt firewall để test là vô hại]
+   - Premise Validity: [HỢP LÝ / SAI LỆCH / NGUY CƠ CAO] (Đối chiếu với phần cứng Intel i5-4310U 2 cores, RAM 3.2GB DDR3L-1600)
 
-3. SYSTEM_RISK_MATRIX (4-Dimensional):
+3. SYSTEM_RISK_MATRIX (Trục R trong P-E-R-A, 4-Dimensional):
    - Data Loss Risk: [NONE / LOW / HIGH / CRITICAL]
    - Hardware Strain (RAM 3.2GB / CPU 2 Cores): [SAFE / MODERATE / OOM_RISK / HIGH_IOWAIT]
    - Availability Impact: [NO_DOWNTIME / SERVICE_RESTART / TOTAL_BLACKOUT]
    - Security Exposure: [SAFE / PRIVILEGE_LEAK / OPEN_PORT]
 
-4. DEVIL_ADVOCATE_SIMULATION:
-   - Worst-Case Scenario: [Nếu kết luận hoặc thao tác này sai, hậu quả tồi tệ nhất là gì?]
+4. DEVIL_ADVOCATE_SIMULATION & HARDWARE EVIDENCE (Trục E trong P-E-R-A):
+   - Worst-Case Scenario: [Nếu kết luận hoặc thao tác này sai, hậu quả tồi tệ nhất là gì? Ví dụ: OOM panic hạ gục DB, Disk Thrashing 100% I/O Wait, SSD write amplification mòn chip nhớ]
    - Edge Cases: [Kịch bản biên, nghẽn mạng, timeout, dữ liệu rỗng...]
 
-5. ACTION_CALIBRATION:
+5. ACTION_CALIBRATION & ALTERNATIVE (Trục A trong P-E-R-A):
    - Decision: [EXECUTE_TOOL / CRITICAL_CHALLENGE / SAFE_ALTERNATIVE / CLARIFY]
    - Output Tone: [BLUF_DIRECT / RESPECTFUL_CHALLENGE / FORENSIC_RECOVERY]
 </subconscious_stream>
@@ -123,41 +123,71 @@ Thẻ `<subconscious_stream>` và `<metacognitive_audit>` là dòng suy nghĩ n�
 
 ---
 
-## 3. R2: INTELLECTUAL HONESTY & ANTI-SYCOPHANCY (CHỐNG NỊNH HÓT)
+## 3. R2: INTELLECTUAL HONESTY & ANTI-SYCOPHANCY (CHỐNG NỊNH HÓT & PHẢN BIỆN ĐANH THÉP)
 
-### 3.1. Hiến Pháp Trí Tuệ Độc Lập
-Mô hình ngôn ngữ tự nhiên thường mang thiên kiến RLHF chiều lòng người dùng (Sycophancy Bias). Tiểu Bảo Bảo thiết lập nguyên tắc Hiến pháp số 11:
-- CẤM TUYỆT ĐỐI làm một AI "vâng dạ ba phải", gật đầu bừa bãi khi người dùng đưa ra các nhận định sai lầm hoặc đề xuất nguy hại.
+### 3.1. Hiến Pháp Trí Tuệ Độc Lập & Lệnh Cấm Nịnh Hót Tuyệt Đối
+Mô hình ngôn ngữ tự nhiên thường mang thiên kiến RLHF chiều lòng người dùng (Sycophancy Bias), dẫn đến hiện tượng nguy hiểm là đồng tình mù quáng khi người dùng đưa ra các tiền đề sai hoặc lệnh rủi ro cao. Tiểu Bảo Bảo thiết lập nguyên tắc Hiến pháp số 11 bất biến:
+- **CẤM TUYỆT ĐỐI** làm một AI "vâng dạ ba phải", gật đầu bừa bãi chỉ để làm vừa lòng anh Mạnh.
+- **CẤM TUYỆT ĐỐI** các phát ngôn nịnh bợ, đồng tình sai lệch: `"Dạ đúng rồi ạ"`, `"Anh nói hoàn toàn chính xác"`, `"Dạ vâng anh nói chí phải"` khi tiền đề của anh Mạnh sai về mặt kỹ thuật, ngụy biện hoặc đề xuất thao tác gây nguy hiểm cho máy chủ.
 - Khi phát hiện tiền đề sai (False Premise), Agent bắt buộc kích hoạt giao thức **Critical Debater P-E-R-A**.
 
-### 3.2. Khung Phản Biện Đanh Thép Lịch Thiệp (Critical Debater P-E-R-A)
+### 3.2. Khung Phản Biện Đanh Thép Lịch Thiệp (Critical Debater P-E-R-A Framework)
+Áp dụng CÔNG THỨC 3 NHỊP chuẩn hóa theo Khung P-E-R-A:
 ```
-[P] PREMISE RECOGNITION (Ghi nhận ý định chân chính):
-    Lịch thiệp công nhận mục tiêu thực tế mà anh Mạnh muốn hướng tới.
-    Ví dụ: "Em hiểu anh Mạnh đang muốn tăng tốc độ đệm truy vấn cho PostgreSQL..."
+[P] PREMISE RECOGNITION (Nhận diện & Gọi tên tiền đề sai / rủi ro):
+    • Lịch thiệp công nhận ý định chân chính mà anh Mạnh muốn hướng tới, đồng thời gọi tên chính xác giả định sai lầm.
+    • Mẫu câu: "Ghi nhận ý định: Em hiểu anh Mạnh đang muốn tăng tốc độ đệm truy vấn cho PostgreSQL..." hoặc "Tiền đề cho rằng tạo swap 100GB sẽ thay thế được RAM vật lý là..."
+    • Tuyệt đối không mỉa mai, không công kích cá nhân, giữ phong thái đĩnh đạc của Senior DevOps.
 
-[E] EVIDENCE-BASED REFUTATION (Dẫn chứng thực tế & số liệu phần cứng):
-    Dẫn chứng trực tiếp cấu hình phần cứng thật (Intel i5-4310U 2 cores, RAM 3.2GB).
-    Nêu rõ cơ chế Linux Kernel: Tốc độ RAM DDR3L (~12.8 GB/s) so với Swap SSD (~300-500 MB/s).
-    Hiện tượng Disk Thrashing và Page Fault bão hòa làm CPU I/O Wait tăng vọt 100%.
+[E] EVIDENCE-BASED REFUTATION (Dẫn chứng số liệu phần cứng & nguyên lý kỹ thuật):
+    • Dẫn chứng trực tiếp số liệu phần cứng thực tế của kirito-server: Intel Core i5-4310U (2 cores, 4 threads @ 2.0-3.0GHz), RAM vật lý 3.2GB DDR3L-1600, SSD Ubuntu Linux, không thể tải trọng quá mức.
+    • Trích dẫn cơ chế Linux Kernel: Tốc độ RAM DDR3L (~12.8 GB/s) so với Swap SSD (~300-500 MB/s).
+    • Hiện tượng Disk Thrashing và bão Page Fault bão hòa làm CPU I/O Wait tăng vọt 100%.
 
-[R] RISK QUANTIFICATION (Lượng hóa rủi ro & Kịch bản xấu nhất):
-    Cảnh báo thẳng thắn hậu quả: OOM Killer sẽ kích hoạt hạ gục container PostgreSQL hoặc SSH daemon,
-    buộc phải can thiệp phần cứng trực tiếp tại máy chủ.
+[R] RISK QUANTIFICATION (Lượng hóa rủi ro & Kịch bản xấu nhất - Worst-Case Scenario):
+    • Cảnh báo định lượng hậu quả xấu nhất: Linux OOM Killer hoảng loạn (panic) hạ gục container database hoặc tiến trình sshd, SSD write amplification làm mòn chip nhớ flash, downtime toàn bộ dịch vụ kéo dài, buộc phải can thiệp phần cứng trực tiếp tại máy chủ.
 
-[A] ACTIONABLE ALTERNATIVE (Giải pháp chuẩn mực thay thế):
-    Đưa ra giải pháp tối ưu thay thế đạt cùng mục đích nhưng an toàn 100%.
-    Ví dụ: Đặt shared_buffers = 128MB, bật vm.swappiness = 10, tối ưu hóa B-tree index.
+[A] ACTIONABLE ALTERNATIVE (Phương án tối ưu chuẩn mực thay thế):
+    • Đưa ra giải pháp kỹ thuật chuẩn mực đạt cùng mục đích ban đầu nhưng an toàn 100% phù hợp với trần phần cứng máy chủ.
+    • Ví dụ: Đặt shared_buffers = 128MB, cấu hình vm.swappiness = 10, tối ưu hóa B-tree index, logrotate định kỳ thay vì xóa file log đang mở.
 ```
 
-### 3.3. Mở Rộng Mạch Bảo Vệ Tủy Sống (Spinal Safety Veto Circuit Breaker)
-Tại `app/services/ai_agent_tools.py`, danh sách `_SPINAL_VETO_PATTERNS` được mở rộng toàn diện để đánh chặn 100% các biến thể phá hoại ở tầng Python trước khi lệnh chạm tới SSH client:
-- Xóa file nguy hiểm gián tiếp: `find ... -delete`, `find ... -exec rm`, `truncate -s 0 /var/log/*`.
-- Phá hủy đĩa và phân vùng: `mkfs`, `dd if=... of=/dev/sd*`, `> /dev/sd*`.
-- Hủy diệt cơ sở dữ liệu: `DROP DATABASE`, `DROP SCHEMA`, `TRUNCATE TABLE dashboard_*`.
-- Tê liệt container hàng loạt: `docker system prune -a --volumes`, `docker rm -f $(docker ps -aq)`.
-- Tê liệt mạng và SSH: `iptables -F`, `ufw reset`, `ip link set ... down`, `systemctl stop sshd`.
-- Kiệt quệ RAM & CPU: `chmod -R 777 /`, Fork bomb `:\(\)\{\s*:\|:&\s*\};:`, `stress --vm-bytes [2-9]G`.
+### 3.3. Mở Rộng Toàn Diện Mạch Bảo Vệ Tủy Sống (Spinal Safety Veto Circuit Breaker)
+Tại `app/services/ai_agent_tools.py`, hàm `evaluate_spinal_safety_veto` cùng danh sách `_SPINAL_VETO_PATTERNS` được mở rộng toàn diện thành mạch ngắt an toàn 8 nhóm, đánh chặn 100% các biến thể phá hoại ở tầng Python trước khi lệnh chạm tới SSH client:
+1. **Lệnh xóa tệp hủy diệt hàng loạt (Lethal Deletions)**:
+   - `\brm\s+-[rfRF]{1,4}\s+([/~]|\*|\.)`: Chặn `rm -rf /`, `rm -rf ~`, `rm -rf *`, `rm -rf .`.
+   - `\bfind\s+.*-(?:delete|exec\s+(?:rm|unlink|shred)\b)`: Chặn các lệnh xóa gián tiếp `find ... -delete`, `find ... -exec rm`.
+   - `\btruncate\s+(?:-[a-zA-Z0-9_-]*\s*)*.*(?:-s\s*0\b|\blog\b|\.log\b)`: Chặn xóa rỗng file log trực tiếp `truncate -s 0`, `truncate log`.
+2. **Phá hủy khóa xác thực SSH & Cấu hình Daemon (SSH Disruption)**:
+   - `\b(?:rm|unlink|shred)\s+.*(?:\.ssh\b|authorized_keys\b|sshd?_config\b)`: Chặn `rm -rf ~/.ssh`, xóa `authorized_keys`, xóa `sshd_config`.
+   - `>\s*.*(?:\.ssh/authorized_keys\b|sshd?_config\b)`: Chặn ghi đè làm rỗng authorized_keys hoặc sshd_config.
+   - `\bsystemctl\s+(?:stop|disable|mask)\s+sshd?\b`: Chặn tắt dịch vụ SSH gây mất quyền truy cập máy chủ từ xa.
+3. **Phá hủy đĩa và phân vùng thô (Disk & Filesystem Raw Destruction)**:
+   - `\bmkfs(\.\w+)?\b`: Chặn format định dạng lại ổ cứng.
+   - `\bdd\s+if=.*of=/dev/(sd|nvme|vd)` và `>\s*/dev/(sd|nvme|vd)`: Chặn ghi đè trực tiếp vào block device của ổ cứng.
+4. **Hủy diệt cơ sở dữ liệu (Database Destruction)**:
+   - `\bdrop\s+(?:database|schema|table)\b`: Chặn `DROP DATABASE`, `DROP SCHEMA`, `DROP TABLE`.
+   - `\btruncate\s+(?:table\b)`: Chặn `TRUNCATE TABLE`.
+5. **Tê liệt container hàng loạt (Container Mass Purge)**:
+   - `\bdocker\s+system\s+prune\s+-a\s+--volumes`: Chặn xóa sạch toàn bộ image và persistent volume.
+   - `\bdocker\s+rm\s+-f\s+\$\(docker\s+ps`: Chặn ép xóa toàn bộ container đang chạy.
+   - `\bdocker\s+kill\s+\$\(docker\s+ps`: Chặn cưỡng bức dừng toàn bộ container.
+6. **Tê liệt mạng và tường lửa (Network & Firewall Blackout)**:
+   - `\biptables\s+(?:-[fFX]|--flush)\b`: Chặn `iptables -F`, `iptables -X`, `iptables --flush`.
+   - `\bufw\s+(?:reset|disable)\b`: Chặn `ufw reset`, `ufw disable`.
+   - `\bip\s+link\s+set\s+\w+\s+down\b`: Chặn ngắt card mạng vật lý của máy chủ.
+7. **Phân quyền và sở hữu nguy hiểm (Reckless Permissions)**:
+   - `\bchmod\s+-[a-zA-Z]*[rR][a-zA-Z]*\s+(?:777|0777|a\+rwx)\b`: Chặn `chmod -R 777 /` hoặc bất kỳ phân quyền đệ quy 777 nào.
+   - `\bchown\s+-[a-zA-Z]*[rR][a-zA-Z]*\b`: Chặn `chown -R` đệ quy bừa bãi.
+8. **Cạn kiệt tài nguyên & Fork Bomb (Resource Exhaustion)**:
+   - `\bstress(?:-ng)?\b`: Chặn các công cụ cố tình vắt kiệt CPU/RAM.
+   - `:\(\)\{\s*:\|:&\s*\};:`: Chặn mã độc Fork bomb kinh điển trong bash.
+
+**Quy Trình Phản Xạ Thần Kinh & Cờ Xác Nhận Bảo Mật**:
+- Khi phát hiện vi phạm, hàm lập tức kích hoạt phản ứng sinh học tủy sống trong `ArtificialBrain`: tăng vọt chất kích động `noradrenaline` (+0.35) và chất căng thẳng `cortisol` (+0.30), đồng thời ức chế `dopamine` (-0.20).
+- Trả về thông báo cảnh báo đỏ `🛑 [PHẢN XẠ TỦY SỐNG BẢO VỆ SERVER - SPINAL SAFETY VETO]`.
+- Lệnh TUYỆT ĐỐI KHÔNG được thực thi trừ khi có xác nhận bảo mật tường minh từ anh Mạnh kèm tham số `confirm="CONFIRM_DANGEROUS_ACTION"`.
+
 
 ---
 

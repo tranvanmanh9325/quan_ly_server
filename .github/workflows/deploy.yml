@@ -46,7 +46,7 @@ jobs:
         run: python -m compileall services/ai-agent-service/app
 
       - name: Set up Node.js 20
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 20
           cache: 'npm'

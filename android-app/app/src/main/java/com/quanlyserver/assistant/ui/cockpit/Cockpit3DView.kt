@@ -2,6 +2,7 @@ package com.quanlyserver.assistant.ui.cockpit
 
 import android.annotation.SuppressLint
 import android.graphics.Color
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.WebChromeClient
@@ -18,10 +19,10 @@ import androidx.webkit.WebViewAssetLoader
 
 /**
  * High-Performance Hardware-Accelerated 3D WebGL Surface.
- * Uses WebViewAssetLoader to securely load local .glb models with zero CORS issues,
- * enabling full 360-degree orbit rotation, dynamic lighting, and 60 FPS performance.
+ * Uses WebViewAssetLoader to securely load local Three.js & .glb models with zero CORS issues.
+ * Implements Touch Intercept Bypass to ensure 100% responsive 360-degree mouse/touch orbit rotation.
  */
-@SuppressLint("SetJavaScriptEnabled")
+@SuppressLint("SetJavaScriptEnabled", "ClickableViewAccessibility")
 @Composable
 fun Cockpit3DView(modifier: Modifier = Modifier) {
     AndroidView(
@@ -47,9 +48,23 @@ fun Cockpit3DView(modifier: Modifier = Modifier) {
                     allowFileAccess = true
                     allowContentAccess = true
                     mediaPlaybackRequiresUserGesture = false
-                    cacheMode = WebSettings.LOAD_DEFAULT
+                    cacheMode = WebSettings.LOAD_NO_CACHE
                     useWideViewPort = true
                     loadWithOverviewMode = true
+                }
+                clearCache(true)
+
+                // Disallow parent Compose scroll/drag from intercepting 3D rotation touches
+                setOnTouchListener { v, event ->
+                    when (event.action) {
+                        MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
+                            v.parent?.requestDisallowInterceptTouchEvent(true)
+                        }
+                        MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                            v.parent?.requestDisallowInterceptTouchEvent(false)
+                        }
+                    }
+                    false
                 }
 
                 webChromeClient = WebChromeClient()

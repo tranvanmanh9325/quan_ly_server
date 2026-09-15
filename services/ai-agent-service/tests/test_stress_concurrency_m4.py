@@ -175,10 +175,28 @@ class TestStressConcurrencyMilestone4(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         if not HAS_FFMPEG:
             self.skipTest("ffmpeg binary is required for TestStressConcurrencyMilestone4")
+        self.api_base = "http://127.0.0.1:8084"
+
+        # Check if live server is reachable before attempting live HTTP streaming
+        server_alive = False
+        try:
+            async with httpx.AsyncClient(timeout=0.5) as client:
+                res = await client.get(f"{self.api_base}/api/ai/health")
+                server_alive = res.status_code < 500
+        except Exception:
+            try:
+                async with httpx.AsyncClient(timeout=0.5) as client:
+                    res = await client.get(f"{self.api_base}/health")
+                    server_alive = res.status_code < 500
+            except Exception:
+                server_alive = False
+
+        if not server_alive:
+            self.skipTest("Live FastAPI server at 127.0.0.1:8084 is not running - skipping live HTTP socket stress test")
+
         self.workspace = Path(tempfile.mkdtemp(prefix="challenger_stress_ws_"))
         self.seed_video = make_seed_video(self.workspace / "seed.mp4", duration_s=3)
         self.sampler = ResourceSampler(interval_seconds=0.3)
-        self.api_base = "http://127.0.0.1:8084"
         media_storage_manager.ensure_dirs()
 
     async def asyncTearDown(self):

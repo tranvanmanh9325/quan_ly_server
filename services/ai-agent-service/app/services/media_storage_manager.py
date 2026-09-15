@@ -175,6 +175,14 @@ class MediaStorageManager:
 
         lan_base = os.getenv("LAN_DOWNLOAD_BASE_URL", "http://192.168.0.100:5173").rstrip("/")
 
+        # Tier 0: Testing / CI environment fast bypass (avoids SSH & Ngrok network probe latencies)
+        if (
+            os.getenv("TESTING", "").lower() in ("1", "true", "yes")
+            or os.getenv("CI", "").lower() in ("1", "true")
+        ):
+            test_base = os.getenv("PUBLIC_DOWNLOAD_BASE_URL", "http://127.0.0.1:8084").rstrip("/")
+            return test_base, lan_base
+
         # Tier 1: Static environment variable override takes precedence
         env_internet = os.getenv("PUBLIC_DOWNLOAD_BASE_URL")
         if env_internet and env_internet.strip():

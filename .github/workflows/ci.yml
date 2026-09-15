@@ -66,6 +66,8 @@ jobs:
           JWT_SECRET: "ci-dummy-jwt-secret-key-for-testing-only-123456789"
           DATABASE_URL: "postgresql://ci:ci@localhost:5432/ci"
           TESTING: "true"
+          CI: "true"
+          PUBLIC_DOWNLOAD_BASE_URL: "http://127.0.0.1:8084"
 
   build-frontend:
     name: Build Frontend

@@ -43,7 +43,10 @@ class TestOptimizationAndSecurity(unittest.IsolatedAsyncioTestCase):
         """Verify that multiple failed attempts place client IP into jail (403)."""
         guard = DownloadRateLimitGuard(capacity=10.0, refill_rate=1.0, max_failed_attempts=3, jail_seconds=60)
         mock_request = MagicMock(spec=Request)
-        mock_request.headers = {"X-Forwarded-For": "203.0.113.50, 10.0.0.1"}
+        mock_request.headers = {
+            "x-forwarded-for": "203.0.113.50, 10.0.0.1",
+            "X-Forwarded-For": "203.0.113.50, 10.0.0.1",
+        }
         mock_request.client = MagicMock()
         mock_request.client.host = "10.0.0.1"
 

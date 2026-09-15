@@ -59,13 +59,14 @@ class DownloadRateLimitGuard:
 
     def _get_client_ip(self, request: Request) -> str:
         """Extracts client IP, prioritizing Cloudflare / Reverse Proxy headers."""
-        cf_ip = request.headers.get("cf-connecting-ip")
+        headers = request.headers
+        cf_ip = headers.get("cf-connecting-ip") or headers.get("CF-Connecting-IP")
         if cf_ip:
             return cf_ip.strip()
-        forwarded = request.headers.get("x-forwarded-for")
+        forwarded = headers.get("x-forwarded-for") or headers.get("X-Forwarded-For")
         if forwarded:
             return forwarded.split(",")[0].strip()
-        real_ip = request.headers.get("x-real-ip")
+        real_ip = headers.get("x-real-ip") or headers.get("X-Real-IP")
         if real_ip:
             return real_ip.strip()
         return request.client.host if request.client else "127.0.0.1"

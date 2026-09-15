@@ -11,6 +11,7 @@ Fortified with:
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any, Dict, Optional
 import urllib.parse
 
@@ -68,6 +69,15 @@ async def download_media_file(
             detail="Failed to serve media file.",
         )
 
+    # Ensure safe path containment within public_dir (CodeQL PathSanitizer Barrier)
+    base_dir = os.path.abspath(os.path.normpath(str(media_storage_manager.public_dir)))
+    safe_path = os.path.abspath(os.path.normpath(str(file_path)))
+    if not safe_path.startswith(base_dir + os.sep):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access forbidden: Path outside base storage directory.",
+        )
+
     # 2. Use original or requested sanitized filename for Content-Disposition
     effective_filename = metadata.get("filename") or filename or file_path.name
     headers = {
@@ -78,7 +88,7 @@ async def download_media_file(
     }
 
     return FileResponse(
-        path=str(file_path),
+        path=safe_path,
         filename=effective_filename,
         media_type="video/mp4",
         content_disposition_type="attachment",
@@ -105,6 +115,14 @@ async def get_download_info(request: Request, token: str) -> Dict[str, Any]:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(exc),
+        )
+
+    base_dir = os.path.abspath(os.path.normpath(str(media_storage_manager.public_dir)))
+    safe_path = os.path.abspath(os.path.normpath(str(file_path)))
+    if not safe_path.startswith(base_dir + os.sep):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access forbidden: Path outside base storage directory.",
         )
 
     import time

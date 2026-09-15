@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Tiểu Bảo Bảo 3D Sci-Fi Cockpit</title>
+  <!-- Load local offline Google model-viewer 3.5.0 via WebViewAssetLoader -->
+  <script type="module" src="https://appassets.androidplatform.net/assets/js/model-viewer.min.js"></script>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      -webkit-touch-callout: none;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+
+    body, html {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background-color: #000;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+
+    /* Container bao trùm không gian buồng lái */
+    .cockpit-viewport {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      background: url('https://appassets.androidplatform.net/assets/images/cockpit_background_clean.webp') no-repeat center center;
+      background-size: cover;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+
+    /* Bầu trời sao lấp lánh thời gian thực */
+    .starfield-canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 55%;
+      pointer-events: none;
+      z-index: 1;
+    }
+
+    /* Sàn rune mạch điện phát xung nhịp sóng năng lượng */
+    .floor-rune-pulse {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: url('https://appassets.androidplatform.net/assets/images/floor_rune_glow.png') no-repeat center bottom;
+      background-size: cover;
+      pointer-events: none;
+      z-index: 2;
+      animation: runePulse 2.8s ease-in-out infinite alternate;
+    }
+
+    @keyframes runePulse {
+      0% { opacity: 0.35; filter: drop-shadow(0 0 4px rgba(0, 255, 234, 0.4)); }
+      100% { opacity: 0.95; filter: drop-shadow(0 0 16px rgba(0, 255, 234, 0.9)); }
+    }
+
+    /* Engine 3D Model-Viewer chính thức của Google */
+    model-viewer {
+      position: absolute;
+      width: 100%;
+      height: 100%;
+      z-index: 3;
+      --poster-color: transparent;
+      outline: none;
+      cursor: grab;
+    }
+
+    model-viewer:active {
+      cursor: grabbing;
+    }
+
+    /* Radar quét mục tiêu 360 độ góc trên bên phải */
+    .radar-container {
+      position: absolute;
+      top: 28%;
+      right: 5%;
+      width: 76px;
+      height: 76px;
+      border-radius: 50%;
+      border: 1px solid rgba(0, 229, 255, 0.5);
+      background: rgba(0, 30, 45, 0.3);
+      pointer-events: none;
+      z-index: 4;
+      overflow: hidden;
+      box-shadow: 0 0 10px rgba(0, 229, 255, 0.3);
+    }
+
+    .radar-sweep {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: conic-gradient(from 0deg, rgba(0, 229, 255, 0.8) 0deg, transparent 60deg, transparent 360deg);
+      border-radius: 50%;
+      animation: radarRotate 4s linear infinite;
+    }
+
+    @keyframes radarRotate {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+
+    /* HUD Bảng điều khiển góc trên bên trái */
+    .hud-telemetry {
+      position: absolute;
+      top: 25%;
+      left: 4%;
+      background: rgba(0, 20, 35, 0.5);
+      border: 1px solid rgba(0, 229, 255, 0.4);
+      padding: 6px 10px;
+      border-radius: 4px;
+      color: #00e5ff;
+      font-family: monospace;
+      font-size: 11px;
+      pointer-events: none;
+      z-index: 4;
+      box-shadow: 0 0 8px rgba(0, 229, 255, 0.2);
+    }
+
+    .hud-telemetry h4 {
+      margin-bottom: 3px;
+      font-size: 11px;
+      letter-spacing: 1px;
+      color: #7df9ff;
+    }
+
+    /* Thanh công cụ điều khiển xoay 3D nhanh phía dưới */
+    .controls-overlay {
+      position: absolute;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 10px;
+      z-index: 10;
+    }
+
+    .btn-3d {
+      background: rgba(0, 30, 50, 0.8);
+      border: 1px solid #00e5ff;
+      color: #00e5ff;
+      padding: 8px 14px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: bold;
+      letter-spacing: 0.5px;
+      cursor: pointer;
+      backdrop-filter: blur(8px);
+      box-shadow: 0 0 10px rgba(0, 229, 255, 0.4);
+      transition: all 0.2s ease;
+    }
+
+    .btn-3d:active {
+      background: rgba(0, 229, 255, 0.4);
+      color: #fff;
+      transform: scale(1.05);
+    }
+
+    /* Nhãn trạng thái 3D thời gian thực */
+    .status-badge {
+      position: absolute;
+      top: 14px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0, 20, 35, 0.8);
+      border: 1px solid rgba(0, 255, 234, 0.5);
+      color: #00ffea;
+      font-size: 11px;
+      padding: 4px 14px;
+      border-radius: 12px;
+      z-index: 10;
+      font-family: monospace;
+      letter-spacing: 1px;
+      box-shadow: 0 0 10px rgba(0, 255, 234, 0.3);
+    }
+  </style>
+</head>
+<body>
+  <div class="cockpit-viewport">
+    <!-- Status Badge -->
+    <div class="status-badge">⚡ TIỂU BẢO BẢO 3D REAL-TIME SYSTEM (60 FPS)</div>
+
+    <!-- Canvas hạt sao vũ trụ -->
+    <canvas id="starfield" class="starfield-canvas"></canvas>
+
+    <!-- Bệ sàn rune phát xung nhịp -->
+    <div class="floor-rune-pulse"></div>
+
+    <!-- Radar quét góc trên phải -->
+    <div class="radar-container">
+      <div class="radar-sweep"></div>
+    </div>
+
+    <!-- Telemetry HUD góc trên trái -->
+    <div class="hud-telemetry">
+      <h4>UNITED AI SYSTEM</h4>
+      <div>FPS: 60 | ENGINE: GLB 3D</div>
+      <div>ROTATION: 360° ORBIT</div>
+    </div>
+
+    <!-- Google model-viewer 3D Engine chính thức -->
+    <model-viewer
+      id="char-viewer"
+      src="https://appassets.androidplatform.net/assets/models/character_female.glb"
+      alt="Tiểu Bảo Bảo 3D Model"
+      camera-controls
+      auto-rotate
+      rotation-per-second="15deg"
+      shadow-intensity="1.5"
+      shadow-softness="0.8"
+      exposure="1.1"
+      camera-orbit="0deg 82deg 2.6m"
+      min-camera-orbit="auto 45deg 1.5m"
+      max-camera-orbit="auto 105deg 4.0m"
+      field-of-view="32deg"
+      interpolation-decay="200"
+      interaction-prompt="none"
+      touch-action="pan-y">
+    </model-viewer>
+
+    <!-- Thanh nút điều khiển 3D tương tác -->
+    <div class="controls-overlay">
+      <button class="btn-3d" onclick="toggleAutoRotate()">🔄 Tự Động Xoay</button>
+      <button class="btn-3d" onclick="resetFrontView()">🎯 Chính Diện</button>
+      <button class="btn-3d" onclick="rotateAngle(90)">↪️ Xoay 90°</button>
+      <button class="btn-3d" onclick="rotateAngle(180)">🔄 Quay Sau Lưng</button>
+    </div>
+  </div>
+
+  <script>
+    // Canvas vẽ sao nhấp nháy trong không gian
+    const canvas = document.getElementById('starfield');
+    const ctx = canvas.getContext('2d');
+    let stars = [];
+
+    function resizeCanvas() {
+      canvas.width = canvas.clientWidth;
+      canvas.height = canvas.clientHeight;
+      stars = [];
+      for (let i = 0; i < 45; i++) {
+        stars.push({
+          x: Math.random() * canvas.width,
+          y: Math.random() * canvas.height,
+          radius: Math.random() * 1.5 + 0.5,
+          alpha: Math.random() * 0.7 + 0.3,
+          speed: Math.random() * 0.02 + 0.005,
+          color: i % 3 === 0 ? '#00e5ff' : '#ffffff'
+        });
+      }
+    }
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
+
+    function renderStars() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      for (let s of stars) {
+        s.alpha += s.speed;
+        if (s.alpha > 1 || s.alpha < 0.2) s.speed = -s.speed;
+        ctx.fillStyle = s.color;
+        ctx.globalAlpha = Math.max(0, Math.min(1, s.alpha));
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, s.radius, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      requestAnimationFrame(renderStars);
+    }
+    renderStars();
+
+    // Các hàm điều khiển 3D
+    const viewer = document.getElementById('char-viewer');
+
+    function toggleAutoRotate() {
+      viewer.autoRotate = !viewer.autoRotate;
+    }
+
+    function resetFrontView() {
+      viewer.cameraOrbit = "0deg 82deg 2.6m";
+    }
+
+    let currentYaw = 0;
+    function rotateAngle(deltaDeg) {
+      currentYaw = (currentYaw + deltaDeg) % 360;
+      viewer.cameraOrbit = `${currentYaw}deg 82deg 2.6m`;
+    }
+  </script>
+</body>
+</html>

@@ -1,7 +1,7 @@
 {
     "logs": [
         {
-            "outputFile": "com.quanlyserver.assistant.app-mergeDebugResources-39:/values-or/values-or.xml",
+            "outputFile": "com.quanlyserver.assistant.app-mergeDebugResources-40:/values-or/values-or.xml",
             "map": [
                 {
                     "source": "C:\\Users\\Kirito\\.gradle\\caches\\transforms-4\\d7f65ba514a9d7138ba1763b9cfbf3c7\\transformed\\core-1.12.0\\res\\values-or\\values-or.xml",

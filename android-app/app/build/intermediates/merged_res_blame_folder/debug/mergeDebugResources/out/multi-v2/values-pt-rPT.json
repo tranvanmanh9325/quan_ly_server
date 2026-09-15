@@ -1,7 +1,7 @@
 {
     "logs": [
         {
-            "outputFile": "com.quanlyserver.assistant.app-mergeDebugResources-39:/values-pt-rPT/values-pt-rPT.xml",
+            "outputFile": "com.quanlyserver.assistant.app-mergeDebugResources-40:/values-pt-rPT/values-pt-rPT.xml",
             "map": [
                 {
                     "source": "C:\\Users\\Kirito\\.gradle\\caches\\transforms-4\\ece1cf78d5657720049b7a43e749440d\\transformed\\ui-release\\res\\values-pt-rPT\\values-pt-rPT.xml",

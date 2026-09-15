@@ -4,6 +4,7 @@ ADDED from D:\GitHub\quan_ly_server\android-app\app\src\main\AndroidManifest.xml
 INJECTED from D:\GitHub\quan_ly_server\android-app\app\src\main\AndroidManifest.xml:2:1-24:12
 INJECTED from D:\GitHub\quan_ly_server\android-app\app\src\main\AndroidManifest.xml:2:1-24:12
 INJECTED from D:\GitHub\quan_ly_server\android-app\app\src\main\AndroidManifest.xml:2:1-24:12
+MERGED from [androidx.webkit:webkit:1.10.0] C:\Users\Kirito\.gradle\caches\transforms-4\5844308e9fd2774a4b5a7498177a81ac\transformed\webkit-1.10.0\AndroidManifest.xml:2:1-7:12
 MERGED from [androidx.compose.material3:material3-android:1.2.0] C:\Users\Kirito\.gradle\caches\transforms-4\e6ccb36d4d1204c5447c31d4b5036a6f\transformed\material3-release\AndroidManifest.xml:17:1-22:12
 MERGED from [androidx.activity:activity:1.8.2] C:\Users\Kirito\.gradle\caches\transforms-4\fd4bf36b026bfb6f1e887dafe5cfafaf\transformed\activity-1.8.2\AndroidManifest.xml:17:1-22:12
 MERGED from [androidx.activity:activity-ktx:1.8.2] C:\Users\Kirito\.gradle\caches\transforms-4\ec66cef04b29146c571ef37406bb98c9\transformed\activity-ktx-1.8.2\AndroidManifest.xml:2:1-7:12
@@ -110,6 +111,8 @@ uses-sdk
 INJECTED from D:\GitHub\quan_ly_server\android-app\app\src\main\AndroidManifest.xml reason: use-sdk injection requested
 INJECTED from D:\GitHub\quan_ly_server\android-app\app\src\main\AndroidManifest.xml
 INJECTED from D:\GitHub\quan_ly_server\android-app\app\src\main\AndroidManifest.xml
+MERGED from [androidx.webkit:webkit:1.10.0] C:\Users\Kirito\.gradle\caches\transforms-4\5844308e9fd2774a4b5a7498177a81ac\transformed\webkit-1.10.0\AndroidManifest.xml:5:5-44
+MERGED from [androidx.webkit:webkit:1.10.0] C:\Users\Kirito\.gradle\caches\transforms-4\5844308e9fd2774a4b5a7498177a81ac\transformed\webkit-1.10.0\AndroidManifest.xml:5:5-44
 MERGED from [androidx.compose.material3:material3-android:1.2.0] C:\Users\Kirito\.gradle\caches\transforms-4\e6ccb36d4d1204c5447c31d4b5036a6f\transformed\material3-release\AndroidManifest.xml:20:5-44
 MERGED from [androidx.compose.material3:material3-android:1.2.0] C:\Users\Kirito\.gradle\caches\transforms-4\e6ccb36d4d1204c5447c31d4b5036a6f\transformed\material3-release\AndroidManifest.xml:20:5-44
 MERGED from [androidx.activity:activity:1.8.2] C:\Users\Kirito\.gradle\caches\transforms-4\fd4bf36b026bfb6f1e887dafe5cfafaf\transformed\activity-1.8.2\AndroidManifest.xml:20:5-44

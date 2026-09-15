@@ -1,7 +1,7 @@
 {
     "logs": [
         {
-            "outputFile": "com.quanlyserver.assistant.app-mergeDebugResources-39:/values-az/values-az.xml",
+            "outputFile": "com.quanlyserver.assistant.app-mergeDebugResources-40:/values-az/values-az.xml",
             "map": [
                 {
                     "source": "C:\\Users\\Kirito\\.gradle\\caches\\transforms-4\\1c66ce69e6ce7776d081f0f86834dd0d\\transformed\\foundation-release\\res\\values-az\\values-az.xml",

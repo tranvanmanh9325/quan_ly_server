@@ -243,17 +243,9 @@ class VietnameseLinguisticNormalizer:
             re.compile(phrase_str, re.IGNORECASE | re.UNICODE) if sorted_phrases else None
         )
 
-        # 2. Syntax-aware "răng" regexes:
-        # When "răng" is at the start of sentence or after punctuation, or followed by pronouns:
-        # e.g., "răng m lại...", "răng mi...", "răng lại..." -> "tại sao"
-        self._rang_cause_regex = re.compile(
-            r"(?:(?<=^)|(?<=[,.?!;:\n]))\s*răng\b|(?<!\w)răng(?=\s+(?:m|mi|tau|t|lại|không|nỏ|chửa|anh|em|bạn|người|hắn|mà|sao)\b)",
-            re.IGNORECASE | re.UNICODE,
-        )
-        # When "răng" is at end of sentence: e.g. "thời tiết ra răng?", "tính răng?" -> "thế nào"
-        self._rang_end_regex = re.compile(
-            r"(?<!\w)răng(?=\s*[\?!\.]|\s*$)",
-            re.IGNORECASE | re.UNICODE,
+        # 2. Syntax-aware "răng" regex (strictly linear O(N), zero ReDoS):
+        self._rang_token_regex: Pattern[str] = re.compile(
+            r"(?<!\w)răng(?!\w)", re.IGNORECASE | re.UNICODE
         )
 
         # 3. Combined single words (Nghệ Tĩnh + Teencode)
@@ -300,24 +292,32 @@ class VietnameseLinguisticNormalizer:
 
         processed = self._phrase_regex.sub(_sub_phrase, processed) if self._phrase_regex else processed
 
-        # Step 2: Syntax-aware "răng" resolution
-        # 2a. "răng" as cause (at start or before pronoun/verb) -> "tại sao"
-        def _sub_rang_cause(match: re.Match) -> str:
+        # Step 2: Syntax-aware "răng" resolution (strictly linear O(N), zero ReDoS)
+        def _sub_rang(match: re.Match) -> str:
             nonlocal replacements
-            replacements += 1
-            matched_str = match.group(0)
-            leading_space = " " if matched_str.startswith(" ") else ""
-            return f"{leading_space}tại sao"
+            start = match.start()
+            end = match.end()
+            prefix = processed[:start].rstrip()
+            suffix = processed[end:].lstrip()
 
-        processed = self._rang_cause_regex.sub(_sub_rang_cause, processed)
+            # 2a. Followed by pronouns / adverbs -> "tại sao" (e.g. "răng m lại...", "răng mi...")
+            if re.match(r"^(?:m|mi|tau|t|lại|không|nỏ|chửa|anh|em|bạn|người|hắn|mà|sao)\b", suffix, re.IGNORECASE):
+                replacements += 1
+                return "tại sao"
 
-        # 2b. "răng" at end of question -> "thế nào"
-        def _sub_rang_end(match: re.Match) -> str:
-            nonlocal replacements
-            replacements += 1
-            return "thế nào"
+            # 2b. Preceded by start of string or punctuation -> "tại sao" (e.g. "răng rứa hè", ", răng mà...")
+            if not prefix or prefix[-1] in ",.?!;:\n":
+                replacements += 1
+                return "tại sao"
 
-        processed = self._rang_end_regex.sub(_sub_rang_end, processed)
+            # 2c. At end of sentence/question -> "thế nào" (e.g. "a răng?", "tính răng?")
+            if not suffix or suffix[0] in "?!.":
+                replacements += 1
+                return "thế nào"
+
+            return match.group(0)
+
+        processed = self._rang_token_regex.sub(_sub_rang, processed)
 
         # Step 3: Single words & teencode substitution
         def _sub_word(match: re.Match) -> str:

@@ -339,6 +339,23 @@ class MediaStorageManager:
         if not re.match(r"^[A-Za-z0-9_-]{16,64}$", token):
             raise FileNotFoundError(f"Invalid token format or invalid characters: {token}")
 
+    def _sanitize_token_dir(self, token: str) -> Path:
+        """
+        Validates token format and safely resolves isolated token directory within public_dir.
+        Enforces strict path containment to completely eliminate Path Injection vulnerabilities.
+        """
+        self._validate_token_string(token)
+        safe_token = os.path.basename(token.strip())
+        resolved_base = self.public_dir.resolve()
+        token_dir = (resolved_base / safe_token).resolve()
+        try:
+            if not token_dir.is_relative_to(resolved_base) or token_dir == resolved_base:
+                raise FileNotFoundError(f"Path traversal blocked for token: {token}")
+        except AttributeError:
+            if resolved_base not in token_dir.parents:
+                raise FileNotFoundError(f"Path traversal blocked for token: {token}")
+        return token_dir
+
     def get_download_file(self, token: str) -> Tuple[Path, Dict[str, Any]]:
         """
         Retrieves file path and metadata for client download:
@@ -346,10 +363,8 @@ class MediaStorageManager:
           - Checks TTL. If expired: immediately triggers Layer 2 instant cleanup and raises FileNotFoundError.
           - Increments download_count on valid download.
         """
-        self._validate_token_string(token)
-
-        token_dir = self.public_dir / token
-        meta_file = token_dir / "metadata.json"
+        token_dir = self._sanitize_token_dir(token)
+        meta_file = (token_dir / "metadata.json").resolve()
 
         if not token_dir.is_dir() or not meta_file.is_file():
             raise FileNotFoundError(f"Download record not found or already deleted: {token}")
@@ -376,7 +391,13 @@ class MediaStorageManager:
             )
             raise FileNotFoundError(f"Download token has expired: {token}")
 
-        file_path = Path(metadata.get("file_path", ""))
+        raw_filename = metadata.get("filename", "")
+        safe_filename = os.path.basename(raw_filename.strip()) if raw_filename else ""
+        if not safe_filename:
+            raw_fp = metadata.get("file_path", "")
+            safe_filename = os.path.basename(raw_fp.strip()) if raw_fp else ""
+        file_path = (token_dir / safe_filename).resolve()
+
         if not file_path.is_file():
             shutil.rmtree(token_dir, ignore_errors=True)
             raise FileNotFoundError(f"Underlying media file missing from storage for token: {token}")
@@ -384,7 +405,7 @@ class MediaStorageManager:
         # Increment download counter atomically in background
         metadata["download_count"] = metadata.get("download_count", 0) + 1
         try:
-            tmp_meta_file = token_dir / f".metadata.{secrets.token_hex(4)}.tmp"
+            tmp_meta_file = (token_dir / f".metadata.{secrets.token_hex(4)}.tmp").resolve()
             with open(tmp_meta_file, "w", encoding="utf-8") as f:
                 json.dump(metadata, f, indent=2, ensure_ascii=False)
             os.replace(tmp_meta_file, meta_file)
@@ -397,10 +418,8 @@ class MediaStorageManager:
         """
         Retrieves metadata and verifies TTL without incrementing the download counter.
         """
-        self._validate_token_string(token)
-
-        token_dir = self.public_dir / token
-        meta_file = token_dir / "metadata.json"
+        token_dir = self._sanitize_token_dir(token)
+        meta_file = (token_dir / "metadata.json").resolve()
 
         if not token_dir.is_dir() or not meta_file.is_file():
             raise FileNotFoundError(f"Download record not found or already deleted: {token}")
@@ -421,7 +440,12 @@ class MediaStorageManager:
             logger.info("[MediaStorage] Info query on expired token %s. Purged folder.", token)
             raise FileNotFoundError(f"Download token has expired: {token}")
 
-        file_path = Path(metadata.get("file_path", ""))
+        raw_filename = metadata.get("filename", "")
+        safe_filename = os.path.basename(raw_filename.strip()) if raw_filename else ""
+        if not safe_filename:
+            raw_fp = metadata.get("file_path", "")
+            safe_filename = os.path.basename(raw_fp.strip()) if raw_fp else ""
+        file_path = (token_dir / safe_filename).resolve()
         return file_path, metadata
 
     def sweep_expired(self) -> Dict[str, Any]:

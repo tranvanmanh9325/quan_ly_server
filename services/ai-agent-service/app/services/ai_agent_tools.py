@@ -56,7 +56,7 @@ _SPINAL_VETO_PATTERNS = (
     re.compile(r"\brm\s+.*--recursive\s+([/~]|\*|\.)", re.IGNORECASE),
     re.compile(r"\brm\s+.*--no-preserve-root\b", re.IGNORECASE),
     re.compile(r"\bfind\s+.*-(?:delete|exec\s+(?:rm|unlink|shred)\b)", re.IGNORECASE),
-    re.compile(r"\btruncate\s+(?:-[a-zA-Z0-9_-]*\s*)*.*(?:-s\s*0\b|\blog\b|\.log\b)", re.IGNORECASE),
+    re.compile(r"\btruncate\b[^\n;&|]*(?:-s\s*0\b|--size\s*0\b|\b\S*log\b|\.log\b)", re.IGNORECASE),
     # 2. SSH keys, authentication & daemon disruption
     re.compile(r"\b(?:rm|unlink|shred)\s+.*(?:\.ssh\b|authorized_keys\b|sshd?_config\b)", re.IGNORECASE),
     re.compile(r">\s*.*(?:\.ssh/authorized_keys\b|sshd?_config\b)", re.IGNORECASE),
@@ -81,7 +81,7 @@ _SPINAL_VETO_PATTERNS = (
     re.compile(r"\bchmod\s+.*(?:777|0777|a\+rwx).*(?:-[a-zA-Z0-9_-]*[rR]|--recursive\b)", re.IGNORECASE),
     re.compile(r"\bchown\s+.*(?:-[a-zA-Z0-9_-]*[rR]|--recursive\b)", re.IGNORECASE),
     # 8. Stress exhaustion & fork bombs
-    re.compile(r"(?:^|[;&|`$()]\s*|\b(?:sudo(?:\s+-[a-zA-Z0-9_-]+(?:\s+[^-][^\s;&|]*)?)*|nohup|exec|env(?:\s+\w+=\S+)*)\s+)\s*stress(?:-ng)?\b", re.IGNORECASE),
+    re.compile(r"(?:^|[;&|`$()]\s*|\b(?:sudo|nohup|exec|env)\b[^\n;&|]*)\bstress(?:-ng)?\b", re.IGNORECASE),
     re.compile(r":\(\)\{\s*:\|:&\s*\};:", re.IGNORECASE),
 )
 

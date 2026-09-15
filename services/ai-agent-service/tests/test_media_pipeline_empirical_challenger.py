@@ -29,6 +29,7 @@ from app.services.media_downloader import (
     TELEGRAM_MAX_FILE_SIZE,
     TEMP_MEDIA_DIR,
     _clean_fbcdn_stream_url,
+    _is_meta_cdn_url,
     cleanup_expired_media,
 )
 
@@ -659,7 +660,7 @@ class TestThreadsSnifferAndAdvancedEdgeCases(unittest.TestCase):
             items = json.loads(clean_json)
             for it in items:
                 candidate = it.get("url")
-                if candidate and ("fbcdn.net" in candidate or "cdninstagram.com" in candidate):
+                if candidate and _is_meta_cdn_url(candidate):
                     extracted_stream_url = candidate
                     break
             if extracted_stream_url:

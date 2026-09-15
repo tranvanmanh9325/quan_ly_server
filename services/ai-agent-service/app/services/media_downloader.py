@@ -64,6 +64,22 @@ def _clean_fbcdn_stream_url(stream_url: str) -> str:
     ))
 
 
+def _is_meta_cdn_url(url: Optional[str]) -> bool:
+    """
+    Safely validates that a candidate stream URL belongs to Meta CDN domains.
+    RFC-compliant hostname parsing eliminates CodeQL py/incomplete-url-substring-sanitization.
+    """
+    if not url or not isinstance(url, str):
+        return False
+    try:
+        parsed = urllib.parse.urlparse(url)
+        hostname = (parsed.hostname or "").lower()
+        allowed_domains = ("fbcdn.net", "cdninstagram.com")
+        return any(hostname == d or hostname.endswith("." + d) for d in allowed_domains)
+    except Exception:
+        return False
+
+
 # ──────────────────────────────────────────────────────────────────────────
 # TẦNG 1: Regex Canonical Rewriting cho Facebook Share URLs (0ms, Zero Network)
 # ──────────────────────────────────────────────────────────────────────────
@@ -668,7 +684,7 @@ class MultiTierMediaPipeline:
                     res_url = response.url
                     ct = response.headers.get("content-type", "").lower()
                     if (
-                        ("fbcdn.net" in res_url or "cdninstagram.com" in res_url)
+                        _is_meta_cdn_url(res_url)
                         and ("video" in ct or ".mp4" in res_url or response.request.resource_type == "media")
                     ):
                         if not network_stream_url:
@@ -708,7 +724,7 @@ class MultiTierMediaPipeline:
                             items = json.loads(clean_json)
                             for it in items:
                                 candidate = it.get("url")
-                                if candidate and ("fbcdn.net" in candidate or "cdninstagram.com" in candidate):
+                                if candidate and _is_meta_cdn_url(candidate):
                                     extracted_stream_url = candidate
                                     logger.info("[Threads Playwright] Found stream URL via video_versions JSON hydration")
                                     break

@@ -43,3 +43,15 @@ cortex_data/
 *.bin
 *.meta.json
 .agents/
+
+# Android Build & Gradle Caches
+.gradle/
+**/.gradle/
+**/build/
+!**/build.gradle
+!**/build.gradle.kts
+*.apk
+*.aab
+local.properties
+.cxx/
+**/.cxx/

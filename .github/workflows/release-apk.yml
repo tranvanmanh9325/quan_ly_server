@@ -66,7 +66,7 @@ jobs:
           if [ -n "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" ]; then
             echo "Decoding release keystore from GitHub Secrets..."
             echo "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" | base64 --decode > android-app/keystore/release.jks
-            echo "keystore_path=keystore/release.jks" >> $GITHUB_OUTPUT
+            echo "keystore_path=${GITHUB_WORKSPACE}/android-app/keystore/release.jks" >> $GITHUB_OUTPUT
             echo "keystore_password=${{ secrets.RELEASE_KEYSTORE_PASSWORD }}" >> $GITHUB_OUTPUT
             echo "key_alias=${{ secrets.RELEASE_KEY_ALIAS }}" >> $GITHUB_OUTPUT
             echo "key_password=${{ secrets.RELEASE_KEY_PASSWORD }}" >> $GITHUB_OUTPUT
@@ -81,7 +81,7 @@ jobs:
               -storepass "android123" \
               -keypass "android123" \
               -dname "CN=QuanLyServer, OU=Mobile, O=QuanLyServer, L=Hanoi, ST=Hanoi, C=VN"
-            echo "keystore_path=keystore/release.jks" >> $GITHUB_OUTPUT
+            echo "keystore_path=${GITHUB_WORKSPACE}/android-app/keystore/release.jks" >> $GITHUB_OUTPUT
             echo "keystore_password=android123" >> $GITHUB_OUTPUT
             echo "key_alias=quanlyserver" >> $GITHUB_OUTPUT
             echo "key_password=android123" >> $GITHUB_OUTPUT

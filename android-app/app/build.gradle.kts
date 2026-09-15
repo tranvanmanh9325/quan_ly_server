@@ -23,7 +23,12 @@ android {
     signingConfigs {
         create("release") {
             val envKeystorePath = System.getenv("KEYSTORE_FILE")
-            val keystoreFile = if (!envKeystorePath.isNullOrBlank()) file(envKeystorePath) else null
+            val keystoreFile = when {
+                envKeystorePath.isNullOrBlank() -> null
+                file(envKeystorePath).exists() -> file(envKeystorePath)
+                rootProject.file(envKeystorePath).exists() -> rootProject.file(envKeystorePath)
+                else -> null
+            }
 
             if (keystoreFile != null && keystoreFile.exists()) {
                 storeFile = keystoreFile
@@ -34,14 +39,12 @@ android {
                 enableV2Signing = true
             } else {
                 val debugKeystore = signingConfigs.getByName("debug")
-                if (debugKeystore.storeFile?.exists() == true) {
-                    storeFile = debugKeystore.storeFile
-                    storePassword = debugKeystore.storePassword
-                    keyAlias = debugKeystore.keyAlias
-                    keyPassword = debugKeystore.keyPassword
-                    enableV1Signing = true
-                    enableV2Signing = true
-                }
+                storeFile = debugKeystore.storeFile
+                storePassword = debugKeystore.storePassword
+                keyAlias = debugKeystore.keyAlias
+                keyPassword = debugKeystore.keyPassword
+                enableV1Signing = true
+                enableV2Signing = true
             }
         }
     }

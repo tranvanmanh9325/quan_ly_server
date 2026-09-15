@@ -27,20 +27,21 @@ android {
 
             if (keystoreFile != null && keystoreFile.exists()) {
                 storeFile = keystoreFile
-                storePassword = System.getenv("KEYSTORE_PASSWORD")
-                keyAlias = System.getenv("KEY_ALIAS")
-                keyPassword = System.getenv("KEY_PASSWORD")
+                storePassword = System.getenv("KEYSTORE_PASSWORD") ?: "android123"
+                keyAlias = System.getenv("KEY_ALIAS") ?: "quanlyserver"
+                keyPassword = System.getenv("KEY_PASSWORD") ?: "android123"
                 enableV1Signing = true
                 enableV2Signing = true
             } else {
-                // Fallback to debug keystore so release build is always signed and installable
                 val debugKeystore = signingConfigs.getByName("debug")
-                storeFile = debugKeystore.storeFile
-                storePassword = debugKeystore.storePassword
-                keyAlias = debugKeystore.keyAlias
-                keyPassword = debugKeystore.keyPassword
-                enableV1Signing = true
-                enableV2Signing = true
+                if (debugKeystore.storeFile?.exists() == true) {
+                    storeFile = debugKeystore.storeFile
+                    storePassword = debugKeystore.storePassword
+                    keyAlias = debugKeystore.keyAlias
+                    keyPassword = debugKeystore.keyPassword
+                    enableV1Signing = true
+                    enableV2Signing = true
+                }
             }
         }
     }

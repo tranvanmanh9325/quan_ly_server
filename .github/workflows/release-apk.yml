@@ -67,20 +67,34 @@ jobs:
             echo "Decoding release keystore from GitHub Secrets..."
             echo "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" | base64 --decode > android-app/keystore/release.jks
             echo "keystore_path=keystore/release.jks" >> $GITHUB_OUTPUT
-            echo "has_secret=true" >> $GITHUB_OUTPUT
+            echo "keystore_password=${{ secrets.RELEASE_KEYSTORE_PASSWORD }}" >> $GITHUB_OUTPUT
+            echo "key_alias=${{ secrets.RELEASE_KEY_ALIAS }}" >> $GITHUB_OUTPUT
+            echo "key_password=${{ secrets.RELEASE_KEY_PASSWORD }}" >> $GITHUB_OUTPUT
           else
-            echo "Notice: No RELEASE_KEYSTORE_BASE64 secret found. Falling back to build.gradle.kts debug fallback signing."
-            echo "has_secret=false" >> $GITHUB_OUTPUT
+            echo "Notice: No RELEASE_KEYSTORE_BASE64 secret found. Generating CI release keystore on the fly..."
+            keytool -genkeypair -v \
+              -keystore android-app/keystore/release.jks \
+              -alias quanlyserver \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -storepass "android123" \
+              -keypass "android123" \
+              -dname "CN=QuanLyServer, OU=Mobile, O=QuanLyServer, L=Hanoi, ST=Hanoi, C=VN"
+            echo "keystore_path=keystore/release.jks" >> $GITHUB_OUTPUT
+            echo "keystore_password=android123" >> $GITHUB_OUTPUT
+            echo "key_alias=quanlyserver" >> $GITHUB_OUTPUT
+            echo "key_password=android123" >> $GITHUB_OUTPUT
           fi
 
       - name: Build Release APK
         run: ./gradlew assembleRelease --no-daemon
         working-directory: android-app
         env:
-          KEYSTORE_FILE: ${{ steps.setup-keystore.outputs.has_secret == 'true' && steps.setup-keystore.outputs.keystore_path || '' }}
-          KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+          KEYSTORE_FILE: ${{ steps.setup-keystore.outputs.keystore_path }}
+          KEYSTORE_PASSWORD: ${{ steps.setup-keystore.outputs.keystore_password }}
+          KEY_ALIAS: ${{ steps.setup-keystore.outputs.key_alias }}
+          KEY_PASSWORD: ${{ steps.setup-keystore.outputs.key_password }}
 
       - name: Package & Generate Checksum
         id: package-apk

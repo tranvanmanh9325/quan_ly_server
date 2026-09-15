@@ -250,48 +250,53 @@ class MultiTierMediaPipeline:
         """
         logger.info("[RedirectResolver] Resolving potential redirect URL: %s", url)
         try:
-            client = await self._get_client()
             headers = {
                 "User-Agent": "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)",
                 "Accept": "*/*",
                 "Accept-Language": "en-US,en;q=0.9",
             }
-            async with client.stream(
-                "GET",
-                url,
-                headers=headers,
-                follow_redirects=True,
-                max_redirects=5,
-            ) as resp:
-                resolved_url = str(resp.url)
-                status_code = resp.status_code
+            client = self._external_client if (self._external_client and not self._external_client.is_closed) else httpx.AsyncClient(headers=headers, follow_redirects=True, timeout=httpx.Timeout(10.0))
+            is_managed = (client is self._external_client)
+            try:
+                async with client.stream(
+                    "GET",
+                    url,
+                    headers=headers,
+                    follow_redirects=True,
+                    max_redirects=5,
+                ) as resp:
+                    resolved_url = str(resp.url)
+                    status_code = resp.status_code
 
-                # Kiểm tra nếu Facebook redirect về trang login hoặc checkpoint (bài viết/video riêng tư)
-                if any(p in resolved_url for p in ("/login", "/checkpoint", "login.php")):
-                    logger.warning(
-                        "[RedirectResolver] Facebook URL redirected to login/checkpoint (private/restricted): %s -> %s",
-                        url,
-                        resolved_url,
-                    )
-                    return url
+                    # Kiểm tra nếu Facebook redirect về trang login hoặc checkpoint (bài viết/video riêng tư)
+                    if any(p in resolved_url for p in ("/login", "/checkpoint", "login.php")):
+                        logger.warning(
+                            "[RedirectResolver] Facebook URL redirected to login/checkpoint (private/restricted): %s -> %s",
+                            url,
+                            resolved_url,
+                        )
+                        return url
 
-                if status_code < 400:
-                    canonical = canonicalize_facebook_url(resolved_url)
-                    logger.info(
-                        "[RedirectResolver] Successfully resolved: %s -> %s (canonical: %s, HTTP %d)",
-                        url,
-                        resolved_url,
-                        canonical,
-                        status_code,
-                    )
-                    return canonical
-                else:
-                    logger.warning(
-                        "[RedirectResolver] HTTP %d received for %s. Keeping original URL.",
-                        status_code,
-                        url,
-                    )
-                    return url
+                    if status_code < 400:
+                        canonical = canonicalize_facebook_url(resolved_url)
+                        logger.info(
+                            "[RedirectResolver] Successfully resolved: %s -> %s (canonical: %s, HTTP %d)",
+                            url,
+                            resolved_url,
+                            canonical,
+                            status_code,
+                        )
+                        return canonical
+                    else:
+                        logger.warning(
+                            "[RedirectResolver] HTTP %d received for %s. Keeping original URL.",
+                            status_code,
+                            url,
+                        )
+                        return url
+            finally:
+                if not is_managed:
+                    await client.aclose()
 
         except (asyncio.TimeoutError, httpx.TooManyRedirects) as err:
             logger.warning("[RedirectResolver] Timeout or redirect loop resolving for %s (%s). Keeping original URL.", url, err)

@@ -163,6 +163,9 @@ def make_fast_large_video(seed_path: Path, output_path: Path, target_mb: int = 5
     return output_path
 
 
+HAS_FFMPEG = bool(shutil.which("ffmpeg"))
+
+
 class TestStressConcurrencyMilestone4(unittest.IsolatedAsyncioTestCase):
     """
     Exhaustive empirical test suite for Milestone 4 Dual Distribution Pipeline.
@@ -170,6 +173,8 @@ class TestStressConcurrencyMilestone4(unittest.IsolatedAsyncioTestCase):
     """
 
     async def asyncSetUp(self):
+        if not HAS_FFMPEG:
+            self.skipTest("ffmpeg binary is required for TestStressConcurrencyMilestone4")
         self.workspace = Path(tempfile.mkdtemp(prefix="challenger_stress_ws_"))
         self.seed_video = make_seed_video(self.workspace / "seed.mp4", duration_s=3)
         self.sampler = ResourceSampler(interval_seconds=0.3)

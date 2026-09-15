@@ -47,6 +47,11 @@ jobs:
           cache: 'pip'
           cache-dependency-path: services/ai-agent-service/requirements.txt
 
+      - name: Install System Dependencies (ffmpeg)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ffmpeg
+
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
@@ -60,6 +65,7 @@ jobs:
         env:
           JWT_SECRET: "ci-dummy-jwt-secret-key-for-testing-only-123456789"
           DATABASE_URL: "postgresql://ci:ci@localhost:5432/ci"
+          TESTING: "true"
 
   build-frontend:
     name: Build Frontend

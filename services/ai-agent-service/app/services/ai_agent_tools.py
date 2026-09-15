@@ -407,7 +407,9 @@ class AgentToolExecutor:
 
         # Media download detection: strictly isolate from CPU load/system keywords
         has_media_link = any(link in q for link in (
-            "tiktok.com", "youtu.be", "youtube.com", "fb.watch", "facebook.com/watch", "douyin.com", "threads.net"
+            "tiktok.com", "youtu.be", "youtube.com", "fb.watch", "fb.me",
+            "facebook.com/watch", "facebook.com/reel", "facebook.com/share", "facebook.com/videos",
+            "douyin.com", "threads.net", "threads.com"
         ))
         is_media = has_media_link or any(k in q for k in (
             "tiktok", "youtube", "douyin", "reels", "reel", "video", "clip", "mp4",
@@ -569,13 +571,13 @@ class AgentToolExecutor:
                 "type": "function",
                 "function": {
                     "name": "download_media_video",
-                    "description": "Tải video đa nền tảng (TikTok, YouTube, Facebook, Threads) gửi Telegram.",
+                    "description": "Tải video đa nền tảng (TikTok, YouTube, YouTube Shorts, Facebook, Facebook Reels, Threads) gửi Telegram.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "url": {
                                 "type": "string",
-                                "description": "URL video cần tải.",
+                                "description": "URL video cần tải (hỗ trợ TikTok, YouTube Shorts, Facebook Reels, Threads...).",
                             },
                             "caption": {
                                 "type": "string",

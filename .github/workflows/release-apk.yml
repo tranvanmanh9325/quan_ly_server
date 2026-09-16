@@ -13,7 +13,7 @@ on:
       release_title:
         description: 'Release Title'
         required: false
-        default: 'Bản phát hành ứng dụng Android - Quan Ly Server Assistant'
+        default: 'Quan Ly Server Assistant - Android Release'
       release_notes:
         description: 'Release Notes'
         required: false
@@ -129,17 +129,23 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.versioning.outputs.tag }}
-          name: ${{ github.event.inputs.release_title || format('Bản phát hành ứng dụng Android {0}', steps.versioning.outputs.tag) }}
+          name: ${{ github.event.inputs.release_title || format('Quan Ly Server Assistant {0}', steps.versioning.outputs.tag) }}
           body: |
             ## 📱 Quan Ly Server Assistant (${{ steps.versioning.outputs.tag }})
 
-            Ứng dụng Android điều khiển và quản trị máy chủ cá nhân tích hợp Trợ lý ảo AI & Không gian Buồng lái 3D.
+            Official Android Client for Server Management & AI Assistant featuring an Ultra-Realistic 3D Sci-Fi Spaceship Cockpit Bridge.
 
-            ### 📦 Thông tin tệp cài đặt:
-            - **Tệp cài đặt:** `${{ steps.package-apk.outputs.apk_name }}`
-            - **Tính toàn vẹn (SHA-256):** Kèm tệp `${{ steps.package-apk.outputs.apk_name }}.sha256`
-            - **Hệ điều hành hỗ trợ:** Android 8.0 (API 26) trở lên
-            - **Trạng thái chữ ký:** Đã ký số v1 + v2 hợp lệ, sẵn sàng cài đặt trực tiếp.
+            ### 📦 Package Information:
+            - **Binary Asset:** `${{ steps.package-apk.outputs.apk_name }}`
+            - **Integrity Checksum:** Verified via `${{ steps.package-apk.outputs.apk_name }}.sha256`
+            - **Supported OS:** Android 8.0+ (API 26+)
+            - **Signature Status:** Signed with valid APK Signature Scheme v1 + v2, ready for direct installation.
+
+            ### 🚀 What's New in this Release:
+            - **Photorealistic Sci-Fi Spaceship Bridge**: Completely overhauled cockpit with panoramic forward canopy, aft bulkhead airlock, and anti-glare titanium floor.
+            - **Obstacle-Free Extended Zoom (0.85m - 12.0m)**: Removed all blocking struts; seamless zoom from face close-up to ultra-wide cockpit vista.
+            - **Cinematic Dynamic Auto-Framing**: Automatically shifts target focus to face during close-ups and to torso during wide angles.
+            - **Ultra-Minimalist HUD & Auto Idle Director**: Clean floating cyber pills for 3 environments (Nebula, Orbit, Warp) and automatic 5s idle smooth glide with 360° slow cinematic orbit.
 
             ${{ github.event.inputs.release_notes }}
           draft: false

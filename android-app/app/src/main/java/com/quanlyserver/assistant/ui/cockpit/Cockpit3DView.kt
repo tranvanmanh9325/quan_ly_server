@@ -41,6 +41,7 @@ fun Cockpit3DView(modifier: Modifier = Modifier) {
                 // Enable GPU hardware acceleration
                 setLayerType(View.LAYER_TYPE_HARDWARE, null)
                 setBackgroundColor(Color.BLACK)
+                WebView.setWebContentsDebuggingEnabled(true)
 
                 settings.apply {
                     javaScriptEnabled = true

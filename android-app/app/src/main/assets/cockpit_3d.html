@@ -133,8 +133,9 @@
     let targetCamY = DEFAULT_CAM_Y;
     
     // Góc xoay chuẩn mặt hướng 100% trực diện vào mắt người dùng: Math.PI rad (180 độ)
-    let targetRotationY = Math.PI;
-    let currentRotationY = Math.PI;
+    const FRONT_FACING_ROTATION_Y = Math.PI;
+    let targetRotationY = FRONT_FACING_ROTATION_Y;
+    let currentRotationY = FRONT_FACING_ROTATION_Y;
 
     camera.position.set(0.0, currentCamY, currentDistance);
     const cameraTarget = new THREE.Vector3(0.0, DEFAULT_TARGET_Y, 0.0);
@@ -197,226 +198,313 @@
     scene.add(floorRuneLight);
 
     // =========================================================================
-    // 3. SIÊU HÀNH TINH 3D ĐA TẦNG & DẢI NGÂN HÀ NGOÀI CỬA SỔ QUAN SÁT
+    // 3. BỘ MÁY SINH TEXTURE PBR ĐIỆN ẢNH PROCEDURAL (ZERO-MB PBR ENGINE)
+    // =========================================================================
+    function createSciFiPanelMaterial(baseColorHex, roughnessVal, metalnessVal, panelCols, panelRows, withRivets) {
+      const size = 512;
+      
+      const hCanvas = document.createElement('canvas');
+      hCanvas.width = size; hCanvas.height = size;
+      const hCtx = hCanvas.getContext('2d');
+      hCtx.fillStyle = '#808080';
+      hCtx.fillRect(0, 0, size, size);
+
+      const aCanvas = document.createElement('canvas');
+      aCanvas.width = size; aCanvas.height = size;
+      const aCtx = aCanvas.getContext('2d');
+      aCtx.fillStyle = baseColorHex;
+      aCtx.fillRect(0, 0, size, size);
+
+      const colW = size / panelCols;
+      const rowH = size / panelRows;
+
+      hCtx.strokeStyle = '#101010';
+      hCtx.lineWidth = 5;
+      aCtx.strokeStyle = 'rgba(0, 0, 0, 0.70)';
+      aCtx.lineWidth = 3;
+
+      for (let c = 0; c <= panelCols; c++) {
+        const x = c * colW;
+        hCtx.beginPath(); hCtx.moveTo(x, 0); hCtx.lineTo(x, size); hCtx.stroke();
+        aCtx.beginPath(); aCtx.moveTo(x, 0); aCtx.lineTo(x, size); aCtx.stroke();
+      }
+      for (let r = 0; r <= panelRows; r++) {
+        const y = r * rowH;
+        hCtx.beginPath(); hCtx.moveTo(0, y); hCtx.lineTo(size, y); hCtx.stroke();
+        aCtx.beginPath(); aCtx.moveTo(0, y); aCtx.lineTo(size, y); aCtx.stroke();
+      }
+
+      if (withRivets) {
+        hCtx.fillStyle = '#ffffff';
+        aCtx.fillStyle = '#38bdf8';
+        for (let c = 0; c < panelCols; c++) {
+          for (let r = 0; r < panelRows; r++) {
+            const x0 = c * colW + 14, x1 = (c + 1) * colW - 14;
+            const y0 = r * rowH + 14, y1 = (r + 1) * rowH - 14;
+            [[x0, y0], [x1, y0], [x0, y1], [x1, y1]].forEach(([px, py]) => {
+              hCtx.beginPath(); hCtx.arc(px, py, 3.5, 0, Math.PI * 2); hCtx.fill();
+              aCtx.beginPath(); aCtx.arc(px, py, 2.0, 0, Math.PI * 2); aCtx.fill();
+            });
+          }
+        }
+      }
+
+      const hData = hCtx.getImageData(0, 0, size, size).data;
+      const nCanvas = document.createElement('canvas');
+      nCanvas.width = size; nCanvas.height = size;
+      const nCtx = nCanvas.getContext('2d');
+      const nImgData = nCtx.createImageData(size, size);
+      const nData = nImgData.data;
+
+      const getH = (x, y) => {
+        const cx = (x + size) % size;
+        const cy = (y + size) % size;
+        return hData[(cy * size + cx) * 4] / 255.0;
+      };
+
+      const strength = 4.2;
+      for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+          const dx = (getH(x + 1, y) - getH(x - 1, y)) * strength;
+          const dy = (getH(x, y + 1) - getH(x, y - 1)) * strength;
+          const dz = 1.0;
+          const len = Math.hypot(dx, dy, dz);
+          const nx = -dx / len;
+          const ny = -dy / len;
+          const nz = dz / len;
+          const idx = (y * size + x) * 4;
+          nData[idx]     = Math.floor(((nx + 1) / 2) * 255);
+          nData[idx + 1] = Math.floor(((ny + 1) / 2) * 255);
+          nData[idx + 2] = Math.floor(((nz + 1) / 2) * 255);
+          nData[idx + 3] = 255;
+        }
+      }
+      nCtx.putImageData(nImgData, 0, 0);
+
+      const rCanvas = document.createElement('canvas');
+      rCanvas.width = size; rCanvas.height = size;
+      const rCtx = rCanvas.getContext('2d');
+      const grayVal = Math.floor(roughnessVal * 255);
+      rCtx.fillStyle = `rgb(${grayVal}, ${grayVal}, ${grayVal})`;
+      rCtx.fillRect(0, 0, size, size);
+      
+      rCtx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
+      for (let i = 0; i < 140; i++) {
+        const sy = Math.random() * size;
+        const len = 40 + Math.random() * 100;
+        const sx = Math.random() * (size - len);
+        rCtx.beginPath(); rCtx.moveTo(sx, sy); rCtx.lineTo(sx + len, sy); rCtx.stroke();
+      }
+
+      const aTex = new THREE.CanvasTexture(aCanvas);
+      const nTex = new THREE.CanvasTexture(nCanvas);
+      const rTex = new THREE.CanvasTexture(rCanvas);
+      aTex.wrapS = aTex.wrapT = THREE.RepeatWrapping;
+      nTex.wrapS = nTex.wrapT = THREE.RepeatWrapping;
+      rTex.wrapS = rTex.wrapT = THREE.RepeatWrapping;
+      aTex.encoding = THREE.sRGBEncoding;
+
+      return new THREE.MeshStandardMaterial({
+        map: aTex,
+        normalMap: nTex,
+        normalScale: new THREE.Vector2(1.4, 1.4),
+        roughnessMap: rTex,
+        roughness: roughnessVal,
+        metalness: metalnessVal
+      });
+    }
+
+    // =========================================================================
+    // 4. HẬU CẢNH VŨ TRỤ 360° EQUIRECTANGULAR SIÊU THỰC & SIÊU HÀNH TINH BĂNG GIÁ
     // =========================================================================
     const spaceGroup = new THREE.Group();
     scene.add(spaceGroup);
 
-    // 3.1. Dải sao ngân hà 3D sâu thẳm (2500 hạt sao)
-    const starGeo = new THREE.BufferGeometry();
-    const starCount = 2500;
-    const starPos = new Float32Array(starCount * 3);
-    const starColors = new Float32Array(starCount * 3);
+    function createEquirectangularCosmicTexture() {
+      const w = 2048, h = 1024;
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext('2d');
 
-    for (let i = 0; i < starCount; i++) {
-      const r = 30 + Math.random() * 110;
-      const theta = Math.random() * Math.PI * 2;
-      const phi = Math.acos((Math.random() * 2) - 1);
+      // 4.1. Nền không gian sâu thẳm
+      const bgGrad = ctx.createLinearGradient(0, 0, 0, h);
+      bgGrad.addColorStop(0, '#010208');
+      bgGrad.addColorStop(0.3, '#020614');
+      bgGrad.addColorStop(0.5, '#050c20');
+      bgGrad.addColorStop(0.7, '#020612');
+      bgGrad.addColorStop(1, '#010206');
+      ctx.fillStyle = bgGrad;
+      ctx.fillRect(0, 0, w, h);
 
-      starPos[i * 3]     = r * Math.sin(phi) * Math.cos(theta);
-      starPos[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta);
-      starPos[i * 3 + 2] = -4 - Math.abs(r * Math.cos(phi));
-
-      const dice = Math.random();
-      if (dice > 0.65) {
-        starColors[i * 3] = 0.22; starColors[i * 3 + 1] = 0.74; starColors[i * 3 + 2] = 0.98;
-      } else if (dice > 0.40) {
-        starColors[i * 3] = 0.78; starColors[i * 3 + 1] = 0.45; starColors[i * 3 + 2] = 0.95;
-      } else {
-        starColors[i * 3] = 0.96; starColors[i * 3 + 1] = 0.96; starColors[i * 3 + 2] = 1.0;
+      // 4.2. Dải tinh vân khí quyển điện ảnh (Cinematic Nebulae)
+      function drawNebulaCloud(cx, cy, rx, ry, colorStop1, colorStop2, rot) {
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.rotate(rot);
+        const grad = ctx.createRadialGradient(0, 0, 10, 0, 0, Math.max(rx, ry));
+        grad.addColorStop(0, colorStop1);
+        grad.addColorStop(0.45, colorStop2);
+        grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
       }
+
+      drawNebulaCloud(w * 0.50, h * 0.40, 520, 260, 'rgba(14, 165, 233, 0.35)', 'rgba(56, 189, 248, 0.08)', -0.15);
+      drawNebulaCloud(w * 0.45, h * 0.46, 420, 180, 'rgba(168, 85, 247, 0.28)', 'rgba(147, 51, 234, 0.06)', 0.25);
+      drawNebulaCloud(w * 0.75, h * 0.30, 380, 200, 'rgba(56, 189, 248, 0.22)', 'rgba(3, 105, 161, 0.05)', -0.30);
+      drawNebulaCloud(w * 0.20, h * 0.35, 450, 220, 'rgba(99, 102, 241, 0.25)', 'rgba(67, 56, 202, 0.05)', 0.18);
+
+      // 4.3. Hàng ngàn vì sao 3D vi mô rải khắp vũ trụ (4,000 sao)
+      for (let i = 0; i < 4000; i++) {
+        const sx = Math.random() * w;
+        const sy = Math.random() * h;
+        const rad = Math.random() < 0.96 ? (0.4 + Math.random() * 0.8) : (1.5 + Math.random() * 1.8);
+        const alpha = 0.35 + Math.random() * 0.65;
+
+        const dice = Math.random();
+        if (dice > 0.70) ctx.fillStyle = `rgba(56, 189, 248, ${alpha})`;
+        else if (dice > 0.45) ctx.fillStyle = `rgba(192, 132, 252, ${alpha})`;
+        else ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`;
+
+        ctx.beginPath();
+        ctx.arc(sx, sy, rad, 0, Math.PI * 2);
+        ctx.fill();
+
+        if (rad > 2.0) {
+          ctx.strokeStyle = `rgba(224, 242, 254, ${alpha * 0.6})`;
+          ctx.lineWidth = 0.8;
+          ctx.beginPath();
+          ctx.moveTo(sx - rad * 3.5, sy); ctx.lineTo(sx + rad * 3.5, sy);
+          ctx.moveTo(sx, sy - rad * 3.5); ctx.lineTo(sx, sy + rad * 3.5);
+          ctx.stroke();
+        }
+      }
+
+      // 4.4. Siêu Hành Tinh Băng Giá Khổng Lồ Chi Tiết Điện Ảnh Tại Chân Trời Vòm Kính
+      const px = w * 0.50;
+      const py = h * 0.88;
+      const pr = 360;
+
+      // Đại dương sâu thẳm & ánh sáng phản quang
+      const planetGrad = ctx.createRadialGradient(px - pr * 0.35, py - pr * 0.40, 20, px, py, pr);
+      planetGrad.addColorStop(0, '#164e63');
+      planetGrad.addColorStop(0.35, '#0e7490');
+      planetGrad.addColorStop(0.65, '#0369a1');
+      planetGrad.addColorStop(0.85, '#075985');
+      planetGrad.addColorStop(1, '#021e38');
+      ctx.fillStyle = planetGrad;
+      ctx.beginPath();
+      ctx.arc(px, py, pr, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Các mảng lục địa thềm ngọc bích phát sáng viền
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(px, py, pr, 0, Math.PI * 2);
+      ctx.clip();
+
+      for (let c = 0; c < 32; c++) {
+        const lx = px - pr * 0.8 + ((c * 43) % (pr * 1.6));
+        const ly = py - pr * 0.6 + ((c * 37) % (pr * 1.2));
+        const lRadX = 40 + (c * 11) % 85;
+        const lRadY = 22 + (c * 7) % 55;
+
+        ctx.fillStyle = c % 2 === 0 ? '#047857' : '#059669';
+        ctx.beginPath();
+        ctx.ellipse(lx, ly, lRadX, lRadY, (c * 0.4), 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.strokeStyle = 'rgba(56, 189, 248, 0.45)';
+        ctx.lineWidth = 3;
+        ctx.stroke();
+      }
+
+      // Tầng mây bão xoáy khí quyển màu trắng ngọc trai
+      ctx.fillStyle = 'rgba(240, 249, 255, 0.65)';
+      for (let m = 0; m < 42; m++) {
+        const mx = px - pr * 0.85 + ((m * 39) % (pr * 1.7));
+        const my = py - pr * 0.70 + ((m * 31) % (pr * 1.3));
+        ctx.beginPath();
+        ctx.ellipse(mx, my, 65 + (m * 8) % 75, 14 + (m * 3) % 22, (m * 0.32), 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+
+      // Vành đai tán xạ khí quyển Rayleigh phát quang rực rỡ ôm trọn đỉnh hành tinh
+      const atmoGrad = ctx.createRadialGradient(px, py, pr - 8, px, py, pr + 42);
+      atmoGrad.addColorStop(0, 'rgba(56, 189, 248, 0.95)');
+      atmoGrad.addColorStop(0.3, 'rgba(14, 165, 233, 0.60)');
+      atmoGrad.addColorStop(0.7, 'rgba(3, 105, 161, 0.20)');
+      atmoGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+      ctx.fillStyle = atmoGrad;
+      ctx.beginPath();
+      ctx.arc(px, py, pr + 42, 0, Math.PI * 2);
+      ctx.fill();
+
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.encoding = THREE.sRGBEncoding;
+      return tex;
     }
-    starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
-    starGeo.setAttribute('color', new THREE.BufferAttribute(starColors, 3));
-    const starMat = new THREE.PointsMaterial({
-      size: 0.55,
-      vertexColors: true,
-      transparent: true,
-      opacity: 0.95,
+
+    const cosmicTexture = createEquirectangularCosmicTexture();
+    const cosmicSkyGeo = new THREE.SphereGeometry(140, 64, 36);
+    const cosmicSkyMat = new THREE.MeshBasicMaterial({
+      map: cosmicTexture,
+      side: THREE.BackSide,
       fog: false
     });
-    const starField = new THREE.Points(starGeo, starMat);
-    spaceGroup.add(starField);
-
-    // 3.2. Quả cầu siêu hành tinh 3D sống động (Super-Planet)
-    const planetRadius = 14.0;
-    const planetGeo = new THREE.SphereGeometry(planetRadius, 64, 48);
-
-    const pCanvas = document.createElement('canvas');
-    pCanvas.width = 1024;
-    pCanvas.height = 512;
-    const pCtx = pCanvas.getContext('2d');
-
-    const oceanGrad = pCtx.createLinearGradient(0, 0, 0, 512);
-    oceanGrad.addColorStop(0, '#04162e');
-    oceanGrad.addColorStop(0.3, '#093663');
-    oceanGrad.addColorStop(0.5, '#0e528c');
-    oceanGrad.addColorStop(0.7, '#083360');
-    oceanGrad.addColorStop(1, '#031429');
-    pCtx.fillStyle = oceanGrad;
-    pCtx.fillRect(0, 0, 1024, 512);
-
-    for (let c = 0; c < 48; c++) {
-      const cx = (c * 23) % 1024;
-      const cy = 80 + ((c * 37) % 350);
-      const radX = 35 + (c * 7) % 65;
-      const radY = 20 + (c * 5) % 45;
-      
-      pCtx.fillStyle = c % 2 === 0 ? '#1b5b48' : '#28735a';
-      pCtx.beginPath();
-      pCtx.ellipse(cx, cy, radX, radY, (c * 0.35), 0, Math.PI * 2);
-      pCtx.fill();
-
-      pCtx.strokeStyle = 'rgba(56, 189, 248, 0.45)';
-      pCtx.lineWidth = 4;
-      pCtx.stroke();
-    }
-
-    pCtx.fillStyle = '#e0f2fe';
-    pCtx.fillRect(0, 0, 1024, 42);
-    pCtx.fillRect(0, 470, 1024, 42);
-
-    const planetTex = new THREE.CanvasTexture(pCanvas);
-    planetTex.encoding = THREE.sRGBEncoding;
-
-    const planetMat = new THREE.MeshStandardMaterial({
-      map: planetTex,
-      emissive: 0x06213f,
-      emissiveIntensity: 0.45,
-      metalness: 0.1,
-      roughness: 0.55
-    });
-    const planetMesh = new THREE.Mesh(planetGeo, planetMat);
-    planetMesh.position.set(0, -11.2, -16.0);
-    cosmicSunLight.target = planetMesh;
-    scene.add(cosmicSunLight.target);
-    spaceGroup.add(planetMesh);
-
-    // 3.3. Tầng mây bão khí quyển xoay chuyển động (Atmospheric Clouds)
-    const cloudGeo = new THREE.SphereGeometry(planetRadius + 0.18, 64, 48);
-    const cCanvas = document.createElement('canvas');
-    cCanvas.width = 1024;
-    cCanvas.height = 512;
-    const cCtx = cCanvas.getContext('2d');
-    cCtx.clearRect(0, 0, 1024, 512);
-
-    cCtx.fillStyle = 'rgba(255, 255, 255, 0.72)';
-    for (let i = 0; i < 36; i++) {
-      const x = (i * 31) % 1024;
-      const y = 60 + ((i * 29) % 390);
-      cCtx.beginPath();
-      cCtx.ellipse(x, y, 85, 22, (i * 0.28), 0, Math.PI * 2);
-      cCtx.fill();
-    }
-    const cloudTex = new THREE.CanvasTexture(cCanvas);
-    const cloudMat = new THREE.MeshStandardMaterial({
-      map: cloudTex,
-      transparent: true,
-      opacity: 0.65,
-      blending: THREE.AdditiveBlending
-    });
-    const cloudMesh = new THREE.Mesh(cloudGeo, cloudMat);
-    cloudMesh.position.copy(planetMesh.position);
-    spaceGroup.add(cloudMesh);
-
-    // 3.4. Vành đai tán xạ khí quyển Rayleigh phát quang (Atmospheric Glow Halo)
-    const atmoGeo = new THREE.SphereGeometry(planetRadius + 0.45, 64, 48);
-    const atmoMat = new THREE.MeshBasicMaterial({
-      color: 0x38bdf8,
-      transparent: true,
-      opacity: 0.42,
-      side: THREE.BackSide,
-      blending: THREE.AdditiveBlending
-    });
-    const atmoMesh = new THREE.Mesh(atmoGeo, atmoMat);
-    atmoMesh.position.copy(planetMesh.position);
-    spaceGroup.add(atmoMesh);
+    const cosmicSkyMesh = new THREE.Mesh(cosmicSkyGeo, cosmicSkyMat);
+    cosmicSkyMesh.position.set(0, 0, 0);
+    spaceGroup.add(cosmicSkyMesh);
 
     // =========================================================================
-    // 4. KIẾN TRÚC BUỒNG LÁI TÀU VŨ TRỤ 3D NGUYÊN KHỐI (MODULAR SCI-FI BRIDGE)
+    // 5. KIẾN TRÚC BUỒNG LÁI TÀU VŨ TRỤ 3D PBR ĐIỆN ẢNH (CINEMATIC PBR BRIDGE)
     // =========================================================================
     const cockpitGroup = new THREE.Group();
     scene.add(cockpitGroup);
 
-    const hullTitanMat = new THREE.MeshStandardMaterial({
-      color: 0x070e1a,
-      metalness: 0.35,
-      roughness: 0.70
-    });
+    // 5.1. Bộ vật liệu PBR kim loại titan xước phay và đinh tán cơ khí
+    const hullTitanPbrMat = createSciFiPanelMaterial('#0a1526', 0.45, 0.85, 4, 8, true);
+    const hullDarkPbrMat = createSciFiPanelMaterial('#040a15', 0.55, 0.80, 4, 8, true);
+    const floorPbrMat = createSciFiPanelMaterial('#060d1b', 0.50, 0.75, 8, 10, true);
+    floorPbrMat.map.repeat.set(4, 5);
+    floorPbrMat.normalMap.repeat.set(4, 5);
+    floorPbrMat.roughnessMap.repeat.set(4, 5);
 
-    const hullDarkMat = new THREE.MeshStandardMaterial({
-      color: 0x030710,
-      metalness: 0.25,
-      roughness: 0.80
-    });
-
-    // --- 4.1. MẶT SÀN TITAN CÓ RÃNH CONDUIT PHÁT QUANG CYAN (Y = 0) ---
-    const floorCanvas = document.createElement('canvas');
-    floorCanvas.width = 512;
-    floorCanvas.height = 512;
-    const fCtx = floorCanvas.getContext('2d');
-    fCtx.fillStyle = '#03060d';
-    fCtx.fillRect(0, 0, 512, 512);
-
-    fCtx.strokeStyle = '#010306';
-    fCtx.lineWidth = 4;
-    for (let x = 0; x <= 512; x += 128) {
-      fCtx.beginPath(); fCtx.moveTo(x, 0); fCtx.lineTo(x, 512); fCtx.stroke();
-    }
-    for (let y = 0; y <= 512; y += 128) {
-      fCtx.beginPath(); fCtx.moveTo(0, y); fCtx.lineTo(512, y); fCtx.stroke();
-    }
-    fCtx.strokeStyle = 'rgba(56, 189, 248, 0.08)';
-    fCtx.lineWidth = 1;
-    for (let x = 4; x <= 512; x += 128) {
-      fCtx.beginPath(); fCtx.moveTo(x, 0); fCtx.lineTo(x, 512); fCtx.stroke();
-    }
-
-    const floorTex = new THREE.CanvasTexture(floorCanvas);
-    floorTex.wrapS = THREE.RepeatWrapping;
-    floorTex.wrapT = THREE.RepeatWrapping;
-    floorTex.repeat.set(4, 5);
-
-    const floorMat = new THREE.MeshStandardMaterial({
-      color: 0x040812,
-      map: floorTex,
-      metalness: 0.15,
-      roughness: 0.90
-    });
-    const floorDeck = new THREE.Mesh(new THREE.PlaneGeometry(7.0, 9.0), floorMat);
+    // 5.2. Mặt sàn kim loại titan công nghiệp (Y = 0)
+    const floorDeck = new THREE.Mesh(new THREE.PlaneGeometry(7.5, 9.5), floorPbrMat);
     floorDeck.rotation.x = -Math.PI / 2;
     floorDeck.position.set(0, 0, -0.5);
     floorDeck.receiveShadow = true;
     cockpitGroup.add(floorDeck);
 
-    // 2 Rãnh dẫn năng lượng (Power Conduits) chạy dọc sàn phát quang neon cyan
+    // 2 Rãnh dẫn năng lượng neon cyan nổi bật chạy dọc sàn
     const conduitGlowMat = new THREE.MeshBasicMaterial({
       color: 0x38bdf8,
       transparent: true,
-      opacity: 0.85,
+      opacity: 0.90,
       blending: THREE.AdditiveBlending
     });
-    const leftConduit = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.02, 8.0), conduitGlowMat);
-    leftConduit.position.set(-1.25, 0.012, -0.5);
+    const leftConduit = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.02, 8.5), conduitGlowMat);
+    leftConduit.position.set(-1.30, 0.012, -0.5);
     cockpitGroup.add(leftConduit);
 
-    const rightConduit = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.02, 8.0), conduitGlowMat);
-    rightConduit.position.set(1.25, 0.012, -0.5);
+    const rightConduit = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.02, 8.5), conduitGlowMat);
+    rightConduit.position.set(1.30, 0.012, -0.5);
     cockpitGroup.add(rightConduit);
 
-    // --- 4.2. BỆ CHỈ HUY BÁT GIÁC 3D (COMMAND DAIS - Y = 0.08m) & MA TRẬN RUNE ---
-    const daisMat = new THREE.MeshStandardMaterial({
-      color: 0x030710,
-      metalness: 0.15,
-      roughness: 0.92
-    });
+    // 5.3. Bệ chỉ huy bát giác PBR cao cấp (Command Dais - Y = 0.08m)
+    const daisPbrMat = createSciFiPanelMaterial('#081222', 0.40, 0.88, 4, 4, true);
     const daisGeo = new THREE.CylinderGeometry(0.88, 0.98, 0.08, 8);
-    const daisMesh = new THREE.Mesh(daisGeo, daisMat);
+    const daisMesh = new THREE.Mesh(daisGeo, daisPbrMat);
     daisMesh.position.set(0, 0.04, 0);
     daisMesh.receiveShadow = true;
     cockpitGroup.add(daisMesh);
 
-    // Vành viền LED neon bao quanh mép sườn bệ bát giác
+    // Viền LED sườn neon cyan sắc cạnh
     const daisRimGeo = new THREE.CylinderGeometry(0.89, 0.99, 0.04, 8, 1, true);
     const daisRimMat = new THREE.MeshBasicMaterial({
       color: 0x38bdf8,
@@ -426,7 +514,7 @@
     daisRim.position.set(0, 0.06, 0);
     cockpitGroup.add(daisRim);
 
-    // Ma trận Rune vi mạch phát quang trên mặt bệ (floor_rune_glow.png)
+    // Ma trận Rune vi mạch phát quang nhịp thở trên mặt bệ (floor_rune_glow.png)
     const texLoader = new THREE.TextureLoader();
     let runeMat = null;
     texLoader.load(
@@ -452,7 +540,7 @@
       }
     );
 
-    // Shadow Catcher plane đón bóng đổ mềm mại dưới chân nhân vật
+    // Shadow Catcher đón bóng đổ mềm mại dưới chân nhân vật
     const shadowGeo = new THREE.PlaneGeometry(1.7, 1.7);
     const shadowMat = new THREE.ShadowMaterial({ opacity: 0.55 });
     const shadowMesh = new THREE.Mesh(shadowGeo, shadowMat);
@@ -461,60 +549,56 @@
     shadowMesh.receiveShadow = true;
     cockpitGroup.add(shadowMesh);
 
-    // --- 4.3. KHUNG VÁCH CỬA SỔ VÒM QUAN SÁT TOÀN CẢNH (PANORAMIC BULKHEAD - Z = -4.5m) ---
+    // 5.4. Khung vách cửa sổ vòm quan sát titan PBR (Panoramic Bulkhead - Z = -4.5m)
     const bulkheadGroup = new THREE.Group();
     bulkheadGroup.position.set(0, 0, -4.5);
     cockpitGroup.add(bulkheadGroup);
 
-    const leftWallPlate = new THREE.Mesh(new THREE.BoxGeometry(1.6, 3.8, 0.3), hullTitanMat);
+    const leftWallPlate = new THREE.Mesh(new THREE.BoxGeometry(1.6, 3.8, 0.3), hullTitanPbrMat);
     leftWallPlate.position.set(-2.8, 1.9, 0);
     leftWallPlate.castShadow = true;
     bulkheadGroup.add(leftWallPlate);
 
-    const rightWallPlate = new THREE.Mesh(new THREE.BoxGeometry(1.6, 3.8, 0.3), hullTitanMat);
+    const rightWallPlate = new THREE.Mesh(new THREE.BoxGeometry(1.6, 3.8, 0.3), hullTitanPbrMat);
     rightWallPlate.position.set(2.8, 1.9, 0);
     rightWallPlate.castShadow = true;
     bulkheadGroup.add(rightWallPlate);
 
-    const topWallPlate = new THREE.Mesh(new THREE.BoxGeometry(4.2, 0.8, 0.3), hullTitanMat);
+    const topWallPlate = new THREE.Mesh(new THREE.BoxGeometry(4.2, 0.8, 0.3), hullTitanPbrMat);
     topWallPlate.position.set(0, 3.4, 0);
     topWallPlate.castShadow = true;
     bulkheadGroup.add(topWallPlate);
 
-    const bottomWallPlate = new THREE.Mesh(new THREE.BoxGeometry(4.2, 0.5, 0.3), hullTitanMat);
+    const bottomWallPlate = new THREE.Mesh(new THREE.BoxGeometry(4.2, 0.5, 0.3), hullTitanPbrMat);
     bottomWallPlate.position.set(0, 0.25, 0);
     bottomWallPlate.receiveShadow = true;
     bulkheadGroup.add(bottomWallPlate);
 
-    const frameBezelMat = new THREE.MeshStandardMaterial({
-      color: 0x101b2c,
-      metalness: 0.75,
-      roughness: 0.45
-    });
-    const archTopBezel = new THREE.Mesh(new THREE.BoxGeometry(3.9, 0.16, 0.36), frameBezelMat);
+    // Thanh giằng vòm kính titan chịu lực
+    const archTopBezel = new THREE.Mesh(new THREE.BoxGeometry(3.9, 0.16, 0.36), hullDarkPbrMat);
     archTopBezel.position.set(0, 2.95, 0.05);
     bulkheadGroup.add(archTopBezel);
 
-    const archBottomBezel = new THREE.Mesh(new THREE.BoxGeometry(3.9, 0.16, 0.36), frameBezelMat);
+    const archBottomBezel = new THREE.Mesh(new THREE.BoxGeometry(3.9, 0.16, 0.36), hullDarkPbrMat);
     archBottomBezel.position.set(0, 0.52, 0.05);
     bulkheadGroup.add(archBottomBezel);
 
-    const leftMullion = new THREE.Mesh(new THREE.BoxGeometry(0.12, 2.35, 0.22), frameBezelMat);
+    const leftMullion = new THREE.Mesh(new THREE.BoxGeometry(0.12, 2.35, 0.22), hullDarkPbrMat);
     leftMullion.position.set(-1.15, 1.72, 0.06);
     leftMullion.rotation.z = -0.09;
     bulkheadGroup.add(leftMullion);
 
-    const rightMullion = new THREE.Mesh(new THREE.BoxGeometry(0.12, 2.35, 0.22), frameBezelMat);
+    const rightMullion = new THREE.Mesh(new THREE.BoxGeometry(0.12, 2.35, 0.22), hullDarkPbrMat);
     rightMullion.position.set(1.15, 1.72, 0.06);
     rightMullion.rotation.z = 0.09;
     bulkheadGroup.add(rightMullion);
 
-    // --- 4.4. HAI VÁCH HÔNG BUỒNG LÁI VỚI ỐNG THỦY LỰC & CỘT TRỤ VÁT (SIDE BULKHEADS) ---
+    // 5.5. Hai vách hông buồng lái với cột trụ vát và ống thủy lực chrome
     function createSidePillar(xPos, zPos, isLeft) {
       const pGroup = new THREE.Group();
       pGroup.position.set(xPos, 0, zPos);
 
-      const colMesh = new THREE.Mesh(new THREE.BoxGeometry(0.38, 3.8, 0.48), hullDarkMat);
+      const colMesh = new THREE.Mesh(new THREE.BoxGeometry(0.38, 3.8, 0.48), hullTitanPbrMat);
       colMesh.position.set(0, 1.9, 0);
       colMesh.rotation.z = isLeft ? -0.07 : 0.07;
       colMesh.castShadow = true;
@@ -522,7 +606,7 @@
 
       const tube = new THREE.Mesh(
         new THREE.CylinderGeometry(0.035, 0.035, 3.6, 16),
-        new THREE.MeshStandardMaterial({ color: 0x38bdf8, metalness: 0.90, roughness: 0.20 })
+        new THREE.MeshStandardMaterial({ color: 0x38bdf8, metalness: 0.95, roughness: 0.15 })
       );
       tube.position.set(isLeft ? 0.22 : -0.22, 1.9, 0);
       pGroup.add(tube);
@@ -535,18 +619,18 @@
     cockpitGroup.add(createSidePillar(-3.05, 1.2, true));
     cockpitGroup.add(createSidePillar(3.05, 1.2, false));
 
-    // --- 4.5. HAI BÀN ĐIỀU KHIỂN CHIẾN HẠM 3D (TACTICAL CONSOLES) ---
+    // 5.6. Hai cụm bàn điều khiển chiến hạm 3D (Tactical Consoles)
     function createBridgeConsole(xPos, zPos, rotY) {
       const cGroup = new THREE.Group();
       cGroup.position.set(xPos, 0, zPos);
       cGroup.rotation.y = rotY;
 
-      const baseMesh = new THREE.Mesh(new THREE.BoxGeometry(1.15, 0.80, 0.65), hullDarkMat);
+      const baseMesh = new THREE.Mesh(new THREE.BoxGeometry(1.15, 0.80, 0.65), hullDarkPbrMat);
       baseMesh.position.set(0, 0.40, 0);
       baseMesh.castShadow = true;
       cGroup.add(baseMesh);
 
-      const deskTop = new THREE.Mesh(new THREE.BoxGeometry(1.10, 0.05, 0.58), hullTitanMat);
+      const deskTop = new THREE.Mesh(new THREE.BoxGeometry(1.10, 0.05, 0.58), hullTitanPbrMat);
       deskTop.position.set(0, 0.82, -0.04);
       deskTop.rotation.x = 0.32;
       cGroup.add(deskTop);
@@ -573,8 +657,8 @@
     cockpitGroup.add(createBridgeConsole(-1.85, -1.5, 0.42));
     cockpitGroup.add(createBridgeConsole(1.85, -1.5, -0.42));
 
-    // --- 4.6. VÒM TRẦN CƠ KHÍ & 2 DẢI ĐÈN HUỲNH QUANG CÔNG NGHIỆP (Y = 3.6m) ---
-    const ceilingMesh = new THREE.Mesh(new THREE.PlaneGeometry(7.0, 9.0), hullDarkMat);
+    // 5.7. Vòm trần cơ khí và máng đèn huỳnh quang công nghiệp (Y = 3.6m)
+    const ceilingMesh = new THREE.Mesh(new THREE.PlaneGeometry(7.5, 9.5), hullDarkPbrMat);
     ceilingMesh.rotation.x = Math.PI / 2;
     ceilingMesh.position.set(0, 3.6, -0.5);
     cockpitGroup.add(ceilingMesh);
@@ -583,27 +667,25 @@
     const tubeMat = new THREE.MeshStandardMaterial({
       color: 0xe0f2fe,
       emissive: 0x38bdf8,
-      emissiveIntensity: 2.2,
+      emissiveIntensity: 2.5,
       roughness: 0.1
     });
 
-    const leftLightBox = new THREE.Mesh(lightHousingGeo, hullDarkMat);
+    const leftLightBox = new THREE.Mesh(lightHousingGeo, hullDarkPbrMat);
     leftLightBox.position.set(-0.90, 3.56, -0.4);
     const leftTube = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.02, 4.1), tubeMat);
     leftTube.position.set(0, -0.045, 0);
     leftLightBox.add(leftTube);
     cockpitGroup.add(leftLightBox);
 
-    const rightLightBox = new THREE.Mesh(lightHousingGeo, hullDarkMat);
+    const rightLightBox = new THREE.Mesh(lightHousingGeo, hullDarkPbrMat);
     rightLightBox.position.set(0.90, 3.56, -0.4);
     const rightTube = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.02, 4.1), tubeMat);
     rightTube.position.set(0, -0.045, 0);
     rightLightBox.add(rightTube);
     cockpitGroup.add(rightLightBox);
 
-    // =========================================================================
-    // 5. HỆ THỐNG MÀN HÌNH HOLOGRAM 3D LƠ LỬNG TRONG KHÔNG GIAN
-    // =========================================================================
+    // 5.8. Màn hình Hologram 3D bay lơ lửng hiển thị sóng xung nhịp và radar quét
     function createHoloScreen(title, lines, isRadar, w, h, xPos, yPos, zPos, rotY) {
       const canvas = document.createElement('canvas');
       canvas.width = 384;
@@ -613,7 +695,7 @@
       function render(time) {
         ctx.clearRect(0, 0, 384, 216);
 
-        ctx.fillStyle = 'rgba(3, 16, 36, 0.55)';
+        ctx.fillStyle = 'rgba(2, 12, 28, 0.65)';
         ctx.fillRect(4, 4, 376, 208);
 
         ctx.strokeStyle = 'rgba(56, 189, 248, 0.85)';
@@ -624,7 +706,7 @@
         ctx.fillStyle = '#38bdf8';
         ctx.fillText(title, 16, 28);
 
-        ctx.fillStyle = 'rgba(56, 189, 248, 0.35)';
+        ctx.fillStyle = 'rgba(56, 189, 248, 0.40)';
         ctx.fillRect(16, 36, 352, 1.5);
 
         ctx.font = '11px monospace';
@@ -641,7 +723,7 @@
           ctx.strokeStyle = '#38bdf8';
           ctx.beginPath();
           ctx.moveTo(cx, cy);
-          ctx.lineTo(cx + Math.cos(time * 2.0) * rad, cy + Math.sin(time * 2.0) * rad);
+          ctx.lineTo(cx + Math.cos(time * 2.2) * rad, cy + Math.sin(time * 2.2) * rad);
           ctx.stroke();
         } else {
           ctx.strokeStyle = '#38bdf8';
@@ -660,7 +742,7 @@
       const mat = new THREE.MeshBasicMaterial({
         map: texture,
         transparent: true,
-        opacity: 0.88,
+        opacity: 0.90,
         side: THREE.DoubleSide,
         blending: THREE.AdditiveBlending,
         depthWrite: false
@@ -731,9 +813,9 @@
           }
         });
 
-        characterModel.rotation.y = Math.PI;
-        currentRotationY = Math.PI;
-        targetRotationY = Math.PI;
+        characterModel.rotation.y = FRONT_FACING_ROTATION_Y;
+        currentRotationY = FRONT_FACING_ROTATION_Y;
+        targetRotationY = FRONT_FACING_ROTATION_Y;
 
         scene.add(characterModel);
         resetIdleTimer();
@@ -865,6 +947,7 @@
       isCloseUp = !isCloseUp;
       targetDistance = isCloseUp ? 1.15 : DEFAULT_DIST;
       targetCamY = isCloseUp ? 1.72 : DEFAULT_CAM_Y;
+      targetRotationY = FRONT_FACING_ROTATION_Y;
     }
 
     // =========================================================================
@@ -898,7 +981,8 @@
       const elapsed = clock.getElapsedTime();
 
       if (isAutoRotating) {
-        targetRotationY += 0.0035;
+        const idleSway = Math.sin(elapsed * 0.8) * 0.05;
+        targetRotationY = THREE.MathUtils.lerp(targetRotationY, FRONT_FACING_ROTATION_Y + idleSway, 0.04);
       }
 
       currentRotationY = THREE.MathUtils.lerp(currentRotationY, targetRotationY, 0.08);
@@ -915,8 +999,9 @@
       cameraTarget.y = THREE.MathUtils.lerp(cameraTarget.y, targetLookY, 0.1);
       camera.lookAt(cameraTarget);
 
-      planetMesh.rotation.y = elapsed * 0.003;
-      cloudMesh.rotation.y = elapsed * 0.006;
+      if (cosmicSkyMesh) {
+        cosmicSkyMesh.rotation.y = elapsed * 0.0008;
+      }
 
       holoLeft.update(elapsed);
       holoRight.update(elapsed);

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <title>Sci-Fi Command Bridge - Tieu Bao Bao</title>
+  <title>Sci-Fi Cinematic Command Bridge - Tieu Bao Bao</title>
   <style>
     * {
       margin: 0;
@@ -27,6 +27,7 @@
       top: 0;
       left: 0;
       z-index: 1;
+      touch-action: none;
     }
 
     /* HUD Header tối giản phong cách chiến hạm */
@@ -63,7 +64,7 @@
     .hud-title {
       font-size: 11px;
       font-weight: 700;
-      letter-spacing: 2.2px;
+      letter-spacing: 2px;
       text-transform: uppercase;
       color: #e0f2fe;
       text-shadow: 0 0 10px rgba(56, 189, 248, 0.5);
@@ -84,7 +85,7 @@
       border: 1px solid rgba(56, 189, 248, 0.25);
       backdrop-filter: blur(16px);
       box-shadow: 0 8px 32px rgba(0, 0, 0, 0.65);
-      opacity: 0.40;
+      opacity: 0.45;
       transition: opacity 0.4s ease, transform 0.3s ease;
     }
     .env-selector-container:hover,
@@ -126,7 +127,7 @@
       box-shadow: 0 0 8px #38bdf8, 0 0 14px rgba(56, 189, 248, 0.8);
     }
 
-    /* Mẹo chỉ dẫn cử chỉ mờ */
+    /* Mẹo chỉ dẫn cử chỉ */
     .gesture-hint {
       position: absolute;
       bottom: 72px;
@@ -138,15 +139,13 @@
       font-weight: 500;
       letter-spacing: 1.2px;
       text-transform: uppercase;
-      color: rgba(148, 163, 184, 0.50);
+      color: rgba(148, 163, 184, 0.55);
       text-align: center;
       white-space: nowrap;
       transition: opacity 0.6s ease;
     }
   </style>
-  <!-- Three.js tải offline trực tiếp qua WebViewAssetLoader -->
   <script src="https://appassets.androidplatform.net/assets/js/three.min.js"></script>
-  <script src="https://appassets.androidplatform.net/assets/js/OrbitControls.js"></script>
   <script src="https://appassets.androidplatform.net/assets/js/GLTFLoader.js"></script>
 </head>
 <body>
@@ -154,7 +153,7 @@
 
   <div class="hud-header" id="hud-header">
     <div class="hud-dot"></div>
-    <div class="hud-title">COMMAND BRIDGE // OBSERVATION DECK</div>
+    <div class="hud-title">COMMAND BRIDGE // UNITED AI SYSTEM</div>
   </div>
 
   <div class="gesture-hint" id="gesture-hint">
@@ -177,12 +176,11 @@
   </div>
 
   <script>
-    // ==========================================
-    // 1. KHỞI TẠO THREE.JS ENGINE CHUẨN ĐIỆN ẢNH
-    // ==========================================
+    // =========================================================================
+    // 1. KHỞI TẠO THREE.JS ENGINE & KHÔNG GIAN BUỒNG LÁI CHIẾN HẠM CHUẨN CONCEPT
+    // =========================================================================
     const container = document.getElementById('canvas-container');
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x010206);
 
     const camera = new THREE.PerspectiveCamera(
       48,
@@ -191,9 +189,20 @@
       1000
     );
 
-    const DEFAULT_CAM_POS = new THREE.Vector3(0.0, 1.25, 2.50);
-    const DEFAULT_TARGET = new THREE.Vector3(0.0, 0.95, 0.0);
-    camera.position.copy(DEFAULT_CAM_POS);
+    // Cự ly chuẩn Cinematic Full-Body: Thấy từ gót chân trên bệ rune đến đỉnh đầu
+    const DEFAULT_DIST = 3.108;
+    const DEFAULT_CAM_Y = 1.05;
+    const DEFAULT_TARGET_Y = 0.80;
+    let currentDistance = DEFAULT_DIST;
+    let targetDistance = DEFAULT_DIST;
+    let currentCamY = DEFAULT_CAM_Y;
+    let targetCamY = DEFAULT_CAM_Y;
+    let targetRotationY = Math.PI; // Mặc định quay mặt ra phía trước
+    let currentRotationY = Math.PI;
+
+    camera.position.set(0.0, currentCamY, currentDistance);
+    const cameraTarget = new THREE.Vector3(0.0, DEFAULT_TARGET_Y, 0.0);
+    camera.lookAt(cameraTarget);
 
     const renderer = new THREE.WebGLRenderer({
       antialias: true,
@@ -209,692 +218,454 @@
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     container.appendChild(renderer.domElement);
 
-    // ==========================================
-    // 2. ORBIT CONTROLS TỐI ƯU CẢM ỨNG & THU PHÓNG SIÊU NHẠY
-    // ==========================================
-    const controls = new THREE.OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;
-    controls.dampingFactor = 0.06;
-    controls.target.copy(DEFAULT_TARGET);
+    // =========================================================================
+    // 2. KHÔNG GIAN HẬU CẢNH CHIẾN HẠM VŨ TRỤ CHUẨN MASTER CONCEPT (1080x1920)
+    // Tích hợp trực tiếp tác phẩm cockpit_background_clean.webp chuẩn xác 100%
+    // =========================================================================
+    const texLoader = new THREE.TextureLoader();
+    const bgTexture = texLoader.load(
+      'https://appassets.androidplatform.net/assets/images/cockpit_background_clean.webp',
+      function (texture) {
+        texture.encoding = THREE.sRGBEncoding;
+        scene.background = texture;
+      }
+    );
 
-    // Phạm vi thu phóng cực rộng: từ cực cận mặt (0.75m) đến toàn cảnh buồng lái và vũ trụ (14.0m)
-    controls.minDistance = 0.75;
-    controls.maxDistance = 14.0;
-    controls.minPolarAngle = Math.PI * 0.10;
-    controls.maxPolarAngle = Math.PI * 0.90;
-    controls.zoomSpeed = 2.4;
-    controls.rotateSpeed = 0.85;
-
-    // Tự động xoay quanh buồng lái điện ảnh
-    controls.autoRotate = false;
-    controls.autoRotateSpeed = 0.45;
-
-    // ==========================================
-    // 3. HỆ THỐNG ÁNH SÁNG CHIẾN HẠM VŨ TRỤ (CINEMATIC 5-POINT LIGHTING)
-    // ==========================================
-    const ambientLight = new THREE.AmbientLight(0x0a1424, 0.95);
+    // =========================================================================
+    // 3. HỆ THỐNG ÁNH SÁNG ĐIỆN ẢNH CHIẾN HẠM ĐỒNG BỘ NỀN CONCEPT
+    // =========================================================================
+    // 3.1. Ánh sáng môi trường dịu nhẹ làm nổi bật chi tiết nhân vật
+    const ambientLight = new THREE.AmbientLight(0x1a263c, 1.25);
     scene.add(ambientLight);
 
-    // Key Light chính diện dịu nhẹ chiếu vào nhân vật
-    const keyLight = new THREE.DirectionalLight(0xffffff, 1.25);
-    keyLight.position.set(1.5, 3.2, 2.8);
-    keyLight.castShadow = true;
-    keyLight.shadow.mapSize.width = 1024;
-    keyLight.shadow.mapSize.height = 1024;
-    scene.add(keyLight);
+    // 3.2. Dải đèn huỳnh quang từ trần buồng lái chiếu thẳng xuống đỉnh đầu & vai
+    const ceilingLight = new THREE.DirectionalLight(0xe0f2fe, 1.6);
+    ceilingLight.position.set(0, 3.8, 1.2);
+    ceilingLight.castShadow = true;
+    ceilingLight.shadow.mapSize.width = 1024;
+    ceilingLight.shadow.mapSize.height = 1024;
+    ceilingLight.shadow.bias = -0.001;
+    scene.add(ceilingLight);
 
-    // Fill Light màu xanh lơ từ mạn trái bù sáng
-    const fillLight = new THREE.DirectionalLight(0x38bdf8, 0.85);
-    fillLight.position.set(-2.5, 1.8, 1.8);
-    scene.add(fillLight);
+    // 3.3. Đèn hắt ngược từ bệ Rune sàn tàu (Cyan Floor Light) chiếu lên chân và gấu váy
+    const floorRuneLight = new THREE.PointLight(0x38bdf8, 1.8, 3.2);
+    floorRuneLight.position.set(0, 0.12, 0);
+    scene.add(floorRuneLight);
 
-    // Cosmic Rim Light từ phía sau lưng xuyên qua vòm kính
-    const rimLightCosmic = new THREE.SpotLight(0x60a5fa, 1.45, 40, Math.PI / 4, 0.4);
-    rimLightCosmic.position.set(0, 3.2, -4.5);
-    rimLightCosmic.target.position.set(0, 1.1, 0);
-    scene.add(rimLightCosmic);
-    scene.add(rimLightCosmic.target);
+    // 3.4. Cosmic Rim Light từ cửa sổ phía sau hắt vào lưng và đường viền tóc
+    const cosmicRimLight = new THREE.DirectionalLight(0x60a5fa, 1.2);
+    cosmicRimLight.position.set(0, 1.6, -3.2);
+    scene.add(cosmicRimLight);
 
-    // Accent Rim Magenta từ mạn phải phía sau
-    const rimPointMagenta = new THREE.PointLight(0xd946ef, 0.65, 12);
-    rimPointMagenta.position.set(2.2, 1.4, -2.5);
-    scene.add(rimPointMagenta);
+    // 3.5. Accent Magenta tinh tế từ góc phải
+    const accentMagenta = new THREE.PointLight(0xd946ef, 0.45, 5.0);
+    accentMagenta.position.set(1.6, 1.2, -0.8);
+    scene.add(accentMagenta);
 
-    // ==========================================
-    // 4. VẬT LIỆU CAO CẤP HỢP KIM TITAN & CARBON FIBER
-    // ==========================================
-    const matDeckPlates = new THREE.MeshStandardMaterial({
-      color: 0x060c18,
-      metalness: 0.82,
-      roughness: 0.38
-    });
+    // =========================================================================
+    // 4. BỆ SÀN RUNE MA TRẬN VI MẠCH 3D & SHADOW CATCHER (Y = 0)
+    // =========================================================================
+    const floorGroup = new THREE.Group();
+    scene.add(floorGroup);
 
-    const matDais = new THREE.MeshStandardMaterial({
-      color: 0x0b1626,
-      metalness: 0.65,
-      roughness: 0.30
-    });
+    // Shadow Catcher plane nhận bóng đổ mềm của nhân vật
+    const shadowGeo = new THREE.PlaneGeometry(3.2, 3.2);
+    const shadowMat = new THREE.ShadowMaterial({ opacity: 0.38 });
+    const shadowMesh = new THREE.Mesh(shadowGeo, shadowMat);
+    shadowMesh.rotation.x = -Math.PI / 2;
+    shadowMesh.position.set(0, 0.005, 0);
+    shadowMesh.receiveShadow = true;
+    floorGroup.add(shadowMesh);
 
-    const matStructural = new THREE.MeshStandardMaterial({
-      color: 0x050a14,
-      metalness: 0.90,
-      roughness: 0.25
-    });
+    // Bệ Rune phát quang vi mạch (floor_rune_glow.png)
+    let runeMat = null;
+    texLoader.load(
+      'https://appassets.androidplatform.net/assets/images/floor_rune_glow.png',
+      function (texture) {
+        texture.encoding = THREE.sRGBEncoding;
+        const runeGeo = new THREE.PlaneGeometry(2.35, 2.35);
+        runeMat = new THREE.MeshBasicMaterial({
+          map: texture,
+          transparent: true,
+          opacity: 0.85,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+          side: THREE.DoubleSide
+        });
+        const runeMesh = new THREE.Mesh(runeGeo, runeMat);
+        runeMesh.rotation.x = -Math.PI / 2;
+        runeMesh.position.set(0, 0.012, 0);
+        floorGroup.add(runeMesh);
+      }
+    );
 
-    const matCyanGlow = new THREE.MeshStandardMaterial({
-      color: 0x0284c7,
-      emissive: 0x38bdf8,
-      emissiveIntensity: 1.15,
-      roughness: 0.1
-    });
+    // =========================================================================
+    // 5. HỆ THỐNG MÀN HÌNH HOLOGRAM 3D CANVAS LƠ LỬNG
+    // =========================================================================
+    function createHoloHUD(title, lines, isRadar, xPos, yPos, zPos, rotY) {
+      const canvas = document.createElement('canvas');
+      canvas.width = 512;
+      canvas.height = 300;
+      const ctx = canvas.getContext('2d');
 
-    // ==========================================
-    // 5. KIẾN TRÚC BUỒNG LÁI TÀU VŨ TRỤ PORTRAIT ĐIỆN ẢNH
-    // BỆ BÁT GIÁC 2 TẦNG & KHUNG VÒM BUỒNG LÁI 3D KHÔNG CHẮN TẦM NHÌN
-    // ==========================================
-    const bridgeGroup = new THREE.Group();
-    bridgeGroup.name = 'bridgeGroup';
-
-    // 5.1. Bệ đứng chỉ huy 2 tầng hình bát giác (Octagonal Command Dais)
-    function buildBridgePlatform() {
-      const group = new THREE.Group();
-
-      // Bệ tầng 1 (Đế bát giác hợp kim titan)
-      const baseGeo = new THREE.CylinderGeometry(1.08, 1.18, 0.08, 8);
-      const base = new THREE.Mesh(baseGeo, matDeckPlates);
-      base.position.y = 0.04;
-      base.receiveShadow = true;
-      group.add(base);
-
-      // Bệ tầng 2 (Mặt bệ carbon composite đứng của chỉ huy)
-      const daisGeo = new THREE.CylinderGeometry(0.96, 1.04, 0.07, 8);
-      const dais = new THREE.Mesh(daisGeo, matDais);
-      dais.position.y = 0.095;
-      dais.receiveShadow = true;
-      group.add(dais);
-
-      // Vòng LED định vị âm sàn mỏng phát quang Cyan
-      const ringGeo = new THREE.RingGeometry(0.88, 0.92, 36);
-      const ring = new THREE.Mesh(ringGeo, matCyanGlow);
-      ring.rotation.x = -Math.PI / 2;
-      ring.position.set(0, 0.131, 0);
-      group.add(ring);
-
-      return group;
-    }
-    bridgeGroup.add(buildBridgePlatform());
-
-    // 5.2. Khung vòm buồng lái quan sát (Canopy Geodesic Arch Pylons)
-    // 4 Cột dầm buồng lái ôm theo 4 góc bệ chỉ huy, không bao giờ che mặt nhân vật khi xoay 360°
-    function buildCanopyPylons() {
-      const group = new THREE.Group();
-
-      const pylonGeo = new THREE.BoxGeometry(0.06, 4.4, 0.07);
-      const ledGeo = new THREE.BoxGeometry(0.010, 4.0, 0.015);
-
-      // 4 Vị trí cột dầm buồng lái ôm quanh bệ bát giác
-      const pylonConfigs = [
-        { x: -0.82, z: 0.45,  ledOffX: 0.03,  ledOffZ: -0.03 },
-        { x: 0.82,  z: 0.45,  ledOffX: -0.03, ledOffZ: -0.03 },
-        { x: -0.82, z: -0.55, ledOffX: 0.03,  ledOffZ: 0.03 },
-        { x: 0.82,  z: -0.55, ledOffX: -0.03, ledOffZ: 0.03 }
-      ];
-
-      pylonConfigs.forEach(cfg => {
-        const pylon = new THREE.Mesh(pylonGeo, matStructural);
-        pylon.position.set(cfg.x, 2.0, cfg.z);
-        pylon.castShadow = true;
-        group.add(pylon);
-
-        const led = new THREE.Mesh(ledGeo, matCyanGlow);
-        led.position.set(cfg.x + cfg.ledOffX, 2.0, cfg.z + cfg.ledOffZ);
-        group.add(led);
-      });
-
-      // Dầm nóc vòm ngang trước (Y = 2.45m)
-      const frontArchGeo = new THREE.BoxGeometry(1.70, 0.08, 0.08);
-      const frontArch = new THREE.Mesh(frontArchGeo, matStructural);
-      frontArch.position.set(0, 2.45, 0.45);
-      group.add(frontArch);
-
-      const frontArchLed = new THREE.Mesh(new THREE.BoxGeometry(1.62, 0.012, 0.015), matCyanGlow);
-      frontArchLed.position.set(0, 2.39, 0.45);
-      group.add(frontArchLed);
-
-      // Dầm nóc vòm ngang sau (Y = 2.45m)
-      const rearArchGeo = new THREE.BoxGeometry(1.70, 0.08, 0.08);
-      const rearArch = new THREE.Mesh(rearArchGeo, matStructural);
-      rearArch.position.set(0, 2.45, -0.55);
-      group.add(rearArch);
-
-      // 2 Dầm dọc nóc buồng lái nối trước - sau (Longitudinal Canopy Rails)
-      const railGeo = new THREE.BoxGeometry(0.06, 0.06, 1.05);
-      const leftRail = new THREE.Mesh(railGeo, matStructural);
-      leftRail.position.set(-0.82, 2.45, -0.05);
-      group.add(leftRail);
-
-      const rightRail = new THREE.Mesh(railGeo, matStructural);
-      rightRail.position.set(0.82, 2.45, -0.05);
-      group.add(rightRail);
-
-      return group;
-    }
-    bridgeGroup.add(buildCanopyPylons());
-
-    // 5.3. Màn hình Hologram ba chiều lơ lửng (True Floating Holo-HUD)
-    function createHoloHUD(title, subtitle, lines, xPos, zPos, rotY) {
-      const group = new THREE.Group();
-
-      const holoCanvas = document.createElement('canvas');
-      holoCanvas.width = 512;
-      holoCanvas.height = 320;
-      const ctx = holoCanvas.getContext('2d');
-
-      function drawContent() {
-        ctx.clearRect(0, 0, 512, 320);
-
-        // Khung nền Hologram thủy tinh mờ công nghệ cao
-        ctx.fillStyle = 'rgba(2, 16, 36, 0.55)';
-        ctx.fillRect(8, 8, 496, 304);
+      function renderCanvas(time) {
+        ctx.clearRect(0, 0, 512, 300);
+        ctx.fillStyle = 'rgba(2, 14, 32, 0.55)';
+        ctx.fillRect(4, 4, 504, 292);
 
         ctx.strokeStyle = 'rgba(56, 189, 248, 0.75)';
-        ctx.lineWidth = 2.5;
-        ctx.strokeRect(8, 8, 496, 304);
+        ctx.lineWidth = 2;
+        ctx.strokeRect(4, 4, 504, 292);
 
-        // 4 Góc ngắm Tactical Reticle Corners
-        ctx.strokeStyle = '#38bdf8';
-        ctx.lineWidth = 4;
-        const corner = 22;
-        ctx.beginPath();
-        ctx.moveTo(8, 8 + corner); ctx.lineTo(8, 8); ctx.lineTo(8 + corner, 8);
-        ctx.moveTo(504 - corner, 8); ctx.lineTo(504, 8); ctx.lineTo(504, 8 + corner);
-        ctx.moveTo(8, 312 - corner); ctx.lineTo(8, 312); ctx.lineTo(8 + corner, 312);
-        ctx.moveTo(504 - corner, 312); ctx.lineTo(504, 312); ctx.lineTo(504, 312 - corner);
-        ctx.stroke();
-
-        // Tiêu đề Hologram
-        ctx.font = 'bold 19px monospace';
+        ctx.font = 'bold 18px monospace';
         ctx.fillStyle = '#38bdf8';
-        ctx.fillText(title, 24, 40);
+        ctx.fillText(title, 20, 36);
 
         ctx.fillStyle = 'rgba(56, 189, 248, 0.35)';
-        ctx.fillRect(24, 48, 464, 1.5);
+        ctx.fillRect(20, 44, 472, 1.5);
 
-        // Nội dung hiển thị
-        ctx.font = '14px monospace';
+        ctx.font = '13px monospace';
         ctx.fillStyle = '#bae6fd';
-        lines.forEach((line, idx) => {
-          ctx.fillText(line, 24, 78 + idx * 24);
-        });
+        lines.forEach((l, idx) => ctx.fillText(l, 20, 72 + idx * 22));
 
-        // Đồ thị động hoặc Radar quét sóng
-        const now = Date.now() * 0.003;
-        if (title.indexOf('PROPULSION') !== -1) {
-          ctx.strokeStyle = '#38bdf8';
-          ctx.lineWidth = 2;
+        if (isRadar) {
+          const cx = 390, cy = 180, rad = 50;
+          ctx.strokeStyle = 'rgba(56, 189, 248, 0.5)';
           ctx.beginPath();
-          for (let px = 0; px < 464; px += 4) {
-            const py = 210 + Math.sin(px * 0.05 + now * 2) * 16 + Math.cos(px * 0.02 + now) * 8;
-            if (px === 0) ctx.moveTo(24 + px, py);
-            else ctx.lineTo(24 + px, py);
-          }
+          ctx.arc(cx, cy, rad, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.moveTo(cx, cy);
+          ctx.lineTo(cx + Math.cos(time * 1.8) * rad, cy + Math.sin(time * 1.8) * rad);
           ctx.stroke();
         } else {
-          // Radar tròn với kim quét 360 độ
-          const rcx = 100, rcy = 210, rrad = 34;
-          ctx.strokeStyle = 'rgba(56, 189, 248, 0.45)';
+          ctx.strokeStyle = '#38bdf8';
           ctx.beginPath();
-          ctx.arc(rcx, rcy, rrad, 0, Math.PI * 2);
+          for (let px = 0; px < 472; px += 4) {
+            const py = 210 + Math.sin(px * 0.05 + time * 3) * 16;
+            if (px === 0) ctx.moveTo(20 + px, py);
+            else ctx.lineTo(20 + px, py);
+          }
           ctx.stroke();
-          ctx.beginPath();
-          ctx.moveTo(rcx, rcy);
-          ctx.lineTo(rcx + Math.cos(now * 1.5) * rrad, rcy + Math.sin(now * 1.5) * rrad);
-          ctx.stroke();
-
-          ctx.font = '12px monospace';
-          ctx.fillStyle = '#7dd3fc';
-          ctx.fillText('SENSOR SWEEP: ACTIVE', 155, 195);
-          ctx.fillText('ZOOM: 0.75 - 14.0 AU', 155, 215);
-          ctx.fillText('DIRECTOR: 360° AUTO', 155, 235);
         }
-
-        ctx.font = '11px monospace';
-        ctx.fillStyle = 'rgba(56, 189, 248, 0.65)';
-        ctx.fillText('DEFENSE MATRIX: OPTIMAL', 24, 275);
-        ctx.fillText('COMM SECURE: ENCRYPTED', 24, 293);
       }
 
-      drawContent();
-      const holoTex = new THREE.CanvasTexture(holoCanvas);
-
-      // Mặt phẳng chiếu Hologram lơ lửng không gian
-      const planeGeo = new THREE.PlaneGeometry(0.68, 0.42);
-      const planeMat = new THREE.MeshBasicMaterial({
-        map: holoTex,
+      renderCanvas(0);
+      const texture = new THREE.CanvasTexture(canvas);
+      const mat = new THREE.MeshBasicMaterial({
+        map: texture,
         transparent: true,
-        opacity: 0.88,
+        opacity: 0.85,
         side: THREE.DoubleSide,
         blending: THREE.AdditiveBlending,
         depthWrite: false
       });
-      const planeMesh = new THREE.Mesh(planeGeo, planeMat);
-      planeMesh.position.set(xPos, 1.05, zPos);
-      planeMesh.rotation.y = rotY;
-      group.add(planeMesh);
+      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(0.72, 0.44), mat);
+      mesh.position.set(xPos, yPos, zPos);
+      mesh.rotation.y = rotY;
+      scene.add(mesh);
 
       return {
-        group,
-        planeMesh,
-        update: function (time) {
-          drawContent();
-          holoTex.needsUpdate = true;
-          // Hiệu ứng bồng bềnh lơ lửng tự nhiên
-          planeMesh.position.y = 1.05 + Math.sin(time * 1.6 + (xPos > 0 ? 1.0 : 0)) * 0.025;
+        update: (t) => {
+          renderCanvas(t);
+          texture.needsUpdate = true;
+          mesh.position.y = yPos + Math.sin(t * 1.5 + xPos) * 0.02;
         }
       };
     }
 
-    // Đặt 2 Hologram lơ lửng hai bên sườn (X = ±0.60m) ôm trọn khung hình Portrait
-    const leftHolo = createHoloHUD(
-      'PROPULSION // DIAGNOSTICS',
-      'CORE STATUS',
-      [
-        'WARP CORE: 99.98% STABLE',
-        'ION FREQUENCY: 432.8 THz',
-        'QUANTUM RESERVE: 100% ONLINE',
-        'THERMAL EXHAUST: NOMINAL'
-      ],
-      -0.60, 0.15, 0.38
+    const holoLeft = createHoloHUD(
+      'UNITED AI SYSTEM // CORE',
+      ['WARP CORE: 99.98% STABLE', 'FREQ: 432.8 THz', 'QUANTUM STATUS: ONLINE', 'SYS TEMP: NOMINAL'],
+      false,
+      -0.88, 1.25, -0.45, 0.28
     );
 
-    const rightHolo = createHoloHUD(
-      'STELLAR NAVIGATION // TELEMETRY',
-      'GRID MAP',
-      [
-        'SECTOR: CYGNUS-ALPHA',
-        'TARGET: SOL // EARTH',
-        'LIGHT CONE: ALIGNED',
-        'WARP DRIVE: ARMED'
-      ],
-      0.60, 0.15, -0.38
+    const holoRight = createHoloHUD(
+      'TARGET SECTOR // RADAR',
+      ['SECTOR: CYGNUS-ALPHA', 'TARGET: ORBIT STN', 'DEFENSE: ARMED', 'AUTO ORBIT: ACTIVE'],
+      true,
+      0.88, 1.25, -0.45, -0.28
     );
 
-    bridgeGroup.add(leftHolo.group);
-    bridgeGroup.add(rightHolo.group);
-    scene.add(bridgeGroup);
+    // =========================================================================
+    // 6. HIỆU ỨNG MÔI TRƯỜNG PHỤ (TINH VÂN & SIÊU KHÔNG GIAN)
+    // =========================================================================
+    const envFxGroup = new THREE.Group();
+    scene.add(envFxGroup);
 
-    // ==========================================
-    // 6. HỆ THỐNG VŨ TRỤ ĐA TẦNG (3 CHẾ ĐỘ MÔI TRƯỜNG)
-    // ==========================================
-    const envGroup = new THREE.Group();
-    scene.add(envGroup);
+    // Tinh vân hạt bụi vũ trụ
+    const nebCanvas = document.createElement('canvas');
+    nebCanvas.width = 128; nebCanvas.height = 128;
+    const nCtx = nebCanvas.getContext('2d');
+    const nRad = nCtx.createRadialGradient(64, 64, 0, 64, 64, 64);
+    nRad.addColorStop(0, 'rgba(217, 70, 239, 0.8)');
+    nRad.addColorStop(0.4, 'rgba(56, 189, 248, 0.4)');
+    nRad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    nCtx.fillStyle = nRad;
+    nCtx.fillRect(0, 0, 128, 128);
 
-    // BẦU TRỜ SAO SÂU THẲM CHUNG CHO TOÀN BỘ VŨ TRỤ (3200 STARS)
-    const starGeo = new THREE.BufferGeometry();
-    const starCount = 3200;
-    const starPos = new Float32Array(starCount * 3);
-    const starColors = new Float32Array(starCount * 3);
-
-    for (let i = 0; i < starCount; i++) {
-      const rad = 50 + Math.random() * 220;
-      const theta = Math.random() * Math.PI * 2;
-      const phi = Math.acos((Math.random() * 2) - 1);
-
-      starPos[i * 3] = rad * Math.sin(phi) * Math.cos(theta);
-      starPos[i * 3 + 1] = rad * Math.sin(phi) * Math.sin(theta);
-      starPos[i * 3 + 2] = rad * Math.cos(phi);
-
-      const rnd = Math.random();
-      if (rnd > 0.82) {
-        starColors[i * 3] = 0.55; starColors[i * 3 + 1] = 0.85; starColors[i * 3 + 2] = 1.0; // Cyan Blue
-      } else if (rnd > 0.65) {
-        starColors[i * 3] = 1.0;  starColors[i * 3 + 1] = 0.88; starColors[i * 3 + 2] = 0.65; // Amber
-      } else if (rnd > 0.50) {
-        starColors[i * 3] = 0.95; starColors[i * 3 + 1] = 0.60; starColors[i * 3 + 2] = 0.80; // Violet
-      } else {
-        starColors[i * 3] = 0.95; starColors[i * 3 + 1] = 0.98; starColors[i * 3 + 2] = 1.0; // Pure White
-      }
-    }
-
-    starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
-    starGeo.setAttribute('color', new THREE.BufferAttribute(starColors, 3));
-
-    const starMat = new THREE.PointsMaterial({
-      size: 0.40,
-      vertexColors: true,
+    const nebMat = new THREE.PointsMaterial({
+      size: 1.2,
+      map: new THREE.CanvasTexture(nebCanvas),
       transparent: true,
-      opacity: 0.95,
-      fog: false
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      opacity: 0.55
     });
-    const starField = new THREE.Points(starGeo, starMat);
-    envGroup.add(starField);
-
-    // --- CHẾ ĐỘ 1: PLANETARY ORBIT (QUỸ ĐẠO SIÊU HÀNH TINH KHỔNG LỒ) - MẶC ĐỊNH ---
-    const orbitSubGroup = new THREE.Group();
-    let planetMesh = null;
-    let planetaryRings = null;
-
-    function initOrbitSystem() {
-      // Siêu hành tinh khí khổng lồ với vân mây mềm mại & bóng đổ bán cầu 3D
-      const pGeo = new THREE.SphereGeometry(16, 64, 32);
-      const pCanvas = document.createElement('canvas');
-      pCanvas.width = 1024;
-      pCanvas.height = 512;
-      const pCtx = pCanvas.getContext('2d');
-
-      const pGrad = pCtx.createLinearGradient(0, 0, 0, 512);
-      pGrad.addColorStop(0, '#031428');
-      pGrad.addColorStop(0.30, '#062e50');
-      pGrad.addColorStop(0.50, '#0a4978');
-      pGrad.addColorStop(0.70, '#062947');
-      pGrad.addColorStop(1, '#021020');
-      pCtx.fillStyle = pGrad;
-      pCtx.fillRect(0, 0, 1024, 512);
-
-      // Các dải vân mây khí quyển hành tinh
-      pCtx.fillStyle = 'rgba(56, 189, 248, 0.30)';
-      for (let i = 0; i < 14; i++) {
-        pCtx.fillRect(0, 40 + i * 32, 1024, 12);
-      }
-      pCtx.fillStyle = 'rgba(255, 255, 255, 0.15)';
-      for (let i = 0; i < 8; i++) {
-        pCtx.fillRect(0, 60 + i * 55, 1024, 6);
-      }
-
-      // Bóng đổ bán cầu (Terminator Shadow) tạo chiều sâu 3D hình cầu nổi
-      const shadowGrad = pCtx.createLinearGradient(0, 0, 1024, 0);
-      shadowGrad.addColorStop(0, 'rgba(0, 4, 10, 0.85)');
-      shadowGrad.addColorStop(0.40, 'rgba(0, 6, 16, 0.40)');
-      shadowGrad.addColorStop(0.75, 'rgba(0, 0, 0, 0)');
-      shadowGrad.addColorStop(1, 'rgba(0, 4, 10, 0.85)');
-      pCtx.fillStyle = shadowGrad;
-      pCtx.fillRect(0, 0, 1024, 512);
-
-      const pMat = new THREE.MeshBasicMaterial({
-        map: new THREE.CanvasTexture(pCanvas),
-        fog: false
-      });
-      planetMesh = new THREE.Mesh(pGeo, pMat);
-      // Đặt hành tinh ở phía sau lưng nhân vật (-Z) để nhìn thấy qua vòm kính buồng lái
-      planetMesh.position.set(2.8, 3.8, -38.0);
-      orbitSubGroup.add(planetMesh);
-
-      // Vầng hào quang khí quyển
-      const atmoGeo = new THREE.SphereGeometry(16.4, 64, 32);
-      const atmoMat = new THREE.MeshBasicMaterial({
-        color: 0x38bdf8,
-        transparent: true,
-        opacity: 0.35,
-        side: THREE.BackSide,
-        blending: THREE.AdditiveBlending,
-        fog: false
-      });
-      const atmoMesh = new THREE.Mesh(atmoGeo, atmoMat);
-      atmoMesh.position.copy(planetMesh.position);
-      orbitSubGroup.add(atmoMesh);
-
-      // Vành đai thiên thạch băng xoay nghiêng
-      const ringGeo = new THREE.RingGeometry(18.5, 28.0, 64);
-      const rCanvas = document.createElement('canvas');
-      rCanvas.width = 512;
-      rCanvas.height = 64;
-      const rCtx = rCanvas.getContext('2d');
-      const rGrad = rCtx.createLinearGradient(0, 0, 512, 0);
-      rGrad.addColorStop(0, 'rgba(56, 189, 248, 0)');
-      rGrad.addColorStop(0.20, 'rgba(186, 230, 253, 0.65)');
-      rGrad.addColorStop(0.50, 'rgba(56, 189, 248, 0.35)');
-      rGrad.addColorStop(0.80, 'rgba(125, 211, 252, 0.70)');
-      rGrad.addColorStop(1, 'rgba(2, 132, 199, 0)');
-      rCtx.fillStyle = rGrad;
-      rCtx.fillRect(0, 0, 512, 64);
-
-      const ringMat = new THREE.MeshBasicMaterial({
-        map: new THREE.CanvasTexture(rCanvas),
-        side: THREE.DoubleSide,
-        transparent: true,
-        opacity: 0.65,
-        blending: THREE.AdditiveBlending,
-        fog: false
-      });
-      planetaryRings = new THREE.Mesh(ringGeo, ringMat);
-      planetaryRings.position.copy(planetMesh.position);
-      planetaryRings.rotation.x = Math.PI * 0.42;
-      planetaryRings.rotation.y = Math.PI * 0.15;
-      orbitSubGroup.add(planetaryRings);
-
-      orbitSubGroup.visible = true; // Mặc định hiển thị Quỹ đạo hành tinh
-      envGroup.add(orbitSubGroup);
+    const nebGeo = new THREE.BufferGeometry();
+    const nebPos = new Float32Array(160 * 3);
+    for (let i = 0; i < 160; i++) {
+      nebPos[i * 3]     = (Math.random() - 0.5) * 6.0;
+      nebPos[i * 3 + 1] = (Math.random() - 0.5) * 4.5 + 1.0;
+      nebPos[i * 3 + 2] = -1.5 - Math.random() * 2.5;
     }
-    initOrbitSystem();
+    nebGeo.setAttribute('position', new THREE.BufferAttribute(nebPos, 3));
+    const nebPoints = new THREE.Points(nebGeo, nebMat);
+    nebPoints.visible = false;
+    envFxGroup.add(nebPoints);
 
-    // --- CHẾ ĐỘ 2: COSMIC NEBULA (TINH VÂN VŨ TRỤ HUYỀN ẢO) ---
-    const nebulaSubGroup = new THREE.Group();
-    function initNebulaSystem() {
-      const nebCanvas = document.createElement('canvas');
-      nebCanvas.width = 2048;
-      nebCanvas.height = 1024;
-      const ctx = nebCanvas.getContext('2d');
-
-      // Nền đen sâu thẳm vũ trụ 100%
-      ctx.fillStyle = '#010206';
-      ctx.fillRect(0, 0, 2048, 1024);
-
-      function drawNebulaCloud(cx, cy, radius, r, g, b, alpha) {
-        const radGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius);
-        radGrad.addColorStop(0, 'rgba(' + r + ',' + g + ',' + b + ',' + alpha + ')');
-        radGrad.addColorStop(0.40, 'rgba(' + r + ',' + g + ',' + b + ',' + (alpha * 0.35) + ')');
-        radGrad.addColorStop(1, 'rgba(1, 2, 6, 0)');
-        ctx.fillStyle = radGrad;
-        ctx.beginPath();
-        ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-        ctx.fill();
-      }
-
-      // Chỉ vẽ các dải mây tinh vân ở bán cầu trên (Y = 150 - 380)
-      drawNebulaCloud(620, 280, 360, 2, 132, 199, 0.28);
-      drawNebulaCloud(1420, 250, 380, 147, 51, 234, 0.25);
-      drawNebulaCloud(1024, 200, 320, 14, 165, 233, 0.22);
-      drawNebulaCloud(400, 320, 260, 217, 70, 239, 0.18);
-      drawNebulaCloud(1680, 300, 280, 6, 182, 212, 0.22);
-
-      // Đảm bảo 100% nửa dưới chân trời đen tuyền không tì vết
-      ctx.fillStyle = '#010206';
-      ctx.fillRect(0, 512, 2048, 512);
-
-      const nebTexture = new THREE.CanvasTexture(nebCanvas);
-      const skyDomeGeo = new THREE.SphereGeometry(260, 48, 24);
-      const skyDomeMat = new THREE.MeshBasicMaterial({
-        map: nebTexture,
-        side: THREE.BackSide,
-        fog: false
-      });
-      const skyDome = new THREE.Mesh(skyDomeGeo, skyDomeMat);
-      nebulaSubGroup.add(skyDome);
-
-      nebulaSubGroup.visible = false;
-      envGroup.add(nebulaSubGroup);
-    }
-    initNebulaSystem();
-
-    // --- CHẾ ĐỘ 3: HYPERSPACE WARP JUMP (BƯỚC NHẢY SIÊU KHÔNG GIAN) ---
-    const warpSubGroup = new THREE.Group();
-    const warpCount = 650;
+    // Siêu không gian (Warp Drive streaks)
+    const warpCount = 450;
     const warpGeo = new THREE.BufferGeometry();
-    const warpPos = new Float32Array(warpCount * 6);
+    const warpPositions = new Float32Array(warpCount * 6);
     const warpSpeeds = new Float32Array(warpCount);
 
     for (let i = 0; i < warpCount; i++) {
-      const x = (Math.random() - 0.5) * 95;
-      const y = (Math.random() - 0.5) * 95;
-      const z = -180 + Math.random() * 200;
-      const len = 5.0 + Math.random() * 9.0;
+      const x = (Math.random() - 0.5) * 12.0;
+      const y = (Math.random() - 0.5) * 10.0 + 1.0;
+      const z = -25.0 + Math.random() * 26.0;
+      const len = 0.8 + Math.random() * 1.6;
 
-      warpPos[i * 6] = x;
-      warpPos[i * 6 + 1] = y;
-      warpPos[i * 6 + 2] = z;
-
-      warpPos[i * 6 + 3] = x;
-      warpPos[i * 6 + 4] = y;
-      warpPos[i * 6 + 5] = z - len;
-
+      warpPositions[i * 6]     = x; warpPositions[i * 6 + 1] = y; warpPositions[i * 6 + 2] = z;
+      warpPositions[i * 6 + 3] = x; warpPositions[i * 6 + 4] = y; warpPositions[i * 6 + 5] = z - len;
       warpSpeeds[i] = 1.2 + Math.random() * 1.8;
     }
-
-    warpGeo.setAttribute('position', new THREE.BufferAttribute(warpPos, 3));
+    warpGeo.setAttribute('position', new THREE.BufferAttribute(warpPositions, 3));
     const warpMat = new THREE.LineBasicMaterial({
-      color: 0x67e8f9,
+      color: 0x38bdf8,
       transparent: true,
-      opacity: 0.75,
-      blending: THREE.AdditiveBlending,
-      fog: false
+      opacity: 0.90,
+      blending: THREE.AdditiveBlending
     });
     const warpLines = new THREE.LineSegments(warpGeo, warpMat);
-    warpSubGroup.add(warpLines);
-    warpSubGroup.visible = false;
-    envGroup.add(warpSubGroup);
+    warpLines.visible = false;
+    envFxGroup.add(warpLines);
 
     let currentEnvMode = 'orbit';
-
-    // Hàm chuyển đổi môi trường mượt mà
     function switchEnvironment(mode) {
+      if (currentEnvMode === mode) return;
       currentEnvMode = mode;
-      orbitSubGroup.visible = (mode === 'orbit');
-      nebulaSubGroup.visible = (mode === 'nebula');
-      warpSubGroup.visible = (mode === 'warp');
 
       document.querySelectorAll('.env-dot-btn').forEach(btn => {
         btn.classList.toggle('active', btn.getAttribute('data-mode') === mode);
       });
 
-      if (mode === 'orbit') {
-        rimLightCosmic.color.setHex(0x60a5fa);
-        rimLightCosmic.intensity = 1.45;
-      } else if (mode === 'nebula') {
-        rimLightCosmic.color.setHex(0x38bdf8);
-        rimLightCosmic.intensity = 1.15;
+      nebPoints.visible = (mode === 'nebula');
+      warpLines.visible = (mode === 'warp');
+
+      if (mode === 'nebula') {
+        ambientLight.color.setHex(0x28183c);
+        cosmicRimLight.color.setHex(0xd946ef);
       } else if (mode === 'warp') {
-        rimLightCosmic.color.setHex(0xa5f3fc);
-        rimLightCosmic.intensity = 1.8;
+        ambientLight.color.setHex(0x102035);
+        cosmicRimLight.color.setHex(0x38bdf8);
+      } else {
+        ambientLight.color.setHex(0x1a263c);
+        cosmicRimLight.color.setHex(0x60a5fa);
       }
     }
 
-    // ==========================================
-    // 7. TẢI MÔ HÌNH NHÂN VẬT TIỂU BẢO BẢO (GLB)
-    // ==========================================
+    // =========================================================================
+    // 7. TẢI MÔ HÌNH NHÂN VẬT TIỂU BẢO BẢO (GLB) ĐỨNG CHÍNH GIỮA BUỒNG LÁI
+    // =========================================================================
     let characterModel = null;
     let chestBone = null;
-    const loader = new THREE.GLTFLoader();
+    const gltfLoader = new THREE.GLTFLoader();
 
-    loader.load(
+    gltfLoader.load(
       'https://appassets.androidplatform.net/assets/models/character_female.glb',
       function (gltf) {
         characterModel = gltf.scene;
-
-        // Căn chỉnh nhân vật đứng trên bệ trung tâm, mặt hướng thẳng về người dùng
-        characterModel.position.set(0, 0.13, 0);
+        // Gót chân tiếp xúc chính xác tại Y = 0.0 trên bệ rune
+        characterModel.position.set(0, 0.0, 0);
         characterModel.scale.set(1.0, 1.0, 1.0);
-        characterModel.rotation.y = Math.PI;
+        characterModel.rotation.y = targetRotationY;
 
         characterModel.traverse(function (node) {
           if (node.isMesh) {
             node.castShadow = true;
             node.receiveShadow = true;
             if (node.material) {
-              node.material.roughness = 0.45;
-              node.material.metalness = 0.15;
+              node.material.roughness = 0.42;
+              node.material.metalness = 0.12;
             }
           }
           if (node.isBone) {
-            // Hạ cánh tay từ T-pose sang dáng đứng tự nhiên thanh thoát
+            // Hạ cánh tay từ T-pose sang tư thế tự nhiên thanh tú
             if (node.name === 'J_Bip_L_UpperArm') {
-              node.rotation.z = 1.25;
-              node.rotation.x = -0.15;
-              node.rotation.y = 0.12;
+              node.rotation.z = 1.25; node.rotation.x = -0.15; node.rotation.y = 0.12;
             }
             if (node.name === 'J_Bip_R_UpperArm') {
-              node.rotation.z = -1.25;
-              node.rotation.x = -0.15;
-              node.rotation.y = -0.12;
+              node.rotation.z = -1.25; node.rotation.x = -0.15; node.rotation.y = -0.12;
             }
-            if (node.name === 'J_Bip_L_LowerArm') {
-              node.rotation.z = 0.15;
-            }
-            if (node.name === 'J_Bip_R_LowerArm') {
-              node.rotation.z = -0.15;
-            }
-            if (node.name === 'J_Bip_C_Chest') {
-              chestBone = node;
-            }
+            if (node.name === 'J_Bip_L_LowerArm') node.rotation.z = 0.15;
+            if (node.name === 'J_Bip_R_LowerArm') node.rotation.z = -0.15;
+            if (node.name === 'J_Bip_C_Chest') chestBone = node;
           }
         });
 
         scene.add(characterModel);
       },
       undefined,
-      function (err) {
-        console.warn('Lỗi khi tải mô hình GLB nhân vật:', err);
-      }
+      (err) => console.warn('GLTF Load Error:', err)
     );
 
-    // ==========================================
-    // 8. DOUBLE-TAP CHUYỂN ĐỔI NHANH CẬN CẢNH / TOÀN CẢNH
-    // ==========================================
+    // =========================================================================
+    // 8. BỘ ĐIỀU KHIỂN CỬ CHỈ CÔNG THÁI HỌC KHÔNG BAO GIỜ BỊ RESET ZOOM
+    // Tách biệt Multi-touch (Pinch Zoom) và Single-touch (Rotate / Double-Tap)
+    // =========================================================================
+    const activePointers = new Map();
+    let isMultiTouchActive = false;
+    let multiTouchCooldownUntil = 0;
+    let initialPinchDist = 0;
+    let pinchStartDistance = DEFAULT_DIST;
+
     let lastTapTime = 0;
-    renderer.domElement.addEventListener('pointerup', (e) => {
-      const now = Date.now();
-      if (now - lastTapTime < 300) {
-        toggleQuickZoom();
+    let lastTapX = 0;
+    let lastTapY = 0;
+
+    let isDragging = false;
+    let lastPointerX = 0;
+    let lastPointerY = 0;
+
+    const dom = renderer.domElement;
+
+    dom.addEventListener('pointerdown', (e) => {
+      activePointers.set(e.pointerId, {
+        x: e.clientX,
+        y: e.clientY,
+        startX: e.clientX,
+        startY: e.clientY,
+        startTime: performance.now()
+      });
+
+      if (activePointers.size === 1) {
+        isDragging = true;
+        lastPointerX = e.clientX;
+        lastPointerY = e.clientY;
+      } else if (activePointers.size >= 2) {
+        // Bắt đầu cử chỉ chụm 2 ngón thu phóng (Pinch Zoom)
+        isMultiTouchActive = true;
+        isDragging = false;
+        const pts = Array.from(activePointers.values());
+        initialPinchDist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+        pinchStartDistance = targetDistance;
+        multiTouchCooldownUntil = performance.now() + 450;
       }
-      lastTapTime = now;
-    });
 
-    let isZoomedIn = false;
-    function toggleQuickZoom() {
-      const targetDist = isZoomedIn ? 2.50 : 1.10;
-      isZoomedIn = !isZoomedIn;
-      smoothZoomToDistance(targetDist);
-    }
+      resetIdleTimer();
+    }, { passive: true });
 
-    function smoothZoomToDistance(targetDist) {
-      const dir = camera.position.clone().sub(controls.target).normalize();
-      const startPos = camera.position.clone();
-      const endPos = controls.target.clone().add(dir.multiplyScalar(targetDist));
+    dom.addEventListener('pointermove', (e) => {
+      const p = activePointers.get(e.pointerId);
+      if (p) {
+        p.x = e.clientX;
+        p.y = e.clientY;
+      }
 
-      const startTime = performance.now();
-      const duration = 500;
-
-      function step(now) {
-        const progress = Math.min((now - startTime) / duration, 1);
-        const ease = progress < 0.5
-          ? 2 * progress * progress
-          : 1 - Math.pow(-2 * progress + 2, 2) / 2;
-
-        camera.position.lerpVectors(startPos, endPos, ease);
-        controls.update();
-
-        if (progress < 1) {
-          requestAnimationFrame(step);
+      if (activePointers.size >= 2 && initialPinchDist > 0) {
+        // Xử lý Pinch Zoom
+        const pts = Array.from(activePointers.values());
+        const currentPinchDist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+        if (currentPinchDist > 5) {
+          const pinchFactor = initialPinchDist / currentPinchDist;
+          // Cự ly cho phép: từ 0.95m (cận cảnh mặt) đến 4.80m (toàn cảnh buồng lái)
+          targetDistance = Math.max(0.95, Math.min(4.80, pinchStartDistance * pinchFactor));
         }
+        multiTouchCooldownUntil = performance.now() + 450;
+      } else if (activePointers.size === 1 && isDragging) {
+        // Xoay 360 độ nhân vật khi vuốt ngang
+        const deltaX = e.clientX - lastPointerX;
+        const deltaY = e.clientY - lastPointerY;
+        lastPointerX = e.clientX;
+        lastPointerY = e.clientY;
+
+        targetRotationY += deltaX * 0.007;
+
+        // Cho phép góc ngắm camera nghiêng nhẹ theo trục Y (pitch)
+        targetCamY = Math.max(0.85, Math.min(1.30, targetCamY - deltaY * 0.0015));
       }
-      requestAnimationFrame(step);
+
+      resetIdleTimer();
+    }, { passive: true });
+
+    function handlePointerRelease(e) {
+      const p = activePointers.get(e.pointerId);
+      const now = performance.now();
+
+      if (p) {
+        const moveDist = Math.hypot(e.clientX - p.startX, e.clientY - p.startY);
+        const duration = now - p.startTime;
+
+        // Chỉ xét Single Tap khi không ở chế độ multi-touch và qua cooldown 450ms
+        const isCleanSingleTap = !isMultiTouchActive &&
+                                 (now > multiTouchCooldownUntil) &&
+                                 (moveDist < 12) &&
+                                 (duration < 260);
+
+        if (isCleanSingleTap) {
+          const timeSinceLast = now - lastTapTime;
+          const distBetweenTaps = Math.hypot(e.clientX - lastTapX, e.clientY - lastTapY);
+
+          if (timeSinceLast > 60 && timeSinceLast < 320 && distBetweenTaps < 25) {
+            onSafeDoubleTap();
+            lastTapTime = 0;
+          } else {
+            lastTapTime = now;
+            lastTapX = e.clientX;
+            lastTapY = e.clientY;
+          }
+        }
+
+        activePointers.delete(e.pointerId);
+      }
+
+      if (activePointers.size === 0) {
+        isDragging = false;
+        isMultiTouchActive = false;
+        initialPinchDist = 0;
+      } else if (activePointers.size === 1) {
+        // Khi 1 ngón vừa nhấc, ngón còn lại tiếp tục giữ nhưng không coi là swipe mới
+        const remaining = Array.from(activePointers.values())[0];
+        lastPointerX = remaining.x;
+        lastPointerY = remaining.y;
+      }
+
+      resetIdleTimer();
     }
 
-    // ==========================================
-    // 9. HỆ THỐNG ĐẠO DIỄN TỰ ĐỘNG (CINEMATIC AUTO IDLE DIRECTOR)
-    // Sau 5s không chạm -> Tự động trở về chính diện & tự xoay 360 độ
-    // ==========================================
+    dom.addEventListener('pointerup', handlePointerRelease, { passive: true });
+    dom.addEventListener('pointercancel', handlePointerRelease, { passive: true });
+
+    // Double-Tap chuyển đổi mượt giữa Toàn Thân (3.11m) và Cận Cảnh Mặt (1.15m)
+    let isCloseUp = false;
+    function onSafeDoubleTap() {
+      isCloseUp = !isCloseUp;
+      targetDistance = isCloseUp ? 1.15 : DEFAULT_DIST;
+      targetCamY = isCloseUp ? 1.25 : DEFAULT_CAM_Y;
+    }
+
+    // =========================================================================
+    // 9. AUTO IDLE DIRECTOR BẢO TOÀN 100% CỰ LY ZOOM HIỆN TẠI
+    // Sau 5s: CHỈ xoay chậm nhân vật quanh trục Y, KHÔNG BAO GIỜ ép cự ly zoom!
+    // =========================================================================
     const IDLE_TIMEOUT_MS = 5000;
     let idleTimer = null;
-    let isAutoGlideActive = false;
-    let glideAnimId = null;
+    let isAutoRotating = false;
 
     function resetIdleTimer() {
-      if (isAutoGlideActive) {
-        if (glideAnimId) cancelAnimationFrame(glideAnimId);
-        isAutoGlideActive = false;
-      }
-      controls.autoRotate = false;
-
+      isAutoRotating = false;
       const selector = document.getElementById('env-selector');
       if (selector) selector.classList.add('active-state');
 
@@ -906,57 +677,15 @@
       const selector = document.getElementById('env-selector');
       if (selector) selector.classList.remove('active-state');
 
-      glideCameraToFront(function () {
-        controls.autoRotate = true;
-      });
+      // Tự động xoay chậm nhưng BẢO TOÀN NGUYÊN VẸN CỰ LY ZOOM người dùng vừa đặt
+      isAutoRotating = true;
     }
-
-    function glideCameraToFront(callback) {
-      if (glideAnimId) cancelAnimationFrame(glideAnimId);
-      isAutoGlideActive = true;
-
-      const startPos = camera.position.clone();
-      const startTarget = controls.target.clone();
-
-      const endTarget = DEFAULT_TARGET.clone();
-      const endPos = DEFAULT_CAM_POS.clone();
-
-      const startTime = performance.now();
-      const duration = 1200;
-
-      function step(now) {
-        if (!isAutoGlideActive) return;
-
-        const progress = Math.min((now - startTime) / duration, 1);
-        const ease = progress < 0.5
-          ? 4 * progress * progress * progress
-          : 1 - Math.pow(-2 * progress + 2, 3) / 2;
-
-        camera.position.lerpVectors(startPos, endPos, ease);
-        controls.target.lerpVectors(startTarget, endTarget, ease);
-        controls.update();
-
-        if (progress < 1) {
-          glideAnimId = requestAnimationFrame(step);
-        } else {
-          isAutoGlideActive = false;
-          glideAnimId = null;
-          if (callback) callback();
-        }
-      }
-
-      glideAnimId = requestAnimationFrame(step);
-    }
-
-    ['pointerdown', 'pointermove', 'wheel', 'touchstart', 'touchmove'].forEach(evt => {
-      window.addEventListener(evt, resetIdleTimer, { passive: true });
-    });
 
     resetIdleTimer();
 
-    // ==========================================
-    // 10. BIND NÚT CHUYỂN MÔI TRƯỜNG TỐI GIẢN (HỖ TRỢ CẢ CLICK, TOUCH, POINTER)
-    // ==========================================
+    // =========================================================================
+    // 10. BIND NÚT CHUYỂN MÔI TRƯỜNG TỐI GIẢN
+    // =========================================================================
     document.querySelectorAll('.env-dot-btn').forEach(btn => {
       const handleSwitch = (e) => {
         e.preventDefault();
@@ -970,9 +699,9 @@
       btn.addEventListener('touchstart', handleSwitch);
     });
 
-    // ==========================================
+    // =========================================================================
     // 11. VÒNG LẶP RENDER 60 FPS & ANIMATIONS ĐIỆN ẢNH
-    // ==========================================
+    // =========================================================================
     const clock = new THREE.Clock();
 
     function animate() {
@@ -980,47 +709,62 @@
       const elapsed = clock.getElapsedTime();
       const delta = clock.getDelta();
 
-      controls.update();
+      // Cập nhật góc tự xoay nhàn rỗi
+      if (isAutoRotating) {
+        targetRotationY += 0.0035;
+      }
 
-      leftHolo.update(elapsed);
-      rightHolo.update(elapsed);
+      // Nội suy mượt mà (smooth damping) góc xoay nhân vật
+      currentRotationY = THREE.MathUtils.lerp(currentRotationY, targetRotationY, 0.08);
+      if (characterModel) {
+        characterModel.rotation.y = currentRotationY;
+      }
 
-      if (currentEnvMode === 'orbit') {
-        if (planetMesh) planetMesh.rotation.y = elapsed * 0.015;
-        if (planetaryRings) planetaryRings.rotation.y = elapsed * 0.024;
-      } else if (currentEnvMode === 'nebula') {
-        nebulaSubGroup.rotation.y = elapsed * 0.005;
-      } else if (currentEnvMode === 'warp') {
+      // Nội suy mượt mà khoảng cách thu phóng (zoom distance) - BẢO ĐẢM KHÔNG BAO GIỜ GIẬT
+      currentDistance = THREE.MathUtils.lerp(currentDistance, targetDistance, 0.09);
+      currentCamY = THREE.MathUtils.lerp(currentCamY, targetCamY, 0.09);
+
+      // Hiệu ứng Parallax 3D tinh tế khi nhân vật quay
+      const parallaxX = Math.sin(currentRotationY * 0.12) * 0.14;
+      camera.position.set(parallaxX, currentCamY, currentDistance);
+      cameraTarget.y = THREE.MathUtils.lerp(cameraTarget.y, DEFAULT_TARGET_Y + (currentCamY - DEFAULT_CAM_Y) * 0.4, 0.1);
+      camera.lookAt(cameraTarget);
+
+      // Cập nhật Holograms
+      holoLeft.update(elapsed);
+      holoRight.update(elapsed);
+
+      // Cập nhật hiệu ứng môi trường
+      if (currentEnvMode === 'nebula' && nebPoints.visible) {
+        nebPoints.rotation.y = elapsed * 0.015;
+      } else if (currentEnvMode === 'warp' && warpLines.visible) {
         const pos = warpGeo.attributes.position.array;
         for (let i = 0; i < warpCount; i++) {
           const spd = warpSpeeds[i];
-          pos[i * 6 + 2] += spd * 48 * delta;
-          pos[i * 6 + 5] += spd * 48 * delta;
+          pos[i * 6 + 2] += spd * 14 * delta;
+          pos[i * 6 + 5] += spd * 14 * delta;
 
-          if (pos[i * 6 + 2] > 25) {
-            const x = (Math.random() - 0.5) * 95;
-            const y = (Math.random() - 0.5) * 95;
-            const z = -180 - Math.random() * 20;
-            const len = 5.0 + Math.random() * 9.0;
+          if (pos[i * 6 + 2] > 6.0) {
+            const x = (Math.random() - 0.5) * 12.0;
+            const y = (Math.random() - 0.5) * 10.0 + 1.0;
+            const z = -25.0 - Math.random() * 5.0;
+            const len = 0.8 + Math.random() * 1.6;
 
-            pos[i * 6] = x;
-            pos[i * 6 + 1] = y;
-            pos[i * 6 + 2] = z;
-
-            pos[i * 6 + 3] = x;
-            pos[i * 6 + 4] = y;
-            pos[i * 6 + 5] = z - len;
+            pos[i * 6] = x; pos[i * 6 + 1] = y; pos[i * 6 + 2] = z;
+            pos[i * 6 + 3] = x; pos[i * 6 + 4] = y; pos[i * 6 + 5] = z - len;
           }
         }
         warpGeo.attributes.position.needsUpdate = true;
-
-        camera.position.x += (Math.random() - 0.5) * 0.0015;
-        camera.position.y += (Math.random() - 0.5) * 0.0015;
       }
 
-      const pulse = 0.5 + 0.5 * Math.sin(elapsed * 2.2);
-      matCyanGlow.emissiveIntensity = 0.95 + 0.35 * pulse;
+      // Nhịp thở năng lượng bệ Rune (floor_rune_glow)
+      if (runeMat) {
+        const pulse = 0.65 + 0.35 * Math.sin(elapsed * 2.2);
+        runeMat.opacity = pulse;
+        floorRuneLight.intensity = 1.3 + 0.7 * pulse;
+      }
 
+      // Nhịp thở ngực sinh học nhân vật
       if (chestBone) {
         chestBone.rotation.x = 0.022 * Math.sin(elapsed * 2.0);
       }

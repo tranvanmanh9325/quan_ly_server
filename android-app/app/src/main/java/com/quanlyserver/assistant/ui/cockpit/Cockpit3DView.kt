@@ -51,16 +51,26 @@ fun Cockpit3DView(modifier: Modifier = Modifier) {
                     cacheMode = WebSettings.LOAD_NO_CACHE
                     useWideViewPort = true
                     loadWithOverviewMode = true
+
+                    // Disable WebView native page zooming to prevent it from intercepting multi-touch pinch gestures
+                    setSupportZoom(false)
+                    builtInZoomControls = false
+                    displayZoomControls = false
                 }
                 clearCache(true)
 
-                // Disallow parent Compose scroll/drag from intercepting 3D rotation touches
+                // Multi-touch passthrough: Use actionMasked so ACTION_POINTER_DOWN (second finger for pinch zoom)
+                // is NOT intercepted by parent Compose containers
                 setOnTouchListener { v, event ->
-                    when (event.action) {
-                        MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
+                    when (event.actionMasked) {
+                        MotionEvent.ACTION_DOWN,
+                        MotionEvent.ACTION_POINTER_DOWN,
+                        MotionEvent.ACTION_MOVE,
+                        MotionEvent.ACTION_POINTER_UP -> {
                             v.parent?.requestDisallowInterceptTouchEvent(true)
                         }
-                        MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                        MotionEvent.ACTION_UP,
+                        MotionEvent.ACTION_CANCEL -> {
                             v.parent?.requestDisallowInterceptTouchEvent(false)
                         }
                     }

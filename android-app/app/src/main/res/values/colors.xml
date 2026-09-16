@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="ic_launcher_background">#010206</color>
+    <color name="primary_cyan">#00ffea</color>
+    <color name="core_blue">#38bdf8</color>
+    <color name="accent_magenta">#d946ef</color>
+    <color name="deep_space_navy">#010206</color>
+</resources>

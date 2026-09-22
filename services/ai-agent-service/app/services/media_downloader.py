@@ -133,6 +133,8 @@ class MediaItem:
     images: List[str] = field(default_factory=list)
     file_size: int = 0
     direct_stream_url: Optional[str] = None
+    cover_url: Optional[str] = None
+    thumbnail_path: Optional[str] = None
     is_temp_file: bool = True
 
     def cleanup(self) -> None:
@@ -154,6 +156,15 @@ class MediaItem:
                     logger.debug("[MediaItem] Cleaned up temporary directory: %s", parent)
             except Exception as err:
                 logger.warning("[MediaItem] Failed to clean up file %s: %s", self.file_path, err)
+
+        if self.thumbnail_path:
+            try:
+                tp = Path(self.thumbnail_path)
+                if tp.exists():
+                    tp.unlink()
+                    logger.debug("[MediaItem] Cleaned up temporary thumbnail: %s", self.thumbnail_path)
+            except Exception as err:
+                logger.warning("[MediaItem] Failed to clean up thumbnail %s: %s", self.thumbnail_path, err)
 
     def __enter__(self) -> "MediaItem":
         return self
@@ -395,12 +406,162 @@ class MultiTierMediaPipeline:
             logger.error("[Tier 1: TikWM] Unexpected failure: %s", err, exc_info=True)
             return None
 
+    async def _prepare_cover_and_thumb(
+        self, cover_url: Optional[str], client: httpx.AsyncClient
+    ) -> Tuple[Optional[str], Optional[str]]:
+        """
+        Tải ảnh bìa và tạo thumbnail JPEG max 320x320 (< 200KB) bằng Pillow.
+        Trả về: (raw_cover_path, thumbnail_path).
+        raw_cover_path được giải phóng trong finally của quá trình muxing.
+        thumbnail_path được gán vào MediaItem và giải phóng khi cleanup.
+        Nếu ảnh lỗi hoặc không hợp lệ, dọn dẹp sạch sẽ và trả về (None, None).
+        """
+        if not cover_url:
+            return None, None
+
+        raw_cover_path = None
+        thumbnail_path = None
+        t_name = None
+        try:
+            raw_cover_path, _ = await self._stream_url_to_file(cover_url, client, suffix=".jpg")
+            try:
+                from PIL import Image
+                # Mở và xác thực ảnh bằng Pillow TRƯỚC KHI tạo file thumbnail trên đĩa
+                with Image.open(raw_cover_path) as img:
+                    img.thumbnail((320, 320))
+                    rgb = img.convert("RGB")
+                    with tempfile.NamedTemporaryFile(suffix="_thumb.jpg", dir=str(TEMP_MEDIA_DIR), delete=False) as tf:
+                        t_name = tf.name
+                    rgb.save(t_name, format="JPEG", quality=85)
+                    if os.path.exists(t_name) and os.path.getsize(t_name) > 200 * 1024:
+                        rgb.save(t_name, format="JPEG", quality=65)
+                if t_name and os.path.exists(t_name):
+                    thumbnail_path = t_name
+            except Exception as pe:
+                logger.warning("[MediaDownloader] Invalid cover image or Pillow generation error: %s", pe)
+                if t_name and os.path.exists(t_name):
+                    try:
+                        os.unlink(t_name)
+                    except OSError:
+                        pass
+                if raw_cover_path and os.path.exists(raw_cover_path):
+                    try:
+                        os.unlink(raw_cover_path)
+                    except OSError:
+                        pass
+                return None, None
+        except Exception as err:
+            logger.warning("[MediaDownloader] Failed preparing cover/thumb for %s: %s", cover_url, err)
+            if t_name and os.path.exists(t_name):
+                try:
+                    os.unlink(t_name)
+                except OSError:
+                    pass
+            if raw_cover_path and os.path.exists(raw_cover_path):
+                try:
+                    os.unlink(raw_cover_path)
+                except OSError:
+                    pass
+            return None, None
+
+        return raw_cover_path, thumbnail_path
+
+    async def _mux_mp3_with_metadata(
+        self,
+        input_path: str,
+        output_path: str,
+        is_video: bool,
+        cover_path: Optional[str] = None,
+        title: str = "TikTok Audio",
+        artist: str = "TikTok Creator",
+        album: str = "TikTok Audio",
+        date: Optional[str] = None,
+    ) -> bool:
+        """
+        Trích xuất (nếu is_video=True, 320kbps MP3 CBR Stereo 44.1kHz) hoặc remux copy
+        kèm ID3v2.3 tags và APIC Cover Art qua FFmpeg native.
+        """
+        clean_title = (title or "TikTok Audio")[:250]
+        clean_artist = (artist or "TikTok Creator")[:250]
+        clean_album = (album or "TikTok Audio")[:250]
+        year_str = date or time.strftime("%Y")
+
+        cmd = [
+            "ffmpeg", "-y", "-v", "error", "-threads", "2",
+            "-i", str(input_path),
+        ]
+        if cover_path and os.path.exists(cover_path):
+            cmd.extend([
+                "-i", str(cover_path),
+                "-map", "0:a:0",
+                "-map", "1:v",
+            ])
+            if is_video:
+                cmd.extend([
+                    "-c:a", "libmp3lame", "-b:a", "320k", "-ar", "44100", "-ac", "2",
+                ])
+            else:
+                cmd.extend([
+                    "-c:a", "copy",
+                ])
+            cmd.extend([
+                "-c:v", "mjpeg",
+                "-disposition:v:0", "attached_pic",
+                "-id3v2_version", "3",
+                "-metadata:s:v", 'title="Album cover"',
+                "-metadata:s:v", 'comment="Cover (front)"',
+            ])
+        else:
+            cmd.extend([
+                "-map", "0:a:0",
+            ])
+            if is_video:
+                cmd.extend([
+                    "-c:a", "libmp3lame", "-b:a", "320k", "-ar", "44100", "-ac", "2",
+                ])
+            else:
+                cmd.extend([
+                    "-c:a", "copy",
+                ])
+            cmd.extend([
+                "-id3v2_version", "3",
+            ])
+
+        cmd.extend([
+            "-metadata", f"title={clean_title}",
+            "-metadata", f"artist={clean_artist}",
+            "-metadata", f"album={clean_album}",
+            "-metadata", f"date={year_str}",
+            str(output_path),
+        ])
+
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await proc.communicate()
+            if proc.returncode == 0 and os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+                return True
+            err_msg = stderr.decode("utf-8", errors="replace").strip() if stderr else ""
+            logger.warning("[FFmpeg Mux] FFmpeg exited with code %d: %s", proc.returncode, err_msg)
+            return False
+        except Exception as e:
+            logger.warning("[FFmpeg Mux] Exception during FFmpeg execution: %s", e)
+            return False
+
     async def _download_tikwm_audio(self, url: str) -> Optional[MediaItem]:
         """
-        Trích xuất MP3 TikTok/Douyin trực tiếp qua TikWM API (data.music / data.music_info).
-        Hỗ trợ cả bài đăng dạng album ảnh slideshow (data.images).
+        Dual-Source Smart Audio Engine cho TikTok/Douyin qua TikWM API:
+          - So khớp duration giữa video và music snippet.
+          - Nhánh Direct CDN (0% CPU, <0.5s): Slideshow (images) hoặc duration khớp (độ lệch <=2s) và video <=30s.
+          - Nhánh Trích Xuất HD Video (Full-Fidelity 320kbps MP3 via FFmpeg): Khi music bị cắt 30s hoặc video >30s.
+          - Nhúng ID3v2.3 tags và APIC Cover Art frame.
+          - Resize ảnh bìa Pillow max 320x320 JPEG (<200KB) làm thumbnail cho Telegram Bot Native Audio Card.
+          - Dọn dẹp sạch sẽ 100% tệp trung gian trong finally (Zero-Disk Leak).
         """
-        logger.info("[Tier 1: TikWM Audio] Initiating audio extraction for: %s", url)
+        logger.info("[Tier 1: TikWM Audio] Initiating dual-source audio extraction for: %s", url)
         client = await self._get_client()
         api_endpoint = "https://www.tikwm.com/api/"
 
@@ -419,14 +580,27 @@ class MultiTierMediaPipeline:
             music_info = data.get("music_info") or {}
             author_info = data.get("author") or {}
 
-            # Ưu tiên lấy stream MP3 từ data.music hoặc data.music_info.play
+            video_duration = int(data.get("duration") or 0)
+            music_duration = int(music_info.get("duration") or 0)
+            images = data.get("images")
+            play_url = data.get("hdplay") or data.get("play")
             music_url = data.get("music") or music_info.get("play")
-            if not music_url:
-                logger.warning("[Tier 1: TikWM Audio] No audio stream URL found in TikWM response")
-                return None
+            cover_url = (
+                music_info.get("cover")
+                or data.get("origin_cover")
+                or data.get("cover")
+            )
 
-            # Chuẩn hóa URL tuyệt đối để phòng trường hợp TikWM trả về relative path
-            music_url = urllib.parse.urljoin("https://www.tikwm.com", music_url)
+            if music_url:
+                music_url = urllib.parse.urljoin("https://www.tikwm.com", music_url)
+            if play_url:
+                play_url = urllib.parse.urljoin("https://www.tikwm.com", play_url)
+            if cover_url:
+                cover_url = urllib.parse.urljoin("https://www.tikwm.com", cover_url)
+
+            if not music_url and not play_url:
+                logger.warning("[Tier 1: TikWM Audio] Neither music_url nor play_url found in TikWM response")
+                return None
 
             title = music_info.get("title") or data.get("title") or "TikTok Audio"
             performer = (
@@ -435,24 +609,178 @@ class MultiTierMediaPipeline:
                 or author_info.get("unique_id")
                 or "TikTok Creator"
             )
-            duration = int(music_info.get("duration") or data.get("duration") or 0)
 
-            # Ghi stream trực tiếp từng chunk 64KB ra tệp .mp3 tạm
-            temp_file_path, file_size = await self._stream_url_to_file(
-                music_url, client, suffix=".mp3"
-            )
+            # Routing Decision:
+            # 1. Slideshow (images) -> Direct CDN (không có video track)
+            # 2. Không có play_url nhưng có music_url -> Direct CDN
+            # 3. Video ngắn <= 30s VÀ duration khớp (độ lệch <= 2s) VÀ có music_url -> Direct CDN
+            # 4. Ngược lại (music bị cắt 30s, video > 30s, hoặc vlog/đối thoại) -> HD Video Extraction
+            use_direct_cdn = False
+            if images:
+                use_direct_cdn = True
+            elif not play_url and music_url:
+                use_direct_cdn = True
+            elif music_url and abs(video_duration - music_duration) <= 2 and video_duration <= 30:
+                use_direct_cdn = True
 
-            return MediaItem(
-                file_path=temp_file_path,
-                title=title,
-                author=performer,
-                duration=duration,
-                media_type="audio",
-                source_url=url,
-                file_size=file_size,
-                direct_stream_url=music_url,
-                is_temp_file=True,
-            )
+            staging_cleanup_files: List[str] = []
+            raw_cover_path = None
+            thumbnail_path = None
+            final_file_path = None
+            final_file_size = 0
+            final_duration = video_duration or music_duration
+            is_success = False
+
+            try:
+                if cover_url:
+                    raw_cover_path, thumbnail_path = await self._prepare_cover_and_thumb(cover_url, client)
+                    if raw_cover_path:
+                        staging_cleanup_files.append(raw_cover_path)
+
+                if not use_direct_cdn and play_url:
+                    logger.info(
+                        "[Tier 1: TikWM Audio] Engaging HD Video Audio Extraction (video: %ds, music: %ds)",
+                        video_duration, music_duration
+                    )
+                    temp_vid_path, _ = await self._stream_url_to_file(play_url, client, suffix=".mp4")
+                    staging_cleanup_files.append(temp_vid_path)
+
+                    with tempfile.NamedTemporaryFile(suffix=".mp3", dir=str(TEMP_MEDIA_DIR), delete=False) as tf:
+                        target_mp3_path = tf.name
+
+                    success = await self._mux_mp3_with_metadata(
+                        input_path=temp_vid_path,
+                        output_path=target_mp3_path,
+                        is_video=True,
+                        cover_path=raw_cover_path,
+                        title=title,
+                        artist=performer,
+                        album="TikTok Audio",
+                    )
+                    # Graceful Degradation: Nếu mux kèm cover lỗi, retry một lần nữa không cover
+                    if not success and raw_cover_path:
+                        logger.warning(
+                            "[Tier 1: TikWM Audio] Mux with cover failed, retrying without cover art (graceful degradation)"
+                        )
+                        success = await self._mux_mp3_with_metadata(
+                            input_path=temp_vid_path,
+                            output_path=target_mp3_path,
+                            is_video=True,
+                            cover_path=None,
+                            title=title,
+                            artist=performer,
+                            album="TikTok Audio",
+                        )
+                    if success:
+                        final_file_path = target_mp3_path
+                        final_file_size = os.path.getsize(target_mp3_path)
+                        final_duration = video_duration or music_duration
+                    else:
+                        if os.path.exists(target_mp3_path):
+                            try:
+                                os.unlink(target_mp3_path)
+                            except OSError:
+                                pass
+                        if music_url:
+                            logger.warning("[Tier 1: TikWM Audio] HD extraction failed, falling back to direct CDN")
+                            use_direct_cdn = True
+
+                if use_direct_cdn or not final_file_path:
+                    if not music_url:
+                        logger.warning("[Tier 1: TikWM Audio] Direct CDN selected but no music_url available")
+                        return None
+
+                    logger.info("[Tier 1: TikWM Audio] Engaging Direct CDN Stream: %s", music_url)
+                    raw_mp3_path, raw_size = await self._stream_url_to_file(music_url, client, suffix=".mp3")
+                    staging_cleanup_files.append(raw_mp3_path)
+
+                    if raw_cover_path:
+                        with tempfile.NamedTemporaryFile(suffix=".mp3", dir=str(TEMP_MEDIA_DIR), delete=False) as tf:
+                            target_mp3_path = tf.name
+                        remux_success = await self._mux_mp3_with_metadata(
+                            input_path=raw_mp3_path,
+                            output_path=target_mp3_path,
+                            is_video=False,
+                            cover_path=raw_cover_path,
+                            title=title,
+                            artist=performer,
+                            album="TikTok Audio",
+                        )
+                        if not remux_success:
+                            logger.warning(
+                                "[Tier 1: TikWM Audio] Direct CDN remux with cover failed, retrying without cover art"
+                            )
+                            remux_success = await self._mux_mp3_with_metadata(
+                                input_path=raw_mp3_path,
+                                output_path=target_mp3_path,
+                                is_video=False,
+                                cover_path=None,
+                                title=title,
+                                artist=performer,
+                                album="TikTok Audio",
+                            )
+                        if remux_success:
+                            final_file_path = target_mp3_path
+                            final_file_size = os.path.getsize(target_mp3_path)
+                        else:
+                            if os.path.exists(target_mp3_path):
+                                try:
+                                    os.unlink(target_mp3_path)
+                                except OSError:
+                                    pass
+                            final_file_path = raw_mp3_path
+                            final_file_size = raw_size
+                            if raw_mp3_path in staging_cleanup_files:
+                                staging_cleanup_files.remove(raw_mp3_path)
+                    else:
+                        final_file_path = raw_mp3_path
+                        final_file_size = raw_size
+                        if raw_mp3_path in staging_cleanup_files:
+                            staging_cleanup_files.remove(raw_mp3_path)
+
+                    final_duration = music_duration or video_duration
+
+                if not final_file_path:
+                    logger.warning("[Tier 1: TikWM Audio] Failed to produce final MP3 audio")
+                    return None
+
+                is_success = True
+                return MediaItem(
+                    file_path=final_file_path,
+                    title=title,
+                    author=performer,
+                    duration=final_duration,
+                    media_type="audio",
+                    source_url=url,
+                    file_size=final_file_size,
+                    direct_stream_url=music_url or play_url,
+                    cover_url=cover_url,
+                    thumbnail_path=thumbnail_path,
+                    is_temp_file=True,
+                )
+
+            finally:
+                for staging_file in staging_cleanup_files:
+                    if staging_file and os.path.exists(staging_file):
+                        try:
+                            os.unlink(staging_file)
+                            logger.debug("[Tier 1: TikWM Audio] Cleaned staging file: %s", staging_file)
+                        except Exception as ce:
+                            logger.warning("[Tier 1: TikWM Audio] Error cleaning staging file %s: %s", staging_file, ce)
+
+                if not is_success:
+                    if final_file_path and os.path.exists(final_file_path):
+                        try:
+                            os.unlink(final_file_path)
+                            logger.debug("[Tier 1: TikWM Audio] Cleaned unreturned final file: %s", final_file_path)
+                        except Exception as fe:
+                            logger.warning("[Tier 1: TikWM Audio] Error cleaning unreturned final file %s: %s", final_file_path, fe)
+                    if thumbnail_path and os.path.exists(thumbnail_path):
+                        try:
+                            os.unlink(thumbnail_path)
+                            logger.debug("[Tier 1: TikWM Audio] Cleaned unreturned thumbnail: %s", thumbnail_path)
+                        except Exception as te:
+                            logger.warning("[Tier 1: TikWM Audio] Error cleaning unreturned thumbnail %s: %s", thumbnail_path, te)
 
         except VideoTooLargeError:
             raise
@@ -684,6 +1012,27 @@ class MultiTierMediaPipeline:
                     or "Unknown Artist"
                 )
 
+                cover_url = info.get("thumbnail")
+                thumbnail_path = None
+                if cover_url:
+                    try:
+                        import urllib.request
+                        raw_thumb = os.path.join(temp_dir, "raw_thumb.jpg")
+                        out_thumb = os.path.join(temp_dir, "thumb_320.jpg")
+                        req = urllib.request.Request(cover_url, headers={"User-Agent": "Mozilla/5.0"})
+                        with urllib.request.urlopen(req, timeout=10) as resp, open(raw_thumb, "wb") as out_f:
+                            out_f.write(resp.read())
+                        if os.path.exists(raw_thumb):
+                            from PIL import Image
+                            with Image.open(raw_thumb) as im:
+                                im.thumbnail((320, 320))
+                                rgb = im.convert("RGB")
+                                rgb.save(out_thumb, format="JPEG", quality=85)
+                            if os.path.exists(out_thumb):
+                                thumbnail_path = out_thumb
+                    except Exception as te:
+                        logger.warning("[Tier 2: yt-dlp Audio] Failed extracting thumbnail: %s", te)
+
                 return MediaItem(
                     file_path=final_path,
                     title=title,
@@ -692,6 +1041,8 @@ class MultiTierMediaPipeline:
                     media_type="audio",
                     source_url=url,
                     file_size=size,
+                    cover_url=cover_url,
+                    thumbnail_path=thumbnail_path,
                     is_temp_file=True,
                 )
 

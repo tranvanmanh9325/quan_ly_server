@@ -6,6 +6,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Set, Union
+import io
 import os
 import shutil
 import tempfile
@@ -688,16 +689,20 @@ class TelegramBot:
         performer: Optional[str] = None,
         duration: int = 0,
         parse_mode: Optional[str] = "HTML",
+        thumbnail: Optional[Union[str, Path, bytes, io.BytesIO]] = None,
         **kwargs: Any,
     ) -> bool:
         """
         Gửi tệp âm thanh MP3 trực tiếp qua Telegram Bot API (/sendAudio)
-        với đầy đủ siêu dữ liệu (performer, title, duration) để Telegram hiển thị
-        Native Audio Player Card (Waveform + Play/Pause button).
+        với đầy đủ siêu dữ liệu (performer, title, duration, thumbnail) để Telegram hiển thị
+        Native Audio Player Card (Waveform + Play/Pause button + Album Art).
         Bảo toàn Zero-RAM streaming từ đĩa và Resilient Plain Text fallback với f.seek(0).
         """
         if not self.token or not audio_path:
             return False
+
+        if thumbnail is None:
+            thumbnail = kwargs.get("thumbnail") or kwargs.get("thumb")
 
         # Support flexible positional arguments (title, performer, duration, caption)
         if isinstance(performer, (int, float)) and isinstance(duration, str):
@@ -739,9 +744,49 @@ class TelegramBot:
             elif suffix == ".wav":
                 mime_type = "audio/wav"
 
+            # Chuẩn bị dữ liệu thumbnail bytes nếu có
+            thumb_bytes: Optional[bytes] = None
+            if thumbnail:
+                if isinstance(thumbnail, bytes):
+                    thumb_bytes = thumbnail
+                elif hasattr(thumbnail, "getvalue"):  # io.BytesIO
+                    thumb_bytes = thumbnail.getvalue()
+                elif isinstance(thumbnail, (str, Path)):
+                    thumb_str = str(thumbnail)
+                    if thumb_str.startswith(("http://", "https://")):
+                        try:
+                            t_resp = await self._http_client.get(thumb_str, timeout=10.0)
+                            if t_resp.status_code == 200:
+                                thumb_bytes = t_resp.content
+                        except Exception as e_thumb:
+                            logger.warning("[TelegramBot] Failed fetching remote thumbnail URL %s: %s", thumb_str, e_thumb)
+                    else:
+                        tp = Path(thumb_str)
+                        if tp.is_file():
+                            try:
+                                thumb_bytes = tp.read_bytes()
+                            except Exception as e_rf:
+                                logger.warning("[TelegramBot] Failed reading thumbnail file %s: %s", thumb_str, e_rf)
+
+            if thumb_bytes and len(thumb_bytes) > 200 * 1024:
+                try:
+                    from PIL import Image
+                    with Image.open(io.BytesIO(thumb_bytes)) as im:
+                        im.thumbnail((320, 320))
+                        buf = io.BytesIO()
+                        im.convert("RGB").save(buf, format="JPEG", quality=75)
+                        compressed = buf.getvalue()
+                        if len(compressed) < len(thumb_bytes):
+                            thumb_bytes = compressed
+                except Exception as ce:
+                    logger.debug("[TelegramBot] Thumbnail compression skipped: %s", ce)
+
             stream = _AudioFileStream(open(p, "rb"), file_size)
             try:
-                files = {"audio": (p.name, stream, mime_type)}
+                files: Dict[str, Any] = {"audio": (p.name, stream, mime_type)}
+                if thumb_bytes and len(thumb_bytes) <= 200 * 1024:
+                    files["thumbnail"] = ("thumbnail.jpg", thumb_bytes, "image/jpeg")
+
                 res = await self._http_client.post(url, data=data, files=files, timeout=120.0)
 
                 if res.status_code == 200:
@@ -750,15 +795,17 @@ class TelegramBot:
                     logger.info("[TelegramBot] Audio successfully sent to %s (%s)", chat_id, audio_path)
                     return True
 
-                # Resilient Fallback: Nếu Telegram báo lỗi parse entities, retry bằng Plain Text không tốn thêm RAM
+                # Resilient Fallback 1: Nếu Telegram báo lỗi parse entities, retry bằng Plain Text bảo toàn thumbnail
                 if parse_mode and "can't parse entities" in res.text.lower():
                     logger.warning("[TelegramBot] sendAudio HTML parse error (%s). Retrying as plain text...", res.text[:120])
                     stream.seek(0)
                     data.pop("parse_mode", None)
                     if caption:
                         data["caption"] = _strip_html_tags(caption)[:1024]
-                    files = {"audio": (p.name, stream, mime_type)}
-                    res2 = await self._http_client.post(url, data=data, files=files, timeout=120.0)
+                    retry_files: Dict[str, Any] = {"audio": (p.name, stream, mime_type)}
+                    if thumb_bytes and len(thumb_bytes) <= 200 * 1024:
+                        retry_files["thumbnail"] = ("thumbnail.jpg", thumb_bytes, "image/jpeg")
+                    res2 = await self._http_client.post(url, data=data, files=retry_files, timeout=120.0)
                     if res2.status_code == 200:
                         if stream.tell() < file_size:
                             stream.seek(0, os.SEEK_END)
@@ -766,6 +813,19 @@ class TelegramBot:
                         return True
                     else:
                         logger.warning("[TelegramBot] sendAudio fallback error %d: %s", res2.status_code, res2.text)
+                # Resilient Fallback 2: Nếu Telegram từ chối thumbnail (HTTP 400 và chứa thumbnail/thumb), retry không kèm thumbnail
+                elif res.status_code == 400 and thumb_bytes and ("thumbnail" in res.text.lower() or "thumb" in res.text.lower()):
+                    logger.warning("[TelegramBot] sendAudio thumbnail rejected (%s). Retrying without thumbnail...", res.text[:120])
+                    stream.seek(0)
+                    files_no_thumb: Dict[str, Any] = {"audio": (p.name, stream, mime_type)}
+                    res_no_thumb = await self._http_client.post(url, data=data, files=files_no_thumb, timeout=120.0)
+                    if res_no_thumb.status_code == 200:
+                        if stream.tell() < file_size:
+                            stream.seek(0, os.SEEK_END)
+                        logger.info("[TelegramBot] Audio successfully sent without thumbnail fallback to %s", chat_id)
+                        return True
+                    else:
+                        logger.warning("[TelegramBot] sendAudio without thumbnail error %d: %s", res_no_thumb.status_code, res_no_thumb.text)
                 else:
                     logger.warning("[TelegramBot] sendAudio error %d: %s", res.status_code, res.text)
             finally:
@@ -1824,6 +1884,7 @@ class TelegramBot:
                             title=raw_title,
                             performer=media_item.author or "Unknown",
                             duration=media_item.duration,
+                            thumbnail=getattr(media_item, "thumbnail_path", None) or getattr(media_item, "cover_url", None),
                         )
                         if not sent:
                             logger.warning("[TelegramBot] send_audio failed, falling back to send_document_file")

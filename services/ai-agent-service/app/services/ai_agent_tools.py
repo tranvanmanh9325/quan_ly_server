@@ -1831,6 +1831,7 @@ class AgentToolExecutor:
                                     duration=media_item.duration,
                                     caption=cap,
                                     parse_mode="HTML",
+                                    thumbnail=getattr(media_item, "thumbnail_path", None) or getattr(media_item, "cover_url", None),
                                 )
                                 if not sent and hasattr(self.telegram_bot, "send_document_file"):
                                     await self.telegram_bot.send_document_file(

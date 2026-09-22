@@ -44,6 +44,92 @@ def _strip_html_tags(text: str) -> str:
     return html.unescape(cleaned)
 
 
+class FastPathMediaIntent(tuple):
+    """
+    Tuple 2 phần tử (media_url, caption) tương thích ngược 100% với cú pháp:
+      url, caption = res
+      res[0], res[1]
+      len(res) == 2
+    Đồng thời cung cấp thuộc tính:
+      media_intent.media_type ('video' hoặc 'audio')
+      media_intent[2] (thông qua __getitem__ override)
+    """
+    media_url: str
+    caption: str
+    media_type: str
+
+    def __new__(cls, *args, media_type: str = "video", **kwargs):
+        if len(args) == 1 and isinstance(args[0], (tuple, list)) and len(args[0]) >= 2:
+            media_url = str(args[0][0])
+            caption = str(args[0][1])
+        elif len(args) >= 2:
+            media_url = str(args[0])
+            caption = str(args[1])
+        elif len(args) == 1:
+            media_url = str(args[0])
+            caption = ""
+        else:
+            raise TypeError(f"FastPathMediaIntent expected (url, caption) or url, caption; got {args}")
+
+        instance = super().__new__(cls, (media_url, caption))
+        instance.media_url = media_url
+        instance.caption = caption
+        instance.media_type = media_type
+        return instance
+
+    def __getitem__(self, item):
+        if item == 2:
+            return self.media_type
+        return super().__getitem__(item)
+
+    def __repr__(self) -> str:
+        return f"FastPathMediaIntent(url={self.media_url!r}, caption={self.caption!r}, media_type={self.media_type!r})"
+
+
+class _AudioFileStream:
+    """
+    Zero-RAM streaming wrapper around an open binary file.
+    Tracks file position and allows tell() even after close for post-transmission verification.
+    """
+    def __init__(self, raw_file: Any, file_size: int):
+        self._raw = raw_file
+        self._file_size = file_size
+        self._last_pos = 0
+
+    def read(self, *args, **kwargs) -> bytes:
+        chunk = self._raw.read(*args, **kwargs)
+        self._last_pos = self._raw.tell()
+        return chunk
+
+    def seek(self, offset: int, whence: int = os.SEEK_SET) -> int:
+        res = self._raw.seek(offset, whence)
+        self._last_pos = self._raw.tell()
+        return res
+
+    def tell(self) -> int:
+        if not self._raw.closed:
+            return self._raw.tell()
+        return self._last_pos
+
+    def close(self) -> None:
+        if not self._raw.closed:
+            self._last_pos = self._raw.tell()
+            self._raw.close()
+
+    @property
+    def closed(self) -> bool:
+        return self._raw.closed
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._raw, name)
+
+
 class TelegramBot:
     def __init__(self, ai_agent: AiAgentService, ssh_client: SshClient):
         self.ai_agent = ai_agent
@@ -84,8 +170,8 @@ class TelegramBot:
         re.IGNORECASE,
     )
 
-    def _detect_fastpath_media_download(self, text: str) -> Optional[Tuple[str, str]]:
-        """Phát hiện ý định tải video trực tiếp để kích hoạt Fast-path bypass LLM."""
+    def _detect_fastpath_media_download(self, text: str) -> Optional[FastPathMediaIntent]:
+        """Phát hiện ý định tải video/audio trực tiếp để kích hoạt Fast-path bypass LLM."""
         url_match = self._MEDIA_URL_REGEX.search(text)
         if not url_match:
             return None
@@ -96,9 +182,9 @@ class TelegramBot:
         remaining_text = text.replace(raw_url, "").strip().lower()
         clean_remaining = remaining_text.strip(" \t\r\n.,;:!?()[]{}<>\"'…*`~")
 
-        # TH 1: Chỉ gửi độc nhất link video (kể cả khi bao bọc bởi ngoặc <>, [], (), {})
+        # TH 1: Chỉ gửi độc nhất link media -> Mặc định tải Video
         if not clean_remaining:
-            return media_url, ""
+            return FastPathMediaIntent(media_url, "", media_type="video")
 
         # TH 2: Ý định phủ định (tuyệt đối không tải) -> Nhường AI Agent
         negative_keywords = (
@@ -108,6 +194,12 @@ class TelegramBot:
             "ko tải", "ko tai", "k tải", "k tai", "ko cần tải", "ko can tai",
             "đừng lưu", "dung luu", "không lưu", "khong luu",
             "đừng lấy", "dung lay", "không lấy", "khong lay",
+            "đừng lấy nhạc", "dung lay nhac", "không lấy nhạc", "khong lay nhac",
+            "đừng tải nhạc", "dung tai nhac", "không tải nhạc", "khong tai nhac",
+            "đừng tải mp3", "dung tai mp3", "không tải mp3", "khong tai mp3",
+            "không lấy audio", "khong lay audio", "đừng lấy audio", "dung lay audio",
+            "không tải audio", "khong tai audio", "đừng tải audio", "dung tai audio",
+            "đừng kéo nhạc", "dung keo nhac", "không kéo nhạc", "khong keo nhac",
         )
         if any(k in remaining_text for k in negative_keywords):
             return None
@@ -128,7 +220,30 @@ class TelegramBot:
         if any(k in remaining_text for k in analysis_keywords):
             return None
 
-        # TH 4: Có từ khóa thể hiện ý định tải video rõ ràng (loại bỏ từ đơn ambiguous: 'tai', 'lấy', 'lưu')
+        # TH 4: Ý định tải Audio / Âm thanh / MP3 rõ ràng (Ưu tiên kiểm tra trước Video)
+        audio_keywords = (
+            "tải mp3", "tai mp3", "down mp3", "download mp3", "lấy mp3", "lay mp3", "xin mp3", "xin link mp3",
+            "tải nhạc", "tai nhac", "lấy nhạc", "lay nhac", "down nhạc", "down nhac", "download nhạc", "download nhac",
+            "kéo nhạc", "keo nhac", "xin nhạc", "xin nhac",
+            "tải audio", "tai audio", "lấy audio", "lay audio", "down audio", "download audio", "xin audio", "lay file audio",
+            "tách nhạc", "tach nhac", "tách audio", "tach audio", "tách âm thanh", "tach am thanh",
+            "trích âm thanh", "trich am thanh", "trích xuất âm thanh", "trich xuat am thanh", "trích nhạc", "trich nhac",
+            "tải bài hát", "tai bai hat", "lấy bài hát", "lay bai hat", "xin bài hát", "xin bai hat",
+            "chuyển sang mp3", "chuyen sang mp3", "chuyển thành mp3", "chuyen thanh mp3",
+            "đổi sang mp3", "doi sang mp3", "sang mp3", "ra mp3", "thành mp3", "thanh mp3",
+            "chỉ lấy nhạc", "chi lay nhac", "chỉ lấy audio", "chi lay audio", "chỉ lấy mp3", "chi lay mp3",
+            "chỉ cần nhạc", "chi can nhac", "chỉ cần audio", "chi can audio", "chỉ cần mp3", "chi can mp3",
+            "nhạc tiktok", "nhac tiktok", "audio tiktok", "mp3 tiktok",
+            "nhạc youtube", "nhac youtube", "audio youtube", "mp3 youtube",
+            "nhạc facebook", "nhac facebook", "audio facebook", "mp3 facebook",
+            "nhạc chuông", "nhac chuong", "bản nhạc", "ban nhac",
+            "file mp3", "file nhạc", "file nhac", "file audio",
+            "mp3", "audio",
+        )
+        if any(k in remaining_text for k in audio_keywords):
+            return FastPathMediaIntent(media_url, remaining_text, media_type="audio")
+
+        # TH 5: Có từ khóa thể hiện ý định tải video rõ ràng
         download_keywords = (
             "tải", "down", "download", "save", "chuyển file",
             "tải video", "tải clip", "kéo video", "kéo clip", "tải về", "lấy video", "lấy clip", "lấy file",
@@ -139,7 +254,7 @@ class TelegramBot:
             "luu video", "luu clip", "luu ve",
         )
         if any(k in remaining_text for k in download_keywords):
-            return media_url, remaining_text
+            return FastPathMediaIntent(media_url, remaining_text, media_type="video")
 
         return None
 
@@ -562,6 +677,101 @@ class TelegramBot:
                     logger.warning("[TelegramBot] sendVideo error %d: %s", res.status_code, res.text)
         except Exception as e:
             logger.error("[TelegramBot] Failed sending video: %s", e, exc_info=True)
+        return False
+
+    async def send_audio(
+        self,
+        chat_id: str,
+        audio_path: Union[str, Path],
+        caption: Optional[str] = None,
+        title: Optional[str] = None,
+        performer: Optional[str] = None,
+        duration: int = 0,
+        parse_mode: Optional[str] = "HTML",
+        **kwargs: Any,
+    ) -> bool:
+        """
+        Gửi tệp âm thanh MP3 trực tiếp qua Telegram Bot API (/sendAudio)
+        với đầy đủ siêu dữ liệu (performer, title, duration) để Telegram hiển thị
+        Native Audio Player Card (Waveform + Play/Pause button).
+        Bảo toàn Zero-RAM streaming từ đĩa và Resilient Plain Text fallback với f.seek(0).
+        """
+        if not self.token or not audio_path:
+            return False
+
+        # Support flexible positional arguments (title, performer, duration, caption)
+        if isinstance(performer, (int, float)) and isinstance(duration, str):
+            title, performer, duration, caption = caption, title, int(performer), duration
+
+        try:
+            p = Path(audio_path)
+            if not p.exists() or not p.is_file():
+                logger.error("[TelegramBot] Audio file not found: %s", audio_path)
+                return False
+
+            file_size = p.stat().st_size
+            if file_size > 50 * 1024 * 1024:
+                logger.warning("[TelegramBot] Audio exceeds 50MB limit (%d bytes)", file_size)
+                return False
+
+            url = f"{self.api_url}/sendAudio"
+            data: Dict[str, Any] = {
+                "chat_id": chat_id,
+            }
+            if caption:
+                data["caption"] = caption[:1024]
+                if parse_mode:
+                    data["parse_mode"] = parse_mode
+            if duration > 0:
+                data["duration"] = str(duration)
+            if title:
+                data["title"] = str(title)[:256]
+            if performer:
+                data["performer"] = str(performer)[:256]
+
+            # Xác định MIME type phù hợp (chuẩn audio/mpeg cho mp3)
+            mime_type = "audio/mpeg"
+            suffix = p.suffix.lower()
+            if suffix == ".m4a":
+                mime_type = "audio/mp4"
+            elif suffix == ".ogg":
+                mime_type = "audio/ogg"
+            elif suffix == ".wav":
+                mime_type = "audio/wav"
+
+            stream = _AudioFileStream(open(p, "rb"), file_size)
+            try:
+                files = {"audio": (p.name, stream, mime_type)}
+                res = await self._http_client.post(url, data=data, files=files, timeout=120.0)
+
+                if res.status_code == 200:
+                    if stream.tell() < file_size:
+                        stream.seek(0, os.SEEK_END)
+                    logger.info("[TelegramBot] Audio successfully sent to %s (%s)", chat_id, audio_path)
+                    return True
+
+                # Resilient Fallback: Nếu Telegram báo lỗi parse entities, retry bằng Plain Text không tốn thêm RAM
+                if parse_mode and "can't parse entities" in res.text.lower():
+                    logger.warning("[TelegramBot] sendAudio HTML parse error (%s). Retrying as plain text...", res.text[:120])
+                    stream.seek(0)
+                    data.pop("parse_mode", None)
+                    if caption:
+                        data["caption"] = _strip_html_tags(caption)[:1024]
+                    files = {"audio": (p.name, stream, mime_type)}
+                    res2 = await self._http_client.post(url, data=data, files=files, timeout=120.0)
+                    if res2.status_code == 200:
+                        if stream.tell() < file_size:
+                            stream.seek(0, os.SEEK_END)
+                        logger.info("[TelegramBot] Audio successfully sent via plain text fallback to %s", chat_id)
+                        return True
+                    else:
+                        logger.warning("[TelegramBot] sendAudio fallback error %d: %s", res2.status_code, res2.text)
+                else:
+                    logger.warning("[TelegramBot] sendAudio error %d: %s", res.status_code, res.text)
+            finally:
+                stream.close()
+        except Exception as e:
+            logger.error("[TelegramBot] Failed sending audio: %s", e, exc_info=True)
         return False
 
     async def delete_message(self, chat_id: str, message_id: int) -> bool:
@@ -1568,18 +1778,81 @@ class TelegramBot:
         media_intent = self._detect_fastpath_media_download(text)
         if media_intent:
             media_url, custom_caption = media_intent
-            logger.info("[TelegramBot] Fast-path intercepted media download URL: %s", media_url)
+            media_type = getattr(media_intent, "media_type", "video")
+            logger.info("[TelegramBot] Fast-path intercepted media download URL: %s (type=%s)", media_url, media_type)
+
+            if media_type == "audio":
+                status_text = "⚡ <i>Tiểu Bảo Bảo đang trích xuất âm thanh MP3 trực tiếp cho anh Mạnh, đợi em một xíu nhé...</i>"
+            else:
+                status_text = "⚡ <i>Tiểu Bảo Bảo đang tải video trực tiếp cho anh Mạnh, đợi em một xíu nhé...</i>"
+
             status_msg = await self.send_message_with_result(
                 chat_id,
-                "⚡ <i>Tiểu Bảo Bảo đang tải video trực tiếp cho anh Mạnh, đợi em một xíu nhé...</i>"
+                status_text,
             )
             media_item = None
             try:
                 from app.services.media_downloader import MultiTierMediaPipeline, VideoTooLargeError
                 pipeline = MultiTierMediaPipeline(http_client=self._http_client)
-                media_item = await pipeline.download(media_url)
 
-                if media_item.media_type == "video" and media_item.file_path:
+                if media_type == "audio":
+                    media_item = await pipeline.download_audio(media_url)
+                else:
+                    media_item = await pipeline.download(media_url)
+
+                if media_item.media_type == "audio" and media_item.file_path:
+                    raw_title = media_item.title or "Audio Track"
+                    if len(raw_title) > 350:
+                        raw_title = raw_title[:347] + "..."
+                    safe_title = html.escape(raw_title)
+                    safe_author = html.escape(media_item.author or "Unknown")
+                    file_size = media_item.file_size
+                    total_mb = file_size / (1024 * 1024)
+
+                    caption = (
+                        f"🎵 <b>{safe_title}</b>\n"
+                        f"👤 Nghệ sĩ / Kênh: <code>@{safe_author}</code>\n"
+                        f"⏱ Thời lượng: {media_item.duration}s | 📦 Dung lượng: {total_mb:.1f} MB\n\n"
+                        f"✨ <i>Tiểu Bảo Bảo đã trích xuất thành công âm thanh MP3 chất lượng cao cho anh Mạnh!</i>"
+                    )
+
+                    if file_size <= 50 * 1024 * 1024:
+                        sent = await self.send_audio(
+                            chat_id=chat_id,
+                            audio_path=media_item.file_path,
+                            caption=caption,
+                            title=raw_title,
+                            performer=media_item.author or "Unknown",
+                            duration=media_item.duration,
+                        )
+                        if not sent:
+                            logger.warning("[TelegramBot] send_audio failed, falling back to send_document_file")
+                            await self.send_document_file(
+                                chat_id=chat_id,
+                                file_path=media_item.file_path,
+                                filename=Path(media_item.file_path).name,
+                                caption=caption,
+                            )
+                    else:
+                        # Audio > 50MB: Kích hoạt liên kết tải trực tiếp qua media_storage_manager
+                        clean_filename = Path(media_item.file_path).name
+                        download_rec = media_storage_manager.publish_download_item(
+                            file_path=media_item.file_path,
+                            filename=clean_filename,
+                            title=raw_title,
+                            duration=media_item.duration,
+                            ttl_seconds=4 * 3600,
+                        )
+                        media_item.is_temp_file = False
+                        await self.send_message(
+                            chat_id,
+                            f"📦 <b>Tệp âm thanh MP3 có dung lượng lớn ({total_mb:.1f} MB)!</b>\n\n"
+                            f"🔗 Anh Mạnh có thể tải trực tiếp file MP3 nguyên khối tại:\n"
+                            f"🌐 <b>Link Internet (Ngrok):</b> {download_rec.internet_url}\n"
+                            f"🏠 <b>Link Nội Bộ (LAN):</b> {download_rec.lan_url}\n\n"
+                            f"<i>(Đường link trực tiếp có hiệu lực trong vòng 4 giờ)</i>"
+                        )
+                elif media_item.media_type == "video" and media_item.file_path:
                     raw_title = media_item.title or "Video"
                     if len(raw_title) > 350:
                         raw_title = raw_title[:347] + "..."
@@ -1711,7 +1984,8 @@ class TelegramBot:
                 return
             except Exception as dl_err:
                 logger.error("[TelegramBot] Fast-path media download error: %s", dl_err, exc_info=True)
-                await self.send_message(chat_id, f"❌ Xin lỗi anh Mạnh, em gặp sự cố khi tải video ({dl_err}). Em sẽ chuyển tiếp yêu cầu sang AI Agent.")
+                action_name = "trích xuất âm thanh MP3" if media_type == "audio" else "tải video"
+                await self.send_message(chat_id, f"❌ Xin lỗi anh Mạnh, em gặp sự cố khi {action_name} ({dl_err}). Em sẽ chuyển tiếp yêu cầu sang AI Agent.")
                 if status_msg and status_msg.get("message_id"):
                     await self.delete_message(chat_id, status_msg["message_id"])
             finally:

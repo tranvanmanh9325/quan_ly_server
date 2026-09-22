@@ -31,6 +31,7 @@ DIRECT_RETURN_TOOLS = frozenset({
     "server_capture_screenshot",
     "browser_take_screenshot",
     "download_media_video",
+    "download_media_audio",
 })
 
 SCREENSHOT_TOOLS = frozenset({
@@ -178,6 +179,7 @@ def classify_action_risk(tool_name: str, tool_args: Optional[Dict[str, Any]] = N
         "get_server_active_sessions",
         "server_capture_screenshot",
         "download_media_video",
+        "download_media_audio",
         "read_archive_file",
         "browser_search_google",
         "browser_navigate",
@@ -366,6 +368,7 @@ class AgentToolExecutor:
     }
     _TOOL_CLUSTER_MEDIA = {
         "download_media_video",
+        "download_media_audio",
         "run_command",
     }
     _TOOL_CLUSTER_CORE = {
@@ -373,6 +376,7 @@ class AgentToolExecutor:
         "get_weather",
         "get_server_location",
         "download_media_video",
+        "download_media_audio",
         "browser_search_google",
         "remember_for_later",
     }
@@ -415,7 +419,10 @@ class AgentToolExecutor:
             "tiktok", "youtube", "douyin", "reels", "reel", "video", "clip", "mp4",
             "shorts", "down video", "lưu clip", "tải video", "tải clip", "tải về",
             "download video", "download clip", "tai video", "tai clip", "tai ve",
-            "lay video", "lay clip", "keo video"
+            "lay video", "lay clip", "keo video",
+            "tải mp3", "tai mp3", "tách nhạc", "tach nhac", "lấy audio", "lay audio",
+            "nhạc tiktok", "nhac tiktok", "audio", "mp3", "bài hát", "bai hat", "nhạc", "nhac",
+            "tải audio", "tai audio", "download audio", "download mp3"
         ))
 
         is_server = bool(self._SHORT_SERVER_RE.search(q)) or any(k in q for k in (
@@ -485,7 +492,7 @@ class AgentToolExecutor:
 
         if len(selected) > max_tools:
             priority_order = [
-                "run_command", "download_media_video", "get_weather", "read_archive_file",
+                "run_command", "download_media_video", "download_media_audio", "get_weather", "read_archive_file",
                 "extract_archive_file", "get_server_location", "browser_navigate",
                 "browser_search_google", "facebook_get_messages", "facebook_send_reply",
                 "server_capture_screenshot", "get_server_active_sessions", "remember_for_later",
@@ -571,7 +578,7 @@ class AgentToolExecutor:
                 "type": "function",
                 "function": {
                     "name": "download_media_video",
-                    "description": "Tải video đa nền tảng (TikTok, YouTube, YouTube Shorts, Facebook, Facebook Reels, Threads) gửi Telegram.",
+                    "description": "Tải video hoặc audio đa nền tảng (TikTok, YouTube, YouTube Shorts, Facebook, Facebook Reels, Threads) gửi Telegram.",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -582,6 +589,33 @@ class AgentToolExecutor:
                             "caption": {
                                 "type": "string",
                                 "description": "Chú thích kèm video.",
+                            },
+                            "media_type": {
+                                "type": "string",
+                                "enum": ["video", "audio"],
+                                "default": "video",
+                                "description": "Loại media cần tải: 'video' (mặc định) hoặc 'audio' (trích xuất âm thanh MP3 chất lượng cao).",
+                            },
+                        },
+                        "required": ["url"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "download_media_audio",
+                    "description": "Tải âm thanh MP3/audio chất lượng cao (320kbps) từ video đa nền tảng (TikTok, YouTube, Facebook, Threads...) và gửi native audio player qua Telegram.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "url": {
+                                "type": "string",
+                                "description": "URL video/audio cần tải hoặc tách nhạc (TikTok, YouTube, Facebook...).",
+                            },
+                            "caption": {
+                                "type": "string",
+                                "description": "Chú thích kèm tệp audio.",
                             },
                         },
                         "required": ["url"],
@@ -1729,30 +1763,97 @@ class AgentToolExecutor:
                     return "🖥️ Đã chụp và gửi ảnh màn hình máy chủ qua Telegram!"
                 return "Đã thực hiện chụp màn hình máy chủ."
 
-            if tool_name == "download_media_video":
+            if tool_name in ("download_media_video", "download_media_audio"):
                 url = (tool_args.get("url") or "").strip()
                 caption_override = tool_args.get("caption") or ""
-                if not url:
-                    return "❌ Lỗi: Vui lòng cung cấp đường dẫn (URL) video hợp lệ."
+                req_media_type = tool_args.get("media_type")
+                if tool_name == "download_media_audio" or req_media_type == "audio":
+                    media_type = "audio"
+                else:
+                    media_type = (req_media_type or "video").lower()
 
-                logger.info("[AiAgentTools] Executing download_media_video for URL: %s", url)
+                if not url:
+                    return f"❌ Lỗi: Vui lòng cung cấp đường dẫn (URL) {'âm thanh (audio/mp3)' if media_type == 'audio' else 'video'} hợp lệ."
+
+                logger.info("[AiAgentTools] Executing %s (media_type=%s) for URL: %s", tool_name, media_type, url)
                 if self.telegram_bot and chat_id:
-                    await self.telegram_bot.send_chat_action(chat_id, "upload_video")
+                    chat_action = "upload_voice" if media_type == "audio" else "upload_video"
+                    await self.telegram_bot.send_chat_action(chat_id, chat_action)
 
                 media_item = None
                 try:
                     from app.services.media_downloader import MultiTierMediaPipeline, VideoTooLargeError
                     client = getattr(self.telegram_bot, "_http_client", None)
                     pipeline = MultiTierMediaPipeline(http_client=client)
-                    media_item = await pipeline.download(url)
+                    if media_type == "audio":
+                        media_item = await pipeline.download_audio(url)
+                    else:
+                        media_item = await pipeline.download(url)
 
-                    raw_title = media_item.title or "Video"
+                    raw_title = media_item.title or ("Audio" if media_type == "audio" else "Video")
                     if len(raw_title) > 350:
                         raw_title = raw_title[:347] + "..."
                     safe_title = html.escape(raw_title)
                     safe_author = html.escape(media_item.author or "Unknown")
 
-                    if media_item.media_type == "video" and media_item.file_path:
+                    if (media_item.media_type == "audio" or media_type == "audio") and media_item.file_path:
+                        file_size = getattr(media_item, "file_size", 0) or 0
+                        if not file_size and media_item.file_path and os.path.exists(media_item.file_path):
+                            file_size = os.path.getsize(media_item.file_path)
+                        total_mb = file_size / (1024 * 1024) if file_size else 0.0
+
+                        if file_size <= 50 * 1024 * 1024:
+                            cap = caption_override or (
+                                f"🎵 <b>{safe_title}</b>\n"
+                                f"👤 Nghệ sĩ / Kênh: <code>@{safe_author}</code>\n"
+                                f"⏱ Thời lượng: {media_item.duration}s | 📦 Dung lượng: {total_mb:.1f} MB\n\n"
+                                f"✨ <i>Tiểu Bảo Bảo đã trích xuất âm thanh MP3 320kbps chất lượng cao cho anh Mạnh!</i>"
+                            )
+                            if self.telegram_bot and chat_id:
+                                sent = await self.telegram_bot.send_audio(
+                                    chat_id=chat_id,
+                                    audio_path=media_item.file_path,
+                                    title=media_item.title,
+                                    performer=media_item.author,
+                                    duration=media_item.duration,
+                                    caption=cap,
+                                    parse_mode="HTML",
+                                )
+                                if not sent and hasattr(self.telegram_bot, "send_document_file"):
+                                    await self.telegram_bot.send_document_file(
+                                        chat_id=chat_id,
+                                        file_path=media_item.file_path,
+                                        filename=Path(media_item.file_path).name,
+                                        caption=cap,
+                                    )
+                            return f"🎵 Em đã tải và trích xuất âm thanh MP3 **{media_item.title}** ({total_mb:.1f} MB) thành công và gửi trực tiếp qua Telegram cho anh Mạnh rồi ạ!"
+                        else:
+                            clean_filename = Path(media_item.file_path).name
+                            download_rec = media_storage_manager.publish_download_item(
+                                file_path=media_item.file_path,
+                                filename=clean_filename,
+                                title=raw_title,
+                                duration=media_item.duration,
+                                ttl_seconds=4 * 3600,
+                            )
+                            media_item.is_temp_file = False
+                            if self.telegram_bot and chat_id:
+                                await self.telegram_bot.send_message(
+                                    chat_id,
+                                    f"📦 <b>Tệp âm thanh chất lượng cao có dung lượng lớn ({total_mb:.1f} MB, vượt quá 50MB của Telegram)!</b>\n\n"
+                                    f"🔗 Anh Mạnh có thể tải trực tiếp file MP3 tại:\n"
+                                    f"🌐 <b>Link Internet (Ngrok):</b> {download_rec.internet_url}\n"
+                                    f"🏠 <b>Link Nội Bộ (LAN):</b> {download_rec.lan_url}\n\n"
+                                    f"<i>(Đường link trực tiếp có hiệu lực trong vòng 4 giờ)</i>"
+                                )
+                            return (
+                                f"🎵 Em đã tải file MP3 **{raw_title}** ({total_mb:.1f} MB) thành công!\n"
+                                f"📦 Do dung lượng tệp vượt quá 50MB của Telegram, em đã tạo liên kết tải trực tiếp cho anh Mạnh:\n"
+                                f"- Internet: {download_rec.internet_url}\n"
+                                f"- LAN nội bộ: {download_rec.lan_url}"
+                            )
+
+                    elif media_item.media_type == "video" and media_item.file_path:
                         file_size = media_item.file_size
                         total_mb = file_size / (1024 * 1024)
 
@@ -1877,10 +1978,10 @@ class AgentToolExecutor:
 
                     return f"✅ Đã tải dữ liệu media từ {url} thành công."
                 except VideoTooLargeError as v_err:
-                    return f"⚠️ Video có dung lượng vượt quá giới hạn 50MB của Telegram Bot ({v_err}). Anh Mạnh có thể xem hoặc tải trực tiếp tại: {url}"
+                    return f"⚠️ Media có dung lượng vượt quá giới hạn 50MB của Telegram Bot ({v_err}). Anh Mạnh có thể xem hoặc tải trực tiếp tại: {url}"
                 except Exception as dl_err:
-                    logger.error("[AiAgentTools] download_media_video error: %s", dl_err, exc_info=True)
-                    return f"❌ Xin lỗi anh Mạnh, em gặp sự cố khi tải video từ liên kết này ({dl_err})."
+                    logger.error("[AiAgentTools] %s error: %s", tool_name, dl_err, exc_info=True)
+                    return f"❌ Xin lỗi anh Mạnh, em gặp sự cố khi tải {'âm thanh' if media_type == 'audio' else 'video'} từ liên kết này ({dl_err})."
                 finally:
                     if media_item:
                         media_item.cleanup()
@@ -2300,6 +2401,8 @@ class AgentToolExecutor:
         "facebook_view_profile",
         "server_capture_screenshot",
         "browser_take_screenshot",
+        "download_media_video",
+        "download_media_audio",
     })
 
     # Fine-grained browser tools: produce a screenshot observation that the LLM

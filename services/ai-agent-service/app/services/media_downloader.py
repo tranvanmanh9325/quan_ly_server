@@ -395,6 +395,74 @@ class MultiTierMediaPipeline:
             logger.error("[Tier 1: TikWM] Unexpected failure: %s", err, exc_info=True)
             return None
 
+    async def _download_tikwm_audio(self, url: str) -> Optional[MediaItem]:
+        """
+        Trích xuất MP3 TikTok/Douyin trực tiếp qua TikWM API (data.music / data.music_info).
+        Hỗ trợ cả bài đăng dạng album ảnh slideshow (data.images).
+        """
+        logger.info("[Tier 1: TikWM Audio] Initiating audio extraction for: %s", url)
+        client = await self._get_client()
+        api_endpoint = "https://www.tikwm.com/api/"
+
+        try:
+            resp = await client.post(api_endpoint, data={"url": url, "hd": 1}, timeout=10.0)
+            if resp.status_code != 200:
+                logger.warning("[Tier 1: TikWM Audio] HTTP %d received from TikWM API", resp.status_code)
+                return None
+
+            res_json = resp.json()
+            if res_json.get("code") != 0 or "data" not in res_json:
+                logger.warning("[Tier 1: TikWM Audio] API error: %s", res_json.get("msg"))
+                return None
+
+            data = res_json["data"]
+            music_info = data.get("music_info") or {}
+            author_info = data.get("author") or {}
+
+            # Ưu tiên lấy stream MP3 từ data.music hoặc data.music_info.play
+            music_url = data.get("music") or music_info.get("play")
+            if not music_url:
+                logger.warning("[Tier 1: TikWM Audio] No audio stream URL found in TikWM response")
+                return None
+
+            # Chuẩn hóa URL tuyệt đối để phòng trường hợp TikWM trả về relative path
+            music_url = urllib.parse.urljoin("https://www.tikwm.com", music_url)
+
+            title = music_info.get("title") or data.get("title") or "TikTok Audio"
+            performer = (
+                music_info.get("author")
+                or author_info.get("nickname")
+                or author_info.get("unique_id")
+                or "TikTok Creator"
+            )
+            duration = int(music_info.get("duration") or data.get("duration") or 0)
+
+            # Ghi stream trực tiếp từng chunk 64KB ra tệp .mp3 tạm
+            temp_file_path, file_size = await self._stream_url_to_file(
+                music_url, client, suffix=".mp3"
+            )
+
+            return MediaItem(
+                file_path=temp_file_path,
+                title=title,
+                author=performer,
+                duration=duration,
+                media_type="audio",
+                source_url=url,
+                file_size=file_size,
+                direct_stream_url=music_url,
+                is_temp_file=True,
+            )
+
+        except VideoTooLargeError:
+            raise
+        except (httpx.RequestError, asyncio.TimeoutError) as err:
+            logger.warning("[Tier 1: TikWM Audio] Request failure: %s", err)
+            return None
+        except Exception as err:
+            logger.error("[Tier 1: TikWM Audio] Unexpected failure: %s", err, exc_info=True)
+            return None
+
     # ──────────────────────────────────────────────────────────────────────────
     # TẦNG 2: Robust Universal Engine (yt-dlp)
     # ──────────────────────────────────────────────────────────────────────────
@@ -508,6 +576,138 @@ class MultiTierMediaPipeline:
         except Exception as err:
             shutil.rmtree(temp_dir, ignore_errors=True)
             logger.error("[Tier 2: yt-dlp] Extraction failed: %s", err, exc_info=True)
+            return None
+
+    async def _download_ytdlp_audio(self, url: str) -> Optional[MediaItem]:
+        """Tải âm thanh chuẩn hóa MP3 320kbps cho YouTube, Facebook Reels/Watch, Douyin..."""
+        logger.info("[Tier 2: yt-dlp Audio] Initiating audio extraction for: %s", url)
+
+        async with self._ytdlp_semaphore:
+            loop = asyncio.get_running_loop()
+            future = loop.run_in_executor(None, self._sync_ytdlp_audio_download, url)
+            try:
+                return await asyncio.shield(future)
+            except asyncio.CancelledError:
+                def _cleanup_orphaned(f):
+                    try:
+                        if not f.cancelled():
+                            res = f.result()
+                            if res:
+                                res.cleanup()
+                    except Exception:
+                        pass
+                future.add_done_callback(_cleanup_orphaned)
+                raise
+
+    def _sync_ytdlp_audio_download(self, url: str) -> Optional[MediaItem]:
+        try:
+            import yt_dlp
+        except ImportError:
+            logger.warning("[Tier 2: yt-dlp Audio] yt-dlp module not installed.")
+            return None
+
+        temp_dir = tempfile.mkdtemp(prefix="media_ytdlp_audio_", dir=str(TEMP_MEDIA_DIR))
+        out_tmpl = os.path.join(temp_dir, "audio_%(id)s.%(ext)s")
+
+        def _match_filter_duration(info_dict: Dict[str, Any], *, incomplete: bool = False) -> Optional[str]:
+            duration = info_dict.get("duration")
+            if duration and duration > 7200:
+                return "Thời lượng âm thanh vượt quá giới hạn an toàn tối đa 2 giờ của hệ thống."
+            return None
+
+        ydl_opts: Dict[str, Any] = {
+            "format": "bestaudio/best",
+            "outtmpl": out_tmpl,
+            "source_address": "0.0.0.0",
+            "noplaylist": True,
+            "socket_timeout": 30,
+            "quiet": True,
+            "no_warnings": True,
+            "nocheckcertificate": True,
+            "match_filter": _match_filter_duration,
+            "postprocessors": [
+                {
+                    "key": "FFmpegExtractAudio",
+                    "preferredcodec": "mp3",
+                    "preferredquality": "320",
+                }
+            ],
+            "postprocessor_args": {
+                "FFmpegExtractAudio": [
+                    "-id3v2_version", "3",
+                ],
+            },
+            "http_headers": {
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+                )
+            },
+        }
+
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+                if not info:
+                    shutil.rmtree(temp_dir, ignore_errors=True)
+                    return None
+
+                downloaded_file = ydl.prepare_filename(info)
+                base, _ = os.path.splitext(downloaded_file)
+                mp3_candidate = f"{base}.mp3"
+
+                final_path = None
+                if os.path.exists(mp3_candidate):
+                    final_path = mp3_candidate
+                else:
+                    mp3_files = list(Path(temp_dir).glob("*.mp3"))
+                    if mp3_files:
+                        final_path = str(mp3_files[0])
+                    elif os.path.exists(downloaded_file):
+                        final_path = downloaded_file
+
+                if not final_path or not os.path.exists(final_path):
+                    residual_files = list(Path(temp_dir).iterdir())
+                    shutil.rmtree(temp_dir, ignore_errors=True)
+                    if residual_files:
+                        logger.warning("[Tier 2: yt-dlp Audio] Incomplete download detected (%s).", residual_files)
+                        raise MediaPipelineError(f"Tải audio không hoàn tất, phát hiện tệp dở dang: {residual_files}")
+                    return None
+
+                size = os.path.getsize(final_path)
+                title = info.get("track") or info.get("title") or "Audio Track"
+                author = (
+                    info.get("artist")
+                    or info.get("creator")
+                    or info.get("uploader")
+                    or info.get("channel")
+                    or "Unknown Artist"
+                )
+
+                return MediaItem(
+                    file_path=final_path,
+                    title=title,
+                    author=author,
+                    duration=int(info.get("duration", 0)),
+                    media_type="audio",
+                    source_url=url,
+                    file_size=size,
+                    is_temp_file=True,
+                )
+
+        except VideoTooLargeError:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            raise
+        except MediaPipelineError:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            raise
+        except yt_dlp.utils.DownloadError as err:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            logger.warning("[Tier 2: yt-dlp Audio] Download error: %s", err)
+            return None
+        except Exception as err:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            logger.error("[Tier 2: yt-dlp Audio] Extraction failed: %s", err, exc_info=True)
             return None
 
     # ──────────────────────────────────────────────────────────────────────────
@@ -779,13 +979,18 @@ class MultiTierMediaPipeline:
     # Tiện ích Zero-RAM Chunked Disk Streaming
     # ──────────────────────────────────────────────────────────────────────────
 
-    async def _stream_url_to_file(self, url: str, client: httpx.AsyncClient) -> Tuple[str, int]:
+    async def _stream_url_to_file(
+        self,
+        url: str,
+        client: httpx.AsyncClient,
+        suffix: str = ".mp4",
+    ) -> Tuple[str, int]:
         """Ghi stream trực tiếp từng chunk 64KB ra đĩa SSD tạm, bảo vệ RAM 3.2GB."""
         async with client.stream("GET", url) as response:
             if response.status_code != 200:
                 raise MediaPipelineError(f"HTTP stream status {response.status_code}")
 
-            with tempfile.NamedTemporaryFile(suffix=".mp4", dir=str(TEMP_MEDIA_DIR), delete=False) as tf:
+            with tempfile.NamedTemporaryFile(suffix=suffix, dir=str(TEMP_MEDIA_DIR), delete=False) as tf:
                 temp_path = tf.name
 
             total_bytes = 0
@@ -886,3 +1091,65 @@ class MultiTierMediaPipeline:
         finally:
             # Chủ động thu hồi RAM nền (glibc malloc_trim + gc.collect) sau khi xử lý media xong
             await reclaim_memory_background(delay_seconds=0.2)
+
+    async def download_audio(self, url: str) -> MediaItem:
+        """
+        Trích xuất và tải âm thanh chất lượng cao (MP3) từ các nền tảng mạng xã hội:
+          - Tự động dọn dẹp các tệp tạm mồ côi cũ hơn 10 phút.
+          - Tiền xử lý Facebook URLs: Canonicalize + Resolve redirect nếu là dạng rút gọn.
+          - Tier 1 (TikTok / Douyin): TikWM API direct MP3 stream (data.music / data.music_info).
+            Siêu tốc < 0.5s, 0% CPU transcoding, giữ nguyên chất lượng gốc từ TikTok CDN.
+            Hỗ trợ cả bài đăng album ảnh slideshow (data.images).
+          - Tier 2 (Universal - YouTube, Facebook Reels/Watch, Douyin, X/Twitter...):
+            yt-dlp với format 'bestaudio/best' + postprocessor 'FFmpegExtractAudio' (MP3 320kbps CBR / ID3v2.3).
+          - Zero-RAM & Zero-Disk Leak: Chunked streaming 64KB và tự động dọn dẹp file tạm.
+          - Trả về MediaItem với media_type='audio', sẵn sàng gửi qua Telegram /sendAudio.
+        """
+        # Tự động dọn dẹp các tệp tạm mồ côi cũ hơn 10 phút trước khi bắt đầu phiên mới
+        cleanup_expired_media(max_age_seconds=600)
+
+        clean_url = url.strip()
+
+        try:
+            # 1. Tiền xử lý Facebook URLs: Kết hợp 2 tầng (Tầng 1 Tĩnh -> Tầng 2 Động)
+            target_url = canonicalize_facebook_url(clean_url)
+            if self._facebook_redirect_regex.search(target_url):
+                resolved = await self._resolve_redirect_url(target_url)
+                target_url = canonicalize_facebook_url(resolved)
+
+            # 2. Định tuyến TikTok / Douyin (Tier 1: TikWM Direct MP3 -> Fallback Tier 2: yt-dlp)
+            is_tiktok_douyin = bool(self._tiktok_regex.search(clean_url))
+
+            if is_tiktok_douyin:
+                try:
+                    item = await self._download_tikwm_audio(clean_url)
+                    if item:
+                        item.source_url = clean_url
+                        logger.info("[Pipeline Audio] Tier 1 (TikWM Audio) succeeded!")
+                        return item
+                except VideoTooLargeError:
+                    raise
+                except Exception as err:
+                    logger.warning("[Pipeline Audio] Tier 1 failed, falling back to Tier 2: %s", err)
+
+            # 3. Tier 2: yt-dlp Universal Audio Downloader (YouTube, Facebook Reels/Watch, Douyin...)
+            try:
+                item = await self._download_ytdlp_audio(target_url)
+                if item:
+                    item.source_url = clean_url
+                    logger.info("[Pipeline Audio] Tier 2 (yt-dlp Audio) succeeded for URL: %s", target_url)
+                    return item
+            except VideoTooLargeError:
+                raise
+            except Exception as err:
+                logger.warning("[Pipeline Audio] Tier 2 audio extraction failed: %s", err)
+
+            raise MediaPipelineError(f"Không thể trích xuất âm thanh từ liên kết: {clean_url}")
+        finally:
+            # Chủ động thu hồi RAM nền (glibc malloc_trim + gc.collect) sau khi xử lý media xong
+            await reclaim_memory_background(delay_seconds=0.2)
+
+
+# Alias tương thích ngược cho các service tiêu thụ
+MediaDownloaderService = MultiTierMediaPipeline
+

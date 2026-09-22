@@ -1,44 +1,64 @@
 import axios from 'axios';
 import { getToken, removeToken } from './auth';
 
-/**
- * REQUEST interceptor — attaches the JWT from localStorage to every axios request.
- * Must be registered before any API call is made; import this module once at app
- * entry point (App.jsx) to guarantee that ordering.
- */
-axios.interceptors.request.use(config => {
-  const token = getToken();
-  if (token) {
-    config.headers['Authorization'] = `Bearer ${token}`;
-  }
-  return config;
-});
+let isSetup = false;
+let responseInterceptorId = null;
 
 /**
- * RESPONSE interceptor — clears the token and hard-redirects to /login whenever
- * the backend returns 401 (missing token, expired token, etc.).
- * window.location.replace() prevents the login page from being pushed onto
- * the browser history stack (so Back button won't return to the auth-failed page).
- *
- * Import this module once at the app entry point (App.jsx) to ensure the
- * interceptor is registered before any API call is made.
+ * Robust, explicit setup function to register request & response interceptors.
+ * Callable multiple times safely (idempotent).
  */
-const responseInterceptorId = axios.interceptors.response.use(
-  res => res,
-  err => {
-    if (err.response?.status === 401) {
-      removeToken();
-      // Only hard-redirect if NOT already on the login page.
-      // A hard reload while on /login causes an infinite reload loop because
-      // App.jsx starts polling effects even before the user is authenticated.
-      if (!window.location.pathname.startsWith('/login')) {
-        window.location.replace('/login');
+export const setupAxiosInterceptors = () => {
+  if (isSetup) return;
+  isSetup = true;
+
+  // 1. Sync existing token to common headers immediately
+  const initialToken = getToken();
+  if (initialToken) {
+    axios.defaults.headers.common['Authorization'] = `Bearer ${initialToken}`;
+  }
+
+  // 2. Dynamic REQUEST interceptor — guarantees token is on every outgoing request
+  axios.interceptors.request.use(config => {
+    const token = getToken();
+    if (token) {
+      if (config.headers && typeof config.headers.set === 'function') {
+        config.headers.set('Authorization', `Bearer ${token}`);
+      } else {
+        config.headers = config.headers || {};
+        config.headers['Authorization'] = `Bearer ${token}`;
       }
     }
-    return Promise.reject(err);
-  }
-);
+    return config;
+  });
 
-// Exposed for testing teardown — eject the interceptors when no longer needed.
-export const ejectAuthInterceptor = () =>
-  axios.interceptors.response.eject(responseInterceptorId);
+  // 3. RESPONSE interceptor — handles 401 Unauthorized gracefully
+  responseInterceptorId = axios.interceptors.response.use(
+    res => res,
+    err => {
+      if (err.response?.status === 401) {
+        // Do not intercept 401 from login itself
+        const isLogin = err.config?.url?.includes('/api/auth/login');
+        if (!isLogin) {
+          removeToken();
+          if (!window.location.pathname.startsWith('/login')) {
+            window.location.replace('/login');
+          }
+        }
+      }
+      return Promise.reject(err);
+    }
+  );
+};
+
+// Auto-run once on module evaluation
+setupAxiosInterceptors();
+
+// Exposed for testing teardown
+export const ejectAuthInterceptor = () => {
+  if (responseInterceptorId !== null) {
+    axios.interceptors.response.eject(responseInterceptorId);
+    responseInterceptorId = null;
+    isSetup = false;
+  }
+};

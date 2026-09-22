@@ -105,11 +105,6 @@ export default defineConfig({
           ],
         },
       },
-      // Aggressive tree-shaking — assumes source modules have no side effects
-      treeshake: {
-        moduleSideEffects: false,
-        propertyReadSideEffects: false,
-      },
     },
   }
 })

@@ -1,8 +1,26 @@
+import axios from 'axios';
+
 const TOKEN_KEY = 'srvdash_token';
 
-export const getToken    = () => localStorage.getItem(TOKEN_KEY);
-export const setToken    = (token) => localStorage.setItem(TOKEN_KEY, token);
-export const removeToken = () => localStorage.removeItem(TOKEN_KEY);
+export const getToken = () => localStorage.getItem(TOKEN_KEY);
+
+export const setToken = (token) => {
+  localStorage.setItem(TOKEN_KEY, token);
+  if (token) {
+    axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+  }
+};
+
+export const removeToken = () => {
+  localStorage.removeItem(TOKEN_KEY);
+  delete axios.defaults.headers.common['Authorization'];
+};
+
+// Initialize default header if token already exists in localStorage
+const existingToken = getToken();
+if (existingToken) {
+  axios.defaults.headers.common['Authorization'] = `Bearer ${existingToken}`;
+}
 
 /**
  * Decodes the payload section of a JWT without a library.

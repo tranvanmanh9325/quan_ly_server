@@ -28,8 +28,8 @@ const RouteLoader = () => (
     <div style={{ width: '32px', height: '32px', border: '3px solid rgba(255,255,255,0.1)', borderTopColor: '#3b82f6', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
   </div>
 );
-// Register the global axios 401 interceptor once at app startup (side-effect only import)
-import './utils/axiosInterceptor';
+import { setupAxiosInterceptors } from './utils/axiosInterceptor';
+setupAxiosInterceptors();
 import './index.css';
 import './App.css';
 import { 

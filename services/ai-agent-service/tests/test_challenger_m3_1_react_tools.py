@@ -62,6 +62,28 @@ from app.services.ai_agent import AiAgentService
 from app.services.media_storage_manager import DownloadRecord, media_storage_manager
 
 
+def _create_atomic_temp_file(
+    content: bytes = b"",
+    suffix: str = ".mp3",
+    prefix: str = "tmp_",
+    directory: Path | str = TEMP_MEDIA_DIR,
+) -> Path:
+    """Create an atomic temporary file, write initial payload, and close the file descriptor immediately.
+
+    Remediates CWE-377 / TOCTOU vulnerability from insecure temporary file creation.
+    Ensures zero descriptor leak and prevents Windows file-locking issues (PermissionError / WinError 32).
+    """
+    target_dir = Path(directory)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    fd, path_str = tempfile.mkstemp(suffix=suffix, prefix=prefix, dir=str(target_dir))
+    try:
+        if content:
+            os.write(fd, content)
+    finally:
+        os.close(fd)
+    return Path(path_str)
+
+
 class TestReActToolsParameterBoundaries(unittest.IsolatedAsyncioTestCase):
     """Category 1: Parameter Boundary & Malicious Input Adversarial Tests."""
 
@@ -142,8 +164,7 @@ class TestReActToolsParameterBoundaries(unittest.IsolatedAsyncioTestCase):
             "https://facebook.com/reel/1234567890/?s=share_link&fbclid=IwAR2xyz!@#$",
         ]
 
-        temp_file = Path(tempfile.mktemp(suffix=".mp3", dir=str(TEMP_MEDIA_DIR)))
-        temp_file.write_bytes(b"ID3" + b"\x00" * 1024)
+        temp_file = _create_atomic_temp_file(b"ID3" + b"\x00" * 1024, suffix=".mp3")
 
         try:
             for s_url in special_urls:
@@ -207,8 +228,7 @@ class TestReActToolsParameterBoundaries(unittest.IsolatedAsyncioTestCase):
             "<svg><rect width='100' height='100' fill='red'/></svg>",
         ]
 
-        temp_file = Path(tempfile.mktemp(suffix=".mp3", dir=str(TEMP_MEDIA_DIR)))
-        temp_file.write_bytes(b"ID3" + b"\x00" * 2048)
+        temp_file = _create_atomic_temp_file(b"ID3" + b"\x00" * 2048, suffix=".mp3")
 
         try:
             for x_cap in xss_captions:
@@ -245,8 +265,7 @@ class TestReActToolsParameterBoundaries(unittest.IsolatedAsyncioTestCase):
         long_title = "Bài hát test <script>tag</script> & âm thanh " + "A" * 320
         long_author = "Nghệ sĩ <author>& Co</author> " + "B" * 320
 
-        temp_file = Path(tempfile.mktemp(suffix=".mp3", dir=str(TEMP_MEDIA_DIR)))
-        temp_file.write_bytes(b"ID3" + b"\x00" * 1024)
+        temp_file = _create_atomic_temp_file(b"ID3" + b"\x00" * 1024, suffix=".mp3")
 
         try:
             mock_item = MediaItem(
@@ -397,8 +416,7 @@ class TestReActToolsZeroDiskLeak(unittest.IsolatedAsyncioTestCase):
         Adversarial: Standard download (<=50MB). File created on real disk.
         After execute_tool finishes, the file MUST be deleted from disk (os.path.exists == False).
         """
-        temp_file = Path(tempfile.mktemp(suffix="_test_leak.mp3", dir=str(TEMP_MEDIA_DIR)))
-        temp_file.write_bytes(b"ID3" + b"\xaa" * 1024 * 50)  # 50KB dummy audio
+        temp_file = _create_atomic_temp_file(b"ID3" + b"\xaa" * 1024 * 50, suffix="_test_leak.mp3")  # 50KB dummy audio
         self.assertTrue(temp_file.exists(), "Pre-condition: temp file must exist before tool execution")
 
         mock_item = MediaItem(
@@ -434,8 +452,7 @@ class TestReActToolsZeroDiskLeak(unittest.IsolatedAsyncioTestCase):
         Adversarial: send_audio returns False -> triggers send_document_file fallback.
         Disk file MUST still be deleted in finally block.
         """
-        temp_file = Path(tempfile.mktemp(suffix="_test_doc_fallback.mp3", dir=str(TEMP_MEDIA_DIR)))
-        temp_file.write_bytes(b"ID3" + b"\xbb" * 1024 * 20)
+        temp_file = _create_atomic_temp_file(b"ID3" + b"\xbb" * 1024 * 20, suffix="_test_doc_fallback.mp3")
 
         self.mock_bot.send_audio = AsyncMock(return_value=False)
         self.mock_bot.send_document_file = AsyncMock(return_value=True)
@@ -471,8 +488,7 @@ class TestReActToolsZeroDiskLeak(unittest.IsolatedAsyncioTestCase):
         Adversarial: Bot throws unhandled network exception during send_audio.
         The finally block in ai_agent_tools.py MUST still execute media_item.cleanup().
         """
-        temp_file = Path(tempfile.mktemp(suffix="_test_net_crash.mp3", dir=str(TEMP_MEDIA_DIR)))
-        temp_file.write_bytes(b"ID3" + b"\xcc" * 1024 * 10)
+        temp_file = _create_atomic_temp_file(b"ID3" + b"\xcc" * 1024 * 10, suffix="_test_net_crash.mp3")
 
         self.mock_bot.send_audio = AsyncMock(side_effect=ConnectionResetError("Telegram Bot API connection reset by peer"))
 
@@ -505,8 +521,7 @@ class TestReActToolsZeroDiskLeak(unittest.IsolatedAsyncioTestCase):
         Adversarial: File > 50MB. Ownership transfers to media_storage_manager.
         is_temp_file MUST be set to False so cleanup() does not delete the hosted file immediately.
         """
-        temp_file = Path(tempfile.mktemp(suffix="_test_oversized.mp3", dir=str(TEMP_MEDIA_DIR)))
-        temp_file.write_bytes(b"ID3" + b"\xdd" * 1024)
+        temp_file = _create_atomic_temp_file(b"ID3" + b"\xdd" * 1024, suffix="_test_oversized.mp3")
 
         try:
             mock_item = MediaItem(
@@ -560,8 +575,7 @@ class TestReActToolsZeroDiskLeak(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(before_files), 0)
 
         for i in range(20):
-            t_file = Path(tempfile.mktemp(suffix=f"_stress_{i}.mp3", dir=str(TEMP_MEDIA_DIR)))
-            t_file.write_bytes(b"ID3" + b"\xee" * (1024 * (i + 1)))
+            t_file = _create_atomic_temp_file(b"ID3" + b"\xee" * (1024 * (i + 1)), suffix=f"_stress_{i}.mp3")
 
             outcome_type = i % 3
             if outcome_type == 0:
@@ -628,8 +642,7 @@ class TestReActToolsSemanticEquivalence(unittest.IsolatedAsyncioTestCase):
         - Both call bot.send_audio
         - Both return audio success template
         """
-        temp_audio = Path(tempfile.mktemp(suffix=".mp3", dir=str(TEMP_MEDIA_DIR)))
-        temp_audio.write_bytes(b"ID3" + b"\x00" * 1024)
+        temp_audio = _create_atomic_temp_file(b"ID3" + b"\x00" * 1024, suffix=".mp3")
 
         try:
             # Run 1: download_media_audio
@@ -699,8 +712,7 @@ class TestReActToolsSemanticEquivalence(unittest.IsolatedAsyncioTestCase):
         - Calls bot.send_video
         - Returns video success template
         """
-        temp_video = Path(tempfile.mktemp(suffix=".mp4", dir=str(TEMP_MEDIA_DIR)))
-        temp_video.write_bytes(b"\x00" * 2048)
+        temp_video = _create_atomic_temp_file(b"\x00" * 2048, suffix=".mp4")
 
         try:
             mock_item = MediaItem(
@@ -733,8 +745,7 @@ class TestReActToolsSemanticEquivalence(unittest.IsolatedAsyncioTestCase):
     async def test_case_insensitive_media_type_audio(self) -> None:
         """Adversarial: media_type casing variations ('AUDIO', 'Audio', 'audio')."""
         casing_variants = ["AUDIO", "Audio", "audio", "AuDiO"]
-        temp_audio = Path(tempfile.mktemp(suffix=".mp3", dir=str(TEMP_MEDIA_DIR)))
-        temp_audio.write_bytes(b"ID3" + b"\x00" * 1024)
+        temp_audio = _create_atomic_temp_file(b"ID3" + b"\x00" * 1024, suffix=".mp3")
 
         try:
             for variant in casing_variants:

@@ -458,8 +458,18 @@ class AgentToolExecutor:
             "wttr", "a răng", "bựa ni"
         ))
 
+        is_audio = any(k in q for k in (
+            "tải mp3", "tai mp3", "tách nhạc", "tach nhac", "lấy audio", "lay audio",
+            "nhạc tiktok", "nhac tiktok", "audio", "mp3", "bài hát", "bai hat", "nhạc", "nhac",
+            "tải audio", "tai audio", "download audio", "download mp3"
+        ))
+
         if is_media:
-            selected.update(self._TOOL_CLUSTER_MEDIA)
+            if is_audio:
+                selected.update(self._TOOL_CLUSTER_MEDIA)
+            else:
+                selected.add("download_media_video")
+                selected.add("run_command")
 
         if is_weather:
             selected.update(self._TOOL_CLUSTER_WEATHER)
@@ -492,11 +502,14 @@ class AgentToolExecutor:
 
         if len(selected) > max_tools:
             priority_order = [
-                "run_command", "download_media_video", "download_media_audio", "get_weather", "read_archive_file",
+                "run_command", "download_media_video",
+                *(["download_media_audio"] if is_audio else []),
+                "get_weather", "read_archive_file",
                 "extract_archive_file", "get_server_location", "browser_navigate",
                 "browser_search_google", "facebook_get_messages", "facebook_send_reply",
                 "server_capture_screenshot", "get_server_active_sessions", "remember_for_later",
                 "complete_task", "recover_archive_password", "facebook_capture_screenshot",
+                *(["download_media_audio"] if not is_audio else []),
                 "browser_click", "browser_type", "browser_scroll", "browser_press_key"
             ]
             pruned: Set[str] = set()
@@ -578,7 +591,7 @@ class AgentToolExecutor:
                 "type": "function",
                 "function": {
                     "name": "download_media_video",
-                    "description": "Tải video hoặc audio đa nền tảng (TikTok, YouTube, YouTube Shorts, Facebook, Facebook Reels, Threads) gửi Telegram.",
+                    "description": "Tải video/audio (TikTok, YouTube, YouTube Shorts, Facebook, Facebook Reels, Threads) gửi Telegram.",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -594,7 +607,7 @@ class AgentToolExecutor:
                                 "type": "string",
                                 "enum": ["video", "audio"],
                                 "default": "video",
-                                "description": "Loại media cần tải: 'video' (mặc định) hoặc 'audio' (trích xuất âm thanh MP3 chất lượng cao).",
+                                "description": "Loại: 'video' (mặc định) hoặc 'audio' (MP3).",
                             },
                         },
                         "required": ["url"],
@@ -605,13 +618,13 @@ class AgentToolExecutor:
                 "type": "function",
                 "function": {
                     "name": "download_media_audio",
-                    "description": "Tải âm thanh MP3/audio chất lượng cao (320kbps) từ video đa nền tảng (TikTok, YouTube, Facebook, Threads...) và gửi native audio player qua Telegram.",
+                    "description": "Tải MP3/audio chất lượng cao (320kbps) từ TikTok, YouTube, Facebook gửi Telegram.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "url": {
                                 "type": "string",
-                                "description": "URL video/audio cần tải hoặc tách nhạc (TikTok, YouTube, Facebook...).",
+                                "description": "URL video/audio cần tải hoặc tách nhạc.",
                             },
                             "caption": {
                                 "type": "string",

@@ -157,16 +157,21 @@ class TelegramBot:
             self.ai_agent.set_telegram_bot(self)
 
     _MEDIA_URL_REGEX = re.compile(
-        r"https?://(?:www\.|web\.|vt\.|vm\.|v\.|m\.)?(?:"
+        r"https?://(?:www\.|web\.|vt\.|vm\.|v\.|m\.|mobile\.|on\.|music\.)?(?:"
         r"tiktok\.com/[^\s]+|"
-        r"douyin\.com/[^\s]+|"
+        r"douyin\.com/[^\s]+|iesdouyin\.com/[^\s]+|"
         r"youtube\.com/[^\s]+|youtu\.be/[^\s]+|"
-        r"(?:facebook\.com|fb\.com)/(?:reel|reels|share|.+?/videos)/[^\s]+|"
+        r"(?:facebook\.com|fb\.com)/(?:reel|reels|share|watch|groups|stories|.+?/videos)/[^\s]+|"
         r"(?:facebook\.com|fb\.com)/watch(?:\?[^\s]+|/[^\s]*)|"
-        r"fb\.watch/[^\s]+|fb\.me/[^\s]+|fb\.com/[^\s]+|"
-        r"instagram\.com/(?:reel|p|tv)/[^\s]+|"
-        r"threads\.net/(?:@[^/\s]+/post|t)/[^\s]+|threads\.net/[^\s]+|threads\.com/[^\s]+|"
-        r"twitter\.com/[^\s]+|x\.com/[^\s]+"
+        r"fb\.watch/[^\s]+|fb\.me/[^\s]+|"
+        r"(?:instagram\.com|instagr\.am)/(?:reel|reels|p|tv|share|stories)/[^\s]+|"
+        r"threads\.net/[^\s]+|threads\.com/[^\s]+|"
+        r"twitter\.com/[^\s]+|x\.com/[^\s]+|t\.co/[^\s]+|"
+        r"soundcloud\.com/[^\s]+|"
+        r"(?:reddit\.com|redd\.it|v\.redd\.it)/[^\s]+|"
+        r"(?:bilibili\.com|b23\.tv)/[^\s]+|"
+        r"(?:pinterest\.com|pin\.it)/[^\s]+|"
+        r"(?:kuaishou\.com|gifshow\.com)/[^\s]+"
         r")",
         re.IGNORECASE,
     )
@@ -183,9 +188,18 @@ class TelegramBot:
         remaining_text = text.replace(raw_url, "").strip().lower()
         clean_remaining = remaining_text.strip(" \t\r\n.,;:!?()[]{}<>\"'…*`~")
 
-        # TH 1: Chỉ gửi độc nhất link media -> Mặc định tải Video
+        # Nhận diện các nền tảng thuần âm nhạc / chuyên audio (SoundCloud, YouTube Music)
+        is_audio_platform = bool(
+            re.search(
+                r"https?://(?:[a-zA-Z0-9_-]+\.)?(?:soundcloud\.com|music\.youtube\.com)/",
+                media_url,
+                re.IGNORECASE,
+            )
+        )
+
+        # TH 1: Chỉ gửi độc nhất link media -> Nếu là nền tảng audio-first -> Mặc định tải Audio; còn lại -> Mặc định tải Video
         if not clean_remaining:
-            return FastPathMediaIntent(media_url, "", media_type="video")
+            return FastPathMediaIntent(media_url, "", media_type="audio" if is_audio_platform else "video")
 
         # TH 2: Ý định phủ định (tuyệt đối không tải) -> Nhường AI Agent
         negative_keywords = (
@@ -236,7 +250,12 @@ class TelegramBot:
             "chỉ cần nhạc", "chi can nhac", "chỉ cần audio", "chi can audio", "chỉ cần mp3", "chi can mp3",
             "nhạc tiktok", "nhac tiktok", "audio tiktok", "mp3 tiktok",
             "nhạc youtube", "nhac youtube", "audio youtube", "mp3 youtube",
+            "nhạc soundcloud", "nhac soundcloud", "audio soundcloud", "mp3 soundcloud",
             "nhạc facebook", "nhac facebook", "audio facebook", "mp3 facebook",
+            "nhạc reels", "nhac reels", "audio reels", "nhạc insta", "nhac insta", "audio insta",
+            "nhạc twitter", "nhac twitter", "audio twitter", "nhạc x", "nhac x",
+            "nhạc reddit", "nhac reddit", "audio reddit",
+            "nhạc bilibili", "nhac bilibili", "audio bilibili",
             "nhạc chuông", "nhac chuong", "bản nhạc", "ban nhac",
             "file mp3", "file nhạc", "file nhac", "file audio",
             "mp3", "audio",
@@ -255,7 +274,7 @@ class TelegramBot:
             "luu video", "luu clip", "luu ve",
         )
         if any(k in remaining_text for k in download_keywords):
-            return FastPathMediaIntent(media_url, remaining_text, media_type="video")
+            return FastPathMediaIntent(media_url, remaining_text, media_type="audio" if is_audio_platform else "video")
 
         return None
 

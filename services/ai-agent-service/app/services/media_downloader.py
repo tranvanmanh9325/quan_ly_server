@@ -250,6 +250,10 @@ class MultiTierMediaPipeline:
             r"https?://(?:www\.)?(?:threads\.net|threads\.com)/(?:@[^/\s]+/post|t)/[^\s]+",
             re.IGNORECASE,
         )
+        self._audio_platform_regex = re.compile(
+            r"https?://(?:[a-zA-Z0-9_-]+\.)?(?:soundcloud\.com|music\.youtube\.com)/",
+            re.IGNORECASE,
+        )
 
         TEMP_MEDIA_DIR.mkdir(parents=True, exist_ok=True)
         # Quét dọn các file mồ côi cũ từ các phiên làm việc trước khi khởi tạo
@@ -851,6 +855,11 @@ class MultiTierMediaPipeline:
             "postprocessor_args": {
                 "merger": ["-movflags", "+faststart"],
             },
+            "extractor_args": {
+                "youtube": {
+                    "player_client": ["android", "web"],
+                },
+            },
             "http_headers": {
                 "User-Agent": (
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -873,21 +882,28 @@ class MultiTierMediaPipeline:
 
                 if not os.path.exists(final_path):
                     residual_files = list(Path(temp_dir).iterdir())
-                    shutil.rmtree(temp_dir, ignore_errors=True)
                     if residual_files:
-                        logger.warning("[Tier 2: yt-dlp] Incomplete download detected (%s).", residual_files)
-                        raise MediaPipelineError(f"Tải video không hoàn tất, phát hiện tệp dở dang: {residual_files}")
-                    return None
+                        final_path = str(residual_files[0])
+                    else:
+                        shutil.rmtree(temp_dir, ignore_errors=True)
+                        return None
 
                 size = os.path.getsize(final_path)
+                final_ext = os.path.splitext(final_path)[1].lower()
+                is_audio = final_ext in {".mp3", ".m4a", ".aac", ".opus", ".flac", ".wav", ".ogg"} or (
+                    info.get("vcodec") == "none" and info.get("acodec") != "none"
+                )
+                media_type = "audio" if is_audio else "video"
+
                 return MediaItem(
                     file_path=final_path,
-                    title=info.get("title") or "Social Video",
+                    title=info.get("title") or ("Social Audio" if is_audio else "Social Video"),
                     author=info.get("uploader") or info.get("channel") or "Unknown",
                     duration=int(info.get("duration", 0)),
-                    media_type="video",
+                    media_type=media_type,
                     source_url=url,
                     file_size=size,
+                    cover_url=info.get("thumbnail"),
                     is_temp_file=True,
                 )
 
@@ -958,12 +974,21 @@ class MultiTierMediaPipeline:
                     "key": "FFmpegExtractAudio",
                     "preferredcodec": "mp3",
                     "preferredquality": "320",
-                }
+                },
+                {
+                    "key": "FFmpegMetadata",
+                    "add_metadata": True,
+                },
             ],
             "postprocessor_args": {
                 "FFmpegExtractAudio": [
                     "-id3v2_version", "3",
                 ],
+            },
+            "extractor_args": {
+                "youtube": {
+                    "player_client": ["android", "web"],
+                },
             },
             "http_headers": {
                 "User-Agent": (
@@ -1379,6 +1404,11 @@ class MultiTierMediaPipeline:
         clean_url = url.strip()
 
         try:
+            # 0. Định tuyến chuyên biệt cho nền tảng thuần âm nhạc (SoundCloud, YouTube Music)
+            if self._audio_platform_regex.search(clean_url):
+                logger.info("[Pipeline] Dedicated audio platform detected, routing to download_audio: %s", clean_url)
+                return await self.download_audio(clean_url)
+
             # 1. Định tuyến Threads chuyên biệt (yt-dlp không hỗ trợ Threads, đi thẳng vào Playwright Sniffer)
             if self._threads_regex.search(clean_url):
                 try:

@@ -413,13 +413,17 @@ class AgentToolExecutor:
         has_media_link = any(link in q for link in (
             "tiktok.com", "youtu.be", "youtube.com", "fb.watch", "fb.me",
             "facebook.com/watch", "facebook.com/reel", "facebook.com/share", "facebook.com/videos",
-            "douyin.com", "threads.net", "threads.com"
+            "douyin.com", "threads.net", "threads.com",
+            "instagram.com", "instagr.am", "twitter.com", "x.com", "t.co",
+            "soundcloud.com", "reddit.com", "redd.it", "v.redd.it",
+            "bilibili.com", "b23.tv", "pinterest.com", "pin.it", "kuaishou.com"
         ))
         is_media = has_media_link or any(k in q for k in (
             "tiktok", "youtube", "douyin", "reels", "reel", "video", "clip", "mp4",
             "shorts", "down video", "lưu clip", "tải video", "tải clip", "tải về",
             "download video", "download clip", "tai video", "tai clip", "tai ve",
-            "lay video", "lay clip", "keo video",
+            "lay video", "lay clip", "keo video", "instagram", "insta", "threads", "twitter",
+            "soundcloud", "reddit", "bilibili", "pinterest", "kuaishou",
             "tải mp3", "tai mp3", "tách nhạc", "tach nhac", "lấy audio", "lay audio",
             "nhạc tiktok", "nhac tiktok", "audio", "mp3", "bài hát", "bai hat", "nhạc", "nhac",
             "tải audio", "tai audio", "download audio", "download mp3"
@@ -461,7 +465,7 @@ class AgentToolExecutor:
         is_audio = any(k in q for k in (
             "tải mp3", "tai mp3", "tách nhạc", "tach nhac", "lấy audio", "lay audio",
             "nhạc tiktok", "nhac tiktok", "audio", "mp3", "bài hát", "bai hat", "nhạc", "nhac",
-            "tải audio", "tai audio", "download audio", "download mp3"
+            "tải audio", "tai audio", "download audio", "download mp3", "soundcloud"
         ))
 
         if is_media:
@@ -591,13 +595,13 @@ class AgentToolExecutor:
                 "type": "function",
                 "function": {
                     "name": "download_media_video",
-                    "description": "Tải video/audio (TikTok, YouTube, YouTube Shorts, Facebook, Facebook Reels, Threads) gửi Telegram.",
+                    "description": "Tải video/audio chất lượng cao (TikTok, YouTube, Facebook, Instagram, Twitter/X, Threads, Reddit, Bilibili, Pinterest, Kuaishou, Douyin) gửi Telegram.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "url": {
                                 "type": "string",
-                                "description": "URL video cần tải (hỗ trợ TikTok, YouTube Shorts, Facebook Reels, Threads...).",
+                                "description": "URL video/media cần tải (TikTok, YouTube, Facebook Reels/Watch, Instagram, X/Twitter, Threads, Reddit, Bilibili, Pinterest, Kuaishou...).",
                             },
                             "caption": {
                                 "type": "string",
@@ -618,13 +622,13 @@ class AgentToolExecutor:
                 "type": "function",
                 "function": {
                     "name": "download_media_audio",
-                    "description": "Tải MP3/audio chất lượng cao (320kbps) từ TikTok, YouTube, Facebook gửi Telegram.",
+                    "description": "Tải MP3/audio Studio Master (320kbps) từ TikTok, YouTube, SoundCloud, Facebook, Instagram, Reddit... gửi Telegram.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "url": {
                                 "type": "string",
-                                "description": "URL video/audio cần tải hoặc tách nhạc.",
+                                "description": "URL video/audio cần tải hoặc tách nhạc (TikTok, YouTube, SoundCloud, Facebook, Instagram, Reddit...).",
                             },
                             "caption": {
                                 "type": "string",

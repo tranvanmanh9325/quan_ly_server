@@ -44,6 +44,8 @@ body::before {
   z-index: -2;
   transform: perspective(600px) rotateX(60deg) translateY(-100px) scale(3);
   animation: gridMove 15s linear infinite;
+  /* Promote to GPU composite layer to avoid layout repaints */
+  will-change: transform;
 }
 
 @keyframes gridMove {
@@ -79,12 +81,15 @@ body::after {
   opacity: 0.5;
   pointer-events: none;
   animation: holoScan 8s linear infinite;
+  /* Fixed position, animate via transform to avoid layout triggers */
+  will-change: transform;
 }
 
 @keyframes holoScan {
-  0% { top: -10%; }
-  100% { top: 110%; }
+  0% { transform: translateY(-10%); }
+  100% { transform: translateY(110vh); }
 }
+
 
 /* Glassmorphism Panel Base - Sci-Fi style */
 .glass-panel {
@@ -96,6 +101,8 @@ body::after {
   position: relative;
   transition: transform var(--transition-speed) ease, box-shadow var(--transition-speed) ease, border-color var(--transition-speed) ease;
   clip-path: polygon(15px 0, 100% 0, 100% calc(100% - 15px), calc(100% - 15px) 100%, 0 100%, 0 15px);
+  /* Isolate layout/style recalculations from the rest of the page */
+  contain: layout style;
 }
 
 .glass-panel:hover {

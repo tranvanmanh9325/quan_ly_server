@@ -798,9 +798,9 @@ export default function DashboardPage() {
                 wrapperStyle={{ fontSize: 11, fontFamily: 'Share Tech Mono', paddingTop: 8 }}
                 formatter={v => v.toUpperCase()}
               />
-              <Line type="monotone" dataKey="cpu"  stroke="var(--accent-cyan)"  dot={false} strokeWidth={1.5} name="cpu" connectNulls />
-              <Line type="monotone" dataKey="ram"  stroke="var(--accent-green)" dot={false} strokeWidth={1.5} name="ram" connectNulls />
-              <Line type="monotone" dataKey="disk" stroke="var(--accent-pink)"  dot={false} strokeWidth={1.5} name="disk" connectNulls />
+              <Line type="monotone" dataKey="cpu"  stroke="var(--accent-cyan)"  dot={false} strokeWidth={1.5} name="cpu"  connectNulls isAnimationActive={false} />
+              <Line type="monotone" dataKey="ram"  stroke="var(--accent-green)" dot={false} strokeWidth={1.5} name="ram"  connectNulls isAnimationActive={false} />
+              <Line type="monotone" dataKey="disk" stroke="var(--accent-pink)"  dot={false} strokeWidth={1.5} name="disk" connectNulls isAnimationActive={false} />
             </LineChart>
           </ResponsiveContainer>
         )}

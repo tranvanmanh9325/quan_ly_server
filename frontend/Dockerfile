@@ -30,7 +30,10 @@ RUN npm run build
 # ==============================================================================
 FROM nginx:alpine AS nginx-base
 
-# Replace default config with SPA Cyberpunk routing configuration
+# Override default nginx.conf to enable worker_processes auto + epoll event loop
+COPY nginx-global.conf /etc/nginx/nginx.conf
+
+# Replace default server config with SPA Cyberpunk routing configuration
 RUN rm /etc/nginx/conf.d/default.conf
 COPY nginx.conf /etc/nginx/conf.d/
 

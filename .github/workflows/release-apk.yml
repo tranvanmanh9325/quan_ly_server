@@ -126,7 +126,7 @@ jobs:
           rm -rf android-app/keystore/release.jks
 
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.versioning.outputs.tag }}
           name: ${{ github.event.inputs.release_title || format('Quan Ly Server Assistant {0}', steps.versioning.outputs.tag) }}

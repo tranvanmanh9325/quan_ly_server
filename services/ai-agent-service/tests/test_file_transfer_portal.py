@@ -301,11 +301,11 @@ class TestTransferPortalTemplateUnit(unittest.TestCase):
         self.assertNotIn("Tải 1 Lần", html_normal)
 
     def test_render_404_expired_session(self):
-        """Verifies render_transfer_portal_html(None) returns clean 404 page."""
+        """Verifies render_transfer_portal_html(None) returns clean 404 page without reflecting token."""
         html_404 = render_transfer_portal_html(None, token="expired_tok_1234")
         self.assertIn("404", html_404)
         self.assertIn("Phiên Truyền Tệp Đã Hết Hạn", html_404)
-        self.assertIn("expired_tok_1234", html_404)
+        self.assertNotIn("expired_tok_1234", html_404)
         self.assertIn("Zero-Disk Leak", html_404)
 
     def test_format_file_size_and_category_helpers(self):
@@ -389,7 +389,7 @@ class TestFileTransferPortalAPI(unittest.TestCase):
         self.assertEqual(resp.status_code, 404)
         self.assertIn("text/html", resp.headers["content-type"])
         self.assertIn("Phiên Truyền Tệp Đã Hết Hạn", resp.text)
-        self.assertIn("non_existent_token_12345678", resp.text)
+        self.assertNotIn("non_existent_token_12345678", resp.text)
 
     def test_get_portal_alias_route(self):
         """Verifies /{token}/portal alias returns the same 200 HTML content."""

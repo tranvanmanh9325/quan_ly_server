@@ -16,6 +16,7 @@ import logging
 import mimetypes
 import os
 from pathlib import Path
+import re
 from typing import Any, AsyncIterator, Dict, Optional, Tuple
 import urllib.parse
 
@@ -36,6 +37,8 @@ from app.services.transfer_storage_manager import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/ai/transfer", tags=["File Transfer"])
+
+TOKEN_REGEX = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
 
 
 class CreateTransferRequest(BaseModel):
@@ -311,7 +314,7 @@ async def download_transfer_file(
     # Path traversal safety check
     base_dir = os.path.abspath(os.path.normpath(str(transfer_storage_manager.base_dir)))
     safe_path = os.path.abspath(os.path.normpath(str(file_path)))
-    if not safe_path.startswith(base_dir + os.sep):
+    if os.path.commonpath([base_dir, safe_path]) != base_dir or safe_path == base_dir:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access forbidden: Path outside base transfer directory.",
@@ -452,12 +455,17 @@ async def get_transfer_portal(token: str):
       - In-browser media preview for video (MP4/WebM with HTTP 206 seek), audio (MP3/WAV), image, and PDF.
       - Returns 404 HTMLResponse if token not found or expired.
     """
+    if not token or not TOKEN_REGEX.match(token):
+        html_content = render_transfer_portal_html(record=None)
+        return HTMLResponse(
+            content=html_content,
+            status_code=status.HTTP_404_NOT_FOUND,
+            media_type="text/html",
+        )
+
     session = transfer_storage_manager.get_session(token)
     if not session:
-        html_content = render_transfer_portal_html(
-            record=None,
-            token=token,
-        )
+        html_content = render_transfer_portal_html(record=None)
         return HTMLResponse(
             content=html_content,
             status_code=status.HTTP_404_NOT_FOUND,

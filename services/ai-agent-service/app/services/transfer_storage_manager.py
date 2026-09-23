@@ -281,36 +281,41 @@ class TransferStorageManager:
 
     def _sanitize_token_dir(self, token: str, must_exist: bool = True) -> Path:
         """
-        Safely identifies or resolves the isolated token directory within base_dir.
-        When must_exist=True, uses exact directory enumeration (iterdir) to ensure zero path injection.
+        Safely identifies and returns the isolated token directory within base_dir.
+        Uses exact directory enumeration (iterdir) so the returned Path originates purely
+        from the local filesystem, containing zero tainted user data and eliminating Path Injection.
         """
         self._validate_token_string(token)
         clean_token = token.strip()
 
-        if must_exist:
-            matched_dir: Optional[Path] = None
-            if self.base_dir.is_dir():
-                for entry in self.base_dir.iterdir():
-                    if entry.is_dir() and entry.name == clean_token:
-                        matched_dir = entry
-                        break
-            if matched_dir is None:
-                raise FileNotFoundError(f"Transfer session not found or already deleted: {token}")
-            return matched_dir
-        else:
-            target_dir = (self.base_dir / clean_token).resolve()
-            base_resolved = self.base_dir.resolve()
-            if not str(target_dir).startswith(str(base_resolved)):
-                raise ValueError("Path traversal attempt detected.")
-            return target_dir
+        matched_dir: Optional[Path] = None
+        if self.base_dir.is_dir():
+            for entry in self.base_dir.iterdir():
+                if entry.is_dir() and entry.name == clean_token:
+                    matched_dir = entry
+                    break
+        if matched_dir is None:
+            raise FileNotFoundError(f"Transfer session not found or already deleted: {token}")
+        return matched_dir
 
     def _write_metadata_atomic(self, token_dir: Path, meta_dict: Dict[str, Any]) -> None:
         """Writes metadata.json atomically using temporary file replacement protected by token lock."""
         token = token_dir.name
         lock = self._get_token_lock(token)
         with lock:
-            meta_file = token_dir / "metadata.json"
-            tmp_meta_file = token_dir / f".metadata.{secrets.token_hex(4)}.tmp"
+            base_dir_resolved = str(self.base_dir.resolve())
+            token_dir_resolved = str(token_dir.resolve())
+            if os.path.commonpath([base_dir_resolved, token_dir_resolved]) != base_dir_resolved:
+                raise ValueError("Path containment violation")
+
+            meta_file = (token_dir / "metadata.json").resolve()
+            tmp_meta_file = (token_dir / f".metadata.{secrets.token_hex(4)}.tmp").resolve()
+
+            if os.path.commonpath([token_dir_resolved, str(meta_file)]) != token_dir_resolved:
+                raise ValueError("Path containment violation")
+            if os.path.commonpath([token_dir_resolved, str(tmp_meta_file)]) != token_dir_resolved:
+                raise ValueError("Path containment violation")
+
             with open(tmp_meta_file, "w", encoding="utf-8") as f:
                 json.dump(meta_dict, f, indent=2, ensure_ascii=False)
             os.replace(tmp_meta_file, meta_file)
@@ -319,14 +324,19 @@ class TransferStorageManager:
         """Reads metadata.json from token directory protected by token lock and retry."""
         token = token_dir.name
         lock = self._get_token_lock(token)
-        meta_file = token_dir / "metadata.json"
+
+        meta_file: Optional[Path] = None
+        if token_dir.is_dir():
+            for item in token_dir.iterdir():
+                if item.is_file() and item.name == "metadata.json":
+                    meta_file = item
+                    break
+
+        if meta_file is None:
+            raise FileNotFoundError("Session metadata.json missing.")
+
         for attempt in range(3):
             with lock:
-                if not meta_file.is_file():
-                    if attempt < 2:
-                        time.sleep(0.01)
-                        continue
-                    raise FileNotFoundError("Session metadata.json missing.")
                 try:
                     with open(meta_file, "r", encoding="utf-8") as f:
                         return json.load(f)
@@ -490,11 +500,23 @@ class TransferStorageManager:
             self.delete_session(token)
             raise FileNotFoundError(f"Transfer session has expired: {token}")
 
-        clean_filename = Path(filename).name.strip()
-        if not clean_filename:
+        clean_filename = Path(filename).name.strip() if filename else ""
+        clean_filename = os.path.basename(clean_filename.replace("\\", "/"))
+        clean_filename = re.sub(r'[\r\n\x00/\\:*?"<>|]', "_", clean_filename).strip(". ")
+        if not clean_filename or clean_filename == "metadata.json" or clean_filename.startswith("."):
             clean_filename = metadata.get("filename") or "uploaded_file"
+            clean_filename = os.path.basename(clean_filename.replace("\\", "/"))
+            clean_filename = re.sub(r'[\r\n\x00/\\:*?"<>|]', "_", clean_filename).strip(". ")
+            if not clean_filename or clean_filename == "metadata.json" or clean_filename.startswith("."):
+                clean_filename = "uploaded_file"
 
-        dest_path = token_dir / clean_filename
+        token_dir_resolved = str(token_dir.resolve())
+        dest_path = (token_dir / clean_filename).resolve()
+        dest_resolved = str(dest_path)
+
+        # CodeQL PathSanitizer Barrier check: verify dest_path stays strictly within token_dir
+        if os.path.commonpath([token_dir_resolved, dest_resolved]) != token_dir_resolved:
+            raise ValueError("Path containment violation")
 
         # Stream chunked write directly to disk with fixed 1MB buffer
         bytes_written = 0
@@ -573,7 +595,17 @@ class TransferStorageManager:
             raise FileNotFoundError(f"Source file not found: {source_path}")
 
         clean_filename = Path(filename).name.strip() if filename else src.name
-        dest_path = token_dir / clean_filename
+        clean_filename = os.path.basename(clean_filename.replace("\\", "/"))
+        clean_filename = re.sub(r'[\r\n\x00/\\:*?"<>|]', "_", clean_filename).strip(". ")
+        if not clean_filename:
+            clean_filename = "file"
+
+        token_dir_resolved = str(token_dir.resolve())
+        dest_path = (token_dir / clean_filename).resolve()
+        dest_resolved = str(dest_path)
+
+        if os.path.commonpath([token_dir_resolved, dest_resolved]) != token_dir_resolved:
+            raise ValueError("Path containment violation")
 
         if copy_mode:
             shutil.copy2(str(src), str(dest_path))
@@ -730,13 +762,15 @@ class TransferStorageManager:
             task.cancel()
 
         try:
-            self._validate_token_string(token)
-            clean_token = token.strip()
-            token_dir = self.base_dir / clean_token
-            if token_dir.is_dir():
+            token_dir = self._sanitize_token_dir(token, must_exist=True)
+            base_resolved = str(self.base_dir.resolve())
+            token_resolved = str(token_dir.resolve())
+            if os.path.commonpath([base_resolved, token_resolved]) == base_resolved and token_resolved != base_resolved:
                 shutil.rmtree(token_dir, ignore_errors=True)
                 logger.info("[TransferStorage] Purged session directory for token=%s", token)
                 return True
+        except FileNotFoundError:
+            return False
         except Exception as exc:
             logger.warning("[TransferStorage] Failed deleting session %s: %s", token, exc)
         finally:

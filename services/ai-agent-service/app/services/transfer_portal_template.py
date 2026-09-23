@@ -81,8 +81,7 @@ def get_media_category(filename: str, content_type: str = "") -> str:
 
 
 def render_not_found_html(token: str = "") -> str:
-    """Renders a standalone 404 / Expired Session portal page."""
-    safe_token = html.escape(token or "unknown")
+    """Renders a standalone 404 / Expired Session portal page without reflecting user token."""
     return f"""<!DOCTYPE html>
 <html lang="vi">
 <head>
@@ -179,7 +178,7 @@ def render_not_found_html(token: str = "") -> str:
     {ICONS["alert"]}
     <span class="badge">404 — Không Tìm Thấy Phiên</span>
     <h1>Phiên Truyền Tệp Đã Hết Hạn</h1>
-    <p>Phiên truyền với mã <code>{safe_token}</code> không tồn tại hoặc đã được tự động dọn sạch theo cơ chế <b>Zero-Disk Leak (TTL 24h)</b> của Tiểu Bảo Bảo để bảo vệ máy chủ.</p>
+    <p>Phiên truyền tệp không tồn tại, đường dẫn không hợp lệ hoặc đã được tự động dọn sạch theo cơ chế <b>Zero-Disk Leak (TTL 24h)</b> của Tiểu Bảo Bảo để bảo vệ máy chủ.</p>
     <a href="javascript:history.back()" class="btn">Quay Lại</a>
   </div>
 </body>
@@ -200,7 +199,7 @@ def render_transfer_portal_html(
       - Dark/Light mode, touch target >= 44px, offline LAN ready.
     """
     if record is None:
-        return render_not_found_html(token=token or "")
+        return render_not_found_html()
 
     # Extract record metadata safely
     effective_token = getattr(record, "token", "") or token or ""

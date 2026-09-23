@@ -14,7 +14,7 @@ flowchart LR
         Nginx -->|/api/metrics/*| MetricsSvc["Metrics Service (:8082)\n• /cpu, /ram, /disk, /network\n• /loadavg, /temperature, /sysinfo\n• /services, /containers, /ports\n• /processes, /execute, /sudo/*"]
         Nginx -->|/api/auth/*| AuthSvc["Auth Service (:8081)\n• /login, /verify\n• /refresh, /logout"]
         Nginx -->|/api/files/*| FileSvc["File Service (:8083)\n• /list, /read\n• /create, /delete, /rename"]
-        Nginx -->|/api/facebook/*\n/api/tiktok/*\n/v1/*\n/health| AgentSvc["AI Agent & 9Router (:8084)\n• /v1/chat/completions\n• /v1/models\n• /api/facebook/*, /api/tiktok/*\n• /health"]
+        Nginx -->|/api/facebook/*\n/api/tiktok/*\n/api/ai/transfer/*\n/api/ai/media/*\n/v1/*\n/health| AgentSvc["AI Agent Service (:8084)\n• /api/ai/transfer/* (Web Drop Portal & Dual-Link)\n• /api/ai/media/* (320kbps MP3 & Video)\n• /v1/chat/completions, /v1/models\n• /api/facebook/*, /api/tiktok/*\n• /health"]
         Nginx -->|/fb-vnc/* WebSocket| VNCBridge["noVNC Live GUI (:6080)\n• /vnc.html"]
     end
 ```
@@ -124,6 +124,84 @@ flowchart LR
 | `/api/tiktok/save-browser-session` | `POST` | Save cookies from interactive browser session | None |
 | `/api/tiktok/close-browser-session`| `POST` | Close visual browser and return to headless mode | None |
 | `/api/tiktok/vnc-heartbeat` | `POST` | Client heartbeat to maintain active VNC session | None |
+
+### High-Speed File Transfer & Web Drop Portal Endpoints (`/api/ai/transfer/*`)
+
+| Endpoint | Method | Description | Payload / Query / Headers | Status Codes |
+| --- | --- | --- | --- | --- |
+| `/api/ai/transfer/create` | `POST` | Khởi tạo phiên truyền tệp mới, trả về đồng thời URL mạng LAN Gigabit và WAN Ngrok | JSON Body: `{"file_name": "backup.zip", "mode": "upload", "one_time": false, "ttl_hours": 24, "title": "Database backup"}` | `200 OK`, `500 Internal Error` |
+| `/api/ai/transfer/upload/{token}` | `POST` | Tải lên tệp qua cơ chế Zero-RAM chunked disk streaming (bộ đệm 1MB qua `aiofiles`) | Stream nhị phân trực tiếp (`request.stream()`) hoặc `multipart/form-data` (`file`). Header tùy chọn: `X-Filename: data.iso`, Query: `?filename=data.iso` | `200 OK`, `400 Bad Request`, `404 Not Found`, `500 Internal Error` |
+| `/api/ai/transfer/download/{token}` | `GET` | Tải xuống tệp hỗ trợ chuẩn RFC 7233 HTTP 206 Partial Content (Range requests) và Zero-Throttling | Header: `Range: bytes=start-end` (hoặc `bytes=start-`, `bytes=-suffix`), `ngrok-skip-browser-warning: 1` | `200 OK`, `206 Partial Content`, `404 Not Found`, `416 Range Not Satisfiable` |
+| `/api/ai/transfer/download/{token}/{filename}` | `GET` | Tải xuống tệp với tên tệp tường minh (semantic filename) trong URL | Cùng tham số và header với endpoint trên | `200 OK`, `206 Partial Content`, `404 Not Found`, `416 Range Not Satisfiable` |
+| `/api/ai/transfer/portal/{token}` | `GET` | Cung cấp giao diện Web Drop Portal HTML5 độc lập Zero-CDN (< 30KB) xem trước đa định dạng | Không yêu cầu payload. Tự động trả về trang 404 bảo mật nếu token không tồn tại/hết hạn | `200 OK` (text/html), `404 Not Found` (text/html) |
+| `/api/ai/transfer/qr/{token}` | `GET` | Trả về ảnh mã QR PNG sinh trực tiếp trong bộ nhớ RAM (Zero-Disk Leak) trỏ đến Web Portal | Không yêu cầu payload. Trả về `image/png` kèm header `Cache-Control: public, max-age=86400` | `200 OK` (image/png), `404 Not Found` |
+| `/api/ai/transfer/info/{token}` | `GET` | Truy vấn siêu dữ liệu phiên: trạng thái, kích thước, số lượt tải, thời gian TTL còn lại | Không yêu cầu payload | `200 OK` (JSON), `404 Not Found` |
+| `/api/ai/transfer/sweep` | `POST` | Kích hoạt chu kỳ dọn dẹp cưỡng chế toàn bộ các phiên quá hạn và thư mục mồ côi | Không yêu cầu payload | `200 OK` (JSON thống kê dọn dẹp) |
+
+#### Chi Tiết Yêu Cầu & Phản Hồi Mẫu (/api/ai/transfer/*)
+
+##### 1. Khởi tạo phiên (`POST /api/ai/transfer/create`)
+```bash
+curl -X POST "http://192.168.0.100:5173/api/ai/transfer/create" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "file_name": "kirito_server_backup.tar.gz",
+       "mode": "upload",
+       "one_time": false,
+       "ttl_hours": 24,
+       "title": "Bản sao lưu cấu hình máy chủ"
+     }'
+```
+*Phản hồi (200 OK):*
+```json
+{
+  "token": "4a7f9b8c2d1e0f3a5b6c7d8e9f0a1b2c",
+  "filename": "kirito_server_backup.tar.gz",
+  "mode": "upload",
+  "state": "pending",
+  "file_size": 0,
+  "content_type": "application/gzip",
+  "one_time": false,
+  "created_at": 1727101200.0,
+  "expires_at": 1727187600.0,
+  "ttl_seconds": 86400,
+  "lan_url": "http://192.168.0.100:5173/api/ai/transfer/download/4a7f9b8c2d1e0f3a5b6c7d8e9f0a1b2c/kirito_server_backup.tar.gz",
+  "wan_url": "https://deformational-semiopenly-ewa.ngrok-free.dev/api/ai/transfer/download/4a7f9b8c2d1e0f3a5b6c7d8e9f0a1b2c/kirito_server_backup.tar.gz",
+  "upload_url": "http://192.168.0.100:5173/api/ai/transfer/upload/4a7f9b8c2d1e0f3a5b6c7d8e9f0a1b2c",
+  "download_url": "http://192.168.0.100:5173/api/ai/transfer/download/4a7f9b8c2d1e0f3a5b6c7d8e9f0a1b2c/kirito_server_backup.tar.gz",
+  "portal_url": "http://192.168.0.100:5173/api/ai/transfer/portal/4a7f9b8c2d1e0f3a5b6c7d8e9f0a1b2c"
+}
+```
+
+##### 2. Tải tệp với Range Header (`GET /api/ai/transfer/download/{token}/{filename}`)
+```bash
+curl -i -H "Range: bytes=0-1048575" \
+     -H "ngrok-skip-browser-warning: 1" \
+     "http://192.168.0.100:5173/api/ai/transfer/download/4a7f9b8c2d1e0f3a5b6c7d8e9f0a1b2c/kirito_server_backup.tar.gz"
+```
+*Phản hồi (206 Partial Content):*
+```http
+HTTP/1.1 206 Partial Content
+Content-Type: application/gzip
+Content-Length: 1048576
+Content-Range: bytes 0-1048575/62818232
+Accept-Ranges: bytes
+Content-Disposition: attachment; filename*=UTF-8''kirito_server_backup.tar.gz
+Cache-Control: no-cache, no-store, must-revalidate
+```
+
+---
+
+### Media Downloader & Audio Extraction Endpoints (`/api/ai/media/*`)
+
+| Endpoint | Method | Description | Headers / Query | Status Codes |
+| --- | --- | --- | --- | --- |
+| `/api/ai/media/download/{token}` | `GET` | Tải xuống video hoặc audio gốc đã trích xuất từ 11+ MXH | Header: `Range: bytes=start-end`, `ngrok-skip-browser-warning: 1` | `200 OK`, `206 Partial Content`, `404 Not Found` |
+| `/api/ai/media/download/{token}/{filename}` | `GET` | Tải xuống media với tên tệp ngữ nghĩa | Cùng tham số trên | `200 OK`, `206 Partial Content`, `404 Not Found` |
+| `/api/ai/media/info/{token}` | `GET` | Tra cứu siêu dữ liệu tệp media (kích thước, định dạng, thời lượng, số lần tải, thời gian hết hạn TTL 4h) | Không yêu cầu payload | `200 OK` (JSON), `404 Not Found` |
+| `/api/ai/media/sweep` | `POST` | Dọn dẹp các tệp media đã quá hạn 4h | Không yêu cầu payload | `200 OK` (JSON) |
+
+---
 
 ### Health & Telemetry
 

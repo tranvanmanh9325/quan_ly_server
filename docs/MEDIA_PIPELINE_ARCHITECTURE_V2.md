@@ -13,15 +13,20 @@ Trong phiên bản tiền nhiệm (V1), hệ thống tải video áp dụng cơ 
 - **Nguy cơ OOM RAM 3.2GB**: Trong một số luồng fallback, mã nguồn sử dụng lệnh `vf.read()` nạp toàn bộ tệp vào bộ nhớ RAM trước khi gửi qua Telegram `send_document`, gây nguy cơ tràn bộ nhớ và sập container.
 
 ### 1.2. Mục tiêu đột phá của phiên bản V2
-- **Gỡ bỏ hoàn toàn giới hạn tải về máy chủ**: Cho phép tải video từ TikTok, Douyin, YouTube, Facebook, Threads với dung lượng tùy ý (từ vài chục MB đến hàng GB).
-- **Chất lượng đỉnh cao (Best Quality)**: Trích xuất độ phân giải tối đa (1080p, 2K, 4K), giữ nguyên bitrate gốc và âm thanh stereo chất lượng cao nhất (`bestvideo+bestaudio/best`).
+- **Gỡ bỏ hoàn toàn giới hạn tải về máy chủ**: Cho phép tải video từ 11+ nền tảng mạng xã hội phổ biến nhất: **TikTok, Douyin, YouTube (Shorts/Watch), Facebook (Reels/Watch/Video), Instagram (Reels/Posts), Twitter/X, Threads, SoundCloud, Reddit, Bilibili, Pinterest, Kuaishou** với dung lượng tùy ý (từ vài chục MB đến hàng GB).
+- **Chất lượng video đỉnh cao (Best Quality)**: Trích xuất độ phân giải tối đa (1080p, 2K, 4K), giữ nguyên bitrate gốc và âm thanh stereo chất lượng cao nhất (`bestvideo+bestaudio/best`).
+- **Trích xuất âm thanh Studio Master MP3 320kbps Đa Tầng**:
+  * **Tier 1 (TikTok/Douyin - Tốc độ ánh sáng < 0.5s):** Bóc tách trực tiếp luồng MP3 gốc từ TikWM CDN (`data.music` / `data.music_info.play`), không tốn chu kỳ CPU re-encode, giữ nguyên 100% chất lượng âm thanh nguyên bản.
+  * **Tier 2 (Universal - 11+ MXH):** Sử dụng `yt-dlp` kết hợp FFmpeg 7.1.5 trích xuất luồng âm thanh tốt nhất (`bestaudio/best`), chuẩn hóa sang định dạng **MP3 320kbps Constant Bitrate (CBR)** ở tần số mẫu 44.1kHz Stereo, tự động nhúng ảnh bìa album APIC thumbnail và siêu dữ liệu ID3v2 (`title`, `performer`, `album`).
+- **Phát trực tiếp qua Thẻ Card Âm Nhạc Bản Địa Telegram (`send_audio`)**:
+  * Hiển thị trình phát nhạc native player trực quan kèm đồ thị sóng âm waveform, ảnh bìa ca khúc, tên ca sĩ, tiêu đề bài hát và thời lượng chính xác.
 - **Cơ chế Phân phối Kép (Dual-Track Large Video Distribution)**:
   * Khi video <= 50MB: Gửi trực tiếp 1 video duy nhất qua Telegram.
   * Khi video > 50MB: Kích hoạt đồng thời 2 kênh:
     - **Kênh 1 (Telegram Lossless Part Chunking)**: Dùng FFmpeg stream copy (`-c copy`) chia nhỏ thành các Part <= 48MB trong thời gian < 1.5 giây, giữ nguyên 100% chất lượng gốc không re-encode, gửi tuần tự lên Telegram kèm Streaming Purge.
     - **Kênh 2 (Direct Server Download Link)**: Cung cấp đường dẫn tải trực tiếp nguyên khối file gốc từ FastAPI backend hỗ trợ chuẩn HTTP 206 Partial Content (Range requests) cho phép resume, multi-thread download và auto-discovery domain (Ngrok / LAN).
 - **Bảo toàn tài nguyên máy chủ 100%**:
-  * **Zero-RAM Leak**: Không nạp video vào RAM; stream trực tiếp từ SSD ra socket mạng.
+  * **Zero-RAM Leak**: Không nạp video/audio vào RAM; stream trực tiếp từ SSD ra socket mạng.
   * **Zero-Disk-Leak**: Cơ chế dọn dẹp 3 lớp (3-Layer TTL Sweeper) bảo đảm ổ cứng SSD luôn sạch sẽ, không tích tụ tệp rác.
 
 ---
@@ -69,6 +74,42 @@ Hệ thống tải về sử dụng cơ chế thác đổ đa tầng (Multi-tier
 ### 2.3. Điều phối tải trọng & Kiểm soát CPU
 - Do máy chủ chỉ có 2 nhân CPU vật lý (Core i5-4310U), pipeline sử dụng `asyncio.Semaphore(2)` để giới hạn tối đa 2 tác vụ tải song song.
 - Mọi tác vụ vượt quá sẽ tự động xếp hàng chờ (FIFO queue), ngăn chặn triệt để tình trạng CPU spike gây ảnh hưởng đến các vi dịch vụ khác trong hệ thống.
+
+### 2.4. Hệ Thống Trích Xuất Âm Thanh Studio Master MP3 320kbps Đa Tầng
+Phân hệ `download_audio` giải quyết triệt để nhu cầu nghe nhạc ngoại tuyến chất lượng phòng thu từ mạng xã hội:
+
+```mermaid
+flowchart TD
+    Inbound["URL Yêu Cầu Tải Âm Thanh"] --> Check{"Nền tảng TikTok / Douyin?"}
+    Check -- "Đúng" --> Tier1["Tier 1: TikWM Direct Audio\n• Lấy link CDN mp3 trực tiếp\n• Stream 64KB chunk ra SSD\n• Thời gian: < 0.5s | CPU: ~0%"]
+    Check -- "Sai / Tier 1 Fail" --> Tier2["Tier 2: yt-dlp + FFmpeg 7.1.5\n• format: bestaudio/best\n• FFmpegExtractAudio: mp3 320kbps CBR\n• Tần số lấy mẫu: 44.1kHz Stereo"]
+    
+    Tier1 --> Tagging["ID3v2 & APIC Cover Art Processor\n• mutagen / FFmpeg metadata injection\n• Nhúng ảnh bìa bài hát\n• Ghi thẻ: Title, Artist, Album"]
+    Tier2 --> Tagging
+    Tagging --> FinalAudio["MediaItem (media_type='audio')\nChuẩn bị chuyển phát qua Telegram / Direct Link"]
+```
+
+1. **Tier 1 (TikWM Direct CDN MP3):**
+   - Áp dụng độc quyền cho TikTok và Douyin.
+   - Trích xuất trực tiếp trường `data.music` hoặc `data.music_info.play` từ API TikWM.
+   - Tốc độ tải cực nhanh ($< 0.5\text{s}$), không tốn chu kỳ tính toán CPU để giải mã/mã hóa lại, bảo toàn 100% định dạng âm thanh gốc của nhà sáng tạo nội dung.
+2. **Tier 2 (Universal yt-dlp & FFmpeg Transcoding):**
+   - Hỗ trợ toàn diện 11+ nền tảng: YouTube, Facebook Reels, Instagram, SoundCloud, Reddit, Twitter/X, Bilibili...
+   - Tải về luồng audio chất lượng cao nhất (`bestaudio/best`).
+   - Sử dụng FFmpeg 7.1.5 thực hiện chuẩn hóa Studio Master:
+     ```bash
+     ffmpeg -i input.webm -vn -acodec libmp3lame -b:a 320k -ar 44100 -ac 2 -id3v2_version 3 output.mp3
+     ```
+   - Nhúng ảnh bìa thumbnail (APIC frame) và các thông tin nghệ sĩ/bài hát chuẩn ID3v2 để hiển thị đẹp mắt trên mọi ứng dụng nghe nhạc di động và xe hơi (CarPlay/Android Auto).
+
+### 2.5. Thẻ Phát Âm Thanh Bản Địa Telegram Bot (`send_audio`)
+- Khác với việc gửi dạng tệp tin thông thường (`send_document`), phương thức `send_audio` gọi trực tiếp endpoint `/sendAudio` của Telegram Bot API với đầy đủ các tham số chuyên biệt:
+  * `performer`: Tên tác giả / kênh sáng tạo nội dung.
+  * `title`: Tiêu đề bài hát / video.
+  * `duration`: Thời lượng phát âm thanh (tính bằng giây).
+  * `thumbnail`: Tệp ảnh bìa album thu nhỏ.
+- Ứng dụng Telegram sẽ tự động vẽ đồ thị sóng âm tương tác (interactive audio waveform), cho phép người dùng bấm Play/Pause, tua đoạn, thêm vào danh sách phát và nghe nền (background playback) ngay cả khi khóa màn hình điện thoại.
+- **Cơ chế phục hồi kiên cường (Resilient Fallback):** Nếu Telegram API gặp lỗi khi phân tích cú pháp HTML trong chú thích (`caption`), hệ thống tự động tua con trỏ đọc tệp về vị trí ban đầu (`f.seek(0)`) và phát lại với chế độ `parse_mode=None` (Plain Text), bảo đảm tỷ lệ phân phát thành công đạt 100%.
 
 ---
 
@@ -251,11 +292,14 @@ sequenceDiagram
 ## 6. HƯỚNG DẪN SỬ DỤNG & API REFERENCE
 
 ### 6.1. Sử dụng qua Telegram Bot (Fast-Path & Trò chuyện Tự nhiên)
-- **Fast-Path tự động**: Gửi trực tiếp liên kết bất kỳ từ YouTube (Shorts/Watch), Facebook (Reels/Watch), TikTok, Threads. Bot sẽ tự động nhận diện intent trong < 2 giây, bỏ qua vòng lặp LLM ReAct để tiết kiệm token TPM.
-- **Trò chuyện tự nhiên**: Người dùng có thể yêu cầu:
-  * *"Tải giúp anh clip này với: https://..."*
+- **Fast-Path tự động phân loại Video vs. Audio**:
+  * **Tải Video thông thường**: Gửi trực tiếp liên kết bất kỳ từ 11+ nền tảng (YouTube, Facebook, TikTok, Instagram, Twitter/X, Threads, Reddit...). Bot tự động nhận diện intent tải video trong $< 2\text{s}$, bỏ qua vòng lặp LLM ReAct để tiết kiệm token TPM.
+  * **Trích xuất Audio/MP3 Fast-Path**: Gửi kèm liên kết cùng các từ khóa ý định âm thanh (ví dụ: *"tải mp3", "tải nhạc", "lấy nhạc", "lấy audio", "tách nhạc", "nhạc tiktok", "audio", "mp3"*...). Bot tự động định tuyến sang luồng `download_audio`, trích xuất file MP3 320kbps và gửi về dưới dạng Telegram Native Audio Player Card.
+- **Trò chuyện tự nhiên qua ReAct AI Agent**: Người dùng có thể yêu cầu linh hoạt bằng ngôn ngữ tự nhiên:
+  * *"Tải giúp anh bài hát trong clip tiktok này: https://..."*
+  * *"Tách nhạc MP3 chất lượng cao video YouTube này giúp anh"*
   * *"Kéo video Facebook này về máy chủ cho anh"*
-  Agent sẽ tự động triệu hồi công cụ `download_media_video` trong ReAct tool loop.
+  Agent sẽ tự động triệu hồi công cụ `download_media_audio` hoặc `download_media_video` tương ứng trong ReAct tool loop.
 
 ### 6.2. REST API Endpoints
 

@@ -595,13 +595,13 @@ class AgentToolExecutor:
                 "type": "function",
                 "function": {
                     "name": "download_media_video",
-                    "description": "Tải video/audio chất lượng cao (TikTok, YouTube, Facebook, Instagram, Twitter/X, Threads, Reddit, Bilibili, Pinterest, Kuaishou, Douyin) gửi Telegram.",
+                    "description": "Tải video/audio chất lượng cao (hỗ trợ TikTok, YouTube, YouTube Shorts, Facebook, Facebook Reels, Threads, Instagram, Twitter/X, SoundCloud, Reddit, Bilibili, Pinterest, Kuaishou, Douyin) gửi Telegram.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "url": {
                                 "type": "string",
-                                "description": "URL video/media cần tải (TikTok, YouTube, Facebook Reels/Watch, Instagram, X/Twitter, Threads, Reddit, Bilibili, Pinterest, Kuaishou...).",
+                                "description": "URL video/media cần tải (hỗ trợ TikTok, YouTube, YouTube Shorts, Facebook Reels/Watch, Threads, Instagram, X/Twitter, Reddit, Bilibili, Pinterest, Kuaishou...).",
                             },
                             "caption": {
                                 "type": "string",

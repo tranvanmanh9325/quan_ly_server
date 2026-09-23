@@ -882,11 +882,11 @@ class MultiTierMediaPipeline:
 
                 if not os.path.exists(final_path):
                     residual_files = list(Path(temp_dir).iterdir())
+                    shutil.rmtree(temp_dir, ignore_errors=True)
                     if residual_files:
-                        final_path = str(residual_files[0])
-                    else:
-                        shutil.rmtree(temp_dir, ignore_errors=True)
-                        return None
+                        logger.warning("[Tier 2: yt-dlp] Incomplete download detected (%s).", residual_files)
+                        raise MediaPipelineError(f"Tải video không hoàn tất, phát hiện tệp dở dang: {residual_files}")
+                    return None
 
                 size = os.path.getsize(final_path)
                 final_ext = os.path.splitext(final_path)[1].lower()
@@ -974,10 +974,6 @@ class MultiTierMediaPipeline:
                     "key": "FFmpegExtractAudio",
                     "preferredcodec": "mp3",
                     "preferredquality": "320",
-                },
-                {
-                    "key": "FFmpegMetadata",
-                    "add_metadata": True,
                 },
             ],
             "postprocessor_args": {

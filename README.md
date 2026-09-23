@@ -240,18 +240,18 @@ flowchart TD
 
 - **Universal Support for 24+ Social Platforms & Generic Sites:** Seamless ingestion across TikTok, Douyin, YouTube (Shorts/Watch), Facebook (Reels/Watch/Posts), Instagram (Reels/Stories/Posts), Twitter/X, Threads, SoundCloud, Reddit, Bilibili, Pinterest, Kuaishou, Vimeo, Dailymotion, Twitch, Kick, Bluesky, Tumblr, Mastodon, Lemon8, CapCut, Weibo, XiaoHongShu, LinkedIn, and generic video links via the intelligent Universal Extractor fallback.
 - **Maximum Resolution & High Frame Rate Video Engine (4K / 60fps):**
-  * **Intelligent Format Sorting:** Prioritizes native resolution and true high frame rates with `format_sort: ["res", "fps", "quality", "size", "br"]` and `format: "bestvideo+bestaudio/best"`, extracting 4K UHD (2160p), 2K QHD (1440p), and 1080p Full HD at authentic 60fps/120fps without downscaling or codec penalization.
-  * **Instant In-Browser / Mobile Playback (`faststart`):** Employs ISO-BMFF box reordering via FFmpeg `-movflags +faststart` across both merger and video remuxer post-processors, relocating the `moov` atom ahead of `mdat` for zero-buffering instant playback.
-  * **Smart Enclosure Stripping & Parameter Cleaning:** Automatically strips surrounding markdown, brackets, and tracking telemetry (`?si=`, `?mibextid=`, `?utm_*`) to maximize platform cache hits.
+  - **Intelligent Format Sorting:** Prioritizes native resolution and true high frame rates with `format_sort: ["res", "fps", "quality", "size", "br"]` and `format: "bestvideo+bestaudio/best"`, extracting 4K UHD (2160p), 2K QHD (1440p), and 1080p Full HD at authentic 60fps/120fps without downscaling or codec penalization.
+  - **Instant In-Browser / Mobile Playback (`faststart`):** Employs ISO-BMFF box reordering via FFmpeg `-movflags +faststart` across both merger and video remuxer post-processors, relocating the `moov` atom ahead of `mdat` for zero-buffering instant playback.
+  - **Smart Enclosure Stripping & Parameter Cleaning:** Automatically strips surrounding markdown, brackets, and tracking telemetry (`?si=`, `?mibextid=`, `?utm_*`) to maximize platform cache hits.
 - **Dual-Track Distribution Architecture:**
-  * **Direct Telegram Send ($\le 50\text{MB}$):** Sent directly via Telegram Video with native resolution and duration metadata.
-  * **Lossless Part-Chunking & Direct Accelerated Links ($> 50\text{MB}$):** Large videos are losslessly sliced into $\le 48\text{MB}$ chunks using FFmpeg stream copy (`-c copy`) and sequentially dispatched to Telegram with immediate file purging (`os.unlink`). Concurrently, two accelerated direct download URLs are provided: Gigabit LAN (`http://192.168.0.100:8084/...`) and WAN Ngrok Tunnel, fully supporting RFC 7233 HTTP 206 Partial Content (multi-threaded IDM/Aria2 acceleration and instant timeline seeking).
+  - **Direct Telegram Send ($\le 50\text{MB}$):** Sent directly via Telegram Video with native resolution and duration metadata.
+  - **Lossless Part-Chunking & Direct Accelerated Links ($> 50\text{MB}$):** Large videos are losslessly sliced into $\le 48\text{MB}$ chunks using FFmpeg stream copy (`-c copy`) and sequentially dispatched to Telegram with immediate file purging (`os.unlink`). Concurrently, two accelerated direct download URLs are provided: Gigabit LAN (`http://192.168.0.100:8084/...`) and WAN Ngrok Tunnel, fully supporting RFC 7233 HTTP 206 Partial Content (multi-threaded IDM/Aria2 acceleration and instant timeline seeking).
 - **Studio Master MP3 320kbps CBR Audio Extraction:**
-  * **Tier 1 (TikTok/Douyin):** Direct CDN MP3 extraction via TikWM API ($< 0.5\text{s}$, zero CPU transcoding, original artist bitrate).
-  * **Tier 2 (Universal 24+ Platforms):** `yt-dlp` extraction transcoded via FFmpeg 7.1.5 to constant 320kbps CBR MP3 at 44.1kHz stereo with embedded APIC album art and ID3v2 metadata.
+  - **Tier 1 (TikTok/Douyin):** Direct CDN MP3 extraction via TikWM API ($< 0.5\text{s}$, zero CPU transcoding, original artist bitrate).
+  - **Tier 2 (Universal 24+ Platforms):** `yt-dlp` extraction transcoded via FFmpeg 7.1.5 to constant 320kbps CBR MP3 at 44.1kHz stereo with embedded APIC album art and ID3v2 metadata.
 - **Enterprise-Grade DoS Defenses & Concurrency Controls:**
-  * Infinite livestreams (`is_live=True`) and videos exceeding 2 hours ($> 7,200\text{s}$) are rejected up-front to safeguard host compute and disk resources.
-  * Downloads are gated by an `asyncio.Semaphore(2)` concurrency limit and stream to NVMe SSD in 64KB chunks to maintain physical memory overhead strictly under 15MB.
+  - Infinite livestreams (`is_live=True`) and videos exceeding 2 hours ($> 7,200\text{s}$) are rejected up-front to safeguard host compute and disk resources.
+  - Downloads are gated by an `asyncio.Semaphore(2)` concurrency limit and stream to NVMe SSD in 64KB chunks to maintain physical memory overhead strictly under 15MB.
 - **Telegram Native Audio Player Cards (`send_audio`):** Interactive player card with real-time waveform graphics, artist, title, duration, and seamless background lock-screen playback on iOS and Android.
 
 ### 4. CodeQL Zero-Vulnerability Security Architecture
@@ -462,7 +462,8 @@ The **Kirito Server Dashboard & Autonomous AI Agent Ecosystem** was conceptualiz
 </a>
 
 ### **Trần Văn Mạnh (Kirito)**
-*Project Founder, Core Maintainer & Lead Software Architect*
+
+Project Founder, Core Maintainer & Lead Software Architect
 
 [![GitHub](https://img.shields.io/badge/GitHub-@tranvanmanh9325-181717?style=for-the-badge&logo=github)](https://github.com/tranvanmanh9325)
 [![Email](https://img.shields.io/badge/Email-manhtrana1k45tl@gmail.com-EA4335?style=for-the-badge&logo=gmail&logoColor=white)](mailto:manhtrana1k45tl@gmail.com)

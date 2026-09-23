@@ -66,8 +66,8 @@ flowchart TD
 When users send a video file without text, they frequently follow up with a clarification message a few seconds later. To prevent premature processing while eliminating bot silence, the `VideoDebounceManager` implements an interactive debounce strategy:
 
 1. **Telegram Inline Action Prompt:** Sends an interactive message with Telegram Inline Keyboard:
-   * `[⚡ Phân Tích Ngay]` (Immediate Analysis)
-   * `[❌ Hủy Bỏ]` (Cancel)
+   - `[⚡ Phân Tích Ngay]` (Immediate Analysis)
+   - `[❌ Hủy Bỏ]` (Cancel)
 2. **5-Second Dynamic Hold:** If the user sends a follow-up text (e.g. *"tóm tắt nội dung video giúp tôi"*) within 5 seconds, the pipeline automatically binds the prompt to the pending video session.
 3. **Automatic Fallback:** If no message arrives after 5 seconds, the bot automatically assumes default summarization intent and begins analysis.
 
@@ -97,6 +97,7 @@ To safeguard against CPU thrashing on 2-core VPS hosts, a strict `asyncio.Semaph
 Vietnamese speech in social media and event videos features background music, crowd noise, English loan words (*"drone show"*, *"rehearsal"*), and regional dialects (*"nghề An"*, *"bựa ni"*, *"a răng"*).
 
 ### Dynamic Vocabulary Biasing (`prompt_bias`)
+
 Groq Whisper's `prompt` parameter is primed with contextual vocabulary before acoustic decoding:
 
 ```python
@@ -156,6 +157,7 @@ flowchart TD
 ## 7. Phonetic Bridge & Vietnamese Dialect Normalizer
 
 ### Central Vietnam Dialect Rules (`VietnameseLinguisticNormalizer`)
+
 Converts central regional vocabulary into standard Vietnamese semantics while preserving original text:
 
 | Original Dialect Term | Standard Vietnamese Intent | Context / Meaning |
@@ -166,6 +168,7 @@ Converts central regional vocabulary into standard Vietnamese semantics while pr
 | `mần chi` | `làm gì` | Doing what |
 
 ### Phonetic Bridge Acoustic Rules (`MediaProcessor._normalize_video_speech_phonetics`)
+
 ```python
 corrections = [
     (r"\btrúng\s+thú\b", "Trung thu"),
@@ -184,6 +187,7 @@ corrections = [
 ```
 
 ### Envelope Guard (`vietnamese_dialect.py`)
+
 To prevent doubling context payloads (which ballooned a 6,000-character video payload into 12,000 characters and triggered HTTP 413 truncation), the normalizer strictly bypasses structured media envelopes:
 
 ```python

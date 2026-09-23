@@ -102,8 +102,8 @@ flowchart LR
 | `/api/facebook/test-ai-chat` | `POST` | Dry-run test an AI response on a synthetic message | `{"message": "Hello"}` |
 | `/api/facebook/launch-browser` | `POST` | Spawns visual Chromium session connected to noVNC | None |
 | `/api/facebook/vnc-ready` | `GET` | Check whether noVNC visual stream is ready | None |
-| `/api/facebook/save-browser-session`| `POST` | Persists cookies/state from manual noVNC session | None |
-| `/api/facebook/close-browser-session`| `POST` | Gracefully closes visual Chromium session | None |
+| `/api/facebook/save-browser-session` | `POST` | Persists cookies/state from manual noVNC session | None |
+| `/api/facebook/close-browser-session` | `POST` | Gracefully closes visual Chromium session | None |
 | `/api/facebook/vnc-heartbeat` | `POST` | Keep-alive heartbeat from web client to prevent VNC timeout | None |
 
 ### TikTok Automation Endpoints (`/api/tiktok/*`)
@@ -122,7 +122,7 @@ flowchart LR
 | `/api/tiktok/launch-browser` | `POST` | Launch visual browser for manual TikTok login via noVNC | None |
 | `/api/tiktok/vnc-ready` | `GET` | Check if noVNC stream is active for TikTok | None |
 | `/api/tiktok/save-browser-session` | `POST` | Save cookies from interactive browser session | None |
-| `/api/tiktok/close-browser-session`| `POST` | Close visual browser and return to headless mode | None |
+| `/api/tiktok/close-browser-session` | `POST` | Close visual browser and return to headless mode | None |
 | `/api/tiktok/vnc-heartbeat` | `POST` | Client heartbeat to maintain active VNC session | None |
 
 ### High-Speed File Transfer & Web Drop Portal Endpoints (`/api/ai/transfer/*`)
@@ -141,6 +141,7 @@ flowchart LR
 #### Chi Tiết Yêu Cầu & Phản Hồi Mẫu (/api/ai/transfer/*)
 
 ##### 1. Khởi tạo phiên (`POST /api/ai/transfer/create`)
+
 ```bash
 curl -X POST "http://192.168.0.100:5173/api/ai/transfer/create" \
      -H "Content-Type: application/json" \
@@ -152,7 +153,9 @@ curl -X POST "http://192.168.0.100:5173/api/ai/transfer/create" \
        "title": "Bản sao lưu cấu hình máy chủ"
      }'
 ```
+
 *Phản hồi (200 OK):*
+
 ```json
 {
   "token": "4a7f9b8c2d1e0f3a5b6c7d8e9f0a1b2c",
@@ -174,12 +177,15 @@ curl -X POST "http://192.168.0.100:5173/api/ai/transfer/create" \
 ```
 
 ##### 2. Tải tệp với Range Header (`GET /api/ai/transfer/download/{token}/{filename}`)
+
 ```bash
 curl -i -H "Range: bytes=0-1048575" \
      -H "ngrok-skip-browser-warning: 1" \
      "http://192.168.0.100:5173/api/ai/transfer/download/4a7f9b8c2d1e0f3a5b6c7d8e9f0a1b2c/kirito_server_backup.tar.gz"
 ```
+
 *Phản hồi (206 Partial Content):*
+
 ```http
 HTTP/1.1 206 Partial Content
 Content-Type: application/gzip

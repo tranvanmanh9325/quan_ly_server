@@ -155,6 +155,7 @@ flowchart TD
 ### Tool Architecture & Delegation (`ai_agent_tools.py`)
 
 To preserve maintainability and eliminate circular dependencies, tool definitions and execution logic are decoupled from `ai_agent.py`:
+
 - **`AgentToolRegistry`:** Manages scoped tool schema injection (`_TOOL_CLUSTER_CORE`, `_TOOL_CLUSTER_SERVER`, `_TOOL_CLUSTER_BROWSER`, `_TOOL_CLUSTER_ARCHIVE`, `_TOOL_CLUSTER_WEATHER`).
 - **`AgentToolExecutor`:** Delegates tool calls to concrete service instances (`ssh_client`, `fb_service`, `browser_agent`, `appointment_service`, `archive_recovery`).
 - **Scope Trimming:** Injects only query-relevant tools into LLM context, keeping total prompt schema size under 800 tokens.
@@ -162,5 +163,6 @@ To preserve maintainability and eliminate circular dependencies, tool definition
 ### Neuromorphic Brain Core & Deep References
 
 For complete low-level neuroscience formulas, hyperdimensional vector math, and media pipelines:
+
 - [**`docs/neuromorphic-brain.md`**](./neuromorphic-brain.md): 6 Neurotransmitters, Karl Friston FEP Active Inference, 10,000-bit HDC 32GB Virtual Cortex, and Sleep/Dream Consolidation.
 - [**`docs/multimodal-video-pipeline.md`**](./multimodal-video-pipeline.md): Parallel Audio/Visual pipeline, Whisper ASR biasing, and Cross-Modal Discrepancy Resolution.

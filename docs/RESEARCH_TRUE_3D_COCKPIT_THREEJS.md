@@ -1,4 +1,5 @@
 # BÁO CÁO NGHIÊN CỨU CHUYÊN SÂU: THIẾT KẾ KHÔNG GIAN BUỒNG LÁI & NHÂN VẬT BẰNG 3D ENGINE THỰC SỰ
+
 ## Dự án: Buồng Lái Không Gian 3D & Trợ Lý Ảo Tiểu Bảo Bảo (`android-app`)
 
 - **Ngày thực hiện**: 15/09/2026
@@ -10,6 +11,7 @@
 ## 1. NGUYÊN NHÂN GỐC RỄ (ROOT CAUSE ANALYSIS)
 
 Người dùng đã gửi ảnh chụp thực tế từ màn hình máy tính và chỉ ra 3 thiếu sót chí mạng:
+
 1. **Không gian buồng lái vẫn là ảnh phẳng 2D**:
    - Dù nhân vật đã là 3D nhưng không gian buồng lái phía sau vẫn bị gán bằng `background: url('...cockpit_background_clean.webp')`. Người dùng nhìn thấy rõ đây là một tấm ảnh dẹp chứ không phải không gian 3D được code dựng hình thật.
 2. **Nhân vật bị lỗi T-Pose và chưa khớp dáng đứng concept**:
@@ -25,6 +27,7 @@ Người dùng đã gửi ảnh chụp thực tế từ màn hình máy tính v�
 Thay vì dùng ảnh tĩnh, chúng ta sử dụng **Three.js Engine** (Engine 3D WebGL mạnh nhất thế giới) để lập trình dựng nên toàn bộ không gian buồng lái 3D thời gian thực:
 
 ### 2.1. Không Gian Buồng Lái 3D Hình Học Thực Thụ (3D Geometry & Lights)
+
 1. **Bầu Trời Vũ Trụ 3D (3D Deep Space Starfield)**:
    - Hệ thống 1500 hạt sao 3D (`THREE.Points`) phân bố trong không gian hình cầu bán kính 50m.
    - Quả cầu hành tinh 3D quay chậm ngoài cửa sổ không gian (`THREE.SphereGeometry`).
@@ -39,10 +42,12 @@ Thay vì dùng ảnh tĩnh, chúng ta sử dụng **Three.js Engine** (Engine 3D
    - Bảng telemetry "United AI System" bay lơ lửng trong không gian tại các toạ độ $(x, y, z)$ thực.
 
 ### 2.2. Nhân Vật Nữ 3D: Đặt Xương & Cử Động Tự Nhiên (Humanoid Rigging & Idle Dynamic)
+
 - Bằng cách can thiệp vào các khớp xương humanoid (`J_Bip_L_UpperArm`, `J_Bip_R_UpperArm`, `J_Bip_L_LowerArm`, `J_Bip_R_LowerArm`), chúng ta hạ hai cánh tay xuống khép nhẹ dọc thân người, tạo dáng đứng tự nhiên, thanh tú (Natural Standing Pose).
 - Tích hợp nhịp thở ngực sinh học (`J_Bip_C_Chest`) dao động hình sin nhịp nhàng theo thời gian thực.
 
 ### 2.3. Điều Khiển Xoay 360 Độ Đa Kênh (Multi-Channel 360 Rotation)
+
 - **Kênh 1: Cảm ứng chuột / vuốt tay trực tiếp (OrbitControls)**: Kéo chuột trái xoay tự do 360 độ quanh nhân vật, lăn chuột zoom in/out, kéo chuột phải pan camera.
 - **Kênh 2: Thanh trượt xoay 360° (Interactive Rotation Slider)**: Kéo trượt từ 0° đến 360° xoay mượt mà tức thì.
 - **Kênh 3: Các nút xoay nhanh**: "Chính Diện (0°)", "Góc Nghiêng (90°)", "Sau Lưng (180°)", "Tự Động Xoay (Auto-Rotate)".

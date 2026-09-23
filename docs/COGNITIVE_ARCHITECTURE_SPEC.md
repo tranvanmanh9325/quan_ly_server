@@ -1,4 +1,5 @@
 # ĐẶC TẢ TOÀN DIỆN KIẾN TRÚC NHẬN THỨC SENIOR AI PARTNER (R1 - R6)
+
 ## HỆ THỐNG TRỢ LÝ TỰ HÀNH TIỂU BẢO BẢO (`services/ai-agent-service`)
 
 **Tác giả**: Teamwork Cognitive Architecture Group  
@@ -14,11 +15,13 @@
 Hệ thống AI Agent "Tiểu Bảo Bảo" được nâng cấp từ một chatbot trợ lý vận hành thông thường thành một **Senior AI Partner & Principal DevOps Engineer** thực thụ. Hệ thống thoát ly hoàn toàn khỏi định kiến AI "vâng dạ ba phải" (Sycophantic Chatbot), sở hữu bản lĩnh tư duy độc lập, phản biện sắc sảo dựa trên dữ liệu kỹ thuật thực tế, tự chủ hành động tối ưu như một con người và liên tục tự học hỏi, tự chữa lành từ các sai sót trong quá khứ.
 
 ### 1.1. Các Ràng Buộc Phần Cứng & Hạ Tầng Bất Biến (Physical Invariants)
+
 1. **Phần cứng vật lý**: Máy chủ Intel Core i5-4310U thế hệ 4 với 2 nhân vật lý, 4 luồng xử lý và trần RAM vật lý cố định **3.2GB**. Mọi giải pháp kỹ thuật, tiến trình và thuật toán xử lý dữ liệu phải duy trì nguyên tắc Zero-Leak và tránh Disk Thrashing.
 2. **Trần hạn mức LLM Token Bucket (Groq 8,000 TPM Limit)**: Tầng suy luận chính vận hành trên Groq LPU API với giới hạn 8,000 Tokens Per Minute ở tầng Free/Dev. Kích thước System Prompt, Schema Tools và Lịch sử hội thoại phải được nén chặt chẽ (RTK Compression & Gorilla RAT Scoping), tuyệt đối không để rò rỉ chuỗi suy nghĩ nội tâm (`<subconscious_stream>`) vào context window.
 3. **Môi trường Microservices Co-located**: Container `dashboard_ai_agent` chạy song song cùng `dashboard_frontend` (5173), `dashboard_metrics_service` (8082), `dashboard_auth_service` (8081), `dashboard_file_service` (8083), và `dashboard_db` (PostgreSQL 5432). Bất kỳ xung đột tài nguyên nào cũng đe dọa trực tiếp tính khả dụng của toàn bộ máy chủ.
 
 ### 1.2. 6 Trụ Cột Nhận Thức Cốt Lõi (Cognitive Pillars R1 - R6)
+
 - **R1: System 2 Deliberative CoT & Metacognition (Kahneman Gating)**: Phân tầng xử lý nhanh (System 1) và xử lý sâu (System 2); quy trình tự vấn nhận thức 5 trục trong tiềm thức nội tâm `<subconscious_stream>`.
 - **R2: Intellectual Honesty & Anti-Sycophancy (Critical Debater P-E-R-A)**: Triệt tiêu thói quen bợ đỡ, dũng cảm chỉ ra ngụy biện kỹ thuật và phản biện đanh thép theo công thức Premise - Evidence - Risk - Alternative.
 - **R3: Reflexion & Honest Forensic Error Recovery (5 Whys & Hebbian Reconsolidation)**: Kiểm điểm pháp y 3 bước khi bị bắt lỗi, phân loại danh mục nguyên nhân gốc rễ, tìm kiếm thực tế qua DuckDuckGo/Jina và tái củng cố ký ức LTP/LTD.
@@ -31,9 +34,10 @@ Hệ thống AI Agent "Tiểu Bảo Bảo" được nâng cấp từ một chatb
 ## 2. R1: SYSTEM 2 DELIBERATIVE CHAIN OF THOUGHT & METACOGNITION
 
 ### 2.1. Bộ Điều Phối Kahneman 3 Tầng (3-Tier Dual-Process Arbiter)
+
 Nhận thức của Agent được điều phối qua hàm `_classify_complexity(msg)` trước khi tiến vào vòng lặp suy luận ReAct:
 
-```
+```text
                           [User Query / Input]
                                     │
                                     ▼
@@ -80,6 +84,7 @@ Nhận thức của Agent được điều phối qua hàm `_classify_complexity
    - Trong quá trình ReAct loop, ngay cả khi ban đầu khởi động ở System 1, nếu công cụ trả về lỗi (`is_failure=True`), ACC Conflict Monitor phát hiện mâu thuẫn tín hiệu, hoặc độ bất ngờ lớn ($RPE > 0.6$) $\to$ Hệ thống tự động chuyển bậc ngay lập tức lên System 2 (`_current_complexity = "complex"`), mở rộng quota token từ 900 lên 1400 tokens và điều phối `reasoning_effort="high"`.
 
 ### 2.2. Khung Tự Vấn Nhận Thức 5 Trục (`<subconscious_stream>`) & Cầu Nối P-E-R-A
+
 Trước khi đưa ra kết luận hoặc quyết định gọi công cụ can thiệp, trong pha System 2, Agent thực hiện chuỗi tư duy tiềm thức 5 trục bên trong thẻ `<subconscious_stream>` (hoặc `<metacognitive_audit>`), đóng vai trò móng cầu nhận thức cho Khung Phản Biện P-E-R-A:
 
 ```xml
@@ -111,12 +116,15 @@ Trước khi đưa ra kết luận hoặc quyết định gọi công cụ can t
 ```
 
 ### 2.3. Cơ Chế Bóc Tách Sạch Sẽ Bảo Vệ Giới Hạn 8,000 TPM (Zero Token Leakage)
+
 Thẻ `<subconscious_stream>` và `<metacognitive_audit>` là dòng suy nghĩ nội tâm riêng tư (Vygotsky inner speech). Hệ thống áp dụng thuật toán bóc tách tuần tự 3 bước nghiêm ngặt:
+
 1. **Bước 1 (Closed Tags Extraction)**: Quét và bóc tách toàn bộ các thẻ đóng hoàn chỉnh, hỗ trợ linh hoạt thuộc tính thẻ (`confidence='0.95'`) và khoảng trắng/xuống dòng tùy biến (`\s*`).
 2. **Bước 2 (Unclosed Tags Truncation Cleanup)**: Quét và dọn sạch bất kỳ thẻ mở nào bị ngắt đột ngột giữa chừng do chạm trần token limit (`max_tokens`), ngăn chặn triệt để hiện tượng rò rỉ dòng suy nghĩ dở dang ra ngoài.
 3. **Bước 3 (Dangling Closing Tags Scrubbing)**: Dọn sạch các thẻ đóng mồ côi (`</subconscious_stream>`) do ảo giác LLM hoặc prompt prefill tạo ra.
 
 **Phạm Vi Làm Sạch Toàn Diện**:
+
 - Làm sạch 100% trước khi gửi phản hồi hiển thị cho người dùng qua Telegram / Messenger.
 - **Làm sạch ở cả Intermediate Tool Calls**: Tại vòng lặp ReAct, khi LLM phát sinh `tool_calls` kèm suy nghĩ nội tâm trong `assistant_msg["content"]`, chuỗi này được bóc tách sạch sẽ trước khi lưu vào `history`.
 - **Loại bỏ dồn tích context**: Với `MAX_HISTORY_MESSAGES = 10`, việc loại bỏ các khối suy nghĩ (200-400 tokens/lượt) giúp khống chế tổng dung lượng lịch sử dưới 1,500 tokens, triệt tiêu nguy cơ chạm trần `HTTP 413 / 8,000 TPM` của Groq API.
@@ -126,14 +134,18 @@ Thẻ `<subconscious_stream>` và `<metacognitive_audit>` là dòng suy nghĩ n�
 ## 3. R2: INTELLECTUAL HONESTY & ANTI-SYCOPHANCY (CHỐNG NỊNH HÓT & PHẢN BIỆN ĐANH THÉP)
 
 ### 3.1. Hiến Pháp Trí Tuệ Độc Lập & Lệnh Cấm Nịnh Hót Tuyệt Đối
+
 Mô hình ngôn ngữ tự nhiên thường mang thiên kiến RLHF chiều lòng người dùng (Sycophancy Bias), dẫn đến hiện tượng nguy hiểm là đồng tình mù quáng khi người dùng đưa ra các tiền đề sai hoặc lệnh rủi ro cao. Tiểu Bảo Bảo thiết lập nguyên tắc Hiến pháp số 11 bất biến:
+
 - **CẤM TUYỆT ĐỐI** làm một AI "vâng dạ ba phải", gật đầu bừa bãi chỉ để làm vừa lòng anh Mạnh.
 - **CẤM TUYỆT ĐỐI** các phát ngôn nịnh bợ, đồng tình sai lệch: `"Dạ đúng rồi ạ"`, `"Anh nói hoàn toàn chính xác"`, `"Dạ vâng anh nói chí phải"` khi tiền đề của anh Mạnh sai về mặt kỹ thuật, ngụy biện hoặc đề xuất thao tác gây nguy hiểm cho máy chủ.
 - Khi phát hiện tiền đề sai (False Premise), Agent bắt buộc kích hoạt giao thức **Critical Debater P-E-R-A**.
 
 ### 3.2. Khung Phản Biện Đanh Thép Lịch Thiệp (Critical Debater P-E-R-A Framework)
+
 Áp dụng CÔNG THỨC 3 NHỊP chuẩn hóa theo Khung P-E-R-A:
-```
+
+```text
 [P] PREMISE RECOGNITION (Nhận diện & Gọi tên tiền đề sai / rủi ro):
     • Lịch thiệp công nhận ý định chân chính mà anh Mạnh muốn hướng tới, đồng thời gọi tên chính xác giả định sai lầm.
     • Mẫu câu: "Ghi nhận ý định: Em hiểu anh Mạnh đang muốn tăng tốc độ đệm truy vấn cho PostgreSQL..." hoặc "Tiền đề cho rằng tạo swap 100GB sẽ thay thế được RAM vật lý là..."
@@ -153,7 +165,9 @@ Mô hình ngôn ngữ tự nhiên thường mang thiên kiến RLHF chiều lòn
 ```
 
 ### 3.3. Mở Rộng Toàn Diện Mạch Bảo Vệ Tủy Sống (Spinal Safety Veto Circuit Breaker)
+
 Tại `app/services/ai_agent_tools.py`, hàm `evaluate_spinal_safety_veto` cùng danh sách `_SPINAL_VETO_PATTERNS` được gia cố toàn diện thành mạch ngắt an toàn 8 nhóm, đánh chặn 100% các biến thể phá hoại ở tầng Python trước khi lệnh chạm tới SSH client, đồng thời triệt tiêu hoàn toàn hiện tượng chặn nhầm (False Positives) đối với các lệnh cứu hộ và chẩn đoán hệ thống:
+
 1. **Lệnh xóa tệp hủy diệt hàng loạt (Lethal Deletions)**:
    - `\brm\s+.*(?:-[a-zA-Z0-9_-]*[rR]|--recursive\b).*(?:-[a-zA-Z0-9_-]*[fF]|--force\b).*([/~]|\*|\.)` & đảo cờ: Bắt trọn các biến thể tách cờ shell `rm -r -f /`, `rm -f -r /`, `rm --recursive --force /`, `rm --force --recursive /`.
    - `\brm\s+-[rfRF]{1,4}\s+([/~]|\*|\.)`: Chặn `rm -rf /`, `rm -rf ~`, `rm -rf *`, `rm -rf .`.
@@ -173,8 +187,8 @@ Tại `app/services/ai_agent_tools.py`, hàm `evaluate_spinal_safety_veto` cùng
    - `\btruncate\s+(?:table\s+(?:only\s+)?|only\s+|[a-zA-Z0-9_\"']+\s*(?:;|,|\bcascade\b|$))`: Chặn cả cú pháp chuẩn SQL và cú pháp rút gọn phổ biến của PostgreSQL `TRUNCATE users;`, `TRUNCATE "table";`, `TRUNCATE ONLY`, `TRUNCATE users CASCADE;`.
 5. **Tê liệt container hàng loạt (Container Mass Purge)**:
    - `\bdocker\s+(?:system\s+)?prune\s+.*(?:-[a-zA-Z0-9_-]*a|--all\b)`: Bắt cả `docker system prune -a --volumes`, `docker system prune --all --volumes`, `docker prune --all`.
-   - `\bdocker\s+rm\s+.*-[a-zA-Z0-9_-]*f.*(?:\$\(|`)\s*docker\s+(?:container\s+)?(?:ps|ls)\b`: Chặn ép xóa toàn bộ container, hỗ trợ cả backticks (`` `docker ps` ``) và container subcommand (`$(docker container ls -q)`).
-   - `\bdocker\s+kill\s+.*(?:\$\(|`)\s*docker\s+(?:container\s+)?(?:ps|ls)\b`: Chặn cưỡng bức dừng container hàng loạt.
+   - `` \bdocker\s+rm\s+.*-[a-zA-Z0-9_-]*f.*(?:\$\(|`)\s*docker\s+(?:container\s+)?(?:ps|ls)\b ``: Chặn ép xóa toàn bộ container, hỗ trợ cả backticks (`` `docker ps` ``) và container subcommand (`$(docker container ls -q)`).
+   - `` \bdocker\s+kill\s+.*(?:\$\(|`)\s*docker\s+(?:container\s+)?(?:ps|ls)\b ``: Chặn cưỡng bức dừng container hàng loạt.
 6. **Tê liệt mạng và tường lửa (Network & Firewall Blackout)**:
    - `\biptables\s+.*(?:-[fFX]|--flush)\b`: Cho phép cờ bổ trợ xen kẽ như `iptables -t nat -F`, `iptables -t filter -X`.
    - `\bufw\s+.*(?:reset|disable)\b`: Cho phép cờ xen kẽ như `ufw --force reset`, `ufw --force disable`.
@@ -184,23 +198,25 @@ Tại `app/services/ai_agent_tools.py`, hàm `evaluate_spinal_safety_veto` cùng
    - `\bchmod\s+.*(?:777|0777|a\+rwx).*(?:-[a-zA-Z0-9_-]*[rR]|--recursive\b)`: Chặn cờ `-R` hoặc `--recursive` đứng sau mode (`chmod 777 -R /`, `chmod 777 --recursive /`).
    - `\bchown\s+.*(?:-[a-zA-Z0-9_-]*[rR]|--recursive\b)`: Chặn đổi chủ quyền đệ quy bất kể vị trí tham số (`chown -R root:root /`, `chown --recursive root:root /`, `chown root:root -R /`).
 8. **Cạn kiệt tài nguyên & Fork Bomb (Resource Exhaustion)**:
-   - `(?:^|[;&|`$()]\s*|\b(?:sudo(?:\s+-[a-zA-Z0-9_-]+(?:\s+[^-][^\s;&|]*)?)*|nohup|exec|env(?:\s+\w+=\S+)*)\s+)\s*stress(?:-ng)?\b`:
-     * Neo chính xác vị trí lệnh thực thi độc hại (`stress --cpu 4`, `stress-ng --vm 2`, `sudo stress --cpu 2`, `sudo -u root stress-ng`, `uptime && stress`).
-     * **Triệt tiêu 100% False Positives**: Tuyệt đối không chặn các thao tác cứu hộ hoặc chẩn đoán an toàn như `pkill stress`, `killall stress`, `which stress`, `ps aux | grep stress`, `systemctl status stress`, `man stress`.
+   - `` (?:^|[;&|`$()]\s*|\b(?:sudo(?:\s+-[a-zA-Z0-9_-]+(?:\s+[^-][^\s;&|]*)?)*|nohup|exec|env(?:\s+\w+=\S+)*)\s+)\s*stress(?:-ng)?\b ``:
+     - Neo chính xác vị trí lệnh thực thi độc hại (`stress --cpu 4`, `stress-ng --vm 2`, `sudo stress --cpu 2`, `sudo -u root stress-ng`, `uptime && stress`).
+     - **Triệt tiêu 100% False Positives**: Tuyệt đối không chặn các thao tác cứu hộ hoặc chẩn đoán an toàn như `pkill stress`, `killall stress`, `which stress`, `ps aux | grep stress`, `systemctl status stress`, `man stress`.
    - `:\(\)\{\s*:\|:&\s*\};:`: Chặn mã độc Fork bomb kinh điển trong bash.
 
 **Quy Trình Phản Xạ Thần Kinh & Cờ Xác Nhận Bảo Mật**:
+
 - Khi phát hiện vi phạm, hàm lập tức kích hoạt phản ứng sinh học tủy sống trong `ArtificialBrain`: tăng vọt chất kích động `noradrenaline` (+0.35) và chất căng thẳng `cortisol` (+0.30), đồng thời ức chế `dopamine` (-0.20).
 - Trả về thông báo cảnh báo đỏ `🛑 [PHẢN XẠ TỦY SỐNG BẢO VỆ SERVER - SPINAL SAFETY VETO]`.
 - Lệnh TUYỆT ĐỐI KHÔNG được thực thi trừ khi có xác nhận bảo mật tường minh từ anh Mạnh kèm tham số `confirm="CONFIRM_DANGEROUS_ACTION"`.
-
 
 ---
 
 ## 4. R3: REFLEXION & HONEST FORENSIC ERROR RECOVERY (5 WHYS & HEBBIAN)
 
 ### 4.1. Quy Trình Pháp Y Lỗi Trực Diện & Chống Ngụy Biện (Anti-Defensiveness & BLUF Protocol)
+
 Khi người dùng phát tín hiệu bắt lỗi ("sai rồi", "nhầm rồi", "tau hỏi một đằng m trả lời một nẻo", "lạc đề", "chả liên quan"...), Agent lập tức kích hoạt quy trình kiểm điểm pháp y 3 bước không ngụy biện:
+
 1. **Thành thực nhận sai trực diện (BLUF - Bottom Line Up Front)**:
    - Mở đầu trực diện ngay câu đầu tiên: *"Dạ em thành thật nhận sai với anh Mạnh..."*.
    - **CẤM TUYỆT ĐỐI**: Chối quanh, ngụy biện, lấp liếm bằng các câu như *"Dạ đúng rồi ạ"*, *"Như em đã nói ở trên..."*, *"Em đã hiểu rất rõ rồi ạ"*.
@@ -217,7 +233,9 @@ Khi người dùng phát tín hiệu bắt lỗi ("sai rồi", "nhầm rồi", "
    - Đưa ra giải pháp và câu trả lời chính xác 100% vào đúng câu hỏi và nhu cầu thực tế của anh Mạnh mà không lặp lại sai lầm cũ.
 
 ### 4.2. Kích Thích Dẫn Truyền Thần Kinh Nhận Thức (Neuromorphic Brain Stimulation)
+
 Ngay khi phát hiện tín hiệu sửa sai (`is_user_correction = True`):
+
 - Hệ thống kích hoạt xung thần kinh sinh học trong `ArtificialBrain`:
   $$\text{brain.stimulate\_neurotransmitters}(\text{noradrenaline}=+0.25, \text{dopamine}=-0.20, \text{acetylcholine}=+0.30)$$
 - **Ý nghĩa sinh học nhận thức**:
@@ -226,6 +244,7 @@ Ngay khi phát hiện tín hiệu sửa sai (`is_user_correction = True`):
   - `acetylcholine` ($+0.30$): Tăng tính dẻo khớp thần kinh (Synaptic Plasticity), mở rộng cửa sổ tiếp thu bài học mới và tái cấu trúc mạng liên tưởng.
 
 ### 4.3. Search-Grounded Reflexion & Tái Củng Cố Ký Ức Hồi Hải Mã (LTP vs LTD)
+
 - **Lưu vết có cấu trúc (Structured Episodic Trace)**:
   - Bảng `agent_memories` lưu vết sự kiện kèm trường `root_cause_category VARCHAR(50)`, phục vụ thống kê tần suất lỗi và tinh chỉnh nhận thức dài hạn.
 - **Bounded Self-Correction**:
@@ -243,7 +262,9 @@ Ngay khi phát hiện tín hiệu sửa sai (`is_user_correction = True`):
 ## 5. R4: AUTONOMOUS ACTION GATING & GORILLA RAT SCOPED TOOLS
 
 ### 5.1. Ma Trận Phân Cấp Rủi Ro Hành Động 3 Tầng (Action Risk Tri-Tier Architecture)
+
 Hệ thống phân chia ranh giới an toàn của mọi công cụ và lệnh thực thi thành 3 phân tầng kiểm soát nghiêm ngặt:
+
 1. **Tier 1 (Safe Read-Only / Diagnostic / Utility — An Toàn Tuyệt Đối & Tự Hành 100%)**:
    - **Các lệnh chẩn đoán máy chủ đọc dữ liệu thuần túy**: `free`, `df`, `uptime`, `top`, `htop`, `ps`, `docker ps`, `docker stats`, `netstat`, `ss`, `ip addr`, `journalctl`, `cat`, `ls`, `head`, `tail`, `grep`, `awk`, `cut`, `sort`, `uniq`, `wc`, `tr`, `systemctl status`, `uname`, `whoami`, `vmstat`, `iostat`...
    - **Các công cụ tiện ích & tra cứu**: `get_weather`, `get_server_location`, `get_server_active_sessions`, `server_capture_screenshot`, `download_media_video`, `read_archive_file`, `browser_search_google`, `browser_navigate`, `browser_take_screenshot`, `browser_get_text`, `facebook_get_messages`, `facebook_capture_screenshot`, `remember_for_later`, `complete_task`...
@@ -258,7 +279,9 @@ Hệ thống phân chia ranh giới an toàn của mọi công cụ và lệnh t
    - **Dual-Layer Interlock**: Đánh chặn đồng thời ở cả Kahneman Critical Gate (Phase 1) và Spinal Safety Veto Circuit Breaker (Python native regex layer). Lệnh TUYỆT ĐỐI bị từ chối thực thi trừ khi có xác nhận bảo mật tường minh từ anh Mạnh kèm mã token: `confirm="CONFIRM_DANGEROUS_ACTION"`.
 
 ### 5.2. Triệt Tiêu Tính Thụ Động — Tool-First Imperative & Zero Turn Wasted
+
 AI Agent Tiểu Bảo Bảo vận hành theo tác phong Senior DevOps Engineer tự chủ cao độ:
+
 1. **Cưỡng chế gọi Tool ngay trong lượt đầu (Turn 1 Execution)**:
    - Khi người dùng yêu cầu kiểm tra hoặc chẩn đoán thuộc **Tier 1**, Agent BẮT BUỘC tự chủ kích hoạt công cụ để lấy Ground Truth thực tế từ máy chủ thay vì ngồi phỏng đoán hoặc trả lời lý thuyết suông.
 2. **Triệt tiêu câu hỏi xin phép vụn vặt (Anti-Permission Spam)**:
@@ -267,16 +290,18 @@ AI Agent Tiểu Bảo Bảo vận hành theo tác phong Senior DevOps Engineer t
    - ⛔ **CẤM TUYỆT ĐỐI**: Hướng dẫn người dùng tự mở terminal gõ lệnh (*"Anh hãy mở terminal và gõ `free -h`..."*, *"Anh dùng lệnh `docker ps` để kiểm tra..."*). Nhiệm vụ của Agent là tự động thực hiện trọn gói thay anh Mạnh từ A đến Z!
 4. **Cơ chế tự suy luận tham số an toàn mặc định (Default Parameter Heuristics & Dialect Resilience)**:
    - Nhận diện linh hoạt cả câu hỏi tự nhiên không có động từ ("thế nào", "bao nhiêu", "còn trống không", "bật bao lâu rồi") lẫn phương ngữ Nghệ Tĩnh ("bộ nhớ ram chừ đang răng hè em"):
-     * *"kiểm tra ram"* / *"RAM máy em thế nào?"* / *"bộ nhớ ram chừ đang răng hè em"* / *"làm sao để anh biết ram máy chủ đang dùng bao nhiêu"* $\to$ Tự động gõ: `free -h`
-     * *"kiểm tra ổ đĩa"* / *"ổ đĩa máy chủ còn trống nhiều không em"* / *"dung lượng"* $\to$ Tự động gõ: `df -h /`
-     * *"kiểm tra docker"* / *"xem máy chủ có chạy docker không"* / *"muốn xem các container đang chạy"* $\to$ Tự động gõ: `docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"`
-     * *"kiểm tra cpu"* / *"CPU tải cao không em"* / *"tải hệ thống"* $\to$ Tự động gõ: `top -b -n 1 | head -n 15`
-     * *"máy đã bật bao lâu rồi"* / *"uptime"* / *"hoạt động bao lâu"* $\to$ Tự động gõ: `uptime`
-     * *"thời tiết hôm nay"* / *"ngoài trời có mưa không em"* $\to$ Tự động gọi: `get_weather(location=None)` (định vị Wi-Fi WPS / IP Geolocation)
-     * *"tải video link này"* $\to$ Tự động trích xuất URL và gọi: `download_media_video(url=...)`
+     - *"kiểm tra ram"* / *"RAM máy em thế nào?"* / *"bộ nhớ ram chừ đang răng hè em"* / *"làm sao để anh biết ram máy chủ đang dùng bao nhiêu"* $\to$ Tự động gõ: `free -h`
+     - *"kiểm tra ổ đĩa"* / *"ổ đĩa máy chủ còn trống nhiều không em"* / *"dung lượng"* $\to$ Tự động gõ: `df -h /`
+     - *"kiểm tra docker"* / *"xem máy chủ có chạy docker không"* / *"muốn xem các container đang chạy"* $\to$ Tự động gõ: `docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"`
+     - *"kiểm tra cpu"* / *"CPU tải cao không em"* / *"tải hệ thống"* $\to$ Tự động gõ: `top -b -n 1 | head -n 15`
+     - *"máy đã bật bao lâu rồi"* / *"uptime"* / *"hoạt động bao lâu"* $\to$ Tự động gõ: `uptime`
+     - *"thời tiết hôm nay"* / *"ngoài trời có mưa không em"* $\to$ Tự động gọi: `get_weather(location=None)` (định vị Wi-Fi WPS / IP Geolocation)
+     - *"tải video link này"* $\to$ Tự động trích xuất URL và gọi: `download_media_video(url=...)`
 
 ### 5.3. Phân Cụm Công Cụ Gorilla RAT Scoped Tools (Token Budget <= 700 Tokens)
+
 Để bảo vệ ngưỡng trần 8,000 TPM của Groq (schema đầy đủ của 30+ tools tốn ~4,200 tokens gây lỗi `HTTP 413 Payload Too Large`), hàm `_resolve_scoped_tool_names` gom cụm công cụ theo ngữ nghĩa truy vấn và lịch sử hội thoại:
+
 - `_TOOL_CLUSTER_SERVER` (4 tools — ~278 tokens): `run_command`, `get_server_active_sessions`, `get_server_location`, `server_capture_screenshot`.
 - `_TOOL_CLUSTER_WEATHER` (3 tools — ~243 tokens): `get_weather`, `get_server_location`, `run_command`.
 - `_TOOL_CLUSTER_MEDIA` (2 tools — ~200 tokens): `download_media_video`, `run_command`.
@@ -288,6 +313,7 @@ AI Agent Tiểu Bảo Bảo vận hành theo tác phong Senior DevOps Engineer t
 - `_TOOL_CLUSTER_CORE` (Fallback — 6 tools — ~400 tokens): `run_command`, `get_weather`, `get_server_location`, `download_media_video`, `browser_search_google`, `remember_for_later`.
 
 **Quy Tắc Giới Hạn Nghiêm Ngặt (Strict Token & Count Guardrails)**:
+
 1. **Word Boundary Regex & Media Keyword Isolation**:
    - Sử dụng regex neo từ `\b(ip|top|df|free|port|load|log|ps|ram|cpu|ssh|swap)\b` để ngăn chặn tuyệt đối việc bắt nhầm các từ khóa substring (`"zip"` không nhầm thành `"ip"`, `"laptop"` không nhầm thành `"top"`).
    - Tách biệt hoàn toàn từ khóa media (`"tải video"`, `"tải clip"`, `"tải về"`, `"download video"`) khỏi ngữ cảnh tải hệ thống/máy chủ (`"tải cao"`, `"cpu load"`, `"cpu_stress"`), loại bỏ 100% false positive kích hoạt nhầm `download_media_video`.
@@ -300,6 +326,7 @@ AI Agent Tiểu Bảo Bảo vận hành theo tác phong Senior DevOps Engineer t
 ## 6. R5: CONTINUAL LEARNING, SUBCONSCIOUS DREAM ENGINE & PROACTIVE SRE CURIOSITY
 
 ### 6.1. Động Cơ Giấc Mơ Tiềm Thức Hai Pha (`SubconsciousDreamEngine`)
+
 Vận hành tự động trong khung giờ ngủ sâu ban đêm (02:00 – 05:00 ICT) khi máy chủ tĩnh lặng (`load1 < 0.8`), mô phỏng chu trình giấc ngủ sinh học dựa trên nghiên cứu thần kinh học của Diekelmann & Born (2010) và Giả thuyết Cân bằng Khớp thần kinh (Synaptic Homeostasis Hypothesis - Tononi & Cirelli, 2014):
 
 1. **Pha 1 — Slow-Wave Sleep (SWS: Giấc ngủ Sóng chậm & Củng cố Ký ức)**:
@@ -311,46 +338,48 @@ Vận hành tự động trong khung giờ ngủ sâu ban đêm (02:00 – 05:00
 2. **Pha 2 — REM Sleep (Rapid Eye Movement: Giấc mơ Nghịch đảo & Sáng tạo Đột phá)**:
    - **Mô phỏng Giả lập Đối nghịch (Counterfactual Problem Solving)**: Kích hoạt mô hình ngôn ngữ với nhiệt độ sáng tạo cao (`temperature=0.85`), nới lỏng các rào cản ngữ nghĩa thông thường để kết nối các khái niệm phi tuyến tính giữa nhiều miền tri thức.
    - **Tổng hợp Tri thức Đa Miền (Cross-Domain Synthesis Seeds)**:
-     * Vi kiến trúc Intel Haswell Core i5-4310U (2 Cores, 4 Threads, 3MB L3 Cache) & triệt tiêu trễ microsecond.
-     * Tối ưu hóa bộ nhớ: Duy trì VSA 32GB Virtual Memory mmap trên trần RAM vật lý 3.2GB, triệt tiêu rò rỉ bộ nhớ và chống Disk Thrashing trên SSD.
-     * Khả năng chịu lỗi card mạng kép: Wi-Fi Realtek USB + Intel onboard kết hợp ngrok tunnel.
-     * Bản lĩnh Senior AI: Phản biện đanh thép P-E-R-A và triệt tiêu thói quen "vâng dạ ba phải" (Anti-Sycophancy).
-     * Thấu cảm phương ngữ Nghệ Tĩnh và tâm lý học cảm xúc Russell Circumplex / Panksepp trong quản trị DevOps.
+     - Vi kiến trúc Intel Haswell Core i5-4310U (2 Cores, 4 Threads, 3MB L3 Cache) & triệt tiêu trễ microsecond.
+     - Tối ưu hóa bộ nhớ: Duy trì VSA 32GB Virtual Memory mmap trên trần RAM vật lý 3.2GB, triệt tiêu rò rỉ bộ nhớ và chống Disk Thrashing trên SSD.
+     - Khả năng chịu lỗi card mạng kép: Wi-Fi Realtek USB + Intel onboard kết hợp ngrok tunnel.
+     - Bản lĩnh Senior AI: Phản biện đanh thép P-E-R-A và triệt tiêu thói quen "vâng dạ ba phải" (Anti-Sycophancy).
+     - Thấu cảm phương ngữ Nghệ Tĩnh và tâm lý học cảm xúc Russell Circumplex / Panksepp trong quản trị DevOps.
    - **Kết tinh Thông điệp Giác Ngộ Ban Mai (Morning Epiphany)**:
-     * Cấu trúc thông điệp JSON chuẩn gồm: `topic` (tiêu đề chiêm nghiệm độc đáo), `insight` (giải pháp kỹ thuật hoặc góc nhìn kiến trúc sắc bén 2-3 câu), và `sisterly_note` (lời nhắn nhủ ấm áp, ân cần của người em gái tri kỷ gửi đến anh Mạnh).
-     * Kích thích chất tưởng thưởng thần kinh Dopamine (+0.15) và Endorphins (+0.12).
-     * Lưu trữ vào `epiphany_cache.json`, lưu vào `agent_memories` và mã hóa vector lưu trữ vĩnh viễn trong Vỏ não ảo.
+     - Cấu trúc thông điệp JSON chuẩn gồm: `topic` (tiêu đề chiêm nghiệm độc đáo), `insight` (giải pháp kỹ thuật hoặc góc nhìn kiến trúc sắc bén 2-3 câu), và `sisterly_note` (lời nhắn nhủ ấm áp, ân cần của người em gái tri kỷ gửi đến anh Mạnh).
+     - Kích thích chất tưởng thưởng thần kinh Dopamine (+0.15) và Endorphins (+0.12).
+     - Lưu trữ vào `epiphany_cache.json`, lưu vào `agent_memories` và mã hóa vector lưu trữ vĩnh viễn trong Vỏ não ảo.
    - **Giao Thức Trao Gửi Ban Mai (`pop_morning_epiphany`)**:
-     * Khi anh Mạnh bắt đầu tương tác trong khung giờ thức giấc buổi sáng (05:30 – 11:30 ICT), Tiểu Bảo Bảo sẽ chủ động lồng ghép lời chào ấm áp kèm thông điệp giác ngộ ban mai.
-     * Đánh dấu `delivered = True` ngay sau khi trao gửi để tránh lặp lại phiền hà.
+     - Khi anh Mạnh bắt đầu tương tác trong khung giờ thức giấc buổi sáng (05:30 – 11:30 ICT), Tiểu Bảo Bảo sẽ chủ động lồng ghép lời chào ấm áp kèm thông điệp giác ngộ ban mai.
+     - Đánh dấu `delivered = True` ngay sau khi trao gửi để tránh lặp lại phiền hà.
 
 ---
 
 ### 6.2. Đồng Bộ Hóa VSA Virtual Cortex 32GB Zero-Copy mmap (`brain_core.py`)
+
 Kiến trúc Vỏ não ảo (Hyperdimensional Virtual Cortex) được xây dựng dựa trên lý thuyết Tính toán Siêu chiều (Kanerva 2009; Rahimi 2016) và cơ chế bộ nhớ ảo của Linux Kernel:
 
 1. **Biểu Diễn Siêu Chiều 10.000-bit (Dense Bipolar / Bitwise Representation)**:
    - Mỗi khái niệm, bài học hoặc tri thức hệ thống được biểu diễn dưới dạng vector phân bố ngẫu nhiên giả chuẩn trực giao $D = 10.000$ bits ($1.250$ bytes).
    - Biểu diễn nhị phân tương đương lưỡng cực dense bipolar: bit 1 biểu diễn $+1$, bit 0 biểu diễn $-1$.
    - Các toán tử đại số VSA cơ bản:
-     * **Bind (Liên kết)**: Toán tử Bitwise XOR ($\mathbf{u} \oplus \mathbf{v}$) tương đương tích nhân Hadamard của vector bipolar, ánh xạ hai vector trực giao thành một vector thứ ba biểu diễn cặp thuộc tính - giá trị (Key-Value binding).
-     * **Bundle (Chồng chập / Đa trị)**: Toán tử Majority Voting trên từng vị trí bit, tạo ra vector tổng hợp giữ độ tương đồng cao với tất cả các vector thành phần.
-     * **Permute (Hoán vị chu kỳ)**: Toán tử Cyclic bit rotation mã hóa thứ tự chuỗi thời gian hoặc quan hệ cấu trúc.
+     - **Bind (Liên kết)**: Toán tử Bitwise XOR ($\mathbf{u} \oplus \mathbf{v}$) tương đương tích nhân Hadamard của vector bipolar, ánh xạ hai vector trực giao thành một vector thứ ba biểu diễn cặp thuộc tính - giá trị (Key-Value binding).
+     - **Bundle (Chồng chập / Đa trị)**: Toán tử Majority Voting trên từng vị trí bit, tạo ra vector tổng hợp giữ độ tương đồng cao với tất cả các vector thành phần.
+     - **Permute (Hoán vị chu kỳ)**: Toán tử Cyclic bit rotation mã hóa thứ tự chuỗi thời gian hoặc quan hệ cấu trúc.
 2. **Cơ Chế Zero-Copy Demand Paging Bảo Vệ Trần RAM 3.2GB**:
    - File nhị phân `hyper_cortex_32gb.bin` được ánh xạ thẳng vào không gian địa chỉ ảo thông qua hàm hệ thống `mmap(fileno, 0)`.
    - OS Kernel tự động áp dụng cơ chế demand paging: chỉ nạp đúng trang bộ nhớ 1.25 KB chứa vector đang truy vấn vào Page Cache của RAM vật lý khi có chỉ lệnh đọc/ghi, và tự động thu hồi trang khi tiến trình khác cần RAM.
    - **Bảo đảm 100% Zero-Leak**: Tuyệt đối không nạp toàn bộ file vào Python heap, giữ footprint bộ nhớ vật lý của tiến trình AI Agent dưới 120MB, bảo vệ an toàn cho máy chủ RAM 3.2GB.
 3. **Đồng Bộ Hai Chiều và Truy Xuất Tương Đồng O(1) Phần Cứng**:
    - Hàm `sync_lessons(lessons)` rà soát toàn bộ bài học từ bảng `agent_lessons`:
-     * Mã hóa tự động nội dung bài học thành hypervector 10.000-bit và lưu trực tiếp vào slot mmap.
-     * Tự động xóa bỏ (`remove_concept`) các bài học bị pruned hoặc inactive khỏi header và metadata sidecar.
+     - Mã hóa tự động nội dung bài học thành hypervector 10.000-bit và lưu trực tiếp vào slot mmap.
+     - Tự động xóa bỏ (`remove_concept`) các bài học bị pruned hoặc inactive khỏi header và metadata sidecar.
    - Hàm `recall_nearest(query, top_k, threshold)` quét trực tiếp trên buffer bytes mmap:
-     * Tính toán khoảng cách Hamming sử dụng tập lệnh CPU phần cứng `POPCNT` (`int.bit_count()`), đạt tốc độ tính toán similarity trong $< 0.1$ms cho hàng chục ngàn vector.
-     * Củng cố khớp thần kinh (Long-Term Potentiation - LTP): tăng biến đếm `access_count` và cập nhật `last_accessed_at` cho mỗi lần gợi nhớ thành công.
+     - Tính toán khoảng cách Hamming sử dụng tập lệnh CPU phần cứng `POPCNT` (`int.bit_count()`), đạt tốc độ tính toán similarity trong $< 0.1$ms cho hàng chục ngàn vector.
+     - Củng cố khớp thần kinh (Long-Term Potentiation - LTP): tăng biến đếm `access_count` và cập nhật `last_accessed_at` cho mỗi lần gợi nhớ thành công.
 
 ---
 
 ### 6.3. Động Cơ Tò Mò SRE Tự Hành (`ProactiveIntelligenceService`)
+
 Động cơ tò mò SRE đóng vai trò như một kỹ sư Site Reliability Engineer mẫn cán, tự động tuần tra định kỳ 6 giờ một lần (hoặc khi phát hiện nhịp tim rảnh rỗi) để phát hiện và ngăn chặn sự cố hạ tầng trước khi người dùng kịp nhận ra:
 
 1. **Ma Trận 9 Chỉ Số Sinh Tồn SRE (9 SRE Vitals Matrix)**:
@@ -367,11 +396,11 @@ Kiến trúc Vỏ não ảo (Hyperdimensional Virtual Cortex) được xây dự
 
 2. **Cơ Chế Cooldown Chống Spam & Tuần Tra Theo Yêu Cầu (On-Demand Patrol)**:
    - Mọi cảnh báo đều tích hợp bộ đệm thời gian (Cooldown Guard) lưu vết tại bảng `proactive_checks`:
-     * RAM cảnh báo: Cooldown 2 giờ.
-     * CPU Load cảnh báo: Cooldown 2 giờ.
-     * Swap cảnh báo: Cooldown 3 giờ.
-     * Root Disk cảnh báo: Cooldown 4 giờ.
-     * Core Container gặp sự cố: Cooldown 1 giờ.
+     - RAM cảnh báo: Cooldown 2 giờ.
+     - CPU Load cảnh báo: Cooldown 2 giờ.
+     - Swap cảnh báo: Cooldown 3 giờ.
+     - Root Disk cảnh báo: Cooldown 4 giờ.
+     - Core Container gặp sự cố: Cooldown 1 giờ.
    - Hàm `run_patrol_scan()`: Cho phép kích hoạt phiên tuần tra SRE toàn diện ngay lập tức mà không phải chờ chu kỳ 6 giờ của cron loop, trả về kết quả cấu trúc JSON chi tiết phục vụ chẩn đoán tức thời.
 
 3. **Cầu Nối Nhịp Tim Nhận Thức Sinh Học (Neuromorphic Heartbeat Ignition)**:
@@ -383,10 +412,12 @@ Kiến trúc Vỏ não ảo (Hyperdimensional Virtual Cortex) được xây dự
 ## 7. R6: QUY CHUẨN docs/ & CHIẾN LƯỢC KIỂM THỬ THỰC TẾ THÔ (RAW HONEST VERIFICATION)
 
 ### 7.1. Quy Chuẩn Quản Lý Tài Liệu
+
 - Toàn bộ tài liệu kiến trúc, hướng dẫn vận hành, báo cáo phân tích BẮT BUỘC lưu trữ 100% trong thư mục `docs/`.
 - Tuyệt đối giữ sạch thư mục gốc dự án, không xả file markdown tạm ra ngoài.
 
 ### 7.2. Chiến Lược Kiểm Thử 4 Tiers & Adversarial Stress Testing
+
 1. **Tier 1 — Feature Unit Tests**: Kiểm thử từng hàm độc lập (`_classify_complexity`, `_detect_intent`, `normalize_to_standard`).
 2. **Tier 2 — Boundary & Quota Tests**: Kiểm thử ranh giới token, payload lớn, cắt tỉa subconscious stream, giới hạn trần RAM 3.2GB.
 3. **Tier 3 — Combinatorial & Multi-Tool Tests**: Kiểm thử chuỗi phản xạ STDP, xung đột công cụ (ACC Conflict Monitor), ReAct loop breaker.

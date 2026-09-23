@@ -82,7 +82,7 @@ flowchart TD
 ### 4.1. Bảng Tổng Hợp 10 Cảnh Báo CodeQL Đã Được Triệt Tiêu Hoàn Toàn
 
 | Alert ID | Loại Lỗ Hổng (Rule ID) | Vị Trí Tập Tin | Nguyên Nhân Ban Đầu & Rủi Ro | Giải Pháp Triệt Để Áp Dụng | Trạng Thái GitHub |
-|:---|:---|:---|:---|:---|:---:|
+| :--- | :--- | :--- | :--- | :--- | :---: |
 | **#81** | `py/reflective-xss` | `file_transfer.py:462` | Token do người dùng gửi từ URL được nhúng trực tiếp vào trang HTML thông báo lỗi 404. Dù có `html.escape`, mô hình phân tích taint flow vẫn gắn cờ Reflective XSS. | Áp dụng nguyên lý **Zero-Reflected Data**: Trang 404 không phản chiếu lại token, chỉ hiển thị thông báo an toàn. Thẩm định regex `TOKEN_REGEX` ngay đầu hàm. | **FIXED** (Closed) |
 | **#82** | `py/path-injection` | `transfer_storage_manager.py:301` | Nhánh `else:` của `_sanitize_token_dir` nối chuỗi `self.base_dir / clean_token`, khiến giá trị trả về bị đánh dấu là tainted. | Loại bỏ hoàn toàn nhánh nối chuỗi; chuyển sang sử dụng 100% duyệt danh mục vật lý `self.base_dir.iterdir()`. | **FIXED** (Closed) |
 | **#83** | `py/path-injection` | `transfer_storage_manager.py:314` | Mở tệp tạm thời `tmp_meta_file = token_dir / f".metadata.{token}.tmp"` khi `token_dir` chưa được xác nhận đóng gói an toàn. | Bổ sung rào chắn `os.path.commonpath` kiểm tra `tmp_meta_file` nằm trọn trong `token_dir` trước khi gọi `open()`. | **FIXED** (Closed) |
@@ -147,6 +147,7 @@ Vì `entry` xuất phát trực tiếp từ lệnh gọi hệ thống của nhâ
 ### 4.4. Quy Chuẩn Ghi Tệp Nguyên Tử (Atomic File Operations)
 
 Để bảo đảm không bao giờ xảy ra tình trạng "corrupted file" do ghi dở dang khi gặp sự cố cúp điện hoặc tiến trình bị kill:
+
 1. Mọi tệp dữ liệu hoặc cấu hình được ghi vào một tệp tạm thời ẩn nằm cùng thư mục đích: `.metadata.<hex>.tmp`.
 2. Sau khi ghi và flush đầy đủ dữ liệu ra đĩa SSD, hệ thống gọi lệnh `os.replace(tmp_path, target_path)`.
 3. Trong hệ điều hành Linux, `os.replace` là một thao tác nguyên tử (atomic operation) ở cấp độ nhân (kernel system call `renameat2`), bảo đảm tệp đích luôn ở trạng thái hoàn chỉnh 100%.

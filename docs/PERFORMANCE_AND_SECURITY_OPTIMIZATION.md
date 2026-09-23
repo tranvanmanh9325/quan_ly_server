@@ -7,6 +7,7 @@ Tài liệu chi tiết về chiến dịch rà soát toàn diện, tối ưu hó
 ## 1. Bối Cảnh & Mục Tiêu Kỹ Thuật
 
 ### 1.1. Hiện Trạng Hạ Tầng Máy Chủ (`kirito-server`)
+
 - **CPU**: Intel Core i5-4310U Haswell @ 2.00GHz (2 Cores / 4 Threads).
 - **RAM Vật Lý**: 3.3 GB DDR3.
 - **Ổ Đĩa**: 400 GB NVMe SSD (Swap 36.5 GB).
@@ -14,6 +15,7 @@ Tài liệu chi tiết về chiến dịch rà soát toàn diện, tối ưu hó
 - **Docker Daemon**: 6 Containers chính (`dashboard_ai_agent`, `dashboard_frontend`, `dashboard_metrics_service`, `dashboard_auth_service`, `dashboard_file_service`, `dashboard_db`).
 
 ### 1.2. Các Vấn Đề Cốt Lõi Đã Được Giải Quyết
+
 1. **Lãng phí tài nguyên ổ đĩa**: Docker Build Cache chiếm dụng 27.95 GB trên SSD (trong đó 9.93 GB là dangling layers không còn sử dụng).
 2. **Nguy cơ phơi lộ cổng mạng (Network Exposure)**: Các cổng backend `8081`, `8082`, `8083`, `8084`, `6080` mở `0.0.0.0`, bypass qua firewall UFW do cơ chế iptables mặc định của Docker.
 3. **Overhead bắt tay TCP/TLS (Connection Overhead)**: Khởi tạo mới `httpx.AsyncClient` liên tục khi tải media và giải mã URL Facebook khiến độ trễ tăng thêm 150-300ms mỗi request.
@@ -69,6 +71,7 @@ flowchart TD
 ```
 
 ### 2.1. Khóa Cổng Nội Bộ Sang `127.0.0.1` (Port Hardening)
+
 - Trong `docker-compose.yml`, các cổng dịch vụ nội bộ được chuyển từ định dạng `PORT:PORT` sang `127.0.0.1:PORT:PORT`:
   - `auth-service`: `127.0.0.1:8081:8081`
   - `metrics-service`: `127.0.0.1:8082:8082`
@@ -80,7 +83,9 @@ flowchart TD
   - Giao tiếp giữa Nginx và các microservices diễn ra thông qua mạng Docker bridge (`dashboard-network`) độc lập hoàn toàn với port map trên host.
 
 ### 2.2. OWASP Security Headers Trên Nginx
+
 Bổ sung đầy đủ các header an ninh tiêu chuẩn và khắc phục cạm bẫy kế thừa `add_header` của Nginx:
+
 - `X-Content-Type-Options: nosniff` (chống MIME-type sniffing).
 - `X-Frame-Options: SAMEORIGIN` (bảo vệ chống Clickjacking nhưng vẫn đảm bảo nhúng iframe noVNC `/vnc-embed.html` mượt mà).
 - `X-XSS-Protection: 1; mode=block` (kích hoạt bộ lọc XSS).
@@ -88,6 +93,7 @@ Bổ sung đầy đủ các header an ninh tiêu chuẩn và khắc phục cạm
 - `Permissions-Policy: geolocation=(), microphone=(), camera=(), clipboard-read=(self), clipboard-write=(self), fullscreen=(self)` (cấp quyền clipboard cho noVNC và chặn các API nhạy cảm khác).
 
 ### 2.3. Bảo Vệ Endpoint Tải Media (`app.core.rate_limiter`)
+
 - Xây dựng module `DownloadRateLimitGuard` thuần Python (Zero External Dependencies):
   - **Token Bucket Rate Limiter**: Cho phép burst 15 requests (để hỗ trợ tua video byte-range nhanh qua HTTP 206) và nạp lại 0.5 tokens/giây (~30 requests/phút).
   - **Anti-Bruteforce IP Jail**: Nếu một địa chỉ IP liên tục thử các token không tồn tại quá 5 lần trong vòng 60 giây, IP đó sẽ bị cách ly vào Jail trong 600 giây (10 phút) với mã lỗi HTTP 403 Forbidden.
@@ -98,18 +104,21 @@ Bổ sung đầy đủ các header an ninh tiêu chuẩn và khắc phục cạm
 ## 3. Tối Ưu Hóa Hiệu Năng & Tài Nguyên Ứng Dụng
 
 ### 3.1. Tái Sử Dụng HTTP Connection Pool (`app.core.http_client`)
+
 - Nâng cấp `HttpClientManager` với 2 pool chuyên biệt:
   1. `get_client()`: Dành cho REST API và LLM Streaming (Groq, OpenRouter, Telegram API) với `max_keepalive_connections=20`, `max_connections=100`, `keepalive_expiry=120.0s`.
   2. `get_media_client()`: Dành cho Media Downloader (TikWM, Facebook redirects) với `local_address="0.0.0.0"`, `max_keepalive_connections=10`, `max_connections=30`, `keepalive_expiry=60.0s`.
 - **Hiệu quả**: Giảm độ trễ chuyển hướng URL Facebook và gọi Groq API từ **150-300ms** xuống còn **< 5ms** nhờ tái sử dụng kết nối TCP/TLS đã thiết lập sẵn.
 
 ### 3.2. Thu Hồi Bộ Nhớ RAM Chủ Động (`app.core.memory_reclaimer`)
+
 - Xây dựng module `reclaim_memory_background` giải quyết vấn đề phân mảnh bộ nhớ của Python trên Linux:
   - Duyệt và dọn dẹp các chu trình tham chiếu chéo (cyclic references) qua `gc.collect()`.
   - Ép glibc trả các trang bộ nhớ nhàn rỗi về cho Linux Kernel qua `libc.malloc_trim(0)`.
   - Thực thi hoàn toàn trong Worker Thread (`asyncio.to_thread`) với độ trễ trù bị 0.2s để đảm bảo **Zero Event Loop Blocking** (không làm nghẽn luồng xử lý chính của FastAPI).
 
 ### 3.3. Tối Ưu Database Connection Pool (`app.core.db`)
+
 - Tinh chỉnh `AsyncConnectionPool` của Psycopg 3 phù hợp với cấu hình PostgreSQL 17 trên VPS 3.2GB RAM:
   - `min_size = 2` (giảm footprint RAM khi nhàn rỗi).
   - `max_size = 10` (chống quá tải connection storm).
@@ -118,6 +127,7 @@ Bổ sung đầy đủ các header an ninh tiêu chuẩn và khắc phục cạm
   - `check = AsyncConnectionPool.check_connection` (liveness check tự động phục hồi kết nối).
 
 ### 3.4. Phân Bổ Tài Nguyên Docker Compose & Tránh CFS Throttling
+
 - Thay thế việc gán cứng CFS quota (`cpus: 0.5`) gây micro-stutter bằng cơ chế chia sẻ CPU mềm (`cpu_shares`):
   - `db`: `cpu_shares: 2048`, limits `768M`, reservations `512M`.
   - `ai-agent-service`: `cpu_shares: 1024`, `shm_size: 512m`, limits `1350M`, reservations `384M`.

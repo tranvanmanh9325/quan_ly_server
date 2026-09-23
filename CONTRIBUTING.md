@@ -37,7 +37,8 @@ The **Kirito Server Dashboard & Autonomous AI Agent Ecosystem** was originally d
 </a>
 
 ### **Trần Văn Mạnh (Kirito)**
-*Project Founder, Core Maintainer & Lead Software Architect*
+
+Project Founder, Core Maintainer & Lead Software Architect
 
 [![GitHub](https://img.shields.io/badge/GitHub-@tranvanmanh9325-181717?style=flat-square&logo=github)](https://github.com/tranvanmanh9325)
 [![Email](https://img.shields.io/badge/Email-manhtrana1k45tl@gmail.com-EA4335?style=flat-square&logo=gmail&logoColor=white)](mailto:manhtrana1k45tl@gmail.com)

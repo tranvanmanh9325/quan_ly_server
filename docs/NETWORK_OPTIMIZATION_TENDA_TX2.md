@@ -13,6 +13,7 @@
 Qua quá trình khảo sát kỹ thuật thực tế (chế độ Read-Only an toàn) trên máy chủ `kirito-server` và phân tích thiết bị mạng mục tiêu:
 
 ### 1.1. Hiện Trạng Card Mạng Của Máy Chủ (`kirito-server`)
+
 1. **Cổng Onboard Gigabit Ethernet (Cáp LAN):**
    - **Phần cứng:** `Intel Corporation Ethernet Connection I218-LM [8086:155a] (rev 04)`, module kernel `e1000e`.
    - **Băng thông danh định:** **1000 Mbps Full-Duplex (1 Gbps song công)**.
@@ -31,6 +32,7 @@ Qua quá trình khảo sát kỹ thuật thực tế (chế độ Read-Only an t
 ---
 
 ### 1.2. Thông Số Kỹ Thuật Router Tenda TX2 (Wi-Fi 6 AX1500)
+
 - **Cổng kết nối vật lý:**
   - 1 Cổng WAN Gigabit (10/100/1000 Mbps).
   - 3 Cổng LAN Gigabit (10/100/1000 Mbps).
@@ -56,7 +58,9 @@ Nhiều người dùng thường có suy nghĩ trực quan: *"Nếu cắm 1 dây
 Tuy nhiên, dưới góc độ kỹ thuật mạng máy tính chuyên sâu (Linux Kernel Network Stack), **đây là một cạm bẫy cực kỳ nguy hiểm**:
 
 ### 2.1. Thảm Họa Bonding Mode 0 (`balance-rr` - Round-Robin)
+
 Nếu cố tình dùng Linux Bonding Mode 0 để luân chuyển gói tin qua cả LAN và Wi-Fi:
+
 1. **Độ trễ vật lý bất đối xứng nghiêm trọng:**
    - Cáp LAN: Tốc độ 1000 Mbps, RTT $< 0.25\text{ ms}$, Jitter $\approx 0$.
    - Wi-Fi 2.4GHz: Tốc độ ~50 Mbps, RTT $10 - 40\text{ ms}$, Jitter cao.
@@ -72,6 +76,7 @@ Nếu cố tình dùng Linux Bonding Mode 0 để luân chuyển gói tin qua c�
    - Độ trễ nhảy vọt, kết nối SSH giật lag, Docker container bị timeout liên tục.
 
 ### 2.2. Giới Hạn Của Khung 802.11 Wi-Fi (3-Address Frame Trap)
+
 - Trong chuẩn Wi-Fi Client mode thông thường, khung vô tuyến 802.11 chỉ có **3 địa chỉ MAC** (Source, Destination, BSSID).
 - Router Wi-Fi (Tenda TX2) bắt buộc địa chỉ MAC nguồn phải trùng khớp 100% với địa chỉ MAC của card Wi-Fi đã bắt tay WPA2.
 - Nếu gộp bonding và dùng địa chỉ MAC ảo của bond interface, router Tenda TX2 sẽ **drop toàn bộ gói tin** vì cho rằng đây là gói tin giả mạo (Anti-Spoofing drop).
@@ -128,11 +133,13 @@ flowchart TD
 ---
 
 ### PHƯƠNG ÁN 1: DEDICATED FUNCTIONAL SEGMENTATION (PHÂN TÁCH CHỨC NĂNG CHUYÊN BIỆT)
+
 ⭐ **[KHUYẾN NGHỊ CAO NHẤT - TỐI ƯU NHẤT CHO THỰC TẾ]**
 
 Thay vì cố ép gộp chung một cách khiên cưỡng, ta giao cho mỗi card mạng một sứ mệnh độc lập phát huy đúng thế mạnh vật lý của nó:
 
-#### 1. Cáp LAN Gigabit (Intel I218-LM) $\to$ Trục Xương Sống Chính (Main Backbone):
+#### 1. Cáp LAN Gigabit (Intel I218-LM) $\to$ Trục Xương Sống Chính (Main Backbone)
+
 - **Nhiệm vụ:** Gánh 100% các dịch vụ nặng, đòi hỏi tốc độ Gigabit và độ trễ thấp:
   - Giao diện Web Dashboard (Nginx `:5173`).
   - Hệ thống microservices Spring Boot (Auth `:8081`, Metrics `:8082`, Files `:8083`).
@@ -142,7 +149,8 @@ Thay vì cố ép gộp chung một cách khiên cưỡng, ta giao cho mỗi car
   - Cloudflare Tunnel Ingress nhận request từ Internet.
 - **Ưu điểm:** Khai thác trọn vẹn 1000 Mbps của cổng LAN Tenda TX2, ổn định tuyệt đối, không bị chia sẻ băng thông với sóng vô tuyến.
 
-#### 2. Card Wi-Fi 1 (PCIe Qualcomm AR9485) $\to$ Dự Phòng Nóng (Hot-Standby Failover 99.99%):
+#### 2. Card Wi-Fi 1 (PCIe Qualcomm AR9485) $\to$ Dự Phòng Nóng (Hot-Standby Failover 99.99%)
+
 - **Nhiệm vụ:** Kết nối thường trực vào Wi-Fi của Tenda TX2 với Metric thấp hơn (Metric 600 so với Metric 100 của LAN).
 - **Cơ chế vận hành:**
   - Bình thường: Toàn bộ lưu lượng đi qua LAN Gigabit. Card Wi-Fi 1 ở trạng thái chờ ấm (Warm Standby).
@@ -150,7 +158,8 @@ Thay vì cố ép gộp chung một cách khiên cưỡng, ta giao cho mỗi car
   - Phiên SSH, Docker container, Telegram Bot hoàn toàn không bị ngắt quãng. Khi cắm lại cáp LAN, hệ thống tự động trả lại quyền cho cổng Gigabit.
 - **Hoặc tùy chọn:** Dùng làm **Dedicated Outbound Interface** cho AI Agent (cào dữ liệu TikTok, Facebook, gọi Groq API) để phân tách tải ngoại vi, không gây ảnh hưởng đến băng thông mạng nội bộ.
 
-#### 3. Card Wi-Fi 2 (USB Realtek RTL8188EUS) $\to$ Trạm Phát Wi-Fi Cô Lập (Isolated Access Point / Rescue AP):
+#### 3. Card Wi-Fi 2 (USB Realtek RTL8188EUS) $\to$ Trạm Phát Wi-Fi Cô Lập (Isolated Access Point / Rescue AP)
+
 - **Nhiệm vụ:** Tận dụng công nghệ `hostapd` và `dnsmasq` trên Linux để biến chiếc USB Wi-Fi này thành **một Access Point phát Wi-Fi độc lập** (ví dụ SSID: `Kirito_IoT_Isolated` hoặc `Kirito_Rescue_AP`, dải mạng riêng `192.168.100.0/24`).
 - **Công năng đột phá:**
   1. **Mạng IoT an toàn tuyệt đối:** Dành riêng cho các vi điều khiển ESP8266, ESP32, camera giám sát, công tắc thông minh kết nối vào. Mạng này được tường lửa (iptables) cô lập hoàn toàn với mạng LAN gia đình, ngăn chặn triệt để nguy cơ thiết bị IoT bị mã độc xâm nhập vào máy tính cá nhân hay cơ sở dữ liệu server.
@@ -159,6 +168,7 @@ Thay vì cố ép gộp chung một cách khiên cưỡng, ta giao cho mỗi car
 ---
 
 ### PHƯƠNG ÁN 2: HIGH AVAILABILITY NETWORK BONDING (ACTIVE-BACKUP MODE 1)
+
 - **Bản chất:** Gộp Cổng LAN (Primary) và Card Wi-Fi 1 (Backup) vào một card mạng ảo `bond0`.
 - **Cấu hình chuẩn Senior:** Bắt buộc sử dụng tham số `fail_over_mac=active` để tránh bị router Wi-Fi drop gói tin MAC 802.11.
 - **Ưu điểm:** Cung cấp 1 địa chỉ IP duy nhất cho cả mạng dây và Wi-Fi. Cắm dây mạng chạy 1000 Mbps; rút dây mạng chạy 50 Mbps qua Wi-Fi mà không đổi IP.
@@ -167,6 +177,7 @@ Thay vì cố ép gộp chung một cách khiên cưỡng, ta giao cho mỗi car
 ---
 
 ### PHƯƠNG ÁN 3: POLICY-BASED ROUTING (PBR - ĐỊNH TUYẾN THEO LUỒNG NÂNG CAO)
+
 - **Bản chất:** Sử dụng nhiều bảng định tuyến (`rt_tables`) và `ip rule` kết hợp đánh dấu gói tin `fwmark` qua `nftables`/`iptables`.
 - **Phân luồng:**
   - Nhóm Inbound & Dashboard & Database $\to$ Cáp LAN Gigabit.
@@ -180,16 +191,19 @@ Thay vì cố ép gộp chung một cách khiên cưỡng, ta giao cho mỗi car
 Để máy chủ Dell Latitude đạt hiệu năng cao nhất trên router Gigabit Wi-Fi 6 mà không làm cạn kiệt tài nguyên (CPU i5 Haswell và RAM 3.2GB eo hẹp):
 
 ### 4.1. Kích Hoạt TCP BBR & Fair Queueing (`fq`)
+
 - **Vấn đề của thuật toán cũ (CUBIC):** Khi có gói tin Wi-Fi bị suy hao nhẹ, CUBIC lập tức cắt giảm 50% băng thông.
 - **Giải pháp:** **TCP BBR (Bottleneck Bandwidth and RTT)** do Google phát triển. BBR đo lường trực tiếp tốc độ chuyển mạch tối đa và độ trễ tối thiểu, bơm dữ liệu theo nhịp Pacing Rate tối ưu, triệt tiêu hoàn toàn hiện tượng **Bufferbloat** (bộ đệm router bị tràn gây tăng ping).
 
 ### 4.2. Khống Chế Buffer TCP Window Chuẩn Xác Cho RAM 3.2GB (Chống OOM-Killer)
+
 - **Cạm bẫy:** Nhiều tài liệu trên mạng hướng dẫn đặt buffer socket lên tới 32MB–64MB. Trên máy chủ RAM 3.2GB đang chạy 6 Docker container, chỉ cần vài luồng tải file lớn đồng thời sẽ ngốn sạch RAM vật lý (vì buffer kernel không thể bị swap ra đĩa), kích hoạt Linux OOM Killer làm sập PostgreSQL hoặc AI Agent!
 - **Công thức vàng cho RAM 3.2GB:**
   - Giới hạn trần Socket Buffer tối đa là **8 MB** (`8388608 bytes`) — Đủ để bơm full băng thông Gigabit (1000 Mbps) ở độ trễ RTT 64ms mà không lãng phí RAM.
   - Khống chế trần `tcp_mem` tối đa không vượt quá 24% tổng dung lượng RAM hệ thống (~768 MB).
 
 ### 4.3. Kích Hoạt Phần Cứng Offload Chip Intel I218-LM
+
 - Kích hoạt **TSO (TCP Segmentation Offload)**, **GSO**, **GRO**, và **Checksum Offload** qua `ethtool`.
 - Cho phép card mạng Intel tự chia nhỏ và đóng gói TCP frame bằng phần cứng, giải phóng tới **70% chu kỳ CPU Haswell**, giữ CPU luôn mát mẻ và nhàn rỗi cho các container xử lý logic.
 
@@ -200,6 +214,7 @@ Thay vì cố ép gộp chung một cách khiên cưỡng, ta giao cho mỗi car
 *(Tất cả cấu hình dưới đây được biên soạn để tham khảo, không tự ý áp dụng khi chưa có sự đồng ý của anh Mạnh).*
 
 ### 5.1. File Tối Ưu Hóa Kernel: `/etc/sysctl.d/99-network-performance.conf`
+
 ```ini
 # ==============================================================================
 # HỆ THỐNG: DELL LATITUDE (i5-4310U / RAM 3.2GB / INTEL GIGABIT I218-LM)
@@ -251,6 +266,7 @@ vm.vfs_cache_pressure = 50
 ---
 
 ### 5.2. Cấu Hình L3 Dynamic Failover Trong Netplan (`/etc/netplan/01-netcfg.yaml`)
+
 ```yaml
 network:
   version: 2

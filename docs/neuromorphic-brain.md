@@ -103,11 +103,12 @@ Under the **Free Energy Principle (FEP)**, the cognitive core strives to minimiz
 $$\mathcal{F} = \text{Complexity} - \text{Accuracy} \approx D_{KL}[q(\theta) \parallel p(\theta)] - \mathbb{E}_{q}[\ln p(y \mid \theta)]$$
 
 In Tiểu Bảo Bảo's operational runtime:
+
 - **Prior Beliefs ($p(\theta)$):** The server is stable (CPU < 70%, RAM < 85%, swap healthy, services active, Anh Mạnh is peaceful).
 - **Sensory Observations ($y$):** Real-time telemetry via SSH, user query urgency, and Telegram message tone.
 - **Variational Surprise ($\mathcal{F}$ score):**
-  * $\mathcal{F} < 0.35$: Routine state $\to$ System 1 Fast Reaction (direct BLUF answer or cached tool result).
-  * $\mathcal{F} \ge 0.35$: Novelty or discrepancy detected $\to$ Kích hoạt **System 2 Deliberative Reasoning** (multi-step inspection, deep cross-modal resolution, risk evaluation).
+  - $\mathcal{F} < 0.35$: Routine state $\to$ System 1 Fast Reaction (direct BLUF answer or cached tool result).
+  - $\mathcal{F} \ge 0.35$: Novelty or discrepancy detected $\to$ Kích hoạt **System 2 Deliberative Reasoning** (multi-step inspection, deep cross-modal resolution, risk evaluation).
 
 ---
 

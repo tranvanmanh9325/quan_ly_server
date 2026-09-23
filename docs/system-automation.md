@@ -66,7 +66,7 @@ flowchart TD
 | `rtk_persist_task` | Every 30 seconds | Persisting token compression savings to database | `rtk_stats` |
 | `cognitive_heartbeat` | Every 30 seconds | Modulates neurochemicals, updates Circadian Baselines & Russell Affect | In-memory `BrainCore` |
 | `proactive_scan` | Every 60 seconds | Proactive sysadmin checks, anomaly detection before user notices | Telemetry & alerts |
-| `nightly_consolidation`| Nightly / Low Activity | Two-stage SWS synaptic pruning and REM creative dream simulation | `ai_agent_lessons`, `cortex.bin` |
+| `nightly_consolidation` | Nightly / Low Activity | Two-stage SWS synaptic pruning and REM creative dream simulation | `ai_agent_lessons`, `cortex.bin` |
 | `weekly_schema` | Every 7 days | Extracts generalized behavioural schemas from episodic interaction history | `ai_agent_lessons` |
 
 ---

@@ -1,4 +1,5 @@
 # BÁO CÁO NGHIÊN CỨU CHUYÊN SÂU: KIẾN TRÚC ĐỒ HỌA THỰC THỤ CHO ỨNG DỤNG ANDROID TIỂU BẢO BẢO
+
 ## Dự án: Buồng Lái Không Gian & Nhân Vật Nữ AI Trợ Lý Cao Cấp (`android-app`)
 
 - **Ngày thực hiện**: 15/09/2026
@@ -10,10 +11,12 @@
 ## 1. PHÂN TÍCH NGUYÊN NHÂN GỐC RỄ (ROOT CAUSE ANALYSIS)
 
 ### 1.1. Hiện Trạng & Phản Ánh Của Người Dùng
+
 Người dùng đã phản ánh chính xác:
 > *"Hình như hiện tại tất cả chỉ là ảnh tĩnh hay sao ấy chứ hình như không phải bạn đang thiết kế thật..."*
 
 ### 1.2. Bản Chất Lỗi Thiết Kế Ở Phiên Bản Trước
+
 1. **Dùng Ảnh Phẳng Liền Khối (Monolithic Static Texture)**:
    - Toàn bộ khung cảnh (vũ trụ sâu thẳm, khung cửa sổ vòm phi thuyền, sàn bệ rune kim loại) và **nhân vật nữ AI** bị đóng cứng trong một tệp ảnh duy nhất (`cockpit_full_hd.webp`).
    - Thành phần `CockpitScreen.kt` sử dụng `Image(painter = painterResource(id = R.drawable.cockpit_full_hd))` để bao trùm toàn màn hình.
@@ -29,6 +32,7 @@ Người dùng đã phản ánh chính xác:
 Để tạo ra trải nghiệm "đập ngay vào mắt như hình ảnh concept", các studio game và ứng dụng đồ họa đỉnh cao (HoYoverse, Shift Up, Yostar, Google) sử dụng hai trường phái kỹ thuật chính:
 
 ### 2.1. Trường Phái 1: 3D Real-Time Engine (Google Filament / SceneView Compose)
+
 - **Cơ chế**:
   - Dựng không gian 3D dạng file `.glb` / `.gltf`.
   - Nạp mô hình buồng lái 3D (Cockpit Mesh) và mô hình nhân vật 3D (Rigged Character Mesh) vào `SceneView` (dựa trên Filament PBR Engine của Google).
@@ -41,6 +45,7 @@ Người dùng đã phản ánh chính xác:
   - **Rủi ro tương thích trên giả lập LDPlayer**: LDPlayer chạy môi trường Android 9 (API 28) với lớp dịch đồ họa OpenGL ES 3.1 x86. Filament khi biên dịch các shader PBR phức tạp rất dễ gặp hiện tượng drop frame nặng (< 15 FPS) hoặc crash GPU Context.
 
 ### 2.2. Trường Phái 2: 2.5D Multi-Entity Spatial Depth & Skeletal Mesh Engine (Chuẩn Mực Nikke, Live2D, Azur Lane)
+
 - **Cơ chế**:
   - Đây là tiêu chuẩn vàng của ngành công nghiệp game Anime cao cấp khi muốn kết hợp giữa **độ chi tiết mỹ thuật tuyệt đối của nét vẽ 2D** và **chiều sâu không gian 3D sống động**.
   - Bức tranh concept được bóc tách và phân rã thành các **Thực thể Đồ họa Độc lập (Independent Graphic Entities)**:
@@ -51,10 +56,10 @@ Người dùng đã phản ánh chính xác:
     5. **Entity 5: Living Character Entity (Z = 0)**:
        - Nhân vật nữ AI được tách lọc alpha pixel-perfect, đứng độc lập tại tiêu cự trung tâm buồng lái.
        - Tích hợp động cơ sinh học đa tầng:
-         * **Harmonic Breathing**: Lồng ngực và thân trên nâng hạ theo đường cong sin sinh học ($T = 3.8s$).
-         * **Dynamic Gaze & 2.5D Head Tracking**: Khi người dùng chạm hoặc di chuột, nhân vật chuyển hướng nhìn và nghiêng đầu nhẹ theo toạ độ trỏ.
-         * **Natural Dual-Phase Eye Blinking**: Mi mắt chớp tự nhiên ngẫu nhiên (3 - 5 giây).
-         * **Hair & Outfit Inertial Sway**: Tóc và vạt áo dao động quán tính ngược chiều di chuyển.
+         - **Harmonic Breathing**: Lồng ngực và thân trên nâng hạ theo đường cong sin sinh học ($T = 3.8s$).
+         - **Dynamic Gaze & 2.5D Head Tracking**: Khi người dùng chạm hoặc di chuột, nhân vật chuyển hướng nhìn và nghiêng đầu nhẹ theo toạ độ trỏ.
+         - **Natural Dual-Phase Eye Blinking**: Mi mắt chớp tự nhiên ngẫu nhiên (3 - 5 giây).
+         - **Hair & Outfit Inertial Sway**: Tóc và vạt áo dao động quán tính ngược chiều di chuyển.
     6. **Entity 6: Floating 3D Holographic HUD System (Z = +30)**:
        - 4 màn hình HUD bán trong suốt trôi lơ lửng phía trước nhân vật với ma trận xoay phối cảnh 3D (`rotationX`, `rotationY`, `cameraDistance`).
        - Radar quét mục tiêu 360 độ thời gian thực, biểu đồ sóng telemetry dao động sóng sin thật.
@@ -68,7 +73,7 @@ Người dùng đã phản ánh chính xác:
 ## 3. BẢNG SO SÁNH ĐỐI CHIẾU KỸ THUẬT
 
 | Tiêu Chí So Sánh | Phương Án 1: 3D Filament / SceneView | Phương Án 2: 2.5D Multi-Entity Spatial Engine (Đề Xuất) |
-|:---|:---:|:---:|
+| :--- | :---: | :---: |
 | **Độ chân thực với Concept Art** | ❌ Kém (Mesh méo, mặt anime bị biến dạng) | ✅ **100% Hoàn hảo (Nét vẽ gốc sắc sảo)** |
 | **Tách biệt Thực thể Nhân vật** | ✅ Tách biệt | ✅ **Tách biệt hoàn toàn (Pixel-perfect Alpha)** |
 | **Chiều sâu không gian (Spatial Depth)** | ✅ 3D Camera | ✅ **Thị sai đa tầng 5 lớp (5-Plane Parallax)** |
@@ -82,10 +87,10 @@ Người dùng đã phản ánh chính xác:
 
 1. **Bước 1: Bóc tách tài nguyên đồ họa chất lượng cao (Asset Decomposition)**:
    - Sử dụng công cụ đồ họa chuyên nghiệp (Photoshop AI / Python PIL Rembg) để trích xuất:
-     * `char_isolated.png`: Nhân vật nữ AI toàn thân không dính nền, kênh Alpha trong suốt hoàn hảo.
-     * `cockpit_background_inpainted.webp`: Không gian buồng lái vũ trụ đã được inpaint xóa nhân vật hoàn toàn.
-     * `floor_rune_glow.png`: Chi tiết bệ rune phát quang tách riêng.
-     * `char_eyes_blink.png`: Khung mi mắt chớp đồng bộ.
+     - `char_isolated.png`: Nhân vật nữ AI toàn thân không dính nền, kênh Alpha trong suốt hoàn hảo.
+     - `cockpit_background_inpainted.webp`: Không gian buồng lái vũ trụ đã được inpaint xóa nhân vật hoàn toàn.
+     - `floor_rune_glow.png`: Chi tiết bệ rune phát quang tách riêng.
+     - `char_eyes_blink.png`: Khung mi mắt chớp đồng bộ.
 2. **Bước 2: Xây dựng Kiến trúc Đồ họa Không gian Đa Tầng (`SpatialCockpitEngine.kt`)**:
    - Tầng 1: Starfield Particle Generator (Vũ trụ sao động).
    - Tầng 2: Cockpit Inpainted Architecture (Khung tàu vũ trụ).

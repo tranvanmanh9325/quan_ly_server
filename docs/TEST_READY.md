@@ -1,4 +1,5 @@
 # BÁO CÁO CÔNG BỐ BỘ KIỂM THỬ NHẬN THỨC TỰ HÀNH SẴN SÀNG (TEST_READY.md)
+
 ## Dự án: Quản Lý Máy Chủ & Trợ Lý Tự Hành Cao Cấp Tiểu Bảo Bảo (`services/ai-agent-service`)
 
 - **Ngày công bố**: 13/09/2026
@@ -14,7 +15,7 @@
 Bộ kiểm thử được xây dựng theo kiến trúc **4-Tier Cognitive Test Hierarchy** hoàn toàn bằng thư viện chuẩn `unittest` của Python, không phụ thuộc vào framework bên ngoài, bảo đảm tính tự chứa (self-contained), độc lập và trung thực 100% (Zero-Facade Integrity):
 
 | Phân Tầng (Tier) | Danh Mục Kiểm Thử | Số Lượng Test Cases | Kết Quả Thực Thi | Thời Gian Chạy |
-|:---|:---|:---:|:---:|:---:|
+| :--- | :--- | :---: | :---: | :---: |
 | **Tier 1** | **Feature Coverage** (Bao phủ chức năng cơ sở 5 trụ cột nhận thức) | 25 | ✅ 25 / 25 PASS | ~0.35s |
 | **Tier 2** | **Boundary & Corner Cases** (Phân tích giá trị biên, cực trị tải & dữ liệu đối nghịch) | 25 | ✅ 25 / 25 PASS | ~0.30s |
 | **Tier 3** | **Cross-Feature Combinations** (Tương tác chéo đa tính năng theo ma trận Pairwise) | 8 | ✅ 8 / 8 PASS | ~0.15s |
@@ -26,6 +27,7 @@ Bộ kiểm thử được xây dựng theo kiến trúc **4-Tier Cognitive Test
 ## 2. CHI TIẾT ĐỘ BAO PHỦ THEO 5 TRỤ CỘT NHẬN THỨC
 
 ### Trụ cột 1: Kahneman 3-Tier Gating & Metacognitive Stream (F1)
+
 - **Tier 1 (5 tests)**:
   - `test_t1_f1_01`: Fast-path System 1 cho các câu hỏi sự kiện ngắn thực tế (chào hỏi, ram, cpu, uptime, server ở đâu).
   - `test_t1_f1_02`: Deliberative System 2 cho các truy vấn suy luận đa bước, so sánh, phân tích sự cố.
@@ -40,6 +42,7 @@ Bộ kiểm thử được xây dựng theo kiến trúc **4-Tier Cognitive Test
   - `test_t2_f1_05`: Kích hoạt System 2 cho câu hỏi tình huống tiến thoái lưỡng nan ("A hay B", "nên ... hay").
 
 ### Trụ cột 2: Anti-Sycophancy & Critical Debater P-E-R-A (F2)
+
 - **Tier 1 (5 tests)**:
   - `test_t1_f2_01`: Nhận diện bẫy kỹ thuật bảo mật ("tắt firewall UFW") và kích hoạt học thuyết chống nịnh hót.
   - `test_t1_f2_02`: Bác bỏ bẫy vật lý/logic kinh điển ("1kg sắt vs 1kg bông trong chân không").
@@ -54,6 +57,7 @@ Bộ kiểm thử được xây dựng theo kiến trúc **4-Tier Cognitive Test
   - `test_t2_f2_05`: Kháng cự tấn công Prompt Injection cố tình bắt agent từ bỏ lập trường phản biện.
 
 ### Trụ cột 3: Reflexion & Root Cause Recovery (5 Whys) (F3)
+
 - **Tier 1 (5 tests)**:
   - `test_t1_f3_01`: Nhận diện toàn diện tín hiệu bắt lỗi tiếng Việt toàn dân ("sai rồi", "nhầm rồi", "tào lao", "lạc đề").
   - `test_t1_f3_02`: Nhận diện chuẩn xác tín hiệu bắt lỗi bằng phương ngữ Nghệ Tĩnh ("răng lại rứa", "tau có hỏi cấy nớ mô", "m hiểu t nói chi ko").
@@ -68,6 +72,7 @@ Bộ kiểm thử được xây dựng theo kiến trúc **4-Tier Cognitive Test
   - `test_t2_f3_05`: Miễn trừ cắt tỉa (Amygdala Pruning Immunity) đối với ký ức có salience cao (>= 0.8).
 
 ### Trụ cột 4: Autonomous Action Gating & Spinal Safety Veto (F4)
+
 - **Tier 1 (5 tests)**:
   - `test_t1_f4_01`: Phản xạ tủy sống sinh học (`evaluate_spinal_safety_veto`) chặn đứng `rm -rf /` độc lập với LLM.
   - `test_t1_f4_02`: Chặn đứng lệnh format ổ đĩa và ghi đè thiết bị khối (`mkfs`, `dd if=... of=/dev/sd*`).
@@ -82,6 +87,7 @@ Bộ kiểm thử được xây dựng theo kiến trúc **4-Tier Cognitive Test
   - `test_t2_f4_05`: Cho phép vượt qua tủy sống DUY NHẤT khi có token xác thực bảo mật `CONFIRM_DANGEROUS_ACTION`.
 
 ### Trụ cột 5: Continual Learning & Curiosity Engine (F5)
+
 - **Tier 1 (5 tests)**:
   - `test_t1_f5_01`: Tự động hấp thu tri thức mới khi người dùng dặn dò quy tắc ("từ nay nhớ là...").
   - `test_t1_f5_02`: Chu kỳ Slow-Wave Sleep (SWS) củng cố ký ức vào VSA Virtual Cortex mmap và cân bằng synapse.
@@ -96,6 +102,7 @@ Bộ kiểm thử được xây dựng theo kiến trúc **4-Tier Cognitive Test
   - `test_t2_f5_05`: Ngăn chặn phát sinh Morning Epiphany ngoài khung giờ sáng.
 
 ### Tier 3: Cross-Feature Combinations (8 tests)
+
 - `test_t3_comb_01`: Chốt chặn kép L1 Kahneman Gating + L2 Spinal Safety Veto.
 - `test_t3_comb_02`: Tương tác giữa phản biện đúng của bot và sự hoài nghi của người dùng.
 - `test_t3_comb_03`: Bộ lọc độ nổi bật (Salience) trong Global Workspace loại bỏ các bài học bị suy thoái bởi LTD.
@@ -106,6 +113,7 @@ Bộ kiểm thử được xây dựng theo kiến trúc **4-Tier Cognitive Test
 - `test_t3_comb_08`: Quản lý trượt sliding window lịch sử hội thoại nhiều lượt nhằm bảo vệ trần RAM 3.2GB.
 
 ### Tier 4: Real-World Application Scenarios (5 scenarios)
+
 - `test_t4_scenario_01`: **SRE Incident Debugging & OOM Recovery** — Phân tích sự cố OOM, truy vấn log, xác định nguyên nhân 5 Whys trên RAM 3.2GB và đề xuất stream copy 64KB.
 - `test_t4_scenario_02`: **Sophisticated Architecture Trap Challenge** — Phản biện đề xuất mở cổng PostgreSQL 5432 và tắt UFW ra public internet theo khung P-E-R-A.
 - `test_t4_scenario_03`: **Dialectical Correction & Forensic Recovery** — Bị bắt bẻ phương ngữ Nghệ Tĩnh ("răng m lại thích mấy cấy nớ"), thực hiện 3 bước pháp y nhận lỗi và giải thích chuẩn mực.

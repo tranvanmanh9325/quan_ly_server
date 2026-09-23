@@ -629,13 +629,13 @@ class AgentToolExecutor:
                 "type": "function",
                 "function": {
                     "name": "download_media_video",
-                    "description": "Tải video chất lượng phòng thu (ưu tiên 4K, 2K, 1080p và 60fps mượt mà) từ hơn 20+ nền tảng mạng xã hội (YouTube, TikTok, Facebook, Instagram, Threads, Twitter/X, Twitch, Vimeo, Dailymotion, CapCut, Xiaohongshu, Weibo, Bilibili, Reddit, Pinterest, Kuaishou, Lemon8, Likee, Bluesky, Rumble, Streamable, Loom...) hoặc bất kỳ web video nào. Tự động hỗ trợ mô hình Phân phối kép (Video <= 50MB gửi Telegram; Video > 50MB chia phần lossless kèm link tải trực tiếp tốc độ cao LAN/WAN).",
+                    "description": "Tải video chất lượng phòng thu (ưu tiên 4K, 2K, 1080p và 60fps mượt mà) từ hơn 20+ nền tảng mạng xã hội (YouTube, YouTube Shorts, TikTok, Douyin, Facebook, Facebook Reels, Instagram, Threads, Twitter/X, Twitch, Vimeo, Dailymotion, CapCut, Xiaohongshu, Weibo, Bilibili, Reddit, Pinterest, Kuaishou, Lemon8, Likee, Bluesky, Rumble, Streamable, Loom...) hoặc bất kỳ web video nào. Tự động hỗ trợ mô hình Phân phối kép (Video <= 50MB gửi Telegram; Video > 50MB chia phần lossless kèm link tải trực tiếp tốc độ cao LAN/WAN).",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "url": {
                                 "type": "string",
-                                "description": "URL video/media cần tải (hỗ trợ 20+ nền tảng: YouTube, Shorts, TikTok, Douyin, Facebook, Instagram, Twitter/X, Threads, Twitch, Vimeo, Dailymotion, CapCut, Xiaohongshu, Weibo, Bilibili, Reddit, Pinterest, Kuaishou, Lemon8, Likee, Bluesky, Rumble, Streamable, Loom hoặc bất kỳ liên kết video nào).",
+                                "description": "URL video/media cần tải (hỗ trợ 20+ nền tảng: YouTube, YouTube Shorts, TikTok, Douyin, Facebook, Facebook Reels, Instagram, Twitter/X, Threads, Twitch, Vimeo, Dailymotion, CapCut, Xiaohongshu, Weibo, Bilibili, Reddit, Pinterest, Kuaishou, Lemon8, Likee, Bluesky, Rumble, Streamable, Loom hoặc bất kỳ liên kết video nào).",
                             },
                             "caption": {
                                 "type": "string",

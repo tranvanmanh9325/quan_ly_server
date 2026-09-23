@@ -207,6 +207,16 @@ class TelegramBot:
             raw_url = generic_match.group(0)
             is_universal = True
 
+            # Domain blacklist for universal extractor (encyclopedia, docs, code repos)
+            lower_url = raw_url.lower()
+            unsupported_domains = (
+                "wikipedia.org", "wikimedia.org", "github.com", "gitlab.com",
+                "stackoverflow.com", "w3schools.com", "docs.python.org",
+                "medium.com", "example.com", "tiangolo.com",
+            )
+            if any(dom in lower_url for dom in unsupported_domains):
+                return None
+
         # Strip common trailing punctuation and enclosures attached in chat, markdown or rich text
         media_url = raw_url.rstrip(".,;!?)\"'>]}…")
         remaining_text = text.replace(raw_url, "").strip().lower()
@@ -221,9 +231,7 @@ class TelegramBot:
             )
         )
 
-        # TH 1: Chỉ gửi độc nhất link media
-        # Với 24 nền tảng mạng xã hội: cho phép kích hoạt fastpath ngay cả khi gửi link trần
-        # Với Universal Web Extractor: yêu cầu phải có từ khóa tải rõ ràng để tránh cướp link web/tài liệu thông thường
+        # TH 1: Chỉ gửi độc nhất link media (kích hoạt Fast-path trực tiếp cho 24 MXH)
         if not clean_remaining:
             if is_universal:
                 return None

@@ -41,6 +41,8 @@ from app.services.telegram_bot import TelegramBot
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("test_challenger_m1_adversarial_audio")
 
+HAS_FFMPEG = bool(shutil.which("ffmpeg") and shutil.which("ffprobe"))
+
 
 class TestDurationFuzzingRouting(unittest.IsolatedAsyncioTestCase):
     """
@@ -246,6 +248,7 @@ class TestFFprobeCodecAndMetadataEmpirical(unittest.IsolatedAsyncioTestCase):
         img = Image.new("RGB", size, color=(255, 99, 71))
         img.save(path, format="JPEG", quality=90)
 
+    @unittest.skipUnless(HAS_FFMPEG, "FFmpeg and FFprobe binaries required")
     async def test_ffprobe_codec_fidelity_video_extraction(self):
         """Xác minh đầu ra của HD Video Extraction đạt chuẩn phòng thu 320kbps CBR Stereo 44.1kHz."""
         raw_video = os.path.join(self.test_dir, "raw_video.mp4")
@@ -432,6 +435,7 @@ class TestConcurrencyTranscodeStress(unittest.IsolatedAsyncioTestCase):
         img.save(cov_path, format="JPEG")
         return vid_path, cov_path
 
+    @unittest.skipUnless(HAS_FFMPEG, "FFmpeg and FFprobe binaries required")
     async def test_concurrent_transcoding_stress_4_workers(self):
         """Thực thi song song 4 tiến trình FFmpeg mux đồng thời và kiểm tra tính toàn vẹn."""
         tasks = []

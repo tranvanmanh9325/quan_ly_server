@@ -13,7 +13,10 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
+_SERVICE_ROOT = str(Path(__file__).resolve().parent.parent)
+if _SERVICE_ROOT not in sys.path:
+    sys.path.insert(0, _SERVICE_ROOT)
+
 import yt_dlp
 
 from app.services.media_downloader import (

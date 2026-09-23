@@ -85,6 +85,7 @@ async def download_media_file(
         "ngrok-skip-browser-warning": "1",
         "Accept-Ranges": "bytes",
         "X-Content-Type-Options": "nosniff",
+        "Content-Encoding": "identity",
     }
 
     return FileResponse(

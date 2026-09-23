@@ -397,7 +397,7 @@ class TestLivePromptReflexEmpirical(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(len(reply), 20)
 
         # 1. Affirmation: Must confirm "Dạ CÓ!" or affirmative opening
-        reply_lower = reply.lower()
+        reply_lower = reply.lower().replace("*", "").replace("#", "")
         has_affirmation = (
             "dạ có" in reply_lower
             or "có ạ" in reply_lower

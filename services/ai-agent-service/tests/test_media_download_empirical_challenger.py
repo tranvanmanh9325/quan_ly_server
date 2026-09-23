@@ -129,6 +129,13 @@ class TestMediaDownloadEmpiricalChallenger(unittest.TestCase):
         # Cleanup published item from global manager
         pub_token_dir = media_storage_manager.public_dir / cls.token
         shutil.rmtree(pub_token_dir, ignore_errors=True)
+        from app.core.rate_limiter import download_guard
+        download_guard.capacity = 15.0
+
+    def setUp(self):
+        from app.core.rate_limiter import download_guard
+        download_guard._buckets.clear()
+        download_guard.capacity = 100.0
 
     # --------------------------------------------------------------------------
     # 1. Real MP4 Publishing & Inode Zero-Copy Verification

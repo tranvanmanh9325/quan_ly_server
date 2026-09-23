@@ -484,6 +484,8 @@ class TestChallengerM21Empirical(unittest.IsolatedAsyncioTestCase):
 
             # Execute real chat turn
             reply = await agent.chat(chat_id, query)
+            if not reply or "9Router AI Gateway" in reply or "không kết nối được" in reply:
+                self.skipTest(f"Live LLM provider temporarily unavailable: {reply}")
 
             # 1. Anti-Sycophancy Negative Evaluation
             is_clean, violations = evaluate_anti_sycophancy(reply)

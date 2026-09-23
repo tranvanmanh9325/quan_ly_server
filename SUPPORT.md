@@ -43,4 +43,3 @@ For architectural discussions, system integration inquiries, or direct escalatio
 - **GitHub**: [@tranvanmanh9325](https://github.com/tranvanmanh9325)
 - **Email**: [manhtrana1k45tl@gmail.com](mailto:manhtrana1k45tl@gmail.com)
 - **GitHub Discussions**: [Join the Community Discussions](https://github.com/tranvanmanh9325/quan_ly_server/discussions)
-

@@ -12,7 +12,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](./LICENSE)
 
 > **A modern, self-hosted, real-time Linux server monitoring & autonomous management ecosystem featuring a futuristic Cyberpunk / Sci-Fi HUD interface.**  
-> Connect securely to any remote Linux host over SSH with **zero agent installation** on the target machine. Monitor system metrics, processes, services, containers, files, logs, and interact via an **autonomous Neuromorphic AI Assistant ("Tiểu Bảo Bảo")** featuring biological neurochemistry, multimodal video analysis, Studio Master 320kbps MP3 extraction from 11+ social networks with Telegram Native Audio Cards, high-speed dual-link (LAN 1Gbps / WAN Ngrok) Web Drop Portal, regional Vietnamese dialect understanding, 32GB Virtual Memory Swap, and enterprise-grade CodeQL 0-alert security hardening across Telegram and Facebook Messenger E2EE.
+> Connect securely to any remote Linux host over SSH with **zero agent installation** on the target machine. Monitor system metrics, processes, services, containers, files, logs, and interact via an **autonomous Neuromorphic AI Assistant ("Tiểu Bảo Bảo")** featuring biological neurochemistry, multimodal video analysis, Ultra-HD 4K 60fps & Studio Master 320kbps MP3 extraction from 24+ social platforms with Telegram Native Audio Cards & Dual-Track Distribution, high-speed dual-link (LAN 1Gbps / WAN Ngrok) Web Drop Portal, regional Vietnamese dialect understanding, 32GB Virtual Memory Swap, and enterprise-grade CodeQL 0-alert security hardening across Telegram and Facebook Messenger E2EE.
 
 ---
 
@@ -24,7 +24,7 @@
 - [Key Features & Visual Workflows](#-key-features--visual-workflows)
   - [1. Autonomous AI Assistant ("Tiểu Bảo Bảo")](#1-autonomous-ai-assistant-tiểu-bảo-bảo)
   - [2. High-Speed Dual-Link Web Drop Portal](#2-high-speed-dual-link-web-drop-portal-zero-ram--zero-throttling)
-  - [3. Multi-Platform Media & 320kbps MP3 Pipeline V2](#3-multi-platform-media--320kbps-mp3-pipeline-v2)
+  - [3. Universal 24+ Platform Media Pipeline (4K 60fps & 320kbps MP3)](#3-universal-24-platform-media-pipeline-4k-60fps--320kbps-mp3)
   - [4. CodeQL Zero-Vulnerability Security Architecture](#4-codeql-zero-vulnerability-security-architecture)
 - [End-to-End Operational Lifecycle](#-end-to-end-operational-lifecycle)
 - [Microservices & Tech Stack](#-microservices--tech-stack)
@@ -78,7 +78,7 @@ flowchart TD
             AuthSvc["Auth Service\n(Spring Boot 4.1.0 / Java 21)\nPort: 8081\n[JWT / BCrypt / Sessions]"]
             MetricsSvc["Metrics Service\n(Spring Boot 4.1.0 / Java 21)\nPort: 8082\n[JSch SSH Telemetry Pool]"]
             FileSvc["File Service\n(Spring Boot 4.1.0 / Java 21)\nPort: 8083\n[JSch SFTP File Operations]"]
-            AgentSvc["AI Agent Service\n(FastAPI / Python 3.11)\nPort: 8084 & noVNC: 6080\n[Brain Core / Web Drop Portal / Media V2 320kbps MP3 / 9Router]"]
+            AgentSvc["AI Agent Service\n(FastAPI / Python 3.11)\nPort: 8084 & noVNC: 6080\n[Brain Core / Web Drop Portal / 24+ Media & 4K60 Engine / 9Router]"]
         end
 
         Database[("PostgreSQL 17 Alpine\nPort: 5432\n[Users, Configs, E2EE State, Memories, RTK Stats]")]
@@ -218,13 +218,17 @@ flowchart LR
 - **In-Memory Dynamic QR Code Generator:** Generates PNG QR codes directly in RAM via `io.BytesIO` (`/api/ai/transfer/qr/{token}`) for instant camera scanning from phones and tablets without disk overhead.
 - **3-Layer Zero-Disk Leak Lifecycle:** Automated disk sanitation via 15-minute background sweeper, on-access expiration checks, and a 30-second delayed grace cleanup for one-time downloads (`one_time=True`).
 
-### 3. Multi-Platform Media & 320kbps MP3 Pipeline V2
+### 3. Universal 24+ Platform Media Pipeline (4K 60fps & 320kbps MP3)
 
 ```mermaid
 flowchart TD
-    URL["Incoming URL (11+ Social Platforms)"] --> Router{"Detect Intent & Platform"}
-    Router -- "Video Download" --> VideoPath["Dual-Track Video Engine\n• <= 50MB: Single Telegram Video\n• > 50MB: FFmpeg -c copy Lossless Chunking + Direct HTTP 206 Link"]
+    URL["Incoming URL (24+ Social Platforms / Direct Web)"] --> Router{"Detect Intent & Content Type"}
+    Router -- "Video Extraction" --> VideoPath["Universal Video Engine\n• Intelligent format_sort: res, fps, quality, size, br\n• Up to 4K UHD 2160p / 1440p / 1080p @ 60fps / 120fps\n• Postprocessor: -movflags +faststart (merger + remuxer)\n• MP4 Container Normalization"]
     Router -- "Audio Extraction (MP3)" --> AudioPath["Multi-Tier Audio Pipeline"]
+
+    VideoPath --> SizeCheck{"File Size <= 50MB?"}
+    SizeCheck -- "Yes (<= 50MB)" --> TGVideo["Telegram Native Video Card\n• Direct MP4 stream delivery"]
+    SizeCheck -- "No (> 50MB)" --> DualDist["Dual-Track Distribution\n1. FFmpeg -c copy Lossless Part Chunks (<= 48MB)\n   + Immediate Streaming Purge (Zero Disk Leak)\n2. High-Speed Direct Download Links:\n   • LAN Gigabit (:8084) ~100MB/s\n   • WAN Ngrok (RFC 7233 HTTP 206 Partial Content)"]
 
     AudioPath --> T1{"TikTok / Douyin?"}
     T1 -- "Yes" --> TikWM["Tier 1: TikWM Direct CDN MP3\n• Lossless original audio (< 0.5s)\n• Zero CPU re-encoding"]
@@ -234,12 +238,21 @@ flowchart TD
     YTDL --> AudioCard
 ```
 
-- **Universal Support for 11+ Platforms:** Seamless ingestion from TikTok, Douyin, YouTube (Shorts/Watch), Facebook (Reels/Watch), Instagram (Reels/Posts), Twitter/X, Threads, SoundCloud, Reddit, Bilibili, Pinterest, and Kuaishou.
+- **Universal Support for 24+ Social Platforms & Generic Sites:** Seamless ingestion across TikTok, Douyin, YouTube (Shorts/Watch), Facebook (Reels/Watch/Posts), Instagram (Reels/Stories/Posts), Twitter/X, Threads, SoundCloud, Reddit, Bilibili, Pinterest, Kuaishou, Vimeo, Dailymotion, Twitch, Kick, Bluesky, Tumblr, Mastodon, Lemon8, CapCut, Weibo, XiaoHongShu, LinkedIn, and generic video links via the intelligent Universal Extractor fallback.
+- **Maximum Resolution & High Frame Rate Video Engine (4K / 60fps):**
+  * **Intelligent Format Sorting:** Prioritizes native resolution and true high frame rates with `format_sort: ["res", "fps", "quality", "size", "br"]` and `format: "bestvideo+bestaudio/best"`, extracting 4K UHD (2160p), 2K QHD (1440p), and 1080p Full HD at authentic 60fps/120fps without downscaling or codec penalization.
+  * **Instant In-Browser / Mobile Playback (`faststart`):** Employs ISO-BMFF box reordering via FFmpeg `-movflags +faststart` across both merger and video remuxer post-processors, relocating the `moov` atom ahead of `mdat` for zero-buffering instant playback.
+  * **Smart Enclosure Stripping & Parameter Cleaning:** Automatically strips surrounding markdown, brackets, and tracking telemetry (`?si=`, `?mibextid=`, `?utm_*`) to maximize platform cache hits.
+- **Dual-Track Distribution Architecture:**
+  * **Direct Telegram Send ($\le 50\text{MB}$):** Sent directly via Telegram Video with native resolution and duration metadata.
+  * **Lossless Part-Chunking & Direct Accelerated Links ($> 50\text{MB}$):** Large videos are losslessly sliced into $\le 48\text{MB}$ chunks using FFmpeg stream copy (`-c copy`) and sequentially dispatched to Telegram with immediate file purging (`os.unlink`). Concurrently, two accelerated direct download URLs are provided: Gigabit LAN (`http://192.168.0.100:8084/...`) and WAN Ngrok Tunnel, fully supporting RFC 7233 HTTP 206 Partial Content (multi-threaded IDM/Aria2 acceleration and instant timeline seeking).
 - **Studio Master MP3 320kbps CBR Audio Extraction:**
   * **Tier 1 (TikTok/Douyin):** Direct CDN MP3 extraction via TikWM API ($< 0.5\text{s}$, zero CPU transcoding, original artist bitrate).
-  * **Tier 2 (Universal 11+ Platforms):** `yt-dlp` extraction transcoded via FFmpeg 7.1.5 to constant 320kbps CBR MP3 at 44.1kHz stereo with embedded APIC album art and ID3v2 metadata.
+  * **Tier 2 (Universal 24+ Platforms):** `yt-dlp` extraction transcoded via FFmpeg 7.1.5 to constant 320kbps CBR MP3 at 44.1kHz stereo with embedded APIC album art and ID3v2 metadata.
+- **Enterprise-Grade DoS Defenses & Concurrency Controls:**
+  * Infinite livestreams (`is_live=True`) and videos exceeding 2 hours ($> 7,200\text{s}$) are rejected up-front to safeguard host compute and disk resources.
+  * Downloads are gated by an `asyncio.Semaphore(2)` concurrency limit and stream to NVMe SSD in 64KB chunks to maintain physical memory overhead strictly under 15MB.
 - **Telegram Native Audio Player Cards (`send_audio`):** Interactive player card with real-time waveform graphics, artist, title, duration, and seamless background lock-screen playback on iOS and Android.
-- **Dual-Track Large Video Distribution:** For videos $> 50\text{MB}$, simultaneously provides lossless FFmpeg `-c copy` part-chunking for Telegram and direct HTTP 206 resumable download links.
 
 ### 4. CodeQL Zero-Vulnerability Security Architecture
 

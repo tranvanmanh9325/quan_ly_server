@@ -157,10 +157,14 @@ class TelegramBot:
             self.ai_agent.set_telegram_bot(self)
 
     _MEDIA_URL_REGEX = re.compile(
-        r"https?://(?:www\.|web\.|vt\.|vm\.|v\.|m\.|mobile\.|on\.|music\.)?(?:"
-        r"tiktok\.com/[^\s]+|"
-        r"douyin\.com/[^\s]+|iesdouyin\.com/[^\s]+|"
+        r"https?://(?:www\.|web\.|vt\.|vm\.|v\.|m\.|mobile\.|on\.|music\.|clips\.|player\.|l\.)?(?:"
         r"youtube\.com/[^\s]+|youtu\.be/[^\s]+|"
+        r"twitch\.tv/[^\s]+|"
+        r"vimeo\.com/[^\s]+|"
+        r"dailymotion\.com/[^\s]+|dai\.ly/[^\s]+|"
+        r"rumble\.com/[^\s]+|"
+        r"streamable\.com/[^\s]+|"
+        r"loom\.com/[^\s]+|"
         r"(?:facebook\.com|fb\.com)/(?:reel|reels|share|watch|groups|stories|.+?/videos)/[^\s]+|"
         r"(?:facebook\.com|fb\.com)/watch(?:\?[^\s]+|/[^\s]*)|"
         r"fb\.watch/[^\s]+|fb\.me/[^\s]+|"
@@ -169,20 +173,40 @@ class TelegramBot:
         r"twitter\.com/[^\s]+|x\.com/[^\s]+|t\.co/[^\s]+|"
         r"soundcloud\.com/[^\s]+|"
         r"(?:reddit\.com|redd\.it|v\.redd\.it)/[^\s]+|"
-        r"(?:bilibili\.com|b23\.tv)/[^\s]+|"
         r"(?:pinterest\.com|pin\.it)/[^\s]+|"
-        r"(?:kuaishou\.com|gifshow\.com)/[^\s]+"
+        r"tiktok\.com/[^\s]+|"
+        r"douyin\.com/[^\s]+|iesdouyin\.com/[^\s]+|"
+        r"capcut\.com/[^\s]+|"
+        r"xiaohongshu\.com/[^\s]+|xhslink\.com/[^\s]+|"
+        r"weibo\.com/[^\s]+|weibo\.cn/[^\s]+|"
+        r"bilibili\.com/[^\s]+|b23\.tv/[^\s]+|"
+        r"kuaishou\.com/[^\s]+|gifshow\.com/[^\s]+|"
+        r"lemon8-app\.com/[^\s]+|"
+        r"likee\.video/[^\s]+|likee\.com/[^\s]+|"
+        r"bsky\.app/[^\s]+"
         r")",
+        re.IGNORECASE,
+    )
+
+    _GENERIC_URL_REGEX = re.compile(
+        r"https?://(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}(?::\d+)?(?:/[^\s]*)?",
         re.IGNORECASE,
     )
 
     def _detect_fastpath_media_download(self, text: str) -> Optional[FastPathMediaIntent]:
         """Phát hiện ý định tải video/audio trực tiếp để kích hoạt Fast-path bypass LLM."""
         url_match = self._MEDIA_URL_REGEX.search(text)
-        if not url_match:
-            return None
+        is_universal = False
+        if url_match:
+            raw_url = url_match.group(0)
+        else:
+            # Universal Web Extractor Fallback: kiểm tra xem có URL http/https hợp lệ hay không
+            generic_match = self._GENERIC_URL_REGEX.search(text)
+            if not generic_match:
+                return None
+            raw_url = generic_match.group(0)
+            is_universal = True
 
-        raw_url = url_match.group(0)
         # Strip common trailing punctuation and enclosures attached in chat, markdown or rich text
         media_url = raw_url.rstrip(".,;!?)\"'>]}…")
         remaining_text = text.replace(raw_url, "").strip().lower()
@@ -197,8 +221,12 @@ class TelegramBot:
             )
         )
 
-        # TH 1: Chỉ gửi độc nhất link media -> Nếu là nền tảng audio-first -> Mặc định tải Audio; còn lại -> Mặc định tải Video
+        # TH 1: Chỉ gửi độc nhất link media
+        # Với 24 nền tảng mạng xã hội: cho phép kích hoạt fastpath ngay cả khi gửi link trần
+        # Với Universal Web Extractor: yêu cầu phải có từ khóa tải rõ ràng để tránh cướp link web/tài liệu thông thường
         if not clean_remaining:
+            if is_universal:
+                return None
             return FastPathMediaIntent(media_url, "", media_type="audio" if is_audio_platform else "video")
 
         # TH 2: Ý định phủ định (tuyệt đối không tải) -> Nhường AI Agent
@@ -256,6 +284,14 @@ class TelegramBot:
             "nhạc twitter", "nhac twitter", "audio twitter", "nhạc x", "nhac x",
             "nhạc reddit", "nhac reddit", "audio reddit",
             "nhạc bilibili", "nhac bilibili", "audio bilibili",
+            "nhạc capcut", "nhac capcut", "audio capcut", "mp3 capcut",
+            "nhạc vimeo", "audio vimeo", "nhạc twitch", "audio twitch",
+            "nhạc weibo", "audio weibo", "nhạc xiaohongshu", "nhạc xhs", "audio xhs", "mp3 xhs",
+            "nhạc lemon8", "audio lemon8", "nhạc likee", "audio likee",
+            "nhạc dailymotion", "audio dailymotion", "nhạc threads", "audio threads",
+            "nhạc rumble", "audio rumble", "nhạc streamable", "audio streamable",
+            "nhạc loom", "audio loom", "nhạc bluesky", "audio bluesky",
+            "nhạc kuaishou", "nhac kuaishou", "audio kuaishou",
             "nhạc chuông", "nhac chuong", "bản nhạc", "ban nhac",
             "file mp3", "file nhạc", "file nhac", "file audio",
             "mp3", "audio",
@@ -272,6 +308,7 @@ class TelegramBot:
             "tai giup", "tai ho", "tai ve may", "tai xuong", "gui em", "gui anh",
             "tải giúp", "tải hộ", "tải giùm", "tai gium", "tải về máy", "tải xuống",
             "luu video", "luu clip", "luu ve",
+            "4k", "60fps", "1080p", "fhd", "hd", "qhd", "uhd",
         )
         if any(k in remaining_text for k in download_keywords):
             return FastPathMediaIntent(media_url, remaining_text, media_type="audio" if is_audio_platform else "video")
@@ -2025,6 +2062,9 @@ class TelegramBot:
                             video_path=media_item.file_path,
                             caption=caption,
                             duration=media_item.duration,
+                            width=getattr(media_item, "width", 0) or 0,
+                            height=getattr(media_item, "height", 0) or 0,
+                            supports_streaming=True,
                         )
                         if not sent:
                             # Fallback stream trực tiếp từ đĩa (Zero-RAM Leak) thay vì nạp toàn bộ vào RAM
@@ -2083,6 +2123,7 @@ class TelegramBot:
                                     duration=p_dur,
                                     width=p_info.get("width", 0),
                                     height=p_info.get("height", 0),
+                                    supports_streaming=True,
                                 )
                                 if not sent_part:
                                     await self.send_document_file(

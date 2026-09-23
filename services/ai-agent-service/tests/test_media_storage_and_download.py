@@ -351,8 +351,8 @@ class TestMediaStorageManager(unittest.TestCase):
              patch.object(self.manager, "_query_host_ngrok_via_ssh", return_value=None):
 
             internet, lan = self.manager.resolve_public_download_base_url_sync()
-            self.assertEqual(internet, "http://192.168.0.100:5173")
-            self.assertEqual(lan, "http://192.168.0.100:5173")
+            self.assertEqual(internet, "http://192.168.0.100:8084")
+            self.assertEqual(lan, "http://192.168.0.100:8084")
 
     def test_query_host_ngrok_via_ssh_executes_curl_and_parses(self):
         """

@@ -26,6 +26,7 @@ from app.services.media_downloader import (
     MediaItem,
     MediaPipelineError,
     VideoTooLargeError,
+    MediaDurationLimitError,
     TELEGRAM_MAX_FILE_SIZE,
     TEMP_MEDIA_DIR,
     _clean_fbcdn_stream_url,
@@ -498,15 +499,25 @@ class TestIPv4EnforcementAndYtDlpConfig(unittest.TestCase):
         self.assertEqual(captured_opts.get("source_address"), "0.0.0.0")
         self.assertNotIn("max_filesize", captured_opts)
         self.assertEqual(captured_opts.get("merge_output_format"), "mp4")
+        self.assertEqual(captured_opts.get("remuxvideo"), "mp4")
         self.assertEqual(captured_opts.get("format"), "bestvideo+bestaudio/best")
         self.assertEqual(
+            captured_opts.get("format_sort"),
+            ["res", "fps", "quality", "size", "br"],
+        )
+        self.assertEqual(
             captured_opts.get("postprocessor_args"),
-            {"merger": ["-movflags", "+faststart"]},
+            {
+                "merger": ["-movflags", "+faststart"],
+                "videoremuxer": ["-movflags", "+faststart"],
+            },
         )
 
-        # Kiểm tra match_filter reject duration > 7200s (2 giờ)
+        # Kiểm tra match_filter reject livestream và duration > 7200s (2 giờ)
         match_filter = captured_opts.get("match_filter")
         self.assertIsNotNone(match_filter)
+        with self.assertRaises(ValueError):
+            match_filter({"is_live": True})
         self.assertIsNotNone(match_filter({"duration": 7201}))
         self.assertIsNone(match_filter({"duration": 1800}))
 
@@ -634,6 +645,37 @@ class TestPipelineDownloadRouting(unittest.TestCase):
                     mock_playwright.assert_not_called()
         asyncio.run(run())
 
+    def test_duration_limit_in_ytdlp_bubbles_up_without_falling_back(self):
+        """Khi video vượt quá 7200s, pipeline KHÔNG ĐƯỢC fallback sang Playwright mà phải ngắt ngay."""
+        async def run():
+            with patch.object(self.pipeline, "_download_ytdlp", new_callable=AsyncMock) as mock_ytdlp:
+                mock_ytdlp.side_effect = MediaDurationLimitError("Thời lượng video vượt quá giới hạn an toàn tối đa 2 giờ")
+                with patch.object(self.pipeline, "_download_playwright_sniff", new_callable=AsyncMock) as mock_playwright:
+                    with self.assertRaises(MediaDurationLimitError):
+                        await self.pipeline.download("https://www.youtube.com/watch?v=too_long")
+                    mock_playwright.assert_not_called()
+        asyncio.run(run())
+
+    def test_livestream_in_ytdlp_bubbles_up_without_falling_back(self):
+        """Khi gặp livestream (is_live=True), pipeline KHÔNG ĐƯỢC fallback sang Playwright."""
+        async def run():
+            with patch.object(self.pipeline, "_download_ytdlp", new_callable=AsyncMock) as mock_ytdlp:
+                mock_ytdlp.side_effect = ValueError("Livestreams are not supported for offline download")
+                with patch.object(self.pipeline, "_download_playwright_sniff", new_callable=AsyncMock) as mock_playwright:
+                    with self.assertRaises(ValueError):
+                        await self.pipeline.download("https://www.youtube.com/watch?v=live_stream")
+                    mock_playwright.assert_not_called()
+        asyncio.run(run())
+
+    def test_invalid_url_scheme_raises_pipeline_error(self):
+        """URL không có scheme http:// hoặc https:// phải bị từ chối ngay với MediaPipelineError."""
+        async def run():
+            with self.assertRaises(MediaPipelineError):
+                await self.pipeline.download("ftp://example.com/video.mp4")
+            with self.assertRaises(MediaPipelineError):
+                await self.pipeline.download("invalid_url_string")
+        asyncio.run(run())
+
 
 class TestThreadsSnifferAndAdvancedEdgeCases(unittest.TestCase):
     """Kiểm thử chuyên sâu các cơ chế nội bộ của Threads Playwright Sniffer và Dọn dẹp Thư mục."""
@@ -708,6 +750,204 @@ class TestThreadsSnifferAndAdvancedEdgeCases(unittest.TestCase):
         cleaned = cleanup_expired_media(max_age_seconds=600)
         self.assertGreaterEqual(cleaned, 1)
         self.assertFalse(expired_dir.exists(), "Thư mục tạm mồ côi phải bị rmtree hoàn toàn!")
+
+
+class TestMediaItemAndMetadataExtraction(unittest.TestCase):
+    """Kiểm thử tính năng mới của MediaItem và phương thức _extract_media_item."""
+
+    def test_media_item_properties_and_backward_compatibility(self):
+        """MediaItem với width, height, fps tính toán đúng is_60fps, resolution_label, fps_label."""
+        # Test 4K 60fps
+        item_4k60 = MediaItem(
+            file_path="/tmp/4k60.mp4",
+            title="Video 4K",
+            author="Author",
+            duration=60,
+            media_type="video",
+            source_url="https://youtube.com/watch?v=4k",
+            width=3840,
+            height=2160,
+            fps=60.0,
+        )
+        self.assertTrue(item_4k60.is_60fps)
+        self.assertEqual(item_4k60.resolution_label, "4K UHD")
+        self.assertEqual(item_4k60.fps_label, "60fps")
+
+        # Test 1080p 59.94fps (chuẩn NTSC 60fps)
+        item_1080p60 = MediaItem(
+            file_path="/tmp/1080p.mp4",
+            title="Video 1080p",
+            author="Author",
+            duration=30,
+            media_type="video",
+            source_url="https://youtube.com/watch?v=1080",
+            width=1920,
+            height=1080,
+            fps=59.94,
+        )
+        self.assertTrue(item_1080p60.is_60fps)
+        self.assertEqual(item_1080p60.resolution_label, "1080p FHD")
+        self.assertEqual(item_1080p60.fps_label, "60fps")
+
+        # Test 2K 120fps
+        item_2k120 = MediaItem(
+            file_path="/tmp/2k120.mp4",
+            title="Video 2K",
+            author="Author",
+            duration=45,
+            media_type="video",
+            source_url="https://youtube.com/watch?v=2k",
+            width=2560,
+            height=1440,
+            fps=120.0,
+        )
+        self.assertTrue(item_2k120.is_60fps)
+        self.assertEqual(item_2k120.resolution_label, "2K QHD")
+        self.assertEqual(item_2k120.fps_label, "120fps")
+
+        # Test 720p 30fps
+        item_720p30 = MediaItem(
+            file_path="/tmp/720p.mp4",
+            title="Video 720p",
+            author="Author",
+            duration=15,
+            media_type="video",
+            source_url="https://youtube.com/watch?v=720",
+            width=1280,
+            height=720,
+            fps=30.0,
+        )
+        self.assertFalse(item_720p30.is_60fps)
+        self.assertEqual(item_720p30.resolution_label, "720p HD")
+        self.assertEqual(item_720p30.fps_label, "30fps")
+
+        # Test 480p 24fps
+        item_480p24 = MediaItem(
+            file_path="/tmp/480p.mp4",
+            title="Video 480p",
+            author="Author",
+            duration=20,
+            media_type="video",
+            source_url="https://youtube.com/watch?v=480",
+            width=854,
+            height=480,
+            fps=24.0,
+        )
+        self.assertFalse(item_480p24.is_60fps)
+        self.assertEqual(item_480p24.resolution_label, "480p SD")
+        self.assertEqual(item_480p24.fps_label, "24fps")
+
+        # Test None / legacy initialization (tương thích ngược 100%)
+        legacy_item = MediaItem(
+            file_path="/tmp/legacy.mp4",
+            title="Legacy",
+            author="Author",
+            duration=10,
+            media_type="video",
+            source_url="https://youtube.com/watch?v=legacy",
+        )
+        self.assertIsNone(legacy_item.width)
+        self.assertIsNone(legacy_item.height)
+        self.assertIsNone(legacy_item.fps)
+        self.assertFalse(legacy_item.is_60fps)
+        self.assertEqual(legacy_item.resolution_label, "")
+        self.assertEqual(legacy_item.fps_label, "")
+
+    def test_extract_media_item_from_root_info(self):
+        """_extract_media_item trích xuất đầy đủ width, height, fps từ root info_dict."""
+        pipeline = MultiTierMediaPipeline()
+        info = {
+            "title": "Empirical 60fps Video",
+            "uploader": "TestChannel",
+            "duration": 42,
+            "width": 1920,
+            "height": 1080,
+            "fps": 60.0,
+            "thumbnail": "https://img.youtube.com/vi/test/maxresdefault.jpg",
+        }
+        item = pipeline._extract_media_item(
+            info=info,
+            file_path="/tmp/test_empirical.mp4",
+            source_url="https://www.youtube.com/watch?v=empirical60",
+            default_media_type="video",
+        )
+        self.assertEqual(item.width, 1920)
+        self.assertEqual(item.height, 1080)
+        self.assertEqual(item.fps, 60.0)
+        self.assertTrue(item.is_60fps)
+        self.assertEqual(item.resolution_label, "1080p FHD")
+        self.assertEqual(item.fps_label, "60fps")
+        self.assertEqual(item.duration, 42)
+        self.assertEqual(item.author, "TestChannel")
+
+    def test_extract_media_item_from_requested_formats(self):
+        """_extract_media_item fallback trích xuất width, height, fps từ requested_formats khi root info thiếu."""
+        pipeline = MultiTierMediaPipeline()
+        info = {
+            "title": "Separated Streams Video",
+            "uploader": "StreamUploader",
+            "duration": 18,
+            "requested_formats": [
+                {
+                    "format_id": "137",
+                    "vcodec": "av01.0.08M.08",
+                    "width": 3840,
+                    "height": 2160,
+                    "fps": "59.94",
+                },
+                {
+                    "format_id": "251",
+                    "acodec": "opus",
+                    "vcodec": "none",
+                },
+            ],
+        }
+        item = pipeline._extract_media_item(
+            info=info,
+            file_path="/tmp/test_sep.mp4",
+            source_url="https://www.youtube.com/watch?v=sep_stream",
+            default_media_type="video",
+        )
+        self.assertEqual(item.width, 3840)
+        self.assertEqual(item.height, 2160)
+        self.assertEqual(item.fps, 59.94)
+        self.assertTrue(item.is_60fps)
+        self.assertEqual(item.resolution_label, "4K UHD")
+        self.assertEqual(item.fps_label, "60fps")
+
+    def test_extract_media_item_with_ffprobe_fallback(self):
+        """Khi info thiếu metadata nhưng tệp mp4 tồn tại, probe video metadata bù đắp chuẩn xác."""
+        pipeline = MultiTierMediaPipeline()
+        info = {
+            "title": "Web Generic Video",
+            "uploader": "Webmaster",
+            "duration": 0,
+        }
+        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as f:
+            f.write(b"mock video data")
+            temp_path = f.name
+
+        try:
+            with patch.object(
+                pipeline,
+                "_probe_video_metadata_sync",
+                return_value={"width": 1920, "height": 1080, "fps": 60.0, "duration": 25.0},
+            ):
+                item = pipeline._extract_media_item(
+                    info=info,
+                    file_path=temp_path,
+                    source_url="https://example.com/video.mp4",
+                    default_media_type="video",
+                )
+                self.assertEqual(item.width, 1920)
+                self.assertEqual(item.height, 1080)
+                self.assertEqual(item.fps, 60.0)
+                self.assertEqual(item.duration, 25)
+                self.assertTrue(item.is_60fps)
+                self.assertEqual(item.resolution_label, "1080p FHD")
+        finally:
+            if os.path.exists(temp_path):
+                os.unlink(temp_path)
 
 
 if __name__ == "__main__":

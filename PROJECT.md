@@ -1,74 +1,86 @@
-# Project: Cổng Chuyển Tệp Siêu Tốc (High-Speed LAN & WAN File Transfer Portal)
+# Project: Nâng Cấp Toàn Diện Công Cụ Tải Video Mạng Xã Hội 20+ Nền Tảng (4K/60fps Dual Distribution)
 
 ## Architecture
-- **Phân tách trách nhiệm (Separation of Concerns)**:
-  * Toàn bộ logic lưu trữ và quản lý phiên truyền tệp được bao bọc độc lập trong `TransferStorageManager` (`app/services/transfer_storage_manager.py`), hoàn toàn tách biệt khỏi `MediaStorageManager` (tránh rủi ro phá vỡ 875+ tests media hiện hữu).
-  * Router chuyên biệt `/api/ai/transfer` (`app/routers/file_transfer.py`) phục vụ cả API tải lên/tải xuống, trả về Web Portal HTML và ảnh QR Code PNG.
-  * Phân vùng đĩa SSD riêng biệt: `/tmp/file_transfers/{token}/`, được bảo vệ bởi 3 tầng dọn rác (Startup prune, On-access expiry check, Periodic background sweeper loop 600s).
-  * Bộ đệm truyền dữ liệu Upload: Cố định 1MB chunked streaming qua `aiofiles`, RAM $O(1) \le 2\text{MB}$/kết nối, an toàn tuyệt đối với trần RAM 3.2GB của `kirito-server`.
-  * Bộ máy truyền dữ liệu Download: Hỗ trợ RFC 7233 Range requests (`HTTP 206 Partial Content`), zero-throttling đa luồng cho IDM/Safari/Chrome.
-  * Bộ sinh mã QR Code in-memory: Sử dụng `qrcode` + `Pillow` (`io.BytesIO()`), 100% Zero-Disk Leak.
-  * AI Agent ReAct Tool: Đăng ký `create_file_transfer_portal` vào `DIRECT_RETURN_TOOLS` tại 4 vị trí chốt, dynamic scoping keyword matching với token budget gate $\le 700$ tokens, System Prompt Section 2f độc lập (bảo toàn Section 2e).
+- **MultiTierMediaPipeline (`app/services/media_downloader.py`)**:
+  * Tier 1: TikWM API chuyên dụng cho TikTok / Douyin (tải video không watermark tốc độ cao, giữ nguyên direct MP3).
+  * Tier 2: `yt-dlp` Core Engine với thuật toán lựa chọn định dạng đa chiều thông qua `format_sort: ["res", "fps", "quality", "size", "br"]` và `format: "bestvideo+bestaudio/best"`, tự động mux lossless thành container MP4 tiêu chuẩn thông qua FFmpeg.
+  * Tier 3: Playwright Chromium Network Sniffer cho Threads và các trang dynamic hydration phức tạp.
+  * Universal Extractor Fallback: Kích hoạt bộ trích xuất vạn năng của `yt-dlp` cho bất kỳ URL video web nào không khớp danh sách cụ thể.
+  * Stream Container Faststart: Tự động dịch chuyển `moov atom` lên đầu tệp (`-movflags +faststart`) qua `merger` và `videoremuxer` postprocessors để cho phép streaming tức thì.
+  * Concurrency & Zero-RAM Disk Streaming: Duy trì `asyncio.Semaphore(2)` bảo vệ CPU 2 cores, chunked disk streaming 64KB/1MB trực tiếp ra SSD NVMe `/tmp/media_downloads/`, thu hồi RAM qua `reclaim_memory_background(0.2s)` và quét rác đĩa trong khối `finally`.
+
+- **Mô Hình Phân Phối Kép (Dual-Track Distribution Engine)**:
+  * Trường hợp video $\le 50\text{MB}$: Gửi trực tiếp qua Telegram Bot bằng `send_video` (`supports_streaming=True`, full metadata). Fallback sang `send_document_file` streaming đĩa nếu gặp lỗi HTML parse hoặc codec Telegram.
+  * Trường hợp video $> 50\text{MB}$ (Video 4K / 1080p60 dung lượng lớn): Kích hoạt đồng thời 2 kênh:
+    - Kênh 1 (Telegram Lossless Part Chunking): Dùng `VideoChunker.split_video()` (`ffmpeg -c copy`) cắt video thành các Part $\le 48\text{MB}$ trong $< 1.5\text{s}$, giữ nguyên 100% 4K/60fps gốc, gửi tuần tự lên Telegram kèm Streaming Purge (`os.unlink` ngay từng part sau khi gửi xong).
+    - Kênh 2 (Direct Server Download Link): Chuyển giao tệp sang `media_storage_manager` cung cấp 2 đường dẫn tải trực tiếp nguyên khối tệp gốc: LAN Gigabit (`http://192.168.0.100:8084/api/ai/media/download/...`) tốc độ 50-100MB/s và WAN Ngrok Internet toàn cầu. Endpoint hỗ trợ chuẩn `HTTP 206 Partial Content` (Range requests) cho phép resume và multi-thread download (IDM).
+
+- **Telegram Fast-Path Interceptor & AI Agent Tools**:
+  * `_MEDIA_URL_REGEX` trong `telegram_bot.py`: Mở rộng nhận diện 24+ nền tảng (YouTube, Shorts, Twitch, Vimeo, Dailymotion, Rumble, Streamable, Loom, Facebook, Instagram, Twitter/X, Threads, Reddit, Pinterest, TikTok, Douyin, CapCut, Xiaohongshu/RedNote, Weibo, Bilibili, Kuaishou, Lemon8, Likee, Bluesky...) kèm Universal Fallback.
+  * `_detect_fastpath_media_download`: Bóc tách URL, phân loại chuẩn xác giữa ý định tải video và trích xuất âm thanh MP3, bỏ qua LLM (Zero-LLM Latency).
+  * `ai_agent_tools.py`: Cập nhật tool `download_media_video` và đồng bộ Dynamic Scoping (`has_media_link`, `is_media`).
+  * `ai_agent.py`: Cập nhật System Prompt Mục 2e khẳng định năng lực tải 4K/60fps từ 20+ nền tảng và phản xạ BLUF "Dạ CÓ!".
 
 ## Feature Inventory
-| # | Feature | Description | Milestone | Source |
-|---|---------|-------------|-----------|--------|
-| 1 | High-Throughput Storage & Session Manager | `TransferStorageManager`, token URL-safe 32-bytes, metadata tracking, TTL 24h, one_time delayed cleanup (30s grace) | M1 | survey_1 |
-| 2 | Chunked Disk Streaming Upload 1MB | `aiofiles` fixed buffer 1MB, zero-RAM leak (<2MB/conn), trần 3.2GB | M1 | survey_1 |
-| 3 | HTTP 206 Partial Content & Zero-Throttling | RFC 7233 range requests, multi-thread download, bypass rate limit cho valid token | M1 | survey_1 |
-| 4 | Responsive Web Drop Portal UI | Single-file HTML5/CSS3/Vanilla JS (<50KB), Dropzone upload MB/s + % + ETA, Preview iOS Safari/Desktop | M2 | survey_2 |
-| 5 | Dynamic In-Memory QR Code Generator | `qrcode` + `Pillow` BytesIO PNG generation, zero-disk leak, RAM cleanup tức thì | M3 | survey_2 |
-| 6 | Telegram Bot Transfer Portal Card | `send_photo_bytes`, LAN link (`192.168.0.100:8084`) & WAN link (`ngrok-free.dev`), TTL 24h format | M3 | survey_2 |
-| 7 | AI Agent Direct Return Tool & Scoping | `create_file_transfer_portal` in `DIRECT_RETURN_TOOLS`, dynamic scoping, token budget gate | M4 | survey_3 |
-| 8 | System Prompt Section 2f & BLUF Reflex | Turn 1 Tool-First Imperative reflex, dual-link & QR presentation | M4 | survey_3 |
-| 9 | Comprehensive E2E Verification & Empirical Benchmark | 100% test suite pass (875+ cũ + tests mới) & đo lường throughput thực tế trên kirito-server | M5 | survey_1,2,3 |
+| # | Feature | Description | Milestone | Source | Status |
+|---|---------|-------------|-----------|--------|--------|
+| 1 | 20+ Platforms Regex & URL Normalizer | Nhận diện 20+ nền tảng, bóc tách tracking params (?si=, ?mibextid=, ?share_id=...) và unwrap shortlinks | M1 | ORIGINAL_REQUEST §R1 | **DONE** |
+| 2 | Universal Web Extractor Fallback | Hỗ trợ tải video từ bất kỳ URL web nào qua generic yt-dlp fallback | M1 | ORIGINAL_REQUEST §R1 | **DONE** |
+| 3 | Max Resolution & 60fps Format Selection | `format_sort: ["res", "fps", "quality", "size", "br"]` & `format: "bestvideo+bestaudio/best"` ưu tiên 4K/60fps | M1 | ORIGINAL_REQUEST §R2 | **DONE** |
+| 4 | FFmpeg Lossless Muxing & Moov Faststart | Ghép nối lossless container MP4 và nhúng moov atom faststart cho cả merger & videoremuxer | M1 | ORIGINAL_REQUEST §R2 | **DONE** |
+| 5 | Dual Distribution: Lossless Part Chunking | FFmpeg `-c copy` chia part $\le 48\text{MB}$ trong $< 1.5\text{s}$, gửi Telegram kèm Streaming Purge | M2 | ORIGINAL_REQUEST §R3 | **DONE** |
+| 6 | Dual Distribution: Direct Link HTTP 206 | Cung cấp link LAN Gigabit (`:8084`) & WAN Ngrok tải file gốc 4K60 với HTTP 206 Partial Content | M2 | ORIGINAL_REQUEST §R3 | **DONE** |
+| 7 | Telegram Fast-Path Interceptor Mở Rộng | Nhận diện 20+ nền tảng, phân biệt rành mạch video vs audio, bypass LLM tức thì | M2 | ORIGINAL_REQUEST §R4 | **DONE** |
+| 8 | AI Agent Tools & Dynamic Scoping Sync | Đồng bộ mô tả tool `download_media_video` và dynamic scoping keywords trong `ai_agent_tools.py` | M2 | ORIGINAL_REQUEST §R4 | **DONE** |
+| 9 | AI Agent System Prompt Mục 2e & BLUF | Cập nhật tri thức trợ lý Tiểu Bảo Bảo trong `ai_agent.py` về tải 4K/60fps 20+ platforms | M2 | ORIGINAL_REQUEST §R4 | **DONE** |
+| 10 | Standardize LAN Base URL Port 8084 | Chuẩn hóa `LAN_DOWNLOAD_BASE_URL` trong `media_storage_manager.py` trỏ về port `8084` | M2 | Explorer 2 Survey | **DONE** |
+| 11 | Opaque-Box E2E Test Suite (Tiers 1-4) | Thiết kế bộ test toàn diện: Tier 1 (Coverage 20+), Tier 2 (BVA/Edge), Tier 3 (Cross), Tier 4 (Real-world) | M3 | ORIGINAL_REQUEST §Acceptance Criteria | **DONE** |
+| 12 | Empirical Verification trên kirito-server | Kiểm thử thực tế thô với link thật 60fps/4K, đo đạc `ffprobe`, kiểm chứng phân phối kép và 100% test pass | M3 | ORIGINAL_REQUEST §Acceptance Criteria | **DONE** |
 
 ## Milestones
 | # | Name | Scope | Dependencies | Status |
 |---|------|-------|-------------|--------|
-| 1 | M1: Transfer Storage Engine & HTTP 206 Router | `requirements.txt`, `transfer_storage_manager.py`, `file_transfer.py`, `main.py` mount & sweeper | none | DONE |
-| 2 | M2: Responsive Web Drop Portal UI | Endpoint `/portal/{token}` trả về HTML5/CSS3/JS (<50KB), Dropzone MB/s & Preview | M1 | DONE |
-| 3 | M3: In-Memory QR Generator & Telegram Card | `transfer_qr_generator.py`, endpoint `/qr/{token}`, `telegram_bot.py` card integration | M1 | DONE |
-| 4 | M4: AI Agent Tool Scoping & Prompt Section 2f | `ai_agent_tools.py` (`DIRECT_RETURN_TOOLS`, scoping), `ai_agent.py` (Section 2f) | M1, M3 | DONE |
-| 5 | M5: E2E Verification & kirito-server Benchmark | Test runner 875+ tests, E2E tests, empirical upload/download test trên kirito-server | M1, M2, M3, M4 | DONE |
+| M1 | MultiTierMediaPipeline Core Upgrade | `media_downloader.py`: format_sort 4K/60fps, format chain, moov faststart, 20+ platform regex/extractor, universal fallback | none | **DONE** |
+| M2 | Dual Distribution & Telegram / Agent Integration | `telegram_bot.py`, `ai_agent_tools.py`, `ai_agent.py`, `media_storage_manager.py`: Fastpath 20+, Dual-Track delivery, tool scoping, prompt 2e, port 8084 | M1 | **DONE** |
+| M3 | E2E Testing Suite & Empirical Verification | `tests/test_multi_platform_media.py`, `tests/test_format_sort_60fps.py`, `tests/test_media_pipeline_20plus_platforms.py`, empirical live test trên kirito-server | M1, M2 | **DONE** |
 
 ## Interface Contracts
-### `TransferStorageManager`
-- `create_session(filename: Optional[str] = None, mode: str = "upload", one_time: bool = False, ttl_hours: int = 24) -> TransferRecord`
-- `get_session(token: str) -> Optional[TransferRecord]`
-- `save_upload_stream(token: str, filename: str, stream: AsyncIterator[bytes]) -> TransferRecord`
-- `get_file_path(token: str) -> Optional[Path]`
-- `schedule_delayed_cleanup(token: str, delay_seconds: int = 30) -> None`
-- `delete_session(token: str) -> bool`
-- `sweep_expired() -> int`
+### `MultiTierMediaPipeline` (`media_downloader.py`)
+- `download(url: str) -> MediaItem`:
+  * Nhận diện URL, thực hiện tải video chất lượng cao nhất (4K/60fps nếu có).
+  * Trả về `MediaItem` với `file_path`, `title`, `duration`, `width`, `height`, `fps`, `file_size`, `is_temp_file`.
+- `_sync_ytdlp_download(url: str, out_tmpl: str) -> Dict[str, Any]`:
+  * Áp dụng `format_sort: ["res", "fps", "quality", "size", "br"]`.
+  * Áp dụng `format: "bestvideo+bestaudio/best"`.
+  * Áp dụng `postprocessor_args: {"merger": ["-movflags", "+faststart"], "videoremuxer": ["-movflags", "+faststart"]}`.
+- `download_audio(url: str) -> MediaItem`:
+  * Trích xuất MP3 320kbps CBR / Direct CDN MP3, giữ nguyên 100% logic Dual-Engine đã kiểm chứng.
 
-### Router `/api/ai/transfer`
-- `POST /api/ai/transfer/create` -> `TransferCreateResponse` (token, lan_url, wan_url, expires_at)
-- `POST /api/ai/transfer/upload/{token}` (multipart / stream) -> `TransferUploadResponse`
-- `GET /api/ai/transfer/portal/{token}` -> `HTMLResponse` (Web Drop Portal <50KB)
-- `GET /api/ai/transfer/download/{token}` -> `StreamingResponse` / `FileResponse` (HTTP 206 Partial Content)
-- `GET /api/ai/transfer/qr/{token}` -> `Response(media_type="image/png")`
-- `GET /api/ai/transfer/info/{token}` -> `TransferInfoResponse` (filename, size, state, ttl)
+### `TelegramBot` (`telegram_bot.py`)
+- `_detect_fastpath_media_download(text: str) -> Optional[FastPathMediaIntent]`:
+  * Nhận diện 20+ nền tảng mạng xã hội và Universal URL fallback.
+  * Phân loại chính xác `media_type="video"` hoặc `media_type="audio"`.
+- `handle_media_download(chat_id, user_id, intent)`:
+  * Nếu video $\le 50\text{MB}$: Gửi trực tiếp qua `send_video()`.
+  * Nếu video $> 50\text{MB}$: Gửi lossless parts qua `VideoChunker.split_video()` và đính kèm 2 Direct Links (LAN `:8084` + WAN Ngrok).
 
-### AI Agent Tool `create_file_transfer_portal`
-- Parameters: `file_name: Optional[str] = None`, `mode: str = "upload"`, `one_time: bool = False`
-- Return: formatted text containing LAN link, WAN link, QR code reference and TTL.
+### `AIAgentTools` (`ai_agent_tools.py`)
+- `download_media_video(url: str, caption: Optional[str] = None)`:
+  * Hỗ trợ 20+ nền tảng, video 4K/60fps, trả về kết quả trực tiếp hoặc kích hoạt phân phối kép.
+- Dynamic Scoping: `has_media_link` và `is_media` nhận diện toàn bộ domain và từ khóa của 20+ nền tảng.
 
 ## Code Layout
-- `services/ai-agent-service/requirements.txt`: Bổ sung `aiofiles>=24.1.0` và `qrcode[pil]>=7.4.2`
-- `services/ai-agent-service/app/services/transfer_storage_manager.py`: Core storage & lifecycle
-- `services/ai-agent-service/app/services/transfer_qr_generator.py`: In-memory QR generator
-- `services/ai-agent-service/app/routers/file_transfer.py`: FastAPI Router `/api/ai/transfer`
-- `services/ai-agent-service/app/main.py`: Router registration and background sweeper
-- `services/ai-agent-service/app/services/telegram_bot.py`: Telegram Bot card integration
-- `services/ai-agent-service/app/services/ai_agent_tools.py`: Tool definition & scoping
-- `services/ai-agent-service/app/services/ai_agent.py`: System prompt Section 2f & ReAct reflex
-- `services/ai-agent-service/tests/test_file_transfer_engine.py`: Unit & integration tests for M1
-- `services/ai-agent-service/tests/test_file_transfer_portal.py`: Unit & integration tests for M2-M4
-- `services/ai-agent-service/tests/test_file_transfer_e2e.py`: E2E test suite for M5
+- `services/ai-agent-service/app/services/media_downloader.py`: MultiTierMediaPipeline, format_sort, faststart, universal fallback (DONE)
+- `services/ai-agent-service/app/services/telegram_bot.py`: _MEDIA_URL_REGEX, fast-path interceptor, dual-track delivery
+- `services/ai-agent-service/app/services/ai_agent_tools.py`: Tool definition & dynamic scoping keywords
+- `services/ai-agent-service/app/services/ai_agent.py`: System prompt Mục 2e
+- `services/ai-agent-service/app/services/media_storage_manager.py`: LAN base URL port 8084 standardization
+- `services/ai-agent-service/tests/test_multi_platform_media.py`: Bộ test nền tảng mở rộng
+- `services/ai-agent-service/tests/test_format_sort_60fps.py`: Bộ test chuyên biệt kiểm tra format_sort và 60fps
+- `services/ai-agent-service/tests/test_media_pipeline_20plus_platforms.py`: Bộ test E2E 20+ nền tảng
 
-## RÀNG BUỘC SỐNG CÒN (CRITICAL CONSTRAINTS)
+## RÀNG BUỘC TUYỆT ĐỐI (CRITICAL CONSTRAINTS)
 1. TUYỆT ĐỐI KHÔNG đụng chạm, không stage, không commit và không push bất kỳ file nào thuộc thư mục `android-app/`.
 2. Git commit messages BẮT BUỘC viết hoàn toàn bằng tiếng Anh.
-3. Mọi giao tiếp, kế hoạch, giải thích, báo cáo BẮT BUỘC viết hoàn toàn bằng tiếng Việt.
-4. Sau khi hoàn thành, BẮT BUỘC kiểm thử thực tế thô (Empirical Test) đo lường tốc độ upload/download thực tế trên máy chủ `kirito-server` và xác nhận 100% test suite pass (cả unit tests mới và toàn bộ 875+ tests cũ).
+3. Mọi giải thích, báo cáo, tài liệu BẮT BUỘC viết hoàn toàn bằng tiếng Việt chỉn chu, chuyên nghiệp.
+4. Sau khi hoàn thành, BẮT BUỘC kiểm thử thực tế thô (empirical verification) với các link thực tế và bộ test tự động trước khi kết luận.

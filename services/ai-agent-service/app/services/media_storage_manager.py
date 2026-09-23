@@ -42,6 +42,8 @@ _cached_url_timestamp: float = 0.0
 _URL_CACHE_TTL_SECONDS: float = 300.0  # 5 minutes
 
 
+
+
 @dataclass
 class DownloadRecord:
     """
@@ -169,11 +171,11 @@ class MediaStorageManager:
              - Step 2A: Direct probe on Docker host candidate IPs & ports 4040-4044 (timeout=0.5s).
              - Step 2B: Fallback SSH probe querying host loopback via SshClient.
              - Caches discovered URL for 300 seconds.
-          3. Tier 3: LAN Fallback IP (http://192.168.0.100:5173).
+          3. Tier 3: LAN Fallback IP (http://192.168.0.100:8084).
         """
         global _cached_internet_url, _cached_url_timestamp
 
-        lan_base = os.getenv("LAN_DOWNLOAD_BASE_URL", "http://192.168.0.100:5173").rstrip("/")
+        lan_base = os.getenv("LAN_TRANSFER_BASE_URL", os.getenv("LAN_DOWNLOAD_BASE_URL", "http://192.168.0.100:8084")).rstrip("/")
 
         # Tier 0: Testing / CI environment fast bypass (avoids SSH & Ngrok network probe latencies)
         if (

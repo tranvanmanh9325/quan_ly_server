@@ -24,6 +24,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import subprocess
 import tempfile
 import time
 from typing import Any, Dict, List, Optional, Tuple
@@ -136,6 +137,43 @@ class MediaItem:
     cover_url: Optional[str] = None
     thumbnail_path: Optional[str] = None
     is_temp_file: bool = True
+    width: Optional[int] = None
+    height: Optional[int] = None
+    fps: Optional[float] = None
+
+    @property
+    def is_60fps(self) -> bool:
+        """Kiểm tra video có phải chuẩn tốc độ khung hình cao (60fps hoặc 59.94fps) hay không."""
+        return bool(self.fps is not None and self.fps >= 55.0)
+
+    @property
+    def resolution_label(self) -> str:
+        """Nhãn độ phân giải trực quan phục vụ Telegram Card caption."""
+        if not self.width or not self.height:
+            return ""
+        min_dim = min(self.width, self.height)
+        if min_dim >= 2160:
+            return "4K UHD"
+        if min_dim >= 1440:
+            return "2K QHD"
+        if min_dim >= 1080:
+            return "1080p FHD"
+        if min_dim >= 720:
+            return "720p HD"
+        if min_dim >= 480:
+            return "480p SD"
+        return f"{self.width}x{self.height}"
+
+    @property
+    def fps_label(self) -> str:
+        """Nhãn tốc độ khung hình làm tròn chuẩn truyền thông (ví dụ: 60fps, 120fps, 30fps)."""
+        if self.fps is None or self.fps <= 0:
+            return ""
+        if 55.0 <= self.fps <= 65.0:
+            return "60fps"
+        if self.fps >= 115.0:
+            return "120fps"
+        return f"{round(self.fps)}fps"
 
     def cleanup(self) -> None:
         """Xóa sạch tệp tạm khỏi ổ đĩa một cách an toàn."""
@@ -217,6 +255,34 @@ class MediaPipelineError(Exception):
 class VideoTooLargeError(MediaPipelineError):
     """Ném ra khi video vượt quá giới hạn 50MB của Telegram Bot API."""
     pass
+
+
+class MediaDurationLimitError(MediaPipelineError):
+    """Ném ra khi video vượt quá giới hạn thời lượng an toàn tối đa 7200s (2 giờ)."""
+    pass
+
+
+def _parse_fps_string(fps_val: Any) -> Optional[float]:
+    """Chuyển đổi chuỗi/giá trị FPS (ví dụ: '60000/1001', '60/1', 59.94, '30') sang float chuẩn xác."""
+    if not fps_val or fps_val in ("0/0", "N/A"):
+        return None
+    try:
+        if isinstance(fps_val, (int, float)):
+            val = float(fps_val)
+            return round(val, 2) if val > 0 else None
+        fps_str = str(fps_val).strip()
+        if "/" in fps_str:
+            num_s, den_s = fps_str.split("/", 1)
+            num, den = float(num_s), float(den_s)
+            if den > 0:
+                return round(num / den, 2)
+        else:
+            val = float(fps_str)
+            if val > 0:
+                return round(val, 2)
+    except Exception:
+        pass
+    return None
 
 
 class MultiTierMediaPipeline:
@@ -820,6 +886,132 @@ class MultiTierMediaPipeline:
                 future.add_done_callback(_cleanup_orphaned)
                 raise
 
+    @staticmethod
+    def _probe_video_metadata_sync(file_path: str) -> Optional[Dict[str, Any]]:
+        """Dùng ffprobe đọc nhanh header video cục bộ để lấy duration, width, height, fps."""
+        try:
+            cmd = [
+                "ffprobe",
+                "-v", "error",
+                "-select_streams", "v:0",
+                "-show_entries", "stream=width,height,r_frame_rate,avg_frame_rate,duration:format=duration",
+                "-of", "json",
+                str(file_path),
+            ]
+            result = subprocess.run(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=5.0,
+                check=False,
+            )
+            if result.returncode != 0:
+                return None
+            data = json.loads(result.stdout.decode("utf-8", errors="replace") or "{}")
+            streams = data.get("streams", [])
+            format_data = data.get("format", {})
+            out: Dict[str, Any] = {}
+            if streams:
+                v = streams[0]
+                if v.get("width"):
+                    out["width"] = int(v["width"])
+                if v.get("height"):
+                    out["height"] = int(v["height"])
+                fps = _parse_fps_string(v.get("r_frame_rate")) or _parse_fps_string(v.get("avg_frame_rate"))
+                if fps:
+                    out["fps"] = fps
+                if v.get("duration"):
+                    try:
+                        out["duration"] = float(v["duration"])
+                    except (ValueError, TypeError):
+                        pass
+            if "duration" not in out and format_data.get("duration"):
+                try:
+                    out["duration"] = float(format_data["duration"])
+                except (ValueError, TypeError):
+                    pass
+            return out
+        except Exception as err:
+            logger.debug("[FFprobe Metadata] Probe failed for %s: %s", file_path, err)
+            return None
+
+    def _extract_media_item(
+        self,
+        info: Dict[str, Any],
+        file_path: str,
+        source_url: str,
+        default_media_type: str = "video",
+    ) -> MediaItem:
+        """
+        Trích xuất siêu dữ liệu toàn diện (title, duration, width, height, fps, file_size)
+        từ yt-dlp info_dict và tự động bù đắp bằng FFprobe nếu thông số bị thiếu.
+        """
+        file_size = 0
+        if file_path and os.path.exists(file_path):
+            file_size = os.path.getsize(file_path)
+        else:
+            file_size = int(info.get("filesize") or info.get("filesize_approx") or 0)
+
+        final_ext = os.path.splitext(file_path)[1].lower() if file_path else ""
+        is_audio = final_ext in {".mp3", ".m4a", ".aac", ".opus", ".flac", ".wav", ".ogg"} or (
+            info.get("vcodec") == "none" and info.get("acodec") != "none"
+        )
+        media_type = "audio" if is_audio else default_media_type
+
+        default_title = "Social Audio" if media_type == "audio" else "Social Video"
+        title = info.get("title") or default_title
+        author = info.get("uploader") or info.get("channel") or info.get("uploader_id") or "Unknown"
+
+        duration = int(info.get("duration") or 0)
+
+        width: Optional[int] = int(info.get("width") or 0) or None
+        height: Optional[int] = int(info.get("height") or 0) or None
+        fps: Optional[float] = _parse_fps_string(info.get("fps"))
+
+        # Kiểm tra trong requested_formats nếu yt-dlp mux tách rời
+        requested_formats = info.get("requested_formats")
+        if (width is None or height is None or fps is None) and isinstance(requested_formats, list):
+            for fmt in requested_formats:
+                if fmt.get("vcodec") and fmt.get("vcodec") != "none":
+                    if width is None and fmt.get("width"):
+                        width = int(fmt["width"])
+                    if height is None and fmt.get("height"):
+                        height = int(fmt["height"])
+                    if fps is None and fmt.get("fps"):
+                        parsed_fmt_fps = _parse_fps_string(fmt.get("fps"))
+                        if parsed_fmt_fps:
+                            fps = parsed_fmt_fps
+
+        # Fallback FFprobe cục bộ nhanh nếu tệp video trên đĩa còn thiếu width/height/fps
+        if media_type == "video" and file_path and os.path.exists(file_path):
+            if width is None or height is None or fps is None or duration <= 0:
+                probed = self._probe_video_metadata_sync(file_path)
+                if probed:
+                    if width is None and probed.get("width"):
+                        width = int(probed["width"])
+                    if height is None and probed.get("height"):
+                        height = int(probed["height"])
+                    if fps is None and probed.get("fps"):
+                        fps = float(probed["fps"])
+                    if duration <= 0 and probed.get("duration"):
+                        duration = int(probed["duration"])
+
+        return MediaItem(
+            file_path=file_path,
+            title=title,
+            author=author,
+            duration=duration,
+            media_type=media_type,
+            source_url=source_url,
+            file_size=file_size,
+            direct_stream_url=info.get("direct_stream_url"),
+            cover_url=info.get("thumbnail") or info.get("cover_url"),
+            is_temp_file=True,
+            width=width,
+            height=height,
+            fps=fps,
+        )
+
     def _sync_ytdlp_download(self, url: str) -> Optional[MediaItem]:
         try:
             import yt_dlp
@@ -833,8 +1025,10 @@ class MultiTierMediaPipeline:
         # 1. Cấu hình Best Quality: Video tốt nhất + Audio tốt nhất, tự động mux lossless sang MP4
         format_chain = "bestvideo+bestaudio/best"
 
-        # 2. Bộ lọc bảo vệ: chỉ từ chối video quá dài (> 2 giờ = 7200s) để chống DoS
+        # 2. Bộ lọc bảo vệ: từ chối livestream và video quá dài (> 2 giờ = 7200s) để chống DoS
         def _match_filter_duration(info_dict: Dict[str, Any], *, incomplete: bool = False) -> Optional[str]:
+            if info_dict.get("is_live"):
+                raise ValueError("Livestreams are not supported for offline download")
             duration = info_dict.get("duration")
             if duration and duration > 7200:
                 return "Thời lượng video vượt quá giới hạn an toàn tối đa 2 giờ của hệ thống."
@@ -842,7 +1036,9 @@ class MultiTierMediaPipeline:
 
         ydl_opts: Dict[str, Any] = {
             "format": format_chain,
+            "format_sort": ["res", "fps", "quality", "size", "br"],
             "merge_output_format": "mp4",
+            "remuxvideo": "mp4",
             "outtmpl": out_tmpl,
             # Bỏ hoàn toàn max_filesize: cho phép tải trọn vẹn mọi dung lượng về máy chủ
             "source_address": "0.0.0.0",
@@ -854,6 +1050,7 @@ class MultiTierMediaPipeline:
             "match_filter": _match_filter_duration,
             "postprocessor_args": {
                 "merger": ["-movflags", "+faststart"],
+                "videoremuxer": ["-movflags", "+faststart"],
             },
             "extractor_args": {
                 "youtube": {
@@ -875,6 +1072,15 @@ class MultiTierMediaPipeline:
                     shutil.rmtree(temp_dir, ignore_errors=True)
                     return None
 
+                if info.get("is_live"):
+                    shutil.rmtree(temp_dir, ignore_errors=True)
+                    raise ValueError("Livestreams are not supported for offline download")
+
+                duration = info.get("duration")
+                if duration and duration > 7200:
+                    shutil.rmtree(temp_dir, ignore_errors=True)
+                    raise MediaDurationLimitError("Thời lượng video vượt quá giới hạn an toàn tối đa 2 giờ của hệ thống.")
+
                 downloaded_file = ydl.prepare_filename(info)
                 base, _ = os.path.splitext(downloaded_file)
                 mp4_candidate = f"{base}.mp4"
@@ -888,26 +1094,23 @@ class MultiTierMediaPipeline:
                         raise MediaPipelineError(f"Tải video không hoàn tất, phát hiện tệp dở dang: {residual_files}")
                     return None
 
-                size = os.path.getsize(final_path)
                 final_ext = os.path.splitext(final_path)[1].lower()
                 is_audio = final_ext in {".mp3", ".m4a", ".aac", ".opus", ".flac", ".wav", ".ogg"} or (
                     info.get("vcodec") == "none" and info.get("acodec") != "none"
                 )
                 media_type = "audio" if is_audio else "video"
 
-                return MediaItem(
+                return self._extract_media_item(
+                    info=info,
                     file_path=final_path,
-                    title=info.get("title") or ("Social Audio" if is_audio else "Social Video"),
-                    author=info.get("uploader") or info.get("channel") or "Unknown",
-                    duration=int(info.get("duration", 0)),
-                    media_type=media_type,
                     source_url=url,
-                    file_size=size,
-                    cover_url=info.get("thumbnail"),
-                    is_temp_file=True,
+                    default_media_type=media_type,
                 )
 
         except VideoTooLargeError:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            raise
+        except (MediaDurationLimitError, ValueError):
             shutil.rmtree(temp_dir, ignore_errors=True)
             raise
         except MediaPipelineError:
@@ -915,6 +1118,9 @@ class MultiTierMediaPipeline:
             raise
         except yt_dlp.utils.DownloadError as err:
             shutil.rmtree(temp_dir, ignore_errors=True)
+            err_msg = str(err)
+            if "Thời lượng video vượt quá" in err_msg or "7200" in err_msg:
+                raise MediaDurationLimitError("Thời lượng video vượt quá giới hạn an toàn tối đa 2 giờ của hệ thống.") from err
             logger.warning("[Tier 2: yt-dlp] Download error: %s", err)
             return None
         except Exception as err:
@@ -1389,15 +1595,18 @@ class MultiTierMediaPipeline:
     async def download(self, url: str) -> MediaItem:
         """
         Phân giải và tải media qua hệ thống phân tầng thông minh:
+          - Audio Platforms (SoundCloud, YT Music) -> download_audio
           - Threads -> _download_threads_playwright
           - Facebook (rút gọn/chia sẻ) -> _resolve_redirect_url -> Tier 2 (yt-dlp)
           - TikTok / Douyin -> Tier 1 (TikWM) -> Tier 2 (yt-dlp) -> Tier 3 (Playwright)
-          - YouTube, Facebook và các nền tảng khác -> Tier 2 (yt-dlp) -> Tier 3 (Playwright)
+          - 20+ Nền tảng & Universal Web Extractor Fallback -> Tier 2 (yt-dlp) -> Tier 3 (Playwright)
         """
         # Tự động dọn dẹp các tệp tạm mồ côi cũ hơn 10 phút trước khi bắt đầu phiên mới
         cleanup_expired_media(max_age_seconds=600)
 
         clean_url = url.strip()
+        if not clean_url.startswith(("http://", "https://")):
+            raise MediaPipelineError(f"Định dạng URL không hợp lệ: {clean_url}")
 
         try:
             # 0. Định tuyến chuyên biệt cho nền tảng thuần âm nhạc (SoundCloud, YouTube Music)
@@ -1440,17 +1649,20 @@ class MultiTierMediaPipeline:
                 except Exception as err:
                     logger.warning("[Pipeline] Tier 1 failed, falling back to Tier 2: %s", err)
 
-            # 4. Tier 2: yt-dlp Universal Downloader (YouTube, Facebook Reels/Watch, Douyin...)
+            # 4. Tier 2: Universal Extractor Engine (yt-dlp Core) — 20+ Nền Tảng & Generic Web Fallback
             try:
                 item = await self._download_ytdlp(target_url)
                 if item:
                     item.source_url = clean_url
-                    logger.info("[Pipeline] Tier 2 (yt-dlp) succeeded for URL: %s", target_url)
+                    logger.info("[Pipeline] Tier 2 (yt-dlp Universal Extractor) succeeded for URL: %s", target_url)
                     return item
             except VideoTooLargeError:
                 raise
+            except (MediaDurationLimitError, ValueError) as err:
+                logger.warning("[Pipeline] Tier 2 rejected video due to policy/duration limits: %s", err)
+                raise
             except Exception as err:
-                logger.warning("[Pipeline] Tier 2 failed, falling back to Tier 3: %s", err)
+                logger.warning("[Pipeline] Tier 2 Universal Extractor failed, falling back to Tier 3: %s", err)
 
             # 5. Tier 3: Playwright Sniffer Fallback
             try:

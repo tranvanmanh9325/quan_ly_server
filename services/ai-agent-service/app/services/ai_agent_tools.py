@@ -422,7 +422,10 @@ class AgentToolExecutor:
             "douyin.com", "threads.net", "threads.com",
             "instagram.com", "instagr.am", "twitter.com", "x.com", "t.co",
             "soundcloud.com", "reddit.com", "redd.it", "v.redd.it",
-            "bilibili.com", "b23.tv", "pinterest.com", "pin.it", "kuaishou.com"
+            "bilibili.com", "b23.tv", "pinterest.com", "pin.it", "kuaishou.com",
+            "twitch.tv", "vimeo.com", "dailymotion.com", "dai.ly", "rumble.com",
+            "streamable.com", "loom.com", "capcut.com", "xiaohongshu.com", "xhslink.com",
+            "weibo.com", "weibo.cn", "lemon8-app.com", "likee.video", "likee.com", "bsky.app"
         ))
         is_media = has_media_link or any(k in q for k in (
             "tiktok", "youtube", "douyin", "reels", "reel", "video", "clip", "mp4",
@@ -430,6 +433,10 @@ class AgentToolExecutor:
             "download video", "download clip", "tai video", "tai clip", "tai ve",
             "lay video", "lay clip", "keo video", "instagram", "insta", "threads", "twitter",
             "soundcloud", "reddit", "bilibili", "pinterest", "kuaishou",
+            "twitch", "vimeo", "dailymotion", "rumble", "streamable", "loom",
+            "capcut", "xiaohongshu", "rednote", "tiểu hồng thư", "tieu hong thu", "xhs",
+            "weibo", "lemon8", "likee", "bluesky", "bsky",
+            "4k", "60fps", "1080p60", "fps cao", "mượt mà",
             "tải mp3", "tai mp3", "tách nhạc", "tach nhac", "lấy audio", "lay audio",
             "nhạc tiktok", "nhac tiktok", "audio", "mp3", "bài hát", "bai hat", "nhạc", "nhac",
             "tải audio", "tai audio", "download audio", "download mp3"
@@ -622,13 +629,13 @@ class AgentToolExecutor:
                 "type": "function",
                 "function": {
                     "name": "download_media_video",
-                    "description": "Tải video/audio chất lượng cao (hỗ trợ TikTok, YouTube, YouTube Shorts, Facebook, Facebook Reels, Threads, Instagram, Twitter/X, SoundCloud, Reddit, Bilibili, Pinterest, Kuaishou, Douyin) gửi Telegram.",
+                    "description": "Tải video chất lượng phòng thu (ưu tiên 4K, 2K, 1080p và 60fps mượt mà) từ hơn 20+ nền tảng mạng xã hội (YouTube, TikTok, Facebook, Instagram, Threads, Twitter/X, Twitch, Vimeo, Dailymotion, CapCut, Xiaohongshu, Weibo, Bilibili, Reddit, Pinterest, Kuaishou, Lemon8, Likee, Bluesky, Rumble, Streamable, Loom...) hoặc bất kỳ web video nào. Tự động hỗ trợ mô hình Phân phối kép (Video <= 50MB gửi Telegram; Video > 50MB chia phần lossless kèm link tải trực tiếp tốc độ cao LAN/WAN).",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "url": {
                                 "type": "string",
-                                "description": "URL video/media cần tải (hỗ trợ TikTok, YouTube, YouTube Shorts, Facebook Reels/Watch, Threads, Instagram, X/Twitter, Reddit, Bilibili, Pinterest, Kuaishou...).",
+                                "description": "URL video/media cần tải (hỗ trợ 20+ nền tảng: YouTube, Shorts, TikTok, Douyin, Facebook, Instagram, Twitter/X, Threads, Twitch, Vimeo, Dailymotion, CapCut, Xiaohongshu, Weibo, Bilibili, Reddit, Pinterest, Kuaishou, Lemon8, Likee, Bluesky, Rumble, Streamable, Loom hoặc bất kỳ liên kết video nào).",
                             },
                             "caption": {
                                 "type": "string",
@@ -1968,6 +1975,9 @@ class AgentToolExecutor:
                                     video_path=media_item.file_path,
                                     caption=cap,
                                     duration=media_item.duration,
+                                    width=getattr(media_item, "width", 0) or 0,
+                                    height=getattr(media_item, "height", 0) or 0,
+                                    supports_streaming=True,
                                 )
                                 if not sent:
                                     # Fallback stream trực tiếp từ đĩa (Zero-RAM Leak)
@@ -2029,6 +2039,7 @@ class AgentToolExecutor:
                                             duration=p_dur,
                                             width=p_info.get("width", 0),
                                             height=p_info.get("height", 0),
+                                            supports_streaming=True,
                                         )
                                         if not sent_part and hasattr(self.telegram_bot, "send_document_file"):
                                             await self.telegram_bot.send_document_file(

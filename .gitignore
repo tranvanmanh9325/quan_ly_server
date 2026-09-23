@@ -55,3 +55,4 @@ cortex_data/
 local.properties
 .cxx/
 **/.cxx/
+android-app/model/

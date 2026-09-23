@@ -158,6 +158,42 @@ class TestMultiPlatformRegexGroup(unittest.TestCase):
             match = self.regex.search(u)
             self.assertIsNotNone(match, f"Regex failed to match TikTok/Douyin URL: {u}")
 
+    def test_10a_new_entertainment_and_streaming_platforms_regex(self):
+        """Kiểm thử nhận diện URL các nền tảng video giải trí & streaming mới."""
+        urls = [
+            "https://www.twitch.tv/videos/1234567890",
+            "https://clips.twitch.tv/FrailTameGrasshopper",
+            "https://twitch.tv/ninja",
+            "https://vimeo.com/123456789",
+            "https://player.vimeo.com/video/123456789",
+            "https://www.dailymotion.com/video/x8abcdef",
+            "https://dai.ly/x8abcdef",
+            "https://rumble.com/v12345-sample-clip.html",
+            "https://streamable.com/abc123xyz",
+            "https://www.loom.com/share/1234567890abcdef1234567890abcdef",
+        ]
+        for u in urls:
+            match = self.regex.search(u)
+            self.assertIsNotNone(match, f"Regex failed to match entertainment/streaming URL: {u}")
+
+    def test_10b_new_asian_and_global_social_platforms_regex(self):
+        """Kiểm thử nhận diện URL các mạng xã hội châu Á & toàn cầu mới."""
+        urls = [
+            "https://www.capcut.com/template-detail/123456789",
+            "https://capcut.com/watch/12345678",
+            "https://www.xiaohongshu.com/explore/64abcdef0000000000000000",
+            "https://xhslink.com/a/abcXYZ123",
+            "https://weibo.com/1234567890/AbCdEfGhI",
+            "https://m.weibo.cn/detail/1234567890123456",
+            "https://www.lemon8-app.com/v/123456789",
+            "https://likee.video/@creator/video/1234567890123456789",
+            "https://l.likee.video/v/abcXYZ",
+            "https://bsky.app/profile/alice.bsky.social/post/3kabcde123",
+        ]
+        for u in urls:
+            match = self.regex.search(u)
+            self.assertIsNotNone(match, f"Regex failed to match Asian/global social URL: {u}")
+
 
 class TestFastPathIntentRoutingGroup(unittest.TestCase):
     """Nhóm 2: Kiểm thử bộ định tuyến Fast-path ý định tải Media & Audio."""
@@ -245,6 +281,57 @@ class TestFastPathIntentRoutingGroup(unittest.TestCase):
             self.assertIsNotNone(intent, f"Failed for input: {raw}")
             self.assertEqual(intent.media_url, expected_url)
 
+    def test_18a_universal_web_extractor_fallback(self):
+        """Universal Web Extractor Fallback: URL ngoài danh sách kèm từ khóa tải media rõ ràng."""
+        # 1. Có từ khóa tải video -> Kích hoạt fastpath video
+        v_intent = self.bot._detect_fastpath_media_download("tải video từ link này https://archive.org/details/sample_video")
+        self.assertIsNotNone(v_intent)
+        self.assertEqual(v_intent.media_type, "video")
+        self.assertEqual(v_intent.media_url, "https://archive.org/details/sample_video")
+
+        # 2. Có từ khóa tải audio -> Kích hoạt fastpath audio
+        a_intent = self.bot._detect_fastpath_media_download("tải mp3 podcast https://mypodcast.com/episodes/123.mp3")
+        self.assertIsNotNone(a_intent)
+        self.assertEqual(a_intent.media_type, "audio")
+        self.assertEqual(a_intent.media_url, "https://mypodcast.com/episodes/123.mp3")
+
+        # 3. URL web thông thường không kèm từ khóa tải -> KHÔNG cướp link (trả về None để AI Agent xử lý)
+        self.assertIsNone(self.bot._detect_fastpath_media_download("https://github.com/torvalds/linux"))
+        self.assertIsNone(self.bot._detect_fastpath_media_download("https://vnexpress.net/thoi-su"))
+
+        # 4. Có URL nhưng chứa từ khóa phủ định -> KHÔNG tải
+        self.assertIsNone(self.bot._detect_fastpath_media_download("đừng tải link https://example.com/video"))
+
+    def test_18b_new_platforms_fastpath_audio_and_video_classification(self):
+        """Kiểm thử phân loại ý định audio vs video cho 20+ nền tảng mới."""
+        audio_cases = [
+            ("tải mp3 capcut https://www.capcut.com/template-detail/123456", "audio"),
+            ("lấy nhạc xiaohongshu https://xhslink.com/a/abcXYZ123", "audio"),
+            ("tách nhạc vimeo https://vimeo.com/123456789", "audio"),
+            ("nhạc weibo này hay quá https://weibo.com/1234567890/AbCdEfGhI", "audio"),
+            ("audio twitch https://clips.twitch.tv/FrailTameGrasshopper", "audio"),
+            ("nhạc lemon8 https://www.lemon8-app.com/v/123456789", "audio"),
+            ("tải audio dailymotion https://www.dailymotion.com/video/x8abcdef", "audio"),
+        ]
+        for text, expected_type in audio_cases:
+            intent = self.bot._detect_fastpath_media_download(text)
+            self.assertIsNotNone(intent, f"Failed for text: {text}")
+            self.assertEqual(intent.media_type, expected_type, f"Expected {expected_type} for: {text}")
+
+        video_cases = [
+            ("tải clip capcut https://www.capcut.com/template-detail/123456", "video"),
+            ("kéo video twitch 60fps https://www.twitch.tv/videos/1234567890", "video"),
+            ("lưu video xiaohongshu https://www.xiaohongshu.com/explore/64abcdef0000000000000000", "video"),
+            ("tải video rumble https://rumble.com/v12345-sample-clip.html", "video"),
+            ("download video streamable https://streamable.com/abc123xyz", "video"),
+            ("tải clip loom https://www.loom.com/share/1234567890abcdef1234567890abcdef", "video"),
+            ("lưu clip bluesky https://bsky.app/profile/alice.bsky.social/post/3kabcde123", "video"),
+        ]
+        for text, expected_type in video_cases:
+            intent = self.bot._detect_fastpath_media_download(text)
+            self.assertIsNotNone(intent, f"Failed for text: {text}")
+            self.assertEqual(intent.media_type, expected_type, f"Expected {expected_type} for: {text}")
+
 
 class TestMediaDownloaderRoutingGroup(unittest.IsolatedAsyncioTestCase):
     """Nhóm 3: Kiểm thử định tuyến MultiTierMediaPipeline cho các nền tảng âm nhạc và video."""
@@ -311,6 +398,87 @@ class TestDynamicScopingAndToolSchemasGroup(unittest.TestCase):
                 f"Scoped tools {scoped} did not include expected {expected_tool} for query: {query}",
             )
 
+    def test_22_scoping_activates_for_new_platforms_and_4k60fps_keywords(self):
+        """Kiểm thử Dynamic Scoping nhận diện các nền tảng mới và từ khóa chất lượng cao 4K/60fps."""
+        queries = [
+            ("kéo video capcut https://capcut.com/template-detail/123", "download_media_video"),
+            ("tải clip twitch 60fps https://twitch.tv/video/123", "download_media_video"),
+            ("lưu video tiểu hồng thư https://xhslink.com/123", "download_media_video"),
+            ("tải nhạc weibo https://weibo.com/12345", "download_media_audio"),
+            ("tải video vimeo 4k 60fps", "download_media_video"),
+            ("tải clip dailymotion https://dai.ly/x123", "download_media_video"),
+            ("lưu video rumble https://rumble.com/v123", "download_media_video"),
+            ("kéo video streamable https://streamable.com/abc", "download_media_video"),
+            ("tải video loom https://loom.com/share/abc", "download_media_video"),
+            ("lưu clip lemon8 https://lemon8-app.com/v/123", "download_media_video"),
+            ("tải video likee https://likee.video/@user/video/123", "download_media_video"),
+            ("tải post bluesky https://bsky.app/profile/user/post/123", "download_media_video"),
+        ]
+        for query, expected_tool in queries:
+            scoped = self.mgr._resolve_scoped_tool_names(query)
+            self.assertIn(
+                expected_tool,
+                scoped,
+                f"Scoped tools {scoped} did not include expected {expected_tool} for query: {query}",
+            )
+
+
+class TestMediaStoragePort8084AndDualDistributionGroup(unittest.TestCase):
+    """Nhóm 5: Kiểm thử chuẩn hóa cổng LAN port 8084 và cơ chế Dual Distribution."""
+
+    def test_23_lan_base_url_standardized_to_port_8084(self):
+        """Xác nhận giá trị mặc định của LAN Base URL được chuẩn hóa sang port 8084 của FastAPI backend."""
+        from app.services.media_storage_manager import media_storage_manager
+        import app.services.media_storage_manager as msm_mod
+
+        # Reset cache
+        msm_mod._cached_internet_url = None
+        msm_mod._cached_url_timestamp = 0.0
+
+        import urllib.error
+        with patch.dict(os.environ, {}, clear=True), \
+             patch("urllib.request.urlopen", side_effect=urllib.error.URLError("Connection refused")), \
+             patch.object(media_storage_manager, "_query_host_ngrok_via_ssh", return_value=None):
+
+            internet, lan = media_storage_manager.resolve_public_download_base_url_sync()
+            # Kiểm tra giá trị chuỗi thực tế trỏ tới port 8084
+            self.assertIn("8084", str(lan))
+            self.assertEqual(lan, "http://192.168.0.100:8084")
+            self.assertEqual(internet, "http://192.168.0.100:8084")
+
+    def test_24_download_record_lan_url_contains_port_8084(self):
+        """Xác nhận publish_download_item tạo URL nội bộ với port 8084 chuẩn hóa."""
+        import tempfile
+        import shutil
+        from pathlib import Path
+        from app.services.media_storage_manager import MediaStorageManager
+        import app.services.media_storage_manager as msm_mod
+
+        tdir = Path(tempfile.mkdtemp(prefix="test_pub_8084_"))
+        try:
+            mgr = MediaStorageManager(
+                base_dir=tdir,
+                temp_dir=tdir / "temp",
+                public_dir=tdir / "public",
+            )
+            # Reset cache
+            msm_mod._cached_internet_url = None
+            msm_mod._cached_url_timestamp = 0.0
+
+            src = tdir / "temp" / "test_vid.mp4"
+            src.write_bytes(b"TEST_BYTES_FOR_8084" * 100)
+
+            with patch.dict(os.environ, {}, clear=True), \
+                 patch("urllib.request.urlopen", side_effect=Exception("offline")), \
+                 patch.object(mgr, "_query_host_ngrok_via_ssh", return_value=None):
+
+                rec = mgr.publish_download_item(src, "test_vid.mp4", "Title 8084")
+                self.assertIn("8084", rec.lan_url)
+                self.assertTrue(rec.lan_url.startswith("http://192.168.0.100:8084/api/ai/media/download/"))
+        finally:
+            shutil.rmtree(tdir, ignore_errors=True)
+
 
 if __name__ == "__main__":
     unittest.main()
+

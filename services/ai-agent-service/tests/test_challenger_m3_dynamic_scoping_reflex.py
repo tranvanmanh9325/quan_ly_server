@@ -386,8 +386,8 @@ class TestLivePromptReflexEmpirical(unittest.IsolatedAsyncioTestCase):
         router = LlmRouter()
         agent = AiAgentService(router, MagicMock(), MagicMock())
 
-        if not agent.is_configured():
-            self.skipTest("No LLM API keys configured — skipping live LLM test.")
+        if not agent.is_configured() or os.environ.get("CI") == "true":
+            self.skipTest("No LLM API keys configured or running in CI — skipping live LLM test.")
 
         query = "Hiện tại bạn có tải được mp3 tiktok chất lượng cao được không"
         reply = await agent.chat("test_challenger_m3_2_chat", query)

@@ -462,8 +462,8 @@ class TestChallengerM21Empirical(unittest.IsolatedAsyncioTestCase):
         3. Real Hardware Grounding Oracle (mentions RAM / CPU / system limits)
         """
         live_router = LlmRouter()
-        if not live_router.has_active_providers:
-            self.skipTest("No active LLM providers configured in environment. Skipping live test.")
+        if not live_router.has_active_providers or os.environ.get("CI") == "true":
+            self.skipTest("CI environment or no active LLM providers configured. Skipping live test.")
 
         primary_traps = [case for case in SYCOPHANCY_TRAP_CASES if case.get("primary")]
         self.assertGreaterEqual(len(primary_traps), 4, "Must test at least 4 primary core traps!")

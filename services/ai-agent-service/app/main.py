@@ -18,8 +18,9 @@ from app.services.memory_service import AgentMemoryService
 from app.services.telegram_bot import TelegramBot
 from app.services.proactive_service import ProactiveIntelligenceService
 from app.services.dream_engine import SubconsciousDreamEngine
-from app.routers import health, facebook, tiktok, openai_gateway, brain, media_download
+from app.routers import health, facebook, tiktok, openai_gateway, brain, media_download, file_transfer
 from app.services.media_storage_manager import media_storage_manager
+from app.services.transfer_storage_manager import transfer_storage_manager
 
 logging.basicConfig(
     level=logging.INFO,
@@ -257,13 +258,39 @@ async def media_ttl_sweeper_loop(interval_sec: int = 600):
             logger.error("[MediaStorage-Sweeper] Unexpected error in sweeper loop: %s", e)
 
 
+async def transfer_ttl_sweeper_loop(interval_sec: int = 600):
+    """
+    Background worker for 3-Layer Zero-Disk-Leak TTL Sweeper (Layer 1: Periodic Lifespan Sweeper).
+    Periodically sweeps expired file transfer directories and orphaned sessions.
+    """
+    logger.info("[TransferStorage-Sweeper] Periodic sweeper loop started (interval: %ds).", interval_sec)
+    while True:
+        try:
+            await asyncio.sleep(interval_sec)
+            stats = transfer_storage_manager.sweep_expired()
+            if stats.get("expired_tokens_removed", 0) > 0 or stats.get("corrupt_tokens_removed", 0) > 0:
+                logger.info(
+                    "[TransferStorage-Sweeper] Sweeper run: removed %d expired, %d corrupt tokens, freed %.2f MB",
+                    stats.get("expired_tokens_removed", 0),
+                    stats.get("corrupt_tokens_removed", 0),
+                    stats.get("freed_mb", 0.0),
+                )
+        except asyncio.CancelledError:
+            logger.info("[TransferStorage-Sweeper] Sweeper loop cancelled.")
+            break
+        except Exception as e:
+            logger.error("[TransferStorage-Sweeper] Unexpected error in sweeper loop: %s", e)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting up AI Agent & 9Router Service (Python)...")
 
-    # 0. Media Storage 3-Layer Sweeper: Startup Grace Prune (Layer 3)
+    # 0. Storage 3-Layer Sweeper: Startup Grace Prune (Layer 3)
     startup_prune = media_storage_manager.sweep_expired()
     logger.info("[MediaStorage] Startup Grace Prune completed: %s", startup_prune)
+    transfer_startup_prune = transfer_storage_manager.sweep_expired()
+    logger.info("[TransferStorage] Startup Grace Prune completed: %s", transfer_startup_prune)
 
     # 1. Initialize DB Connection Pool & Shared HTTP Client
     from app.core.db import db_manager
@@ -344,6 +371,7 @@ async def lifespan(app: FastAPI):
     dream_task           = asyncio.create_task(dream_engine.start_subconscious_loop())
     heartbeat_task       = asyncio.create_task(cognitive_heartbeat_loop(ai_agent, interval_sec=30))
     media_sweeper_task   = asyncio.create_task(media_ttl_sweeper_loop(interval_sec=600))
+    transfer_sweeper_task = asyncio.create_task(transfer_ttl_sweeper_loop(interval_sec=600))
 
     yield
 
@@ -361,11 +389,12 @@ async def lifespan(app: FastAPI):
     dream_task.cancel()
     heartbeat_task.cancel()
     media_sweeper_task.cancel()
+    transfer_sweeper_task.cancel()
     try:
         await asyncio.gather(
             telegram_task, fb_scan_task, tiktok_scan_task, reminder_task,
             rtk_persist_task, proactive_task, consolidation_task, schema_task,
-            dream_task, heartbeat_task, media_sweeper_task,
+            dream_task, heartbeat_task, media_sweeper_task, transfer_sweeper_task,
             return_exceptions=True,
         )
     except Exception:
@@ -412,3 +441,4 @@ app.include_router(tiktok.router)
 app.include_router(openai_gateway.router)
 app.include_router(brain.router)
 app.include_router(media_download.router)
+app.include_router(file_transfer.router)

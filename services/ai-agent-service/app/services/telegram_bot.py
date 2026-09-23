@@ -551,6 +551,77 @@ class TelegramBot:
             logger.error("[TelegramBot] Failed sending photo bytes: %s", e)
         return False
 
+    async def send_transfer_portal_card(
+        self,
+        chat_id: str,
+        file_name: str,
+        file_size_bytes: int,
+        token: str,
+        lan_url: str,
+        wan_url: str,
+        qr_target_url: Optional[str] = None,
+        ttl_hours: int = 24,
+        mode: str = "download",
+        one_time: bool = False,
+    ) -> bool:
+        """
+        Sends an in-memory QR code card for the High-Speed Transfer Portal to Telegram.
+        Presents parallel LAN Gigabit and WAN Internet links with 24h TTL countdown.
+        """
+        try:
+            from app.services.transfer_qr_generator import generate_qr_png_bytes
+            from datetime import timedelta
+
+            target_url = qr_target_url or wan_url or lan_url
+            photo_bytes = generate_qr_png_bytes(target_url)
+
+            def _format_size(b: int) -> str:
+                if b <= 0:
+                    return "0 B" if mode == "download" else "Chưa xác định"
+                for unit in ["B", "KB", "MB", "GB"]:
+                    if b < 1024.0:
+                        return f"{b:.1f} {unit}"
+                    b /= 1024.0
+                return f"{b:.1f} TB"
+
+            formatted_size = _format_size(file_size_bytes)
+
+            vn_now = datetime.now(VN_TZ)
+            expire_time = vn_now + timedelta(hours=ttl_hours)
+            expire_str = expire_time.strftime("%H:%M ngày %d/%m/%Y")
+
+            title = (
+                "🚀 <b>CỔNG CHUYỂN TỆP SIÊU TỐC TIỂU BẢO BẢO</b>"
+                if mode == "upload"
+                else "📥 <b>NHẬN TỆP CHUYỂN GIAO</b>"
+            )
+            safe_name = html.escape(file_name or "Tệp tin")
+
+            caption_lines = [
+                title,
+                f"📁 <b>Tên tệp:</b> <code>{safe_name}</code> | <b>Dung lượng:</b> <code>{formatted_size}</code>",
+                f"⚡ <b>Link LAN Wi-Fi (Tốc độ tối đa Gigabit 50-100MB/s):</b>\n<code>{lan_url}</code>",
+                f"🌐 <b>Link WAN Internet Toàn Cầu:</b>\n<code>{wan_url}</code>",
+                f"⏳ <b>Hiệu lực:</b> {ttl_hours} giờ (đến {expire_str})",
+                "📷 <b>Quét mã QR đính kèm bằng Camera điện thoại/iPad để mở cổng ngay lập tức!</b>",
+            ]
+
+            if one_time:
+                caption_lines.append("⚠️ <i>Liên kết tự hủy sau 1 lần tải thành công.</i>")
+
+            caption = "\n\n".join(caption_lines)
+
+            return await self.send_photo_bytes(
+                chat_id=chat_id,
+                photo_bytes=photo_bytes,
+                filename="portal_qr.png",
+                caption=caption,
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            logger.error("[TelegramBot] Failed sending transfer portal card: %s", e, exc_info=True)
+            return False
+
     async def send_document(
         self,
         chat_id: str,

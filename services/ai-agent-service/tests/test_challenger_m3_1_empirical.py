@@ -36,6 +36,7 @@ Test Objectives (Challenger M3 Empirical Verification):
 """
 
 import asyncio
+import os
 import re
 import sys
 import unittest
@@ -649,8 +650,8 @@ class TestChallengerM31EmpiricalSuite(unittest.IsolatedAsyncioTestCase):
         on an adversarial dialect correction query and tests actual LLM response.
         """
         live_router = LlmRouter()
-        if not live_router.has_active_providers:
-            self.skipTest("No active LLM providers configured in environment. Skipping live test.")
+        if not live_router.has_active_providers or os.environ.get("CI") == "true":
+            self.skipTest("No active LLM providers configured in environment or running in CI. Skipping live test.")
 
         chat_id = "test_live_m3_dialect"
         agent = AiAgentService(

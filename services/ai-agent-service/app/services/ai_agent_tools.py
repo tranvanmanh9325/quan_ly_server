@@ -32,6 +32,7 @@ DIRECT_RETURN_TOOLS = frozenset({
     "browser_take_screenshot",
     "download_media_video",
     "download_media_audio",
+    "create_file_transfer_portal",
 })
 
 SCREENSHOT_TOOLS = frozenset({
@@ -371,12 +372,17 @@ class AgentToolExecutor:
         "download_media_audio",
         "run_command",
     }
+    _TOOL_CLUSTER_TRANSFER = {
+        "create_file_transfer_portal",
+        "run_command",
+    }
     _TOOL_CLUSTER_CORE = {
         "run_command",
         "get_weather",
         "get_server_location",
         "download_media_video",
         "download_media_audio",
+        "create_file_transfer_portal",
         "browser_search_google",
         "remember_for_later",
     }
@@ -468,12 +474,31 @@ class AgentToolExecutor:
             "tải audio", "tai audio", "download audio", "download mp3", "soundcloud"
         ))
 
+        is_transfer = any(k in q for k in (
+            "chuyển file", "chuyen file", "bắn file", "ban file", "gửi file", "gui file",
+            "chuyển ảnh", "chuyen anh", "bắn ảnh", "ban anh", "gửi ảnh", "gui anh",
+            "chuyển video", "chuyen video", "bắn video", "ban video", "gửi video", "gui video",
+            "gửi file sang điện thoại", "chuyển ảnh sang ipad", "bắn ảnh sang ipad",
+            "sang điện thoại", "sang dien thoai", "sang dt", "sang phone",
+            "sang ipad", "sang tablet", "sang laptop", "sang máy tính", "sang may tinh",
+            "sang máy khác", "sang may khac",
+            "share file", "chia sẻ file", "chia se file", "upload file", "download file",
+            "tải file lên", "tai file len", "tải file về", "tai file ve", "tải tệp", "tai tep",
+            "gửi tệp", "gui tep", "chuyển tệp", "chuyen tep", "bắn tệp", "ban tep",
+            "airdrop", "drop file", "file drop", "chuyển tài liệu", "chuyen tai lieu",
+            "portal transfer", "file portal", "cổng truyền file", "cong truyen file",
+            "truyền file", "truyen file", "transfer portal", "portal"
+        ))
+
         if is_media:
             if is_audio:
                 selected.update(self._TOOL_CLUSTER_MEDIA)
             else:
                 selected.add("download_media_video")
                 selected.add("run_command")
+
+        if is_transfer:
+            selected.update(self._TOOL_CLUSTER_TRANSFER)
 
         if is_weather:
             selected.update(self._TOOL_CLUSTER_WEATHER)
@@ -506,6 +531,7 @@ class AgentToolExecutor:
 
         if len(selected) > max_tools:
             priority_order = [
+                *(["create_file_transfer_portal"] if is_transfer else []),
                 "run_command", "download_media_video",
                 *(["download_media_audio"] if is_audio else []),
                 "get_weather", "read_archive_file",
@@ -514,6 +540,7 @@ class AgentToolExecutor:
                 "server_capture_screenshot", "get_server_active_sessions", "remember_for_later",
                 "complete_task", "recover_archive_password", "facebook_capture_screenshot",
                 *(["download_media_audio"] if not is_audio else []),
+                *(["create_file_transfer_portal"] if not is_transfer else []),
                 "browser_click", "browser_type", "browser_scroll", "browser_press_key"
             ]
             pruned: Set[str] = set()
@@ -636,6 +663,33 @@ class AgentToolExecutor:
                             },
                         },
                         "required": ["url"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "create_file_transfer_portal",
+                    "description": "Tạo cổng truyền file siêu tốc an toàn (LAN Gigabit/WAN Internet) giữa máy tính, điện thoại, iPad và máy chủ. Tự động sinh mã QR Code gửi Telegram.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "file_name": {
+                                "type": "string",
+                                "description": "Tên file hoặc đường dẫn tệp muốn chuyển hoặc nhận diện (nếu có).",
+                            },
+                            "mode": {
+                                "type": "string",
+                                "enum": ["upload", "download"],
+                                "default": "upload",
+                                "description": "'upload' khi người dùng muốn chuyển/tải file từ thiết bị lên để chia sẻ; 'download' khi người dùng muốn nhận/tải file sẵn có.",
+                            },
+                            "one_time": {
+                                "type": "boolean",
+                                "default": False,
+                                "description": "True nếu muốn liên kết tự hủy sau 1 lần tải thành công.",
+                            },
+                        },
                     },
                 },
             },
@@ -1137,6 +1191,31 @@ class AgentToolExecutor:
                         filtered_tools.append(t)
         # Deterministic sorting by function name guarantees KV-cache prefix stability across calls
         filtered_tools.sort(key=lambda x: x.get("function", {}).get("name", ""))
+
+        # Strict Token Budget Gate: prune lowest priority tools until schema <= 700 tokens
+        # Only prune if scoping was actively invoked (i.e. query or history provided)
+        if scoped_allowed is not None and len(filtered_tools) > 2:
+            import json
+            reverse_priority = [
+                "browser_press_key", "browser_scroll", "browser_type", "browser_click",
+                "facebook_capture_screenshot", "recover_archive_password", "complete_task",
+                "remember_for_later", "get_server_active_sessions", "server_capture_screenshot",
+                "facebook_send_reply", "facebook_get_messages", "browser_search_google",
+                "browser_navigate", "get_server_location", "extract_archive_file",
+                "read_archive_file", "get_weather", "download_media_audio",
+                "download_media_video", "run_command"
+            ]
+            while len(filtered_tools) > 2 and (len(json.dumps(filtered_tools, ensure_ascii=False)) / 3.5) > 700.0:
+                dropped = False
+                for candidate in reverse_priority:
+                    cand_tool = next((t for t in filtered_tools if t.get("function", {}).get("name") == candidate), None)
+                    if cand_tool is not None:
+                        filtered_tools.remove(cand_tool)
+                        dropped = True
+                        break
+                if not dropped:
+                    filtered_tools.pop()
+
         return filtered_tools
 
     # ──────────────────────────────────────────────────────────────────────────
@@ -2004,6 +2083,59 @@ class AgentToolExecutor:
                     if media_item:
                         media_item.cleanup()
 
+            # ── High-Speed File Transfer Portal (Multi-Device LAN/WAN) ──
+            if tool_name == "create_file_transfer_portal":
+                from app.services.transfer_storage_manager import transfer_storage_manager
+                file_name = tool_args.get("file_name")
+                raw_mode = str(tool_args.get("mode", "upload")).strip().lower()
+                mode = "download" if raw_mode == "download" else "upload"
+                one_time = bool(tool_args.get("one_time", False))
+
+                session = transfer_storage_manager.create_session(
+                    filename=file_name,
+                    mode=mode,
+                    one_time=one_time,
+                    ttl_hours=24,
+                )
+
+                internet_base, lan_base = transfer_storage_manager.resolve_public_transfer_base_url_sync()
+                lan_url = f"{lan_base}/api/ai/transfer/portal/{session.token}"
+                wan_url = f"{internet_base}/api/ai/transfer/portal/{session.token}"
+
+                qr_sent = False
+                if self.telegram_bot and chat_id:
+                    try:
+                        qr_target = wan_url if (wan_url and not wan_url.startswith("http://192.168.") and not wan_url.startswith("http://127.0.0.1")) else lan_url
+                        qr_sent = await self.telegram_bot.send_transfer_portal_card(
+                            chat_id=chat_id,
+                            file_name=session.filename,
+                            file_size_bytes=session.file_size,
+                            token=session.token,
+                            lan_url=lan_url,
+                            wan_url=wan_url,
+                            qr_target_url=qr_target,
+                            ttl_hours=24,
+                            mode=mode,
+                            one_time=one_time,
+                        )
+                    except Exception as tg_err:
+                        logger.warning("[AiAgentTools] Failed to send Telegram transfer portal card: %s", tg_err)
+
+                mode_text = "Tải lên (Upload từ thiết bị)" if mode == "upload" else "Tải xuống (Download về thiết bị)"
+                one_time_note = "\n⚠️ **Lưu ý:** Liên kết sẽ tự hủy sau 1 lần tải thành công." if one_time else ""
+                qr_status = "Đã gửi trực tiếp mã QR Code lên Telegram, anh chỉ cần bật Camera điện thoại/iPad quét là mở cổng ngay!" if (qr_sent or self.telegram_bot) else "Anh có thể mở trực tiếp đường link trên hoặc quét mã QR từ cổng web."
+
+                return (
+                    f"🚀 **CỔNG CHUYỂN TỆP SIÊU TỐC TIỂU BẢO BẢO ĐÃ SẴN SÀNG!**\n\n"
+                    f"Em đã khởi tạo phiên truyền tệp thành công và gửi thông tin kèm mã QR Code cho anh Mạnh rồi ạ:\n"
+                    f"• 📋 **Chế độ:** `{mode_text}`\n"
+                    f"• 📁 **Tên tệp:** `{html.escape(session.filename)}`\n"
+                    f"• ⚡ **Link LAN Wi-Fi (Tốc độ tối đa Gigabit 50-100MB/s):**\n`{lan_url}`\n"
+                    f"• 🌐 **Link WAN Internet Toàn Cầu:**\n`{wan_url}`\n"
+                    f"• ⏳ **Thời hạn hiệu lực:** 24 giờ\n"
+                    f"• 📷 **Mã QR:** {qr_status}{one_time_note}"
+                )
+
             # ── Phase 5A: Prospective Memory Tools ──────────────────────────
             if tool_name == "remember_for_later":
                 if not self.memory_service:
@@ -2413,15 +2545,7 @@ class AgentToolExecutor:
     # ──────────────────────────────────────────────────────────────────────────
 
     # Tools that always terminate the ReAct loop — the screenshot IS the final answer.
-    _DIRECT_RETURN_TOOLS = frozenset({
-        "facebook_send_reply",
-        "facebook_capture_screenshot",
-        "facebook_view_profile",
-        "server_capture_screenshot",
-        "browser_take_screenshot",
-        "download_media_video",
-        "download_media_audio",
-    })
+    _DIRECT_RETURN_TOOLS = DIRECT_RETURN_TOOLS
 
     # Fine-grained browser tools: produce a screenshot observation that the LLM
     # can inspect to decide the NEXT action. NOT terminal — the loop continues.

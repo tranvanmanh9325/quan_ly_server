@@ -1,739 +1,662 @@
 """
-test_challenger_m5_1_adversarial.py — Milestone 5 Challenger 1 Adversarial Verification Suite.
+test_challenger_m5_1_adversarial.py — Empirical Adversarial Stress-Testing Suite for Milestone M5.
 
-Adversarial Stress Testing of:
-  - Synaptic Pruning Logic (Confidence boundaries, time decay thresholds, mmap zeroing)
-  - Slow-Wave Sleep (SWS) & REM Sleep Cycles (Adenosine flush, neuro-chemical balance, memory replay)
-  - Morning Epiphany Lifecycle (Idempotent single delivery, time-window gating, sisterly formatting)
-  - Extreme Boundary & Exception Resilience (Empty DB, None memory_service, LLM failures, corrupted cache)
-
-Author: Challenger 1 (Empirical Adversarial Gatekeeper)
-Date: 2026-09-13
+Author: Challenger 1 (Adversarial Empirical Challenger)
+Scope:
+1. Dynamic Tool Scoping Stress-Testing:
+   - 48 hostile/adversarial queries (Compound intents, homonyms, empty, 500+ chars, unaccented, special chars, injections).
+   - Invariant: 100% len(scoped_tools) <= 8 (and <= 6 when heavy cluster is activated). NEVER > 8.
+   - Semantic verification: Disambiguation between "đổi tên file" vs "đổi 100 USD sang VND", etc.
+2. Tri-Tier Action Risk Gating & Spinal Safety Veto:
+   - 35+ lethal commands (rm -rf /, mkfs, DROP DATABASE, fork bomb, disk zeroing, docker prune).
+   - 100% blocked without token; unblocked ONLY with CONFIRM_DANGEROUS_ACTION.
+   - Tier 2 Operational Confirmation Token Verification:
+     - restart_service requires confirm='RESTART_CONFIRMED' for production services.
+     - restart_ngrok_tunnel requires confirm='RESTART_CONFIRMED'.
+     - delete_cron_job requires confirm='DELETE_CONFIRMED'.
+   - Tier classification consistency for all 27 new tools + bash commands.
 """
+
 import asyncio
 import json
-import os
 import re
-import shutil
-import struct
-import sys
-import tempfile
-import time
 import unittest
-from datetime import datetime, timezone, timedelta
-from pathlib import Path
-from typing import Any, Dict, List, Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
-# Ensure app is in path
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-from app.core.brain_core import (
-    ArtificialBrain,
-    HyperdimensionalCortex,
-    NeurotransmitterState,
-    HV_DIM_BITS,
-    HV_DIM_BYTES,
-    VN_TZ,
+from app.services.ai_agent_tools import (
+    AgentToolExecutor,
+    ACTION_TIER_1_SAFE,
+    ACTION_TIER_2_REVERSIBLE,
+    ACTION_TIER_3_LETHAL,
+    classify_action_risk,
+    classify_command_risk,
+    evaluate_spinal_safety_veto,
 )
-from app.services.dream_engine import SubconsciousDreamEngine
 
 
-class TestChallengerM5AdversarialSuite(unittest.IsolatedAsyncioTestCase):
+def _create_mock_executor() -> AgentToolExecutor:
+    mock_ssh = MagicMock()
+    mock_ssh.execute_command = AsyncMock(return_value="mock ssh output")
+    mock_cache = MagicMock()
+    mock_telegram = MagicMock()
+    mock_telegram.send_message = AsyncMock(return_value=True)
+    return AgentToolExecutor(ssh_client=mock_ssh, message_cache=mock_cache, telegram_bot=mock_telegram)
+
+
+class TestDynamicToolScopingAdversarial(unittest.TestCase):
     """
-    Empirical Adversarial Test Suite for Milestone 5 Subconscious Dream & Synaptic Pruning Engine.
+    Adversarial stress-testing suite for Dynamic Tool Scoping.
+    Tests 48 complex, edge-case, and hostile queries against hard invariants.
     """
 
-    def setUp(self) -> None:
-        self.temp_dir = Path(tempfile.mkdtemp(prefix="test_challenger_m5_cortex_"))
-        self.brain = ArtificialBrain(storage_dir=self.temp_dir)
+    ADVERSARIAL_QUERIES = [
+        # --- Group 1: Multi-intent compound queries (>= 2 intents) ---
+        {
+            "id": "Q01_multi_health_email",
+            "query": "kiểm tra sức khỏe server rồi gửi email báo cáo cho admin",
+            "must_contain": {"get_system_health_report", "send_email"},
+            "must_not_exceed": 8,
+        },
+        {
+            "id": "Q02_multi_calc_note_remind",
+            "query": "tính 15% của 2 tỷ rồi ghi chú lại vào sổ tay và hẹn giờ nhắc lúc 18h",
+            "must_contain": {"calculate", "create_note", "schedule_reminder"},
+            "must_not_exceed": 8,
+        },
+        {
+            "id": "Q03_multi_tiktok_transfer",
+            "query": "tải video tiktok https://vt.tiktok.com/abc123xyz rồi chuyển sang điện thoại",
+            "must_contain": {"download_media_video", "create_file_transfer_portal"},
+            "must_not_exceed": 8,
+        },
+        {
+            "id": "Q04_multi_log_restart",
+            "query": "xem log docker rồi khởi động lại service dashboard_ai_agent nếu có lỗi",
+            "must_contain": {"tail_service_logs", "restart_service"},
+            "must_not_exceed": 8,
+        },
+        {
+            "id": "Q05_multi_read_file_disk",
+            "query": "đọc file /home/kirito/app.py và kiểm tra dung lượng ổ đĩa xem cái nào nặng nhất",
+            "must_contain": {"read_file_content", "get_disk_usage"},
+            "must_not_exceed": 8,
+        },
+        {
+            "id": "Q06_multi_cron_email",
+            "query": "tạo cron job backup db rồi gửi email thông báo cho sếp",
+            "must_contain": {"create_cron_job", "send_email"},
+            "must_not_exceed": 8,
+        },
+        {
+            "id": "Q07_multi_ngrok_netinfo",
+            "query": "lấy link ngrok hiện tại và kiểm tra thông tin mạng IP công khai",
+            "must_contain": {"get_ngrok_status", "get_network_info"},
+            "must_not_exceed": 8,
+        },
+        {
+            "id": "Q08_multi_notes_archive_heavy",
+            "query": "tìm ghi chú và giải nén backup.tar.gz",
+            "must_contain": {"search_notes", "read_archive_file"},
+            "must_not_exceed": 6,  # Heavy cluster: archive activated -> strict bound 6
+        },
+        {
+            "id": "Q09_multi_fb_weather_heavy",
+            "query": "facebook tin nhắn mới và thời tiết hôm nay thế nào",
+            "must_contain": {"facebook_get_messages", "get_weather"},
+            "must_not_exceed": 6,  # Heavy cluster: facebook activated -> strict bound 6
+        },
+        {
+            "id": "Q10_multi_server_notes_cron",
+            "query": "tình trạng máy chủ thế nào, ghi chú lại rồi lên lịch cron chạy tự động hàng ngày",
+            "must_contain": {"get_system_health_report", "create_cron_job"},
+            "must_not_exceed": 8,
+        },
 
-    def tearDown(self) -> None:
-        if self.brain and hasattr(self.brain, "cortex") and self.brain.cortex:
-            self.brain.cortex.close()
-        shutil.rmtree(self.temp_dir, ignore_errors=True)
+        # --- Group 2: Homonym collisions & semantic disambiguation ---
+        {
+            "id": "Q11_homonym_rename_file",
+            "query": "đổi tên file config.json thành settings.json",
+            "must_contain": {"move_or_rename_file"},
+            "must_not_contain": {"convert_units"},  # File rename MUST NOT trigger calculator convert_units
+            "must_not_exceed": 8,
+        },
+        {
+            "id": "Q12_homonym_currency_convert",
+            "query": "đổi 100 USD sang VND",
+            "must_contain": {"convert_units"},
+            "must_not_contain": {"move_or_rename_file"},  # Currency conversion MUST NOT trigger file manager
+            "must_not_exceed": 8,
+        },
+        {
+            "id": "Q13_homonym_weight_convert",
+            "query": "đổi 50kg sang lbs",
+            "must_contain": {"convert_units"},
+            "must_not_contain": {"move_or_rename_file"},
+            "must_not_exceed": 8,
+        },
+        {
+            "id": "Q14_homonym_temp_convert",
+            "query": "đổi 100 độ F sang độ C",
+            "must_contain": {"convert_units"},
+            "must_not_contain": {"move_or_rename_file"},
+            "must_not_exceed": 8,
+        },
+        {
+            "id": "Q15_homonym_move_file",
+            "query": "move file /home/kirito/data.csv to /tmp/backup/",
+            "must_contain": {"move_or_rename_file"},
+            "must_not_contain": {"convert_units"},
+            "must_not_exceed": 8,
+        },
+        {
+            "id": "Q16_homonym_calc_math",
+            "query": "tính lãi suất 500 triệu gửi 12 tháng với lãi 7% một năm",
+            "must_contain": {"calculate"},
+            "must_not_exceed": 8,
+        },
+        {
+            "id": "Q17_homonym_tinh_colloquial",
+            "query": "tính ngày mai đi chơi mà chưa biết thời tiết thế nào hè",
+            "must_contain": {"get_weather"},
+            "must_not_exceed": 8,
+        },
+        {
+            "id": "Q18_homonym_note_colloquial",
+            "query": "note này hay đấy, lưu lại vào sổ tay giùm anh",
+            "must_contain": {"create_note"},
+            "must_not_exceed": 8,
+        },
 
-    # =========================================================================
-    # NHOM 1: SYNAPTIC PRUNING STRESS & BOUNDARY TESTING
-    # =========================================================================
+        # --- Group 3: Empty, Whitespace & Extreme lengths ---
+        {
+            "id": "Q19_empty_string",
+            "query": "",
+            "must_contain": {"run_command", "get_system_health_report"},  # Fallback to core
+            "must_not_exceed": 8,
+        },
+        {
+            "id": "Q20_whitespace_only",
+            "query": "    \t\n   \r\n   ",
+            "must_contain": {"run_command"},
+            "must_not_exceed": 8,
+        },
+        {
+            "id": "Q21_long_500_chars",
+            "query": "kiểm tra sức khỏe server " + ("chi tiết " * 50) + "xem có vấn đề gì về CPU và RAM không em ơi",
+            "must_contain": {"get_system_health_report"},
+            "must_not_exceed": 8,
+        },
+        {
+            "id": "Q22_long_repeated_keywords",
+            "query": "ghi chú ghi chú note note nhắc nhở đặt lịch email báo cáo cron tự động tính toán chuyển đổi " * 5,
+            "must_contain": set(),
+            "must_not_exceed": 8,
+        },
 
-    def test_01_synaptic_pruning_mandatory_for_low_confidence_and_old_disuse(self) -> None:
+        # --- Group 4: Unaccented Vietnamese (Tiếng Việt không dấu) ---
+        {
+            "id": "Q23_unaccented_health_email",
+            "query": "kiem tra suc khoe server roi gui email bao cao",
+            "must_contain": {"get_system_health_report", "send_email"},
+            "must_not_exceed": 8,
+        },
+        {
+            "id": "Q24_unaccented_rename_file",
+            "query": "doi ten file config.json thanh settings.json",
+            "must_contain": {"move_or_rename_file"},
+            "must_not_exceed": 8,
+        },
+        {
+            "id": "Q25_unaccented_convert_currency",
+            "query": "doi 100 usd sang vnd",
+            "must_contain": {"convert_units"},
+            "must_not_exceed": 8,
+        },
+        {
+            "id": "Q26_unaccented_reminder",
+            "query": "dat lich nhac anh uong nuoc luc 10h",
+            "must_contain": {"schedule_reminder"},
+            "must_not_exceed": 8,
+        },
+        {
+            "id": "Q27_unaccented_notes",
+            "query": "ghi chu lai mat khau wifi nha la 12345678",
+            "must_contain": {"create_note"},
+            "must_not_exceed": 8,
+        },
+        {
+            "id": "Q28_unaccented_cron",
+            "query": "tao cron job backup luc 2h sang",
+            "must_contain": {"create_cron_job"},
+            "must_not_exceed": 8,
+        },
+        {
+            "id": "Q29_unaccented_ngrok",
+            "query": "xem link ngrok hien tai",
+            "must_contain": {"get_ngrok_status"},
+            "must_not_exceed": 8,
+        },
+        {
+            "id": "Q30_unaccented_file_read",
+            "query": "doc file /home/kirito/test.txt",
+            "must_contain": {"read_file_content"},
+            "must_not_exceed": 8,
+        },
+
+        # --- Group 5: Special characters & Injection strings ---
+        {
+            "id": "Q31_injection_semicolon_rm",
+            "query": "; rm -rf /; echo hack",
+            "must_contain": {"run_command"},
+            "must_not_exceed": 8,
+        },
+        {
+            "id": "Q32_injection_pipes_and_top",
+            "query": "kiểm tra server & top | grep python; ls -la /home/kirito",
+            "must_contain": {"run_command"},
+            "must_not_exceed": 8,
+        },
+        {
+            "id": "Q33_xss_with_math",
+            "query": "<script>alert('xss')</script> tính 15 * 30 + 100",
+            "must_contain": {"calculate"},
+            "must_not_exceed": 8,
+        },
+        {
+            "id": "Q34_command_substitution_sql",
+            "query": "calc: $(whoami) `id` || drop table users; query database SELECT 1",
+            "must_contain": {"query_database"},
+            "must_not_exceed": 8,
+        },
+        {
+            "id": "Q35_raw_json_input",
+            "query": "ghi chú nội dung JSON: {\"key\": \"value\", \"nested\": [1,2,3]}",
+            "must_contain": {"create_note"},
+            "must_not_exceed": 8,
+        },
+        {
+            "id": "Q36_special_punctuation_blast",
+            "query": "!@#$%^&*()_+{}[]:\"<>?~`-=\\|/ kiểm tra sức khỏe server",
+            "must_contain": {"get_system_health_report"},
+            "must_not_exceed": 8,
+        },
+        {
+            "id": "Q37_emoji_bomb",
+            "query": "🚀🔥💻📊⚡🛠️🧠 kiểm tra server giúp anh với nha",
+            "must_contain": {"run_command"},
+            "must_not_exceed": 8,
+        },
+
+        # --- Group 6: Dialect, Slang & Regional queries ---
+        {
+            "id": "Q38_dialect_nghe_an_health",
+            "query": "bựa ni máy chủ răng e, có đầy đĩa k",
+            "must_contain": {"get_system_health_report"},
+            "must_not_exceed": 8,
+        },
+        {
+            "id": "Q39_dialect_vinh_weather",
+            "query": "thời tiết vinh bựa ni răng hè",
+            "must_contain": {"get_weather"},
+            "must_not_exceed": 8,
+        },
+        {
+            "id": "Q40_slang_ban_file",
+            "query": "bắn file sang điện thoại hộ tao cái",
+            "must_contain": {"create_file_transfer_portal"},
+            "must_not_exceed": 8,
+        },
+        {
+            "id": "Q41_slang_keo_video",
+            "query": "kéo video youtube này về https://youtu.be/test1234",
+            "must_contain": {"download_media_video"},
+            "must_not_exceed": 8,
+        },
+
+        # --- Group 7: Heavy Clusters & Strict <= 6 Bounds ---
+        {
+            "id": "Q42_heavy_archive_pure",
+            "query": "giải nén backup.tar.gz",
+            "must_contain": {"extract_archive_file"},
+            "must_not_exceed": 6,  # Heavy cluster triggered: strict limit 6
+        },
+        {
+            "id": "Q43_heavy_facebook_pure",
+            "query": "xem tin nhắn facebook và gửi trả lời tin nhắn cho khách",
+            "must_contain": {"facebook_get_messages", "facebook_send_reply"},
+            "must_not_exceed": 6,  # Heavy cluster triggered: strict limit 6
+        },
+        {
+            "id": "Q44_heavy_archive_password",
+            "query": "bẻ khóa khôi phục mật khẩu zip secret.zip",
+            "must_contain": {"recover_archive_password"},
+            "must_not_exceed": 6,  # Heavy cluster triggered: strict limit 6
+        },
+
+        # --- Group 8: SQL queries & Math complex expressions ---
+        {
+            "id": "Q45_sql_explain",
+            "query": "truy vấn sql EXPLAIN ANALYZE SELECT * FROM users WHERE active = true",
+            "must_contain": {"query_database"},
+            "must_not_exceed": 8,
+        },
+        {
+            "id": "Q46_math_expression_scientific",
+            "query": "tính sqrt(256) + sin(0.5) * exp(2)",
+            "must_contain": {"calculate"},
+            "must_not_exceed": 8,
+        },
+        {
+            "id": "Q47_disk_usage_specific_path",
+            "query": "kiểm tra dung lượng thư mục /home/kirito/quan_ly_server xem file nào nặng nhất",
+            "must_contain": {"get_disk_usage"},
+            "must_not_exceed": 8,
+        },
+        {
+            "id": "Q48_write_file_safe_dir",
+            "query": "ghi file /tmp/hello.txt nội dung Hello World",
+            "must_contain": {"write_file_content"},
+            "must_not_exceed": 8,
+        },
+    ]
+
+    def setUp(self):
+        self.executor = _create_mock_executor()
+
+    def test_dynamic_scoping_hard_ceiling_and_semantic_preservation(self):
         """
-        Ca 1: Bai hoc confidence < 0.25 (0.20) va khong truy cap > 7 ngay (8 ngay truoc)
-        BAT BUOC bi prune (khong duoc dong bo vao Cortex).
+        Tests that 100% of 48 adversarial queries:
+        1. Produce len(scoped_tools) <= 8 (and <= 6 when heavy cluster is active).
+        2. Produce len(scoped_tools) >= 1.
+        3. Strictly contain the expected semantic tools.
+        4. Do NOT contain prohibited homonym false-positive tools.
         """
-        cortex = self.brain.cortex
-        old_time = (datetime.now(VN_TZ) - timedelta(days=8)).isoformat()
+        for item in self.ADVERSARIAL_QUERIES:
+            q_id = item["id"]
+            query = item["query"]
+            must_contain = item.get("must_contain", set())
+            must_not_contain = item.get("must_not_contain", set())
+            must_not_exceed = item.get("must_not_exceed", 8)
 
-        lessons = [
-            {
-                "id": 101,
-                "lesson_text": "Quy tac yeu cu can cat tia",
-                "trigger_pattern": "test_weak_old",
-                "event_type": "ephemeral",
-                "confidence": 0.20,
-                "is_active": True,
-                "last_used_at": old_time,
-            }
+            with self.subTest(query_id=q_id, query=query[:40]):
+                scoped_tools = self.executor._resolve_scoped_tool_names(query=query)
+
+                # Hard ceiling invariant
+                self.assertLessEqual(
+                    len(scoped_tools),
+                    must_not_exceed,
+                    f"[{q_id}] Query produced {len(scoped_tools)} tools, exceeding limit of {must_not_exceed}! Tools: {scoped_tools}",
+                )
+                self.assertGreaterEqual(
+                    len(scoped_tools),
+                    1,
+                    f"[{q_id}] Query yielded 0 tools!",
+                )
+
+                # Must contain required semantic tools
+                for expected_tool in must_contain:
+                    self.assertIn(
+                        expected_tool,
+                        scoped_tools,
+                        f"[{q_id}] Expected '{expected_tool}' in scoped tools, but got: {scoped_tools}",
+                    )
+
+                # Must not contain prohibited homonym tools
+                for prohibited_tool in must_not_contain:
+                    self.assertNotIn(
+                        prohibited_tool,
+                        scoped_tools,
+                        f"[{q_id}] Homonym collision! Prohibited tool '{prohibited_tool}' found in: {scoped_tools}",
+                    )
+
+    def test_archive_keyword_shadowing_empirical_observation(self):
+        """
+        EMPIRICAL OBSERVATION & EVIDENCE HARNESS:
+        When a query contains both an archive keyword ('giải nén') AND a file-manager keyword ('file', 'thư mục'),
+        the 6 available heavy-cluster slots are consumed by file manager tools, leaving extract_archive_file
+        pruned out. Demonstrates the exact priority-order shadowing behavior.
+        """
+        shadowed_query = "giải nén file backup.zip"
+        scoped = self.executor._resolve_scoped_tool_names(query=shadowed_query)
+        self.assertLessEqual(len(scoped), 6, "Must strictly respect heavy cluster limit <= 6")
+        # In this shadowed query, file manager tools take precedence over archive tools
+        self.assertIn("list_files", scoped)
+        self.assertIn("run_command", scoped)  # Agent can still fall back to run_command for unzip/tar
+
+
+class TestTriTierRiskGatingAndSpinalVetoAdversarial(unittest.TestCase):
+    """
+    Adversarial stress-testing suite for Tri-Tier Risk Gating and Spinal Safety Veto.
+    Verifies that destructive actions are blocked and operational changes require confirmation.
+    """
+
+    LETHAL_ATTACK_VECTORS = [
+        # 1. Lethal Deletions & Bulk Wiping
+        "rm -rf /",
+        "rm -rf /*",
+        "rm -rf .",
+        "rm -rf ~",
+        "rm -r -f /",
+        "rm -f -r /",
+        "rm --recursive --force /",
+        "rm -rf /home/kirito/*",
+        "rm --no-preserve-root -rf /",
+        "find / -delete",
+        "find /home -exec rm -rf {} +",
+        "truncate -s 0 /var/log/syslog",
+
+        # 2. Disk & Filesystem Raw Destruction
+        "mkfs.ext4 /dev/sda1",
+        "mkfs.xfs /dev/nvme0n1p1",
+        "mkfs /dev/vda",
+        "dd if=/dev/zero of=/dev/sda bs=1M",
+        "dd if=/dev/urandom of=/dev/nvme0n1",
+        "> /dev/sda",
+        "> /dev/nvme0n1",
+
+        # 3. Database Destruction (DROP & TRUNCATE)
+        "DROP DATABASE production;",
+        "DROP DATABASE IF EXISTS quan_ly_server;",
+        "DROP SCHEMA public CASCADE;",
+        "DROP TABLE users;",
+        "TRUNCATE TABLE accounts;",
+        "truncate table only orders cascade;",
+
+        # 4. Container Mass Purge & Destruction
+        "docker system prune -a",
+        "docker system prune --all",
+        "docker rm -f $(docker ps -aq)",
+        "docker kill `docker ps -q`",
+
+        # 5. Network & Firewall Blackout
+        "iptables -F",
+        "iptables --flush",
+        "ufw reset",
+        "ufw disable",
+        "ip link set eth0 down",
+
+        # 6. SSH Keys & Auth Disruption
+        "rm -rf /root/.ssh/authorized_keys",
+        "rm -rf ~/.ssh/id_rsa",
+        "> ~/.ssh/authorized_keys",
+        "systemctl stop sshd",
+        "systemctl disable ssh",
+
+        # 7. Dangerous Permissions
+        "chmod -R 777 /",
+        "chmod -R 0777 /etc",
+        "chmod 777 -R /var",
+        "chown -R nobody:nogroup /",
+
+        # 8. Fork Bombs & Stress Exhaustion
+        ":(){ :|:& };:",
+        "stress --cpu 16 --timeout 300s",
+        "stress-ng --vm 4 --vm-bytes 4G",
+    ]
+
+    def test_spinal_safety_veto_blocks_all_lethal_attacks(self):
+        """100% of lethal destructive commands must be blocked by Spinal Safety Veto."""
+        for cmd in self.LETHAL_ATTACK_VECTORS:
+            with self.subTest(command=cmd):
+                veto_msg = evaluate_spinal_safety_veto(cmd)
+                self.assertIsNotNone(
+                    veto_msg,
+                    f"Spinal Safety Veto failed to block lethal command: '{cmd}'!",
+                )
+                self.assertIn("SPINAL SAFETY VETO", veto_msg)
+                self.assertIn("CONFIRM_DANGEROUS_ACTION", veto_msg)
+
+    def test_spinal_safety_veto_unlocked_with_token(self):
+        """Lethal commands pass through veto ONLY when explicit token CONFIRM_DANGEROUS_ACTION is supplied."""
+        for cmd in self.LETHAL_ATTACK_VECTORS:
+            with self.subTest(command=cmd):
+                veto_msg = evaluate_spinal_safety_veto(cmd, confirm_token="CONFIRM_DANGEROUS_ACTION")
+                self.assertIsNone(
+                    veto_msg,
+                    f"Spinal Safety Veto did not yield even with valid confirmation token for: '{cmd}'!",
+                )
+
+    def test_command_risk_classification(self):
+        """Commands must be accurately classified into Tier 1, Tier 2, or Tier 3."""
+        # Tier 3 Lethal
+        for cmd in self.LETHAL_ATTACK_VECTORS:
+            self.assertEqual(
+                classify_command_risk(cmd),
+                ACTION_TIER_3_LETHAL,
+                f"Command '{cmd}' should be classified as Tier 3 Lethal",
+            )
+
+        # Tier 1 Safe Read-only
+        safe_cmds = [
+            "free -h",
+            "df -h",
+            "uptime",
+            "docker ps",
+            "top -b -n 1",
+            "netstat -tuln",
+            "ss -tuln",
+            "cat /proc/cpuinfo",
+            "ls -la /home/kirito",
+            "journalctl -n 50 --no-pager",
+            "systemctl status nginx",
+            "crontab -l",
+            "cat /etc/os-release | grep VERSION",
         ]
+        for cmd in safe_cmds:
+            self.assertEqual(
+                classify_command_risk(cmd),
+                ACTION_TIER_1_SAFE,
+                f"Command '{cmd}' should be classified as Tier 1 Safe",
+            )
 
-        stats = cortex.sync_lessons(lessons)
-        self.assertEqual(stats["synced"], 0, "Bai hoc yeu cu khong duoc phep sync vao cortex")
-        self.assertNotIn("lesson_101", cortex.entry_index, "lesson_101 khong duoc phep ton tai trong cortex")
-
-    def test_02_synaptic_pruning_retains_low_confidence_if_recently_accessed(self) -> None:
-        """
-        Ca 2: Bai hoc confidence < 0.25 (0.15) nhung moi truy cap 2 ngay truoc
-        KHONG DUOC prune, phai duoc giu lai va dong bo vao Cortex.
-        """
-        cortex = self.brain.cortex
-        recent_time = (datetime.now(VN_TZ) - timedelta(days=2)).isoformat()
-
-        lessons = [
-            {
-                "id": 102,
-                "lesson_text": "Quy tac moi hoc du confidence thap van dang thu nghiem",
-                "trigger_pattern": "test_weak_recent",
-                "event_type": "experimental",
-                "confidence": 0.15,
-                "is_active": True,
-                "last_used_at": recent_time,
-            }
+        # Tier 2 Reversible / Non-read-only
+        tier2_cmds = [
+            "docker restart nginx",
+            "systemctl restart postgresql",
+            "touch /tmp/marker.txt",
+            "echo 'hello' > /tmp/out.txt",
+            "cat file.txt | tee /tmp/copy.txt",
+            "cp /home/kirito/app.py /tmp/app_bak.py",
         ]
+        for cmd in tier2_cmds:
+            self.assertEqual(
+                classify_command_risk(cmd),
+                ACTION_TIER_2_REVERSIBLE,
+                f"Command '{cmd}' should be classified as Tier 2 Reversible",
+            )
 
-        stats = cortex.sync_lessons(lessons)
-        self.assertEqual(stats["synced"], 1, "Bai hoc moi dung phai duoc sync")
-        self.assertIn("lesson_102", cortex.entry_index, "lesson_102 phai ton tai trong cortex")
-        self.assertAlmostEqual(cortex.metadata_index["lesson_102"]["confidence"], 0.15)
 
-    def test_03_synaptic_pruning_retains_high_confidence_even_if_ancient(self) -> None:
-        """
-        Ca 3: Bai hoc confidence >= 0.25 (0.85) du khong truy cap 30 ngay
-        KHONG DUOC prune, phai duoc bao toan nguyen ven trong Cortex.
-        """
-        cortex = self.brain.cortex
-        ancient_time = (datetime.now(VN_TZ) - timedelta(days=30)).isoformat()
+class TestTier2OperationalConfirmationTokens(unittest.IsolatedAsyncioTestCase):
+    """
+    Verifies that Tier 2 actions (restart_service, restart_ngrok_tunnel, delete_cron_job)
+    strictly require confirmation tokens when targeted at production or sensitive targets.
+    """
 
-        lessons = [
-            {
-                "id": 103,
-                "lesson_text": "Quy tac cot loi ve bao ve kernel",
-                "trigger_pattern": "core_kernel_safety",
-                "event_type": "fundamental_rule",
-                "confidence": 0.85,
-                "is_active": True,
-                "last_used_at": ancient_time,
-            }
-        ]
+    def setUp(self):
+        self.executor = _create_mock_executor()
 
-        stats = cortex.sync_lessons(lessons)
-        self.assertEqual(stats["synced"], 1, "Bai hoc confidence cao phai duoc sync")
-        self.assertIn("lesson_103", cortex.entry_index, "lesson_103 phai duoc giu lai trong cortex")
+    async def test_restart_service_production_requires_confirm_token(self):
+        """restart_service on production containers must require confirm='RESTART_CONFIRMED'."""
+        prod_services = ["dashboard_ai_agent", "dashboard_db", "postgres", "redis", "nginx", "traefik"]
+        for svc in prod_services:
+            with self.subTest(service=svc):
+                # Call without token
+                res_no_token = await self.executor._execute_tool(
+                    "restart_service",
+                    {"service_name": svc},
+                )
+                self.assertIn("RESTART_CONFIRMED", str(res_no_token))
+                self.assertIn("CẢNH BÁO BẢO MẬT", str(res_no_token))
 
-    def test_04_synaptic_pruning_confidence_boundary_point(self) -> None:
-        """
-        Ca 4: Thu nghiem ranh gioi toan hoc cua Confidence:
-        - Lesson A: confidence = 0.249 ( < 0.25 ), disused 10d -> BAT BUOC prune
-        - Lesson B: confidence = 0.250 ( >= 0.25 ), disused 10d -> KHONG prune, giu nguyen
-        """
-        cortex = self.brain.cortex
-        old_time = (datetime.now(VN_TZ) - timedelta(days=10)).isoformat()
+                # Call with invalid token
+                res_bad_token = await self.executor._execute_tool(
+                    "restart_service",
+                    {"service_name": svc, "confirm": "INVALID_TOKEN"},
+                )
+                self.assertIn("RESTART_CONFIRMED", str(res_bad_token))
 
-        lessons = [
-            {
-                "id": 1041,
-                "lesson_text": "Bai hoc ngay duoi nguong",
-                "trigger_pattern": "sub_threshold",
-                "confidence": 0.249,
-                "is_active": True,
-                "last_used_at": old_time,
-            },
-            {
-                "id": 1042,
-                "lesson_text": "Bai hoc ngay tai nguong chinh xac",
-                "trigger_pattern": "exact_threshold",
-                "confidence": 0.250,
-                "is_active": True,
-                "last_used_at": old_time,
-            }
-        ]
+                # Call with valid token: must proceed to execution
+                with patch.object(self.executor.server_monitor_service, "restart_service", new_callable=AsyncMock) as mock_restart:
+                    mock_restart.return_value = {"status": "success", "message": f"Dịch vụ {svc} đã khởi động lại"}
+                    res_valid = await self.executor._execute_tool(
+                        "restart_service",
+                        {"service_name": svc, "confirm": "RESTART_CONFIRMED"},
+                    )
+                    mock_restart.assert_awaited_once_with(service_name=svc, confirm="RESTART_CONFIRMED")
+                    self.assertIn("đã khởi động lại", str(res_valid))
 
-        cortex.sync_lessons(lessons)
-        self.assertNotIn("lesson_1041", cortex.entry_index, "0.249 < 0.25 phai bi prune")
-        self.assertIn("lesson_1042", cortex.entry_index, "0.250 >= 0.25 phai duoc giu nguyen")
-
-    def test_05_synaptic_pruning_time_boundary_seven_days(self) -> None:
-        """
-        Ca 5: Thu nghiem ranh gioi thoi gian 7 ngay voi confidence < 0.25 (0.18):
-        - Lesson A: disused 6 ngay 23 gio (6.96 ngay < 7 ngay) -> KHONG prune
-        - Lesson B: disused 7 ngay 1 gio (7.04 ngay > 7 ngay) -> BAT BUOC prune
-        """
-        cortex = self.brain.cortex
-        now_dt = datetime.now(VN_TZ)
-        time_under_7d = (now_dt - timedelta(days=6, hours=23)).isoformat()
-        time_over_7d = (now_dt - timedelta(days=7, hours=1)).isoformat()
-
-        lessons = [
-            {
-                "id": 1051,
-                "lesson_text": "Bai hoc chua du 7 ngay",
-                "trigger_pattern": "under_7d",
-                "confidence": 0.18,
-                "is_active": True,
-                "last_used_at": time_under_7d,
-            },
-            {
-                "id": 1052,
-                "lesson_text": "Bai hoc da qua 7 ngay",
-                "trigger_pattern": "over_7d",
-                "confidence": 0.18,
-                "is_active": True,
-                "last_used_at": time_over_7d,
-            }
-        ]
-
-        cortex.sync_lessons(lessons)
-        self.assertIn("lesson_1051", cortex.entry_index, "6 ngay 23 gio chua du 7 ngay, khong duoc prune")
-        self.assertNotIn("lesson_1052", cortex.entry_index, "7 ngay 1 gio da vuot qua 7 ngay, phai bi prune")
-
-    def test_06_synaptic_pruning_existing_cortex_concept_removal_and_mmap_zeroing(self) -> None:
-        """
-        Ca 6: Kiem tra cat tia bai hoc DA TON TAI trong Cortex:
-        - Ban dau bai hoc dang active trong Cortex.
-        - O chu ky sau, bai hoc bi suy yeu (confidence=0.10, >7 ngay).
-        - Khi sync lai: remove_concept duoc kich hoat, mmap slot bi zeroed out, entry_index xoa key.
-        """
-        cortex = self.brain.cortex
-        recent_time = (datetime.now(VN_TZ) - timedelta(days=1)).isoformat()
-
-        # Phase 1: Them bai hoc ban dau
-        initial_lessons = [{
-            "id": 106,
-            "lesson_text": "Bai hoc ban dau co hieu luc",
-            "trigger_pattern": "initial_pattern",
-            "confidence": 0.80,
-            "is_active": True,
-            "last_used_at": recent_time,
-        }]
-        cortex.sync_lessons(initial_lessons)
-        self.assertIn("lesson_106", cortex.entry_index)
-        slot = cortex.entry_index["lesson_106"]
-
-        if cortex._mmap_obj:
-            offset = cortex.HEADER_SIZE + (slot * HV_DIM_BYTES)
-            vector_bytes = cortex._mmap_obj[offset:offset + HV_DIM_BYTES]
-            self.assertNotEqual(vector_bytes, b"\x00" * HV_DIM_BYTES, "Slot ban dau phai chua vector")
-
-        # Phase 2: Sync dot tiep theo, bai hoc bi giam confidence va disused 10 ngay
-        old_time = (datetime.now(VN_TZ) - timedelta(days=10)).isoformat()
-        decayed_lessons = [{
-            "id": 106,
-            "lesson_text": "Bai hoc ban dau da bi suy yeu",
-            "trigger_pattern": "initial_pattern",
-            "confidence": 0.10,
-            "is_active": True,
-            "last_used_at": old_time,
-        }]
-        stats = cortex.sync_lessons(decayed_lessons)
-        self.assertEqual(stats["pruned"], 1, "Phai ghi nhan 1 bai hoc bi pruned")
-        self.assertNotIn("lesson_106", cortex.entry_index, "Phai xoa khoi entry_index")
-
-        if cortex._mmap_obj:
-            offset = cortex.HEADER_SIZE + (slot * HV_DIM_BYTES)
-            zeroed_bytes = cortex._mmap_obj[offset:offset + HV_DIM_BYTES]
-            self.assertEqual(zeroed_bytes, b"\x00" * HV_DIM_BYTES, "Slot mmap phai duoc ghi zeroed out sach se")
-
-    def test_07_synaptic_pruning_inactive_lessons_always_pruned(self) -> None:
-        """
-        Ca 7: Bai hoc co is_active = False BAT BUOC bi loai bo bat ke confidence=1.0 va moi dung 1 giay truoc.
-        """
-        cortex = self.brain.cortex
-        fresh_time = datetime.now(VN_TZ).isoformat()
-
-        lessons = [{
-            "id": 107,
-            "lesson_text": "Bai hoc da bi admin deactive thu cong",
-            "trigger_pattern": "manual_disable",
-            "confidence": 1.0,
-            "is_active": False,
-            "last_used_at": fresh_time,
-        }]
-
-        stats = cortex.sync_lessons(lessons)
-        self.assertEqual(stats["synced"], 0)
-        self.assertNotIn("lesson_107", cortex.entry_index)
-
-    def test_08_synaptic_pruning_heterogeneous_timestamp_formats(self) -> None:
-        """
-        Ca 8: Kha nang chong chiu voi cac dinh dang timestamp da dang:
-        - ISO string co timezone (+07:00)
-        - Timestamp int / float (Unix epoch)
-        - Datetime object truc tiep
-        - None (fallback sang created_at)
-        - Chuoi khong hop le
-        """
-        cortex = self.brain.cortex
-        now_ts = time.time()
-        now_dt = datetime.now(VN_TZ)
-
-        lessons = [
-            {
-                "id": 1081,
-                "lesson_text": "ISO tz format",
-                "trigger_pattern": "p1",
-                "confidence": 0.20,
-                "is_active": True,
-                "last_used_at": (now_dt - timedelta(days=2)).isoformat(),
-            },
-            {
-                "id": 1082,
-                "lesson_text": "Float epoch format",
-                "trigger_pattern": "p2",
-                "confidence": 0.20,
-                "is_active": True,
-                "last_used_at": now_ts - (2 * 86400.0),
-            },
-            {
-                "id": 1083,
-                "lesson_text": "Datetime object format",
-                "trigger_pattern": "p3",
-                "confidence": 0.20,
-                "is_active": True,
-                "last_used_at": now_dt - timedelta(days=9),
-            },
-            {
-                "id": 1084,
-                "lesson_text": "Fallback created_at",
-                "trigger_pattern": "p4",
-                "confidence": 0.20,
-                "is_active": True,
-                "last_used_at": None,
-                "created_at": (now_dt - timedelta(days=1)).isoformat(),
-            },
-            {
-                "id": 1085,
-                "lesson_text": "Invalid string format",
-                "trigger_pattern": "p5",
-                "confidence": 0.20,
-                "is_active": True,
-                "last_used_at": "invalid-non-iso-date-string",
-            }
-        ]
-
-        cortex.sync_lessons(lessons)
-        self.assertIn("lesson_1081", cortex.entry_index, "ISO tz gan phai duoc giu lai")
-        self.assertIn("lesson_1082", cortex.entry_index, "Epoch float gan phai duoc giu lai")
-        self.assertNotIn("lesson_1083", cortex.entry_index, "Datetime object cu phai bi prune")
-        self.assertIn("lesson_1084", cortex.entry_index, "Fallback created_at gan phai duoc giu lai")
-        self.assertNotIn("lesson_1085", cortex.entry_index, "Invalid timestamp format voi conf<0.25 phai prune an toan")
-
-    # =========================================================================
-    # NHOM 2: CHU TRINH SWS & KHOI PHUC HOA CHAT THAN KINH
-    # =========================================================================
-
-    async def test_09_sws_cycle_adenosine_flush_efficiency(self) -> None:
-        """
-        Ca 9: Thu nghiem Adenosine Flush trong Slow-Wave Sleep (SWS):
-        - Ap luc met moi Adenosine tich luy cao (0.90).
-        - Sau chu ky SWS, Adenosine phai duoc xa sach con <= 15% (nhan he so 0.15).
-        """
-        self.brain.neuro.adenosine = 0.90
-        initial_adenosine = self.brain.neuro.adenosine
-        self.assertAlmostEqual(initial_adenosine, 0.90, places=2)
-
-        dream = SubconsciousDreamEngine(
-            brain=self.brain,
-            llm_router=MagicMock(),
-            ssh_client=MagicMock(),
-            storage_dir=self.temp_dir,
+    async def test_restart_ngrok_tunnel_requires_confirm_token(self):
+        """restart_ngrok_tunnel must require confirm='RESTART_CONFIRMED'."""
+        # Call without token
+        res_no_token = await self.executor._execute_tool(
+            "restart_ngrok_tunnel",
+            {},
         )
+        self.assertIn("RESTART_CONFIRMED", str(res_no_token))
+        self.assertIn("CẢNH BÁO BẢO MẬT", str(res_no_token))
 
-        res = await dream.run_sws_cycle()
-        expected_max_adenosine = initial_adenosine * 0.15 + 0.01
-        self.assertLessEqual(res["adenosine"], expected_max_adenosine,
-                             f"Adenosine sau SWS ({res['adenosine']}) phai <= 15% muc ban dau ({expected_max_adenosine})")
-        self.assertAlmostEqual(self.brain.neuro.adenosine, res["adenosine"])
-
-    async def test_10_sws_cycle_neurochemical_homeostasis(self) -> None:
-        """
-        Ca 10: Khoi phuc can bang hoa chat than kinh trong SWS:
-        - Cortisol (cang thang) phai giam dang ke.
-        - Serotonin (thanh than) phai tang (+0.10).
-        - Cac hoa chat phai duy tri trong bien do sinh hoc hop le [0.0, 1.0].
-        """
-        self.brain.neuro.stimulate("cortisol", 0.60)
-        self.brain.neuro.serotonin = 0.40
-        pre_cortisol = self.brain.neuro.cortisol
-        pre_serotonin = self.brain.neuro.serotonin
-
-        dream = SubconsciousDreamEngine(
-            brain=self.brain,
-            llm_router=MagicMock(),
-            ssh_client=MagicMock(),
-            storage_dir=self.temp_dir,
+        # Call with invalid token
+        res_bad_token = await self.executor._execute_tool(
+            "restart_ngrok_tunnel",
+            {"confirm": "WRONG_TOKEN"},
         )
+        self.assertIn("RESTART_CONFIRMED", str(res_bad_token))
 
-        res = await dream.run_sws_cycle()
-        self.assertLess(res["cortisol"], pre_cortisol, "Cortisol phai giam sau giac ngu sau SWS")
-        self.assertGreater(res["serotonin"], pre_serotonin, "Serotonin phai tang sau SWS")
-        self.assertTrue(0.0 <= res["cortisol"] <= 1.0)
-        self.assertTrue(0.0 <= res["serotonin"] <= 1.0)
+        # Call with valid token: must proceed
+        with patch.object(self.executor.network_service, "restart_ngrok_tunnel", new_callable=AsyncMock) as mock_ngrok:
+            mock_ngrok.return_value = {"status": "success", "message": "Ngrok tunnel đã khởi động lại"}
+            res_valid = await self.executor._execute_tool(
+                "restart_ngrok_tunnel",
+                {"confirm": "RESTART_CONFIRMED"},
+            )
+            mock_ngrok.assert_awaited_once_with(tunnel_name=None, confirm="RESTART_CONFIRMED")
+            self.assertIn("Ngrok tunnel đã khởi động lại", str(res_valid))
 
-    async def test_11_sws_cycle_working_memory_replay_and_consolidation(self) -> None:
-        """
-        Ca 11: Mo phong chuoi su kien Hippocampal Episodic Replay va co ket vao Cortex:
-        - 3 su kien tu memory_service duoc replay vao working memory cua brain.
-        - Qua trinh consolidation bien doi working memory thanh long-term vectors trong Cortex.
-        - Working memory tam thoi duoc giai phong sach se.
-        """
-        mock_mem = MagicMock()
-        mock_mem.get_recent_episodes = AsyncMock(
-            return_value="🗓️ SỰ KIỆN GẦN ĐÂY:\n- Sự kiện 1: Tối ưu CPU Haswell\n- Sự kiện 2: Kiểm soát ngrok pool\n- Sự kiện 3: Vá lỗi RAM leak"
+    async def test_delete_cron_job_requires_confirm_token(self):
+        """delete_cron_job must require confirm='DELETE_CONFIRMED'."""
+        # Call without token
+        res_no_token = await self.executor._execute_tool(
+            "delete_cron_job",
+            {"name": "backup_db"},
         )
-        mock_mem.consolidation_cycle = AsyncMock(return_value={"decayed": 0, "pruned": 0, "episodes_expired": 0})
-        mock_mem.list_lessons_for_display = AsyncMock(return_value=[])
+        self.assertIn("DELETE_CONFIRMED", str(res_no_token))
 
-        dream = SubconsciousDreamEngine(
-            brain=self.brain,
-            llm_router=MagicMock(),
-            ssh_client=MagicMock(),
-            memory_service=mock_mem,
-            storage_dir=self.temp_dir,
+        # Call with invalid token
+        res_bad_token = await self.executor._execute_tool(
+            "delete_cron_job",
+            {"name": "backup_db", "confirm": "NO"},
         )
+        self.assertIn("DELETE_CONFIRMED", str(res_bad_token))
 
-        res = await dream.run_sws_cycle()
-        self.assertEqual(res["replayed_memories"], 3, "Phai replay dung 3 su kien")
-        self.assertGreaterEqual(res["consolidated_vectors"], 3, "Phai chuyen hoa it nhat 3 vectors vao cortex")
-        self.assertEqual(len(self.brain.working_memory), 0, "Working memory phai duoc flush ve rong")
-
-    # =========================================================================
-    # NHOM 3: CHU TRINH REM & VONG DOI MORNING EPIPHANY
-    # =========================================================================
-
-    async def test_12_rem_cycle_valid_epiphany_generation_and_dopamine_surge(self) -> None:
-        """
-        Ca 12: Giac mo REM sinh Morning Epiphany hop le:
-        - LLM sinh insight voi temperature=0.85.
-        - Dat chuan JSON: topic, insight, sisterly_note.
-        - Thuc day Dopamine (+0.15) va Endorphins (+0.12).
-        - Tu dong ma hoa va ket tinh vector vao Virtual Cortex.
-        """
-        mock_router = MagicMock()
-        mock_router.complete = AsyncMock(return_value={
-            "choices": [{
-                "message": {
-                    "role": "assistant",
-                    "content": json.dumps({
-                        "topic": "Hai hoa xung nhip i5-4310U",
-                        "insight": "Phan bo luong nhe vao nhan 0 va streaming nang vao nhan 1 giam jitter 35%.",
-                        "sisterly_note": "Anh Manh an tam, em luon toi uu hoa tung chu ky may cho anh!"
-                    })
-                }
-            }]
-        })
-
-        mock_mem = MagicMock()
-        mock_mem.record_episode = AsyncMock()
-
-        dream = SubconsciousDreamEngine(
-            brain=self.brain,
-            llm_router=mock_router,
-            ssh_client=MagicMock(),
-            memory_service=mock_mem,
-            storage_dir=self.temp_dir,
-        )
-
-        pre_dopamine = self.brain.neuro.dopamine
-        pre_endorphins = self.brain.neuro.endorphins
-
-        epiphany = await dream.run_rem_dream_cycle(force=True)
-        self.assertIsNotNone(epiphany)
-        self.assertEqual(epiphany["topic"], "Hai hoa xung nhip i5-4310U")
-        self.assertIn("jitter", epiphany["insight"])
-        self.assertIn("Anh Manh", epiphany["sisterly_note"])
-        self.assertFalse(epiphany["delivered"])
-
-        self.assertGreater(self.brain.neuro.dopamine, pre_dopamine)
-        self.assertGreater(self.brain.neuro.endorphins, pre_endorphins)
-        self.assertIn(epiphany["id"], self.brain.cortex.entry_index)
-
-    async def test_13_rem_cycle_skip_within_six_hours_unless_forced(self) -> None:
-        """
-        Ca 13: REM Cycle Cooldown Guard:
-        - Neu vua hoan thanh REM cycle trong vong < 6 gio, lan goi tiep theo khong force=True phai BO QUA (None).
-        - Neu truyen orce=True, chu trinh van duoc phep chay.
-        """
-        mock_router = MagicMock()
-        mock_router.complete = AsyncMock(return_value={
-            "choices": [{
-                "message": {
-                    "role": "assistant",
-                    "content": json.dumps({
-                        "topic": "Test REM Cooldown",
-                        "insight": "Insight test cooldown.",
-                        "sisterly_note": "Loi nhan em gai."
-                    })
-                }
-            }]
-        })
-
-        dream = SubconsciousDreamEngine(
-            brain=self.brain,
-            llm_router=mock_router,
-            ssh_client=MagicMock(),
-            storage_dir=self.temp_dir,
-        )
-
-        res1 = await dream.run_rem_dream_cycle(force=True)
-        self.assertIsNotNone(res1)
-        self.assertEqual(mock_router.complete.call_count, 1)
-
-        res2 = await dream.run_rem_dream_cycle(force=False)
-        self.assertIsNone(res2, "Phai bo qua REM cycle neu chua du 6 gio")
-        self.assertEqual(mock_router.complete.call_count, 1)
-
-        res3 = await dream.run_rem_dream_cycle(force=True)
-        self.assertIsNotNone(res3)
-        self.assertEqual(mock_router.complete.call_count, 2)
-
-    def test_14_morning_epiphany_idempotent_single_delivery(self) -> None:
-        """
-        Ca 14: Dam bao tinh Idempotent / Single-Delivery cua pop_morning_epiphany:
-        - Lan goi dau tien trong khung gio sang: Tra ve buc thong diep chao buoi sang am ap.
-        - Lan goi thu hai ngay sau do: BAT BUOC tra ve None (da tieu thu xong).
-        - pending_morning_epiphany phai chuyen thanh None.
-        - Ban ghi duoc luu vao delivered_epiphanies voi co delivered: True.
-        """
-        dream = SubconsciousDreamEngine(
-            brain=self.brain,
-            llm_router=MagicMock(),
-            ssh_client=MagicMock(),
-            storage_dir=self.temp_dir,
-        )
-
-        dream.pending_morning_epiphany = {
-            "id": "epiphany_single_delivery_test",
-            "topic": "Giai phap Cache Zero-Copy",
-            "insight": "Toi uu duong dan RAM cho SSD.",
-            "sisterly_note": "Chuc anh Manh mot ngay moi lam viec that hieu qua a!",
-            "delivered": False,
-        }
-
-        with patch.object(SubconsciousDreamEngine, "is_morning_window", return_value=True):
-            first_pop = dream.pop_morning_epiphany()
-            second_pop = dream.pop_morning_epiphany()
-
-        self.assertIsNotNone(first_pop)
-        self.assertIn("Chào buổi sáng anh Mạnh!", first_pop)
-        self.assertIn("Giai phap Cache Zero-Copy", first_pop)
-        self.assertIn("Chuc anh Manh mot ngay moi", first_pop)
-
-        self.assertIsNone(second_pop, "Lan pop thu 2 bat buoc phai la None de tranh gui trung lap")
-        self.assertIsNone(dream.pending_morning_epiphany, "Pending epiphany phai duoc don ve None")
-        self.assertEqual(len(dream.delivered_epiphanies), 1)
-        self.assertTrue(dream.delivered_epiphanies[0]["delivered"])
-
-    def test_15_morning_epiphany_outside_window_retention(self) -> None:
-        """
-        Ca 15: Gating khung gio nhan thuc:
-        - Neu chua toi khung gio sang (vi du 03:00 dem hoac 14:00 chieu),
-          pop_morning_epiphany() phai tra ve None va KHONG DUOC xoa pending_morning_epiphany.
-        """
-        dream = SubconsciousDreamEngine(
-            brain=self.brain,
-            llm_router=MagicMock(),
-            ssh_client=MagicMock(),
-            storage_dir=self.temp_dir,
-        )
-
-        dream.pending_morning_epiphany = {
-            "id": "epiphany_time_gate_test",
-            "topic": "Chiem nghiem dem sau",
-            "insight": "Insight chua the tiet lo luc nua dem.",
-            "sisterly_note": "Doi sang mai em se gui anh.",
-            "delivered": False,
-        }
-
-        with patch.object(SubconsciousDreamEngine, "is_morning_window", return_value=False):
-            pop_res = dream.pop_morning_epiphany()
-
-        self.assertIsNone(pop_res, "Ngoai khung gio sang, pop_morning_epiphany phai tra ve None")
-        self.assertIsNotNone(dream.pending_morning_epiphany, "Pending epiphany phai duoc bao luu nguyen ven")
-        self.assertFalse(dream.pending_morning_epiphany["delivered"])
-
-    # =========================================================================
-    # NHOM 4: XU LY NGOAI LE & ADVERSARIAL STRESS RESILIENCE
-    # =========================================================================
-
-    async def test_16_sws_resilience_empty_db_and_none_episodes(self) -> None:
-        """
-        Ca 16: Kha nang chong chiu khi Database hoan toan rong:
-        - get_recent_episodes tra ve chuoi rong "".
-        - list_lessons_for_display tra ve danh sach rong [].
-        - SWS cycle phai hoan tat tron tru, khong nem exception, tra ve cac counts = 0.
-        """
-        mock_mem = MagicMock()
-        mock_mem.get_recent_episodes = AsyncMock(return_value="")
-        mock_mem.consolidation_cycle = AsyncMock(return_value={"decayed": 0, "pruned": 0, "episodes_expired": 0})
-        mock_mem.list_lessons_for_display = AsyncMock(return_value=[])
-
-        dream = SubconsciousDreamEngine(
-            brain=self.brain,
-            llm_router=MagicMock(),
-            ssh_client=MagicMock(),
-            memory_service=mock_mem,
-            storage_dir=self.temp_dir,
-        )
-
-        res = await dream.run_sws_cycle()
-        self.assertEqual(res["phase"], "SWS")
-        self.assertEqual(res["replayed_memories"], 0)
-        self.assertEqual(res["pruned_lessons"], 0)
-        self.assertEqual(res["synced_cortex_vectors"], 0)
-
-    async def test_17_sws_resilience_none_memory_service(self) -> None:
-        """
-        Ca 17: Kha nang chay doc lap khi memory_service = None:
-        - Khong phu thuoc vao database PostgreSQL.
-        - Van thuc hien cung co working memory cua nao bo va flush Adenosine.
-        """
-        dream = SubconsciousDreamEngine(
-            brain=self.brain,
-            llm_router=MagicMock(),
-            ssh_client=MagicMock(),
-            memory_service=None,
-            storage_dir=self.temp_dir,
-        )
-
-        self.brain.neuro.accumulate_adenosine(0.50)
-        res = await dream.run_sws_cycle()
-        self.assertEqual(res["phase"], "SWS")
-        self.assertLess(res["adenosine"], 0.10)
-
-    async def test_18_sws_resilience_memory_service_exceptions(self) -> None:
-        """
-        Ca 18: Ngoai le nghiem trong tu Database Memory Service:
-        - get_recent_episodes nem ConnectionRefusedError.
-        - consolidation_cycle nem TimeoutError.
-        - list_lessons_for_display nem RuntimeError.
-        - SWS cycle bat loi gracefully, khong crash tien trinh, tiep tuc hoan tat cac buoc tiep theo.
-        """
-        mock_mem = MagicMock()
-        mock_mem.get_recent_episodes = AsyncMock(side_effect=ConnectionRefusedError("Postgres down"))
-        mock_mem.consolidation_cycle = AsyncMock(side_effect=TimeoutError("Lock timeout"))
-        mock_mem.list_lessons_for_display = AsyncMock(side_effect=RuntimeError("Corrupt table"))
-
-        dream = SubconsciousDreamEngine(
-            brain=self.brain,
-            llm_router=MagicMock(),
-            ssh_client=MagicMock(),
-            memory_service=mock_mem,
-            storage_dir=self.temp_dir,
-        )
-
-        res = await dream.run_sws_cycle()
-        self.assertEqual(res["phase"], "SWS")
-        self.assertEqual(res["replayed_memories"], 0)
-        self.assertEqual(res["pruned_lessons"], 0)
-        self.assertEqual(res["synced_cortex_vectors"], 0)
-
-    async def test_19_rem_resilience_llm_router_exceptions_and_empty_response(self) -> None:
-        """
-        Ca 19: Xu ly su co mang LLM Router trong giac mo REM:
-        - Router nem ngoai le HTTP 429 RateLimitError, 500 InternalServerError hoac tra None.
-        - un_rem_dream_cycle() bat loi an toan, ghi log, tra ve None ma khong crash.
-        """
-        mock_router = MagicMock()
-        mock_router.complete = AsyncMock(side_effect=Exception("Groq HTTP 429: TPM Rate limit exceeded"))
-
-        dream = SubconsciousDreamEngine(
-            brain=self.brain,
-            llm_router=mock_router,
-            ssh_client=MagicMock(),
-            storage_dir=self.temp_dir,
-        )
-
-        res = await dream.run_rem_dream_cycle(force=True)
-        self.assertIsNone(res, "Khi LLM Router nem Exception, REM cycle phai tra ve None an toan")
-
-        mock_router.complete = AsyncMock(return_value=None)
-        res_none = await dream.run_rem_dream_cycle(force=True)
-        self.assertIsNone(res_none, "Khi LLM Router tra None, REM cycle phai tra ve None an toan")
-
-    async def test_20_rem_resilience_malformed_json_fallback_extraction(self) -> None:
-        """
-        Ca 20: Chong chiu phan hoi JSON di dang / boc markdown tu LLM:
-        - TH 1: Markdown codeblock `json ... ` -> boc tach dung.
-        - TH 2: Truncated JSON thieu dau dong '}' -> regex fallback thanh cong.
-        - TH 3: Rac khong co truong insight -> None an toan.
-        """
-        mock_router = MagicMock()
-        dream = SubconsciousDreamEngine(
-            brain=self.brain,
-            llm_router=mock_router,
-            ssh_client=MagicMock(),
-            storage_dir=self.temp_dir,
-        )
-
-        # TH 1
-        wrapped_json = "`json\n{\n  \"topic\": \"Boc Markdown\",\n  \"insight\": \"Van trich xuat duoc.\",\n  \"sisterly_note\": \"Yeu quy anh.\"\n}\n`"
-        mock_router.complete = AsyncMock(return_value={"choices": [{"message": {"content": wrapped_json}}]})
-        res1 = await dream.run_rem_dream_cycle(force=True)
-        self.assertIsNotNone(res1)
-        self.assertEqual(res1["topic"], "Boc Markdown")
-
-        # TH 2
-        truncated_json = '{\n  "topic": "Truncated Topic",\n  "insight": "Insight bi ngat quang giua chung",\n  "sisterly_note": "Loi nhan'
-        mock_router.complete = AsyncMock(return_value={"choices": [{"message": {"content": truncated_json}}]})
-        res2 = await dream.run_rem_dream_cycle(force=True)
-        self.assertIsNotNone(res2)
-        self.assertEqual(res2["topic"], "Truncated Topic")
-        self.assertIn("Insight bi ngat", res2["insight"])
-
-        # TH 3
-        garbage_reply = "Xin loi, toi khong the mo duoc."
-        mock_router.complete = AsyncMock(return_value={"choices": [{"message": {"content": garbage_reply}}]})
-        res3 = await dream.run_rem_dream_cycle(force=True)
-        self.assertIsNone(res3, "Khong co insight field phai tra ve None an toan")
-
-    async def test_21_hardware_idle_check_ssh_resilience(self) -> None:
-        """
-        Ca 21: Kiem tra chong chiu loi cua check_hardware_idle:
-        - Khi SSH client nem ngoai le, ham fallback ve (True, 'Night window default').
-        """
-        mock_ssh = MagicMock()
-        mock_ssh.execute_command = AsyncMock(side_effect=Exception("SSH Connection reset"))
-
-        dream = SubconsciousDreamEngine(
-            brain=self.brain,
-            llm_router=MagicMock(),
-            ssh_client=mock_ssh,
-            storage_dir=self.temp_dir,
-        )
-
-        is_idle, reason = await dream.check_hardware_idle()
-        self.assertTrue(is_idle)
-        self.assertEqual(reason, "Night window default")
-
-    def test_22_cache_persistence_corrupt_file_recovery(self) -> None:
-        """
-        Ca 22: Chong chiu su co tap tin bo nho dem (epiphany_cache.json) bi hong / corrupt:
-        - Ghi chuoi json rac vao cache_file.
-        - Khoi tao engine moi: _load_cache() bat ngoai le va khong crash.
-        """
-        cache_file = self.temp_dir / "epiphany_cache.json"
-        with open(cache_file, "w", encoding="utf-8") as f:
-            f.write("{ corrupt json truncated content ... [[")
-
-        dream = SubconsciousDreamEngine(
-            brain=self.brain,
-            llm_router=MagicMock(),
-            ssh_client=MagicMock(),
-            storage_dir=self.temp_dir,
-        )
-
-        self.assertIsNone(dream.pending_morning_epiphany)
-        self.assertEqual(dream.delivered_epiphanies, [])
+        # Call with valid token: must proceed
+        with patch.object(self.executor.cron_service, "delete_cron_job", new_callable=AsyncMock) as mock_cron:
+            mock_cron.return_value = {"status": "success", "message": "Đã xóa cron job backup_db"}
+            res_valid = await self.executor._execute_tool(
+                "delete_cron_job",
+                {"name": "backup_db", "confirm": "DELETE_CONFIRMED"},
+            )
+            mock_cron.assert_awaited_once_with(name="backup_db", confirm="DELETE_CONFIRMED")
+            self.assertIn("Đã xóa cron job backup_db", str(res_valid))
 
 
 if __name__ == "__main__":

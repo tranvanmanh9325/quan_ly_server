@@ -181,6 +181,7 @@ def classify_action_risk(tool_name: str, tool_args: Optional[Dict[str, Any]] = N
         "server_capture_screenshot",
         "download_media_video",
         "download_media_audio",
+        "create_file_transfer_portal",
         "read_archive_file",
         "browser_search_google",
         "browser_navigate",
@@ -194,6 +195,21 @@ def classify_action_risk(tool_name: str, tool_args: Optional[Dict[str, Any]] = N
         "messenger_get_group_members",
         "remember_for_later",
         "complete_task",
+        # ── R1 - R8 Tier 1 Safe Read-Only / Diagnostic / Utility Tools ──
+        "get_system_health_report",
+        "check_service_status",
+        "tail_service_logs",
+        "list_files",
+        "read_file_content",
+        "get_disk_usage",
+        "calculate",
+        "convert_units",
+        "list_notes",
+        "search_notes",
+        "list_cron_jobs",
+        "list_scheduled_reminders",
+        "get_ngrok_status",
+        "get_network_info",
     }
     if tool_name in tier1_tools:
         return ACTION_TIER_1_SAFE
@@ -211,6 +227,20 @@ def classify_action_risk(tool_name: str, tool_args: Optional[Dict[str, Any]] = N
         "browser_fill_form",
         "browser_wait_for",
         "browser_execute_js",
+        # ── R1 - R8 Tier 2 Reversible / Operational Tools ──
+        "restart_service",
+        "restart_ngrok_tunnel",
+        "delete_cron_job",
+        "create_cron_job",
+        "send_email",
+        "generate_report",
+        "write_file_content",
+        "move_or_rename_file",
+        "schedule_reminder",
+        "cancel_reminder",
+        "create_note",
+        "delete_note",
+        "query_database",
     }
     if tool_name in tier2_tools:
         return ACTION_TIER_2_REVERSIBLE
@@ -289,6 +319,15 @@ class AgentToolExecutor:
         appointment_service: Any = None,
         telegram_bot: Any = None,
         memory_service: Any = None,
+        pool: Optional[Any] = None,
+        scheduler_service: Any = None,
+        server_monitor_service: Any = None,
+        notes_service: Any = None,
+        calculator_service: Any = None,
+        cron_service: Any = None,
+        email_report_service: Any = None,
+        network_service: Any = None,
+        file_manager_service: Any = None,
     ):
         self.ssh_client = ssh_client
         self.message_cache = message_cache
@@ -297,6 +336,29 @@ class AgentToolExecutor:
         self.appointment_service = appointment_service
         self.telegram_bot = telegram_bot
         self.memory_service = memory_service
+
+        # DB Connection Pool
+        from app.core.db import db_manager
+        self.pool = pool or db_manager
+
+        # Lazy / Injected Sub-services initialization with SSH and Pool binding
+        from app.services.scheduler_service import SchedulerService
+        from app.services.server_monitor_service import ServerMonitorService
+        from app.services.notes_service import NotesService
+        from app.services.calculator_service import CalculatorService
+        from app.services.cron_service import CronService
+        from app.services.email_report_service import EmailReportService
+        from app.services.network_service import NetworkService
+        from app.services.file_manager_service import FileManagerService
+
+        self.scheduler_service = scheduler_service or SchedulerService(use_db=True)
+        self.server_monitor_service = server_monitor_service or ServerMonitorService(ssh_client=self.ssh_client)
+        self.notes_service = notes_service or NotesService(ssh_client=self.ssh_client)
+        self.calculator_service = calculator_service or CalculatorService()
+        self.cron_service = cron_service or CronService(ssh_client=self.ssh_client)
+        self.email_report_service = email_report_service or EmailReportService(monitor_service=self.server_monitor_service)
+        self.network_service = network_service or NetworkService(ssh_client=self.ssh_client)
+        self.file_manager_service = file_manager_service or FileManagerService(ssh_client=self.ssh_client)
 
     def set_fb_service(self, fb_service: Any) -> None:
         self.fb_service = fb_service
@@ -376,20 +438,112 @@ class AgentToolExecutor:
         "create_file_transfer_portal",
         "run_command",
     }
+
+    # ── M5 Extended Tool Clusters (R1 - R8) ──
+    _TOOL_CLUSTER_REMINDER = {
+        "schedule_reminder",
+        "list_scheduled_reminders",
+        "cancel_reminder",
+    }
+    _TOOL_CLUSTER_SERVER_HEALTH = {
+        "get_system_health_report",
+        "check_service_status",
+        "restart_service",
+        "tail_service_logs",
+        "run_command",
+    }
+    _TOOL_CLUSTER_NOTES = {
+        "create_note",
+        "search_notes",
+        "list_notes",
+        "delete_note",
+    }
+    _TOOL_CLUSTER_CALCULATOR = {
+        "calculate",
+        "query_database",
+        "convert_units",
+    }
+    _TOOL_CLUSTER_CRON = {
+        "create_cron_job",
+        "list_cron_jobs",
+        "delete_cron_job",
+        "run_command",
+    }
+    _TOOL_CLUSTER_EMAIL = {
+        "send_email",
+        "generate_report",
+        "get_system_health_report",
+    }
+    _TOOL_CLUSTER_NETWORK = {
+        "get_ngrok_status",
+        "restart_ngrok_tunnel",
+        "get_network_info",
+        "run_command",
+    }
+    _TOOL_CLUSTER_FILE_MANAGER = {
+        "list_files",
+        "read_file_content",
+        "write_file_content",
+        "move_or_rename_file",
+        "get_disk_usage",
+        "run_command",
+    }
+
+    # Cập nhật _TOOL_CLUSTER_CORE (Đúng 8 tools tinh túy)
     _TOOL_CLUSTER_CORE = {
         "run_command",
+        "get_system_health_report",
+        "calculate",
         "get_weather",
-        "get_server_location",
-        "download_media_video",
-        "download_media_audio",
-        "create_file_transfer_portal",
         "browser_search_google",
-        "remember_for_later",
+        "download_media_video",
+        "create_file_transfer_portal",
+        "schedule_reminder",
     }
 
     _SHORT_SERVER_RE = re.compile(r"\b(ip|top|df|free|port|load|log|ps|ram|cpu|ssh|swap)\b", re.IGNORECASE)
     _SHORT_TASK_RE = re.compile(r"\b(task|done|việc)\b", re.IGNORECASE)
     _SHORT_WEB_RE = re.compile(r"\b(web|url|link|form)\b", re.IGNORECASE)
+
+    _SHORT_REMINDER_RE = re.compile(
+        r"\b(nhắc|nhac|remind|reminder|alarm|hẹn giờ|hen gio|đặt lịch|dat lich|lịch nhắc|lich nhac)\b",
+        re.IGNORECASE,
+    )
+    _SHORT_SERVER_HEALTH_RE = re.compile(
+        r"\b(sức khỏe|suc khoe|health|health report|tail log|service log|restart service|check service|reboot service)\b",
+        re.IGNORECASE,
+    )
+    _SHORT_NOTES_RE = re.compile(
+        r"\b(ghi chú|ghi chu|note|notes|notepad|sổ tay|so tay)\b",
+        re.IGNORECASE,
+    )
+    _MATH_EXPR_RE = re.compile(
+        r"(?:(?:\d+(?:\.\d+)?)\s*[\+\-\*\/\^%]\s*(?:\d+(?:\.\d+)?))|"
+        r"\b(?:sin|cos|tan|sqrt|log|exp|pow|compound_interest)\s*\(",
+        re.IGNORECASE,
+    )
+    _SHORT_CALC_RE = re.compile(
+        r"\b(tính|tinh|calculate|calculator|math|phép tính|phep tinh|máy tính|may tinh|lãi suất|lai suat|lãi kép|lai kep|đổi đơn vị|doi don vi|chuyển đổi đơn vị|chuyen doi don vi|convert units|query database|truy vấn|truy van|sql|postgres|postgresql)\b",
+        re.IGNORECASE,
+    )
+    _SHORT_CRON_RE = re.compile(
+        r"\b(cron|crontab|cronjob|tự động hóa|tu dong hoa|lên lịch tự động|len lich tu dong|định kỳ|dinh ky|hàng ngày|hang ngay|hàng tuần|hang tuan|hàng tháng|hang thang)\b",
+        re.IGNORECASE,
+    )
+    _EMAIL_ADDRESS_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
+    _SHORT_EMAIL_RE = re.compile(
+        r"\b(email|send email|gửi email|gui email|send mail|gửi thư|gui thu|hộp thư|hop thu|báo cáo|bao cao|report|generate report)\b",
+        re.IGNORECASE,
+    )
+    _SHORT_NETWORK_RE = re.compile(
+        r"\b(ngrok|tunnel|public ip|ip công khai|ip cong khai|địa chỉ ip|dia chi ip|tốc độ mạng|toc do mang|isp|kiểm tra mạng|kiem tra mang|mạng internet|mang internet)\b",
+        re.IGNORECASE,
+    )
+    _PATH_PREFIX_RE = re.compile(r"(?:^|\s)(?:/(?:home|tmp|var|etc|usr|opt)(?:/[\w\.\-]+)*|\./[\w\.\-]+)\b")
+    _SHORT_FILE_RE = re.compile(
+        r"\b(file|folder|thư mục|thu muc|tệp tin|tep tin|tệp|tep|đọc file|doc file|xem file|danh sách file|danh sach file|ghi file|đổi tên file|doi ten file|dung lượng ổ đĩa|dung luong o dia|disk usage|du -sh)\b",
+        re.IGNORECASE,
+    )
 
     def _resolve_scoped_tool_names(
         self,
@@ -427,7 +581,13 @@ class AgentToolExecutor:
             "streamable.com", "loom.com", "capcut.com", "xiaohongshu.com", "xhslink.com",
             "weibo.com", "weibo.cn", "lemon8-app.com", "likee.video", "likee.com", "bsky.app"
         ))
-        is_media = has_media_link or any(k in q for k in (
+        is_audio = any(k in q for k in (
+            "tải mp3", "tai mp3", "tách nhạc", "tach nhac", "lấy audio", "lay audio",
+            "nhạc tiktok", "nhac tiktok", "audio", "mp3", "bài hát", "bai hat", "nhạc", "nhac",
+            "tải audio", "tai audio", "download audio", "download mp3", "soundcloud"
+        ))
+
+        is_media = has_media_link or is_audio or any(k in q for k in (
             "tiktok", "youtube", "douyin", "reels", "reel", "video", "clip", "mp4",
             "shorts", "down video", "lưu clip", "tải video", "tải clip", "tải về",
             "download video", "download clip", "tai video", "tai clip", "tai ve",
@@ -437,9 +597,22 @@ class AgentToolExecutor:
             "capcut", "xiaohongshu", "rednote", "tiểu hồng thư", "tieu hong thu", "xhs",
             "weibo", "lemon8", "likee", "bluesky", "bsky",
             "4k", "60fps", "1080p60", "fps cao", "mượt mà",
-            "tải mp3", "tai mp3", "tách nhạc", "tach nhac", "lấy audio", "lay audio",
-            "nhạc tiktok", "nhac tiktok", "audio", "mp3", "bài hát", "bai hat", "nhạc", "nhac",
-            "tải audio", "tai audio", "download audio", "download mp3"
+        ))
+
+        is_transfer = any(k in q for k in (
+            "chuyển file", "chuyen file", "bắn file", "ban file", "gửi file", "gui file",
+            "chuyển ảnh", "chuyen anh", "bắn ảnh", "ban anh", "gửi ảnh", "gui anh",
+            "chuyển video", "chuyen video", "bắn video", "ban video", "gửi video", "gui video",
+            "gửi file sang điện thoại", "chuyển ảnh sang ipad", "bắn ảnh sang ipad",
+            "sang điện thoại", "sang dien thoai", "sang dt", "sang phone",
+            "sang ipad", "sang tablet", "sang laptop", "sang máy tính", "sang may tinh",
+            "sang máy khác", "sang may khac",
+            "share file", "chia sẻ file", "chia se file", "upload file", "download file",
+            "tải file lên", "tai file len", "tải file về", "tai file ve", "tải tệp", "tai tep",
+            "gửi tệp", "gui tep", "chuyển tệp", "chuyen tep", "bắn tệp", "ban tep",
+            "airdrop", "drop file", "file drop", "chuyển tài liệu", "chuyen tai lieu",
+            "portal transfer", "file portal", "cổng truyền file", "cong truyen file",
+            "truyền file", "truyen file", "transfer portal", "portal"
         ))
 
         is_server = bool(self._SHORT_SERVER_RE.search(q)) or any(k in q for k in (
@@ -465,7 +638,7 @@ class AgentToolExecutor:
         ))
 
         is_task = bool(self._SHORT_TASK_RE.search(q)) or any(k in q for k in (
-            "nhớ", "ghi nhớ", "remind", "lưu lại", "xong", "hoàn thành"
+            "nhớ", "ghi nhớ", "lưu lại", "xong", "hoàn thành"
         ))
 
         is_weather = any(k in q for k in (
@@ -475,27 +648,95 @@ class AgentToolExecutor:
             "wttr", "a răng", "bựa ni"
         ))
 
-        is_audio = any(k in q for k in (
-            "tải mp3", "tai mp3", "tách nhạc", "tach nhac", "lấy audio", "lay audio",
-            "nhạc tiktok", "nhac tiktok", "audio", "mp3", "bài hát", "bai hat", "nhạc", "nhac",
-            "tải audio", "tai audio", "download audio", "download mp3", "soundcloud"
+        is_reminder = bool(self._SHORT_REMINDER_RE.search(q)) or any(k in q for k in (
+            "đặt lịch", "nhắc nhở", "nhắc anh", "nhắc em", "nhắc tôi", "nhắc mình",
+            "báo anh", "báo em", "lịch nhắc", "nhắc việc", "hẹn giờ", "đặt hẹn",
+            "nhắc lịch", "lên lịch nhắc", "canh giờ", "xem lịch nhắc", "danh sách nhắc",
+            "hủy nhắc", "xóa nhắc", "lịch hẹn nhắc", "hẹn nhắc", "đã hẹn nhắc", "hủy lịch nhắc",
+            "dat lich", "nhac nho", "nhac anh", "nhac em", "nhac toi", "nhac minh",
+            "bao anh", "bao em", "lich nhac", "nhac viec", "hen gio", "dat hen",
+            "nhac lich", "len lich nhac", "canh gio", "xem lich nhac", "danh sach nhac",
+            "huy nhac", "xoa nhac", "huy lich nhac",
+            "set reminder", "remind me", "reminder", "schedule reminder", "list reminders", "cancel reminder", "timer"
         ))
 
-        is_transfer = any(k in q for k in (
-            "chuyển file", "chuyen file", "bắn file", "ban file", "gửi file", "gui file",
-            "chuyển ảnh", "chuyen anh", "bắn ảnh", "ban anh", "gửi ảnh", "gui anh",
-            "chuyển video", "chuyen video", "bắn video", "ban video", "gửi video", "gui video",
-            "gửi file sang điện thoại", "chuyển ảnh sang ipad", "bắn ảnh sang ipad",
-            "sang điện thoại", "sang dien thoai", "sang dt", "sang phone",
-            "sang ipad", "sang tablet", "sang laptop", "sang máy tính", "sang may tinh",
-            "sang máy khác", "sang may khac",
-            "share file", "chia sẻ file", "chia se file", "upload file", "download file",
-            "tải file lên", "tai file len", "tải file về", "tai file ve", "tải tệp", "tai tep",
-            "gửi tệp", "gui tep", "chuyển tệp", "chuyen tep", "bắn tệp", "ban tep",
-            "airdrop", "drop file", "file drop", "chuyển tài liệu", "chuyen tai lieu",
-            "portal transfer", "file portal", "cổng truyền file", "cong truyen file",
-            "truyền file", "truyen file", "transfer portal", "portal"
+        is_server_health = bool(self._SHORT_SERVER_HEALTH_RE.search(q)) or any(k in q for k in (
+            "sức khỏe server", "sức khỏe hệ thống", "tình trạng server", "tổng quan server",
+            "trạng thái service", "kiểm tra service", "khởi động lại service", "xem log",
+            "xem log service", "tail log", "báo cáo hệ thống", "kiểm tra container", "sức khỏe máy chủ",
+            "tình trạng máy chủ", "tinh trang may chu", "máy chủ hoạt động thế nào",
+            "trạng thái container", "trang thai container", "restart container",
+            "suc khoe server", "suc khoe he thong", "tinh trang server", "tong quan server",
+            "trang thai service", "kiem tra service", "khoi dong lai service", "xem log",
+            "xem log service", "bao cao he thong", "kiem tra container", "suc khoe may chu",
+            "sức khỏe", "suc khoe", "health", "system health", "service status", "check service",
+            "restart service", "tail service logs", "container health", "docker status",
+            "bựa ni máy chủ răng", "máy chủ răng", "có đầy đĩa k", "đầy đĩa", "đầy đĩa không",
+            "kiểm tra sức khỏe", "kiem tra suc khoe"
         ))
+
+        is_notes = False
+        if not is_media:
+            is_notes = bool(self._SHORT_NOTES_RE.search(q)) or any(k in q for k in (
+                "ghi chú", "tạo note", "tìm note", "xem note", "danh sách note", "xóa note",
+                "sổ tay", "lưu lại thông tin", "lưu thông tin", "ghi nhớ thông tin", "ghi chép",
+                "viết note", "tra cứu ghi chú", "note cá nhân", "note lại", "tìm ghi chú", "xóa ghi chú",
+                "ghi chu", "tao note", "tim note", "xem note", "danh sach note", "xoa note",
+                "so tay", "luu lai thong tin", "luu thong tin", "ghi nho thong tin", "ghi chep",
+                "viet note", "tra cuu ghi chu", "note ca nhan", "note lai", "tim ghi chu", "xoa ghi chu",
+                "create note", "search notes", "list notes", "delete note", "notepad", "my notes", "take note"
+            ))
+
+        is_calc = bool(self._MATH_EXPR_RE.search(q)) or bool(self._SHORT_CALC_RE.search(q)) or bool(re.search(r"\b(?:đổi|doi)\s+\d+", q)) or any(k in q for k in (
+            "tính toán", "tính lãi", "lãi suất", "lãi kép", "công thức", "thống kê",
+            "chuyển đổi", "đổi đơn vị", "quy đổi", "truy vấn", "cơ sở dữ liệu", "truy vấn sql",
+            "bảng postgres", "tính giúp anh", "tính hộ", "tính ", "tinh ",
+            "đổi sang", "doi sang", "đổi từ", "doi tu", "quy đổi", "quy doi",
+            "tinh toan", "tinh lai", "lai suat", "lai kep", "cong thuc", "thong ke",
+            "chuyen doi", "doi don vi", "truy van", "co so du lieu", "truy van sql",
+            "bang postgres",
+            "calculate", "convert_units", "unit convert", "currency convert", "query database", "select from", "sql query",
+            "độ f sang độ c", "kg sang lbs", "độ f", "độ c", "lbs"
+        ))
+
+        is_cron = bool(self._SHORT_CRON_RE.search(q)) or any(k in q for k in (
+            "tự động", "lên lịch cron", "định kỳ", "hàng ngày", "hàng tuần", "hàng tháng",
+            "chạy tự động", "danh sách cron", "xóa cron", "tạo cron", "tác vụ định kỳ", "cron job",
+            "tu dong", "len lich cron", "dinh ky", "hang ngay", "hang tuan", "hang thang",
+            "chay tu dong", "danh sach cron", "xoa cron", "tao cron", "tac vu dinh ky",
+            "cron", "crontab", "cron job", "cronjob", "automation", "create cron", "list cron", "delete cron", "schedule job", "periodic task"
+        ))
+
+        is_email = bool(self._EMAIL_ADDRESS_RE.search(q)) or bool(self._SHORT_EMAIL_RE.search(q)) or any(k in q for k in (
+            "gửi email", "gửi thư", "hộp thư", "gửi mail cho", "gửi mail",
+            "báo cáo tổng hợp", "báo cáo ngày", "báo cáo tuần", "báo cáo tháng", "gửi báo cáo", "email thông báo",
+            "tạo báo cáo", "bao cao tong hop",
+            "gui email", "gui thu", "hop thu", "gui mail cho", "gui mail",
+            "bao cao tong hop", "bao cao ngay", "bao cao tuan", "bao cao thang", "gui bao cao", "email thong bao",
+            "send email", "send mail", "mail to", "generate report", "daily report", "weekly report", "monthly report", "smtp"
+        ))
+
+        is_network = bool(self._SHORT_NETWORK_RE.search(q)) or any(k in q for k in (
+            "ip công khai", "ip ngoài", "ip server", "địa chỉ ip", "kiểm tra mạng",
+            "tốc độ mạng", "khởi động lại ngrok", "trạng thái ngrok", "đường truyền", "nhà mạng",
+            "ngrok", "tunnel", "link ngrok", "restart lại tunnel", "thông tin mạng",
+            "ip cong khai", "ip ngoai", "ip server", "dia chi ip", "kiem tra mang",
+            "toc do mang", "khoi dong lai ngrok", "trang thai ngrok", "duong truyen", "nha mang",
+            "public ip", "external ip", "network info", "restart ngrok", "ngrok status", "lan ip", "network speed"
+        ))
+
+        is_file_manager = (not is_transfer) and (
+            bool(self._PATH_PREFIX_RE.search(q)) or bool(self._SHORT_FILE_RE.search(q)) or any(k in q for k in (
+                "thư mục", "tệp tin", "đọc file", "xem file", "danh sách file", "liệt kê file", "liệt kê danh sách file",
+                "đọc nội dung file", "ghi file", "ghi nội dung", "đổi tên file", "di chuyển file",
+                "dung lượng ổ đĩa", "xem dung lượng", "top file lớn", "nặng nhất", "nội dung file",
+                "dung lượng thư mục",
+                "thu muc", "tep tin", "doc file", "xem file", "danh sach file", "liet ke file",
+                "doc noi dung file", "ghi file", "ghi noi dung", "doi ten file", "di chuyen file",
+                "dung luong o dia", "xem dung luong", "top file lon", "nang nhat", "noi dung file",
+                "list files", "read file", "write file", "move file", "rename file", "disk usage", "file content", "directory tree"
+            ))
+        )
 
         if is_media:
             if is_audio:
@@ -510,8 +751,31 @@ class AgentToolExecutor:
         if is_weather:
             selected.update(self._TOOL_CLUSTER_WEATHER)
 
-        if is_server:
+        if is_reminder:
+            selected.update(self._TOOL_CLUSTER_REMINDER)
+
+        if is_server_health:
+            selected.update(self._TOOL_CLUSTER_SERVER_HEALTH)
+        elif is_server:
             selected.update(self._TOOL_CLUSTER_SERVER)
+
+        if is_notes:
+            selected.update(self._TOOL_CLUSTER_NOTES)
+
+        if is_calc:
+            selected.update(self._TOOL_CLUSTER_CALCULATOR)
+
+        if is_cron:
+            selected.update(self._TOOL_CLUSTER_CRON)
+
+        if is_email:
+            selected.update(self._TOOL_CLUSTER_EMAIL)
+
+        if is_network:
+            selected.update(self._TOOL_CLUSTER_NETWORK)
+
+        if is_file_manager:
+            selected.update(self._TOOL_CLUSTER_FILE_MANAGER)
 
         if is_archive:
             selected.update(self._TOOL_CLUSTER_ARCHIVE)
@@ -537,18 +801,96 @@ class AgentToolExecutor:
         max_tools = 6 if has_heavy_cluster else 8
 
         if len(selected) > max_tools:
-            priority_order = [
+            is_rename_or_move = any(k in q for k in ("đổi tên", "doi ten", "move", "rename", "di chuyển", "di chuyen"))
+            is_write = any(k in q for k in ("ghi file", "ghi noi dung", "ghi nội dung", "write file"))
+            is_disk = any(k in q for k in ("dung lượng", "dung luong", "disk usage", "du -sh", "nặng nhất", "nang nhat"))
+
+            priority_order: List[str] = [
+                # 1. Specialized Intent Boosters (Mỗi intent đưa 1-2 công cụ cốt lõi nhất lên đỉnh)
                 *(["create_file_transfer_portal"] if is_transfer else []),
-                "run_command", "download_media_video",
+                *(["schedule_reminder", "list_scheduled_reminders"] if is_reminder else []),
+                *(["calculate", "convert_units"] if is_calc else []),
+                *(["get_system_health_report", "check_service_status"] if is_server_health else []),
+                *(["send_email", "generate_report"] if is_email else []),
+                *(["get_ngrok_status", "get_network_info"] if is_network else []),
+                *(["create_note", "search_notes"] if is_notes else []),
+                *(["create_cron_job", "list_cron_jobs"] if is_cron else []),
+                *(["move_or_rename_file"] if (is_file_manager and is_rename_or_move) else ["write_file_content"] if (is_file_manager and is_write) else ["get_disk_usage"] if (is_file_manager and is_disk) else ["list_files", "read_file_content"] if is_file_manager else []),
+                *(["download_media_video"] if is_media and not is_audio else []),
                 *(["download_media_audio"] if is_audio else []),
-                "get_weather", "read_archive_file",
-                "extract_archive_file", "get_server_location", "browser_navigate",
-                "browser_search_google", "facebook_get_messages", "facebook_send_reply",
-                "server_capture_screenshot", "get_server_active_sessions", "remember_for_later",
-                "complete_task", "recover_archive_password", "facebook_capture_screenshot",
-                *(["download_media_audio"] if not is_audio else []),
-                *(["create_file_transfer_portal"] if not is_transfer else []),
-                "browser_click", "browser_type", "browser_scroll", "browser_press_key"
+
+                # 2. Universal Lifesaver (Fallback an toàn cho mọi lệnh hệ thống)
+                "run_command",
+
+                # 3. Primary Secondary Operations (Công cụ bổ trợ thường dùng)
+                "get_system_health_report",
+                "check_service_status",
+                "calculate",
+                "schedule_reminder",
+                "send_email",
+                "get_ngrok_status",
+                "list_files",
+                "create_note",
+                "create_cron_job",
+                "download_media_video",
+                "download_media_audio",
+                "get_weather",
+
+                # 4. Secondary Operations (Thao tác chi tiết hơn)
+                "restart_service",
+                "tail_service_logs",
+                "read_file_content",
+                "write_file_content",
+                "move_or_rename_file",
+                "get_disk_usage",
+                "search_notes",
+                "list_notes",
+                "delete_note",
+                "query_database",
+                "convert_units",
+                "list_cron_jobs",
+                "delete_cron_job",
+                "restart_ngrok_tunnel",
+                "get_network_info",
+                "generate_report",
+                "cancel_reminder",
+                "list_scheduled_reminders",
+
+                # 5. Diagnostic & Passive Utilities
+                "get_server_location",
+                "get_server_active_sessions",
+                "server_capture_screenshot",
+                "remember_for_later",
+                "complete_task",
+
+                # 6. Archive Heavy Group
+                "read_archive_file",
+                "extract_archive_file",
+                "recover_archive_password",
+
+                # 7. Facebook & Social Group
+                "facebook_get_messages",
+                "facebook_send_reply",
+                "facebook_capture_screenshot",
+                "messenger_list_groups",
+                "messenger_get_group_members",
+                "facebook_view_profile",
+                "get_appointments",
+
+                # 8. Browser Navigation & Automation Group
+                "browser_navigate",
+                "browser_search_google",
+                "browser_take_screenshot",
+                "browser_get_text",
+                "browser_click",
+                "browser_type",
+                "browser_scroll",
+                "browser_press_key",
+                "browser_hover",
+                "browser_select_option",
+                "browser_execute_js",
+                "browser_fill_form",
+                "browser_wait_for",
             ]
             pruned: Set[str] = set()
             for t in priority_order:
@@ -1184,6 +1526,551 @@ class AgentToolExecutor:
                             }
                         },
                         "required": ["task_id"],
+                    },
+                },
+            },
+            # ── R1: Smart Calendar & Scheduler ──
+            {
+                "type": "function",
+                "function": {
+                    "name": "schedule_reminder",
+                    "description": "Đặt lịch nhắc nhở tự động gửi thông báo qua Telegram sau một khoảng thời gian (phút), hỗ trợ tần suất lặp lại (daily, weekly, none).",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "message": {
+                                "type": "string",
+                                "description": "Nội dung lời nhắc cần gửi cho anh Mạnh (ví dụ: 'Uống thuốc', 'Họp giao ban sprint').",
+                            },
+                            "delay_minutes": {
+                                "type": "integer",
+                                "description": "Số phút chờ trước khi kích hoạt thông báo nhắc việc (phải là số nguyên > 0).",
+                            },
+                            "repeat": {
+                                "type": "string",
+                                "enum": ["none", "daily", "weekly"],
+                                "default": "none",
+                                "description": "Tần suất lặp lại nhắc nhở: 'none' (chỉ nhắc 1 lần), 'daily' (lặp hàng ngày), hoặc 'weekly' (lặp hàng tuần).",
+                            },
+                        },
+                        "required": ["message", "delay_minutes"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "list_scheduled_reminders",
+                    "description": "Liệt kê tất cả các lịch nhắc nhở công việc đang ở trạng thái chờ kích hoạt (pending) trong hệ thống.",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "cancel_reminder",
+                    "description": "Hủy bỏ một lịch nhắc nhở đang chờ kích hoạt bằng mã định danh ID của nhắc nhở (Tier 2 Reversible).",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "reminder_id": {
+                                "type": "integer",
+                                "description": "Mã ID của lịch nhắc nhở cần hủy (ví dụ: 12, 1005).",
+                            },
+                        },
+                        "required": ["reminder_id"],
+                    },
+                },
+            },
+
+            # ── R2: Autonomous Health Monitor ──
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_system_health_report",
+                    "description": "Thu thập báo cáo tổng hợp sức khỏe máy chủ 1-shot toàn diện 5 chiều: tải CPU, bộ nhớ RAM, dung lượng ổ đĩa Disk, trạng thái Docker containers, và các cổng mạng đang mở (ss -tuln).",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "check_service_status",
+                    "description": "Kiểm tra chi tiết trạng thái hoạt động của một dịch vụ Systemd hoặc Docker container trên máy chủ (active, exited, restart count, uptime).",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "service_name": {
+                                "type": "string",
+                                "description": "Tên container Docker (ví dụ: 'dashboard_ai_agent', 'postgres') hoặc dịch vụ systemd (ví dụ: 'nginx', 'ssh').",
+                            },
+                        },
+                        "required": ["service_name"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "restart_service",
+                    "description": "Khởi động lại một Docker container hoặc Systemd service (Tier 2 Reversible). Yêu cầu mã xác nhận an toàn confirm='RESTART_CONFIRMED' khi restart các dịch vụ production trọng yếu.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "service_name": {
+                                "type": "string",
+                                "description": "Tên dịch vụ hoặc container cần khởi động lại.",
+                            },
+                            "confirm": {
+                                "type": "string",
+                                "description": "Mã xác nhận an toàn ('RESTART_CONFIRMED') khi khởi động lại các container/service production.",
+                            },
+                        },
+                        "required": ["service_name"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "tail_service_logs",
+                    "description": "Đọc các dòng nhật ký (logs) gần nhất của dịch vụ/container, tự động bóc tách phân tích lỗi (error/exception) và tóm tắt tình trạng.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "service_name": {
+                                "type": "string",
+                                "description": "Tên Docker container hoặc Systemd service cần xem logs.",
+                            },
+                            "lines": {
+                                "type": "integer",
+                                "default": 50,
+                                "description": "Số dòng nhật ký cuối cần đọc và phân tích (mặc định 50 dòng, tối đa 500).",
+                            },
+                        },
+                        "required": ["service_name"],
+                    },
+                },
+            },
+
+            # ── R3: Personal Notes & Knowledge Base ──
+            {
+                "type": "function",
+                "function": {
+                    "name": "create_note",
+                    "description": "Tạo hoặc cập nhật ghi chú cá nhân lưu trữ dạng Markdown với YAML frontmatter trên máy chủ tại /home/kirito/quan_ly_server/data/notes/.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "title": {
+                                "type": "string",
+                                "description": "Tiêu đề ghi chú cá nhân.",
+                            },
+                            "content": {
+                                "type": "string",
+                                "description": "Nội dung chi tiết của ghi chú (hỗ trợ đầy đủ định dạng Markdown).",
+                            },
+                            "tags": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "Danh sách các nhãn/thẻ phân loại (ví dụ: ['cong_viec', 'server', 'y_tuong']).",
+                            },
+                        },
+                        "required": ["title", "content"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "search_notes",
+                    "description": "Tìm kiếm toàn văn (full-text) trong tiêu đề và nội dung của kho ghi chú cá nhân, hỗ trợ lọc theo thẻ phân loại.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {
+                                "type": "string",
+                                "description": "Từ khóa tìm kiếm nội dung ghi chú.",
+                            },
+                            "tags": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "Danh sách nhãn/thẻ lọc kết quả tìm kiếm.",
+                            },
+                        },
+                        "required": ["query"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "list_notes",
+                    "description": "Liệt kê danh sách các ghi chú cá nhân hiện có trên hệ thống, kèm metadata và có thể lọc theo một thẻ (tag) cụ thể.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "tag": {
+                                "type": "string",
+                                "description": "Nhãn/thẻ cần lọc danh sách (bỏ trống để liệt kê toàn bộ ghi chú).",
+                            },
+                        },
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "delete_note",
+                    "description": "Xóa an toàn một ghi chú cá nhân bằng cách chuyển vào thư mục thùng rác .trash/ (Tier 2 Reversible).",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "note_id": {
+                                "type": "string",
+                                "description": "Mã ID của ghi chú cần xóa (ví dụ: 'hop_giao_ban_20260926_123456_abcd').",
+                            },
+                        },
+                        "required": ["note_id"],
+                    },
+                },
+            },
+
+            # ── R4: Calculator & Data Analytics ──
+            {
+                "type": "function",
+                "function": {
+                    "name": "calculate",
+                    "description": "Tính toán an toàn biểu thức toán học, tài chính (lãi kép), thống kê (mean, median, stdev) hoặc hàm lượng giác qua cây cú pháp AST (chống tiêm mã độc).",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "expression": {
+                                "type": "string",
+                                "description": "Biểu thức toán học cần tính (ví dụ: 'sqrt(144) + 2**8', 'compound_interest(100000000, 0.07, 12, 5)', 'mean([4, 8, 15, 16, 23, 42])').",
+                            },
+                        },
+                        "required": ["expression"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "query_database",
+                    "description": "Thực thi truy vấn SQL chỉ đọc (chỉ cho phép SELECT và EXPLAIN) trên cơ sở dữ liệu PostgreSQL của server và trả về kết quả dạng bảng ASCII định dạng cho Telegram. Tuyệt đối ngăn chặn mọi thao tác sửa đổi DML/DDL.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "sql_query": {
+                                "type": "string",
+                                "description": "Câu lệnh SQL SELECT hoặc EXPLAIN cần thực thi (ví dụ: 'SELECT id, username, email FROM users LIMIT 10;').",
+                            },
+                            "database": {
+                                "type": "string",
+                                "default": "postgres",
+                                "description": "Tên cơ sở dữ liệu truy vấn (mặc định 'postgres').",
+                            },
+                        },
+                        "required": ["sql_query"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "convert_units",
+                    "description": "Chuyển đổi đại lượng giữa các đơn vị đo lường (nhiệt độ C/F/K, khối lượng kg/g/lb/oz/tấn, chiều dài km/m/cm/mm/mile/inch, tốc độ m/s/kmh/mph, dung lượng byte/KB/MB/GB/TB, tiền tệ USD/VND/EUR/GBP/JPY).",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "value": {
+                                "type": "number",
+                                "description": "Số lượng giá trị cần chuyển đổi.",
+                            },
+                            "from_unit": {
+                                "type": "string",
+                                "description": "Đơn vị gốc (ví dụ: 'c', 'kg', 'km', 'usd', 'mb').",
+                            },
+                            "to_unit": {
+                                "type": "string",
+                                "description": "Đơn vị đích muốn chuyển đổi sang (ví dụ: 'f', 'lb', 'mile', 'vnd', 'gb').",
+                            },
+                        },
+                        "required": ["value", "from_unit", "to_unit"],
+                    },
+                },
+            },
+
+            # ── R5: Cron Automation ──
+            {
+                "type": "function",
+                "function": {
+                    "name": "create_cron_job",
+                    "description": "Tạo lịch chạy định kỳ cron job mới trên máy chủ với cú pháp cron chuẩn 5 trường và lệnh bash thực thi an toàn (Tier 2 Reversible).",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "name": {
+                                "type": "string",
+                                "description": "Tên định danh duy nhất của cron job (chỉ chứa chữ cái, số, gạch dưới, gạch ngang).",
+                            },
+                            "schedule": {
+                                "type": "string",
+                                "description": "Biểu thức cron chuẩn 5 trường (ví dụ: '0 2 * * *' chạy 2h sáng mỗi ngày, '*/15 * * * *' mỗi 15 phút).",
+                            },
+                            "command": {
+                                "type": "string",
+                                "description": "Lệnh bash shell cần thực thi khi kích hoạt.",
+                            },
+                            "description": {
+                                "type": "string",
+                                "default": "",
+                                "description": "Mô tả mục đích hoạt động của cron job.",
+                            },
+                        },
+                        "required": ["name", "schedule", "command"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "list_cron_jobs",
+                    "description": "Liệt kê tất cả các cron job đang hoạt động trên hệ thống (cả job do AI Agent quản lý lẫn job crontab hệ thống).",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "delete_cron_job",
+                    "description": "Xóa một cron job khỏi hệ thống theo tên định danh (Tier 2 Reversible). Bắt buộc cung cấp mã xác nhận confirm='DELETE_CONFIRMED'.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "name": {
+                                "type": "string",
+                                "description": "Tên định danh của cron job cần xóa.",
+                            },
+                            "confirm": {
+                                "type": "string",
+                                "description": "Mã xác nhận an toàn bắt buộc: 'DELETE_CONFIRMED'.",
+                            },
+                        },
+                        "required": ["name"],
+                    },
+                },
+            },
+
+            # ── R6: Email & Notification ──
+            {
+                "type": "function",
+                "function": {
+                    "name": "send_email",
+                    "description": "Gửi email thông báo qua giao thức SMTP (văn bản thuần hoặc HTML) kèm tùy chọn đính kèm tệp an toàn (Tier 2 Reversible).",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "to": {
+                                "type": "string",
+                                "description": "Địa chỉ email người nhận (ví dụ: 'admin@example.com').",
+                            },
+                            "subject": {
+                                "type": "string",
+                                "description": "Tiêu đề thư email.",
+                            },
+                            "body": {
+                                "type": "string",
+                                "description": "Nội dung thư (hỗ trợ văn bản thuần hoặc HTML).",
+                            },
+                            "attachments": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "Danh sách đường dẫn các tệp cần đính kèm an toàn.",
+                            },
+                        },
+                        "required": ["to", "subject", "body"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "generate_report",
+                    "description": "Tự động sinh báo cáo tổng hợp sức khỏe máy chủ theo chu kỳ thời gian (hôm nay, tuần, tháng), trả về văn bản Markdown và tùy chọn gửi qua email.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "report_type": {
+                                "type": "string",
+                                "description": "Loại báo cáo cần tạo (ví dụ: 'health', 'system', 'summary').",
+                            },
+                            "period": {
+                                "type": "string",
+                                "enum": ["today", "week", "month"],
+                                "default": "today",
+                                "description": "Chu kỳ dữ liệu: 'today' (hôm nay), 'week' (tuần này), 'month' (tháng này).",
+                            },
+                            "send_to_email": {
+                                "type": "string",
+                                "description": "Địa chỉ email nhận báo cáo nếu muốn tự động gửi đi sau khi tạo.",
+                            },
+                        },
+                        "required": ["report_type"],
+                    },
+                },
+            },
+
+            # ── R7: Network Management ──
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_ngrok_status",
+                    "description": "Kiểm tra trạng thái hoạt động của Ngrok, quét các cổng API nội bộ (4040-4044) để lấy danh sách các tunnel công khai đang mở, URL công khai và số kết nối.",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "restart_ngrok_tunnel",
+                    "description": "Khởi động lại tiến trình Ngrok tunnel trên máy chủ để nhận URL công khai mới (Tier 2 Reversible). Yêu cầu mã xác nhận confirm='RESTART_CONFIRMED'.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "tunnel_name": {
+                                "type": "string",
+                                "description": "Tên tunnel cụ thể cần khởi động lại (để trống nếu muốn khởi động lại toàn bộ dịch vụ Ngrok).",
+                            },
+                            "confirm": {
+                                "type": "string",
+                                "description": "Mã xác nhận an toàn bắt buộc: 'RESTART_CONFIRMED'.",
+                            },
+                        },
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_network_info",
+                    "description": "Lấy thông tin mạng toàn diện của máy chủ: IP mạng nội bộ (LAN), IP công khai (Public IP), nhà mạng ISP, quốc gia, và số lượng kết nối TCP đang mở.",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+
+            # ── R8: File Server Manager ──
+            {
+                "type": "function",
+                "function": {
+                    "name": "list_files",
+                    "description": "Liệt kê danh sách tệp và thư mục tại đường dẫn chỉ định với metadata chi tiết (loại, dung lượng, thời gian chỉnh sửa), hỗ trợ lọc mẫu glob và sắp xếp.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "path": {
+                                "type": "string",
+                                "default": "/home/kirito",
+                                "description": "Đường dẫn thư mục cần xem (mặc định '/home/kirito').",
+                            },
+                            "pattern": {
+                                "type": "string",
+                                "description": "Mẫu glob để lọc tệp (ví dụ: '*.py', '*.json', '*.log').",
+                            },
+                            "sort_by": {
+                                "type": "string",
+                                "enum": ["name", "size", "date"],
+                                "default": "name",
+                                "description": "Tiêu chí sắp xếp: 'name' (tên), 'size' (kích thước), 'date' (ngày sửa).",
+                            },
+                        },
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "read_file_content",
+                    "description": "Đọc nội dung tệp văn bản thuần (giới hạn tối đa 2000 ký tự an toàn, từ chối đọc tệp nhị phân binary và các tệp nhạy cảm).",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "path": {
+                                "type": "string",
+                                "description": "Đường dẫn tệp văn bản cần đọc.",
+                            },
+                            "lines": {
+                                "type": "integer",
+                                "description": "Số dòng đầu tiên cần đọc (bỏ trống để đọc theo giới hạn ký tự).",
+                            },
+                        },
+                        "required": ["path"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "write_file_content",
+                    "description": "Ghi nội dung văn bản vào tệp trên máy chủ (Tier 2 Reversible). Giới hạn an toàn nghiêm ngặt chỉ cho phép ghi bên trong /home/kirito/ và /tmp/, chặn ghi tệp nhạy cảm.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "path": {
+                                "type": "string",
+                                "description": "Đường dẫn tệp cần ghi (phải nằm trong /home/kirito/ hoặc /tmp/).",
+                            },
+                            "content": {
+                                "type": "string",
+                                "description": "Nội dung văn bản cần ghi.",
+                            },
+                            "mode": {
+                                "type": "string",
+                                "enum": ["overwrite", "append"],
+                                "default": "overwrite",
+                                "description": "Chế độ ghi: 'overwrite' (ghi đè toàn bộ) hoặc 'append' (nối tiếp vào cuối tệp).",
+                            },
+                        },
+                        "required": ["path", "content"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "move_or_rename_file",
+                    "description": "Di chuyển hoặc đổi tên tệp/thư mục trong ranh giới an toàn cho phép (/home/kirito/ và /tmp/) (Tier 2 Reversible).",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "src": {
+                                "type": "string",
+                                "description": "Đường dẫn tệp hoặc thư mục nguồn.",
+                            },
+                            "dst": {
+                                "type": "string",
+                                "description": "Đường dẫn tệp hoặc thư mục đích mới.",
+                            },
+                        },
+                        "required": ["src", "dst"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_disk_usage",
+                    "description": "Phân tích dung lượng lưu trữ của thư mục hoặc phân vùng ổ đĩa (sử dụng du -sh) và trích xuất top 10 mục (tệp/thư mục con) chiếm dung lượng lớn nhất.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "path": {
+                                "type": "string",
+                                "default": "/",
+                                "description": "Đường dẫn thư mục hoặc phân vùng ổ đĩa cần phân tích dung lượng (mặc định '/').",
+                            },
+                        },
                     },
                 },
             },
@@ -2328,6 +3215,231 @@ class AgentToolExecutor:
                     success_prefix=res.get("action", f"✅ Element `{sel}` đã xuất hiện"),
                     pending_photos=pending_photos,
                 )
+
+            # ── R1: Smart Calendar & Scheduler ──
+            if tool_name == "schedule_reminder":
+                msg = tool_args.get("message", "")
+                delay = int(tool_args.get("delay_minutes", 0))
+                repeat = tool_args.get("repeat", "none")
+                res = await self.scheduler_service.schedule_reminder(
+                    message=msg, delay_minutes=delay, repeat=repeat
+                )
+                return res.get("text") or res.get("message") or json.dumps(res, ensure_ascii=False)
+
+            if tool_name == "list_scheduled_reminders":
+                res = await self.scheduler_service.list_scheduled_reminders()
+                reminders = res.get("reminders", [])
+                if not reminders:
+                    return "⏰ Hiện không có lịch nhắc nhở nào đang chờ kích hoạt."
+                lines = [f"📋 **DANH SÁCH LỊCH NHẮC ĐANG CHỜ ({len(reminders)} lịch)**:"]
+                for r in reminders:
+                    r_id = r.get("id")
+                    r_msg = r.get("message")
+                    r_time = r.get("remind_at_vn") or r.get("remind_at")
+                    r_repeat = r.get("repeat", "none")
+                    repeat_str = f" [Lặp: {r_repeat}]" if r_repeat != "none" else ""
+                    lines.append(f"• **#{r_id}**: \"{r_msg}\" — lúc `{r_time}`{repeat_str}")
+                return "\n".join(lines)
+
+            if tool_name == "cancel_reminder":
+                r_id = int(tool_args.get("reminder_id", 0))
+                res = await self.scheduler_service.cancel_reminder(reminder_id=r_id)
+                return res.get("message") or json.dumps(res, ensure_ascii=False)
+
+            # ── R2: Autonomous Health Monitor ──
+            if tool_name == "get_system_health_report":
+                res = await self.server_monitor_service.get_system_health_report()
+                if res.get("status") == "error":
+                    return f"❌ Lỗi lấy báo cáo sức khỏe máy chủ: {res.get('message')}"
+                return res.get("summary") or json.dumps(res, ensure_ascii=False, indent=2)
+
+            if tool_name == "check_service_status":
+                svc_name = tool_args.get("service_name", "").strip()
+                res = await self.server_monitor_service.check_service_status(service_name=svc_name)
+                return res.get("text") or res.get("message") or json.dumps(res, ensure_ascii=False)
+
+            if tool_name == "restart_service":
+                svc_name = tool_args.get("service_name", "").strip()
+                confirm = tool_args.get("confirm")
+                res = await self.server_monitor_service.restart_service(service_name=svc_name, confirm=confirm)
+                return res.get("message") or json.dumps(res, ensure_ascii=False)
+
+            if tool_name == "tail_service_logs":
+                svc_name = tool_args.get("service_name", "").strip()
+                lines_cnt = int(tool_args.get("lines", 50))
+                res = await self.server_monitor_service.tail_service_logs(service_name=svc_name, lines=lines_cnt)
+                if res.get("status") == "error":
+                    return f"❌ Lỗi lấy logs: {res.get('message')}"
+                error_sum = res.get("error_summary", "")
+                logs_raw = res.get("logs", "")
+                return (
+                    f"📜 **LOGS DỊCH VỤ '{svc_name}' ({res.get('total_lines', 0)} dòng)**:\n"
+                    f"💡 **Tóm tắt chẩn đoán**: {error_sum}\n\n"
+                    f"```\n{logs_raw[-1500:] if len(logs_raw) > 1500 else logs_raw}\n```"
+                )
+
+            # ── R3: Personal Notes & Knowledge Base ──
+            if tool_name == "create_note":
+                title = tool_args.get("title", "")
+                content = tool_args.get("content", "")
+                tags = tool_args.get("tags")
+                res = await self.notes_service.create_note(title=title, content=content, tags=tags)
+                return res.get("text") or res.get("message") or json.dumps(res, ensure_ascii=False)
+
+            if tool_name == "search_notes":
+                query = tool_args.get("query", "")
+                tags = tool_args.get("tags")
+                res = await self.notes_service.search_notes(query=query, tags=tags)
+                return res.get("text") or res.get("message") or json.dumps(res, ensure_ascii=False)
+
+            if tool_name == "list_notes":
+                tag = tool_args.get("tag")
+                res = await self.notes_service.list_notes(tag=tag)
+                return res.get("text") or res.get("message") or json.dumps(res, ensure_ascii=False)
+
+            if tool_name == "delete_note":
+                note_id = tool_args.get("note_id", "").strip()
+                res = await self.notes_service.delete_note(note_id=note_id)
+                return res.get("message") or json.dumps(res, ensure_ascii=False)
+
+            # ── R4: Calculator & Data Analytics ──
+            if tool_name == "calculate":
+                expr = tool_args.get("expression", "")
+                res = await self.calculator_service.calculate(expression=expr)
+                if res.get("status") == "success":
+                    formatted = res.get("formatted", res.get("result"))
+                    return f"🔢 **Kết quả tính toán:** `{expr}` = **{formatted}**"
+                return f"❌ {res.get('message', 'Lỗi tính toán')}"
+
+            if tool_name == "query_database":
+                sql = tool_args.get("sql_query", "")
+                db_name = tool_args.get("database", "postgres")
+                res = await self.calculator_service.query_database(sql_query=sql, database=db_name)
+                if res.get("status") == "success":
+                    table = res.get("formatted_table", "")
+                    row_cnt = res.get("row_count", 0)
+                    dur = res.get("duration_ms", 0)
+                    return f"📊 **KẾT QUẢ TRUY VẤN SQL ({row_cnt} dòng, {dur}ms)**:\n```\n{table}\n```"
+                return f"❌ {res.get('message', 'Lỗi truy vấn SQL')}"
+
+            if tool_name == "convert_units":
+                val = float(tool_args.get("value", 0))
+                f_unit = tool_args.get("from_unit", "")
+                t_unit = tool_args.get("to_unit", "")
+                res = await self.calculator_service.convert_units(value=val, from_unit=f_unit, to_unit=t_unit)
+                if res.get("status") == "success":
+                    return f"🔄 **Chuyển đổi đơn vị:** {val} {f_unit} = **{res.get('formatted')}**"
+                return f"❌ {res.get('message', 'Lỗi chuyển đổi đơn vị')}"
+
+            # ── R5: Cron Automation ──
+            if tool_name == "create_cron_job":
+                c_name = tool_args.get("name", "").strip()
+                c_sched = tool_args.get("schedule", "").strip()
+                c_cmd = tool_args.get("command", "").strip()
+                c_desc = tool_args.get("description", "")
+                res = await self.cron_service.create_cron_job(
+                    name=c_name, schedule=c_sched, command=c_cmd, description=c_desc
+                )
+                return res.get("message") or json.dumps(res, ensure_ascii=False)
+
+            if tool_name == "list_cron_jobs":
+                res = await self.cron_service.list_cron_jobs()
+                jobs = res.get("jobs", [])
+                if not jobs:
+                    return res.get("text") or res.get("message") or f"⏰ Hiện không có cron job nào (status: {res.get('status', 'success')})."
+                lines = [f"📋 **DANH SÁCH CRON JOBS ({len(jobs)} jobs)**:"]
+                for j in jobs:
+                    j_name = j.get("name")
+                    j_sched = j.get("schedule")
+                    j_cmd = j.get("command")
+                    j_desc = j.get("description")
+                    desc_str = f" ({j_desc})" if j_desc else ""
+                    lines.append(f"• **{j_name}** [`{j_sched}`]: `{j_cmd}`{desc_str}")
+                return "\n".join(lines)
+
+            if tool_name == "delete_cron_job":
+                c_name = tool_args.get("name", "").strip()
+                confirm = tool_args.get("confirm")
+                res = await self.cron_service.delete_cron_job(name=c_name, confirm=confirm)
+                return res.get("message") or json.dumps(res, ensure_ascii=False)
+
+            # ── R6: Email & Notification ──
+            if tool_name == "send_email":
+                to_addr = tool_args.get("to", "").strip()
+                subj = tool_args.get("subject", "").strip()
+                body = tool_args.get("body", "")
+                attachments = tool_args.get("attachments")
+                res = await self.email_report_service.send_email(
+                    to=to_addr, subject=subj, body=body, attachments=attachments
+                )
+                return res.get("message") or json.dumps(res, ensure_ascii=False)
+
+            if tool_name == "generate_report":
+                r_type = tool_args.get("report_type", "health")
+                period = tool_args.get("period", "today")
+                send_to = tool_args.get("send_to_email")
+                res = await self.email_report_service.generate_report(
+                    report_type=r_type, period=period, send_to_email=send_to
+                )
+                rep_text = res.get("report_text", "")
+                email_note = f"\n\n📧 Đã gửi báo cáo đến: `{send_to}`" if res.get("email_sent") else ""
+                return f"{rep_text}{email_note}"
+
+            # ── R7: Network Management ──
+            if tool_name == "get_ngrok_status":
+                res = await self.network_service.get_ngrok_status()
+                return res.get("message") or res.get("summary_text") or json.dumps(res, ensure_ascii=False)
+
+            if tool_name == "restart_ngrok_tunnel":
+                tun_name = tool_args.get("tunnel_name")
+                confirm = tool_args.get("confirm")
+                res = await self.network_service.restart_ngrok_tunnel(tunnel_name=tun_name, confirm=confirm)
+                return res.get("message") or json.dumps(res, ensure_ascii=False)
+
+            if tool_name == "get_network_info":
+                res = await self.network_service.get_network_info()
+                return res.get("summary_text") or json.dumps(res, ensure_ascii=False)
+
+            # ── R8: File Server Manager ──
+            if tool_name == "list_files":
+                f_path = tool_args.get("path", "/home/kirito")
+                pattern = tool_args.get("pattern")
+                sort_by = tool_args.get("sort_by", "name")
+                res = await self.file_manager_service.list_files(path=f_path, pattern=pattern, sort_by=sort_by)
+                return res.get("text") or res.get("message") or json.dumps(res, ensure_ascii=False)
+
+            if tool_name == "read_file_content":
+                f_path = tool_args.get("path", "").strip()
+                lines_cnt = tool_args.get("lines")
+                res = await self.file_manager_service.read_file_content(path=f_path, lines=lines_cnt)
+                if res.get("status") == "success":
+                    content = res.get("content", "")
+                    trunc_note = " (đã cắt bớt vì vượt quá 2000 ký tự)" if res.get("truncated") else ""
+                    return f"📄 **Nội dung tệp `{f_path}`**{trunc_note}:\n```\n{content}\n```"
+                return f"❌ {res.get('message', 'Lỗi đọc tệp')}"
+
+            if tool_name == "write_file_content":
+                f_path = tool_args.get("path", "").strip()
+                content = tool_args.get("content", "")
+                mode = tool_args.get("mode", "overwrite")
+                res = await self.file_manager_service.write_file_content(path=f_path, content=content, mode=mode)
+                return res.get("message") or json.dumps(res, ensure_ascii=False)
+
+            if tool_name == "move_or_rename_file":
+                src = tool_args.get("src", "").strip()
+                dst = tool_args.get("dst", "").strip()
+                res = await self.file_manager_service.move_or_rename_file(src=src, dst=dst)
+                return res.get("message") or json.dumps(res, ensure_ascii=False)
+
+            if tool_name == "get_disk_usage":
+                d_path = tool_args.get("path", "/")
+                res = await self.file_manager_service.get_disk_usage(path=d_path)
+                if res.get("status") == "success":
+                    summary = res.get("summary_text", "")
+                    top_items = res.get("top_items", [])
+                    item_lines = [f"• `{it['size']}` — `{it['path']}`" for it in top_items]
+                    return f"{summary}\n" + "\n".join(item_lines)
+                return f"❌ {res.get('message', 'Lỗi phân tích ổ đĩa')}"
 
 
 

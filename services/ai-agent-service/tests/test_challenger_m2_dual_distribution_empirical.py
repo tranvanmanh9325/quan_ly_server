@@ -65,6 +65,7 @@ class TestChallengerM2EmpiricalDualDistribution(unittest.IsolatedAsyncioTestCase
         media_storage_manager.temp_dir = self.temp_dir
 
     def tearDown(self):
+        self.client.close()
         media_storage_manager.temp_dir = self.orig_media_temp_dir
         shutil.rmtree(self.test_dir, ignore_errors=True)
 

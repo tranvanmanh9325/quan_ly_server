@@ -60,6 +60,7 @@ class TestFileTransferE2EScenarios(unittest.TestCase):
         self.client = TestClient(app)
 
     def tearDown(self) -> None:
+        self.client.close()
         self.url_patcher.stop()
         self.storage_patcher.stop()
         self.tools_storage_patcher.stop()

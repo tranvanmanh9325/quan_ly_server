@@ -143,6 +143,7 @@ class TestFileTransferQREndpoint(unittest.TestCase):
         self.client = TestClient(app)
 
     def tearDown(self):
+        self.client.close()
         transfer_storage_manager.base_dir = self.original_base_dir
         if self.tmp_dir.exists():
             shutil.rmtree(self.tmp_dir, ignore_errors=True)

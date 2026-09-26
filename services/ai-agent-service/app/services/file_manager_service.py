@@ -100,21 +100,34 @@ class FileManagerService:
     def normalize_posix_path(self, raw_path: str) -> str:
         """
         Normalizes POSIX path, decodes percent-encoding, resolves relative references.
+        Guarantees cross-platform resolution consistency by canonicalizing backslashes early.
         """
-        unquoted = urllib.parse.unquote(str(raw_path).strip())
+        clean_path = str(raw_path).strip()
+        # 1. Multi-round URL unquoting to prevent nested percent-encoding bypass
+        for _ in range(3):
+            new_decoded = urllib.parse.unquote(clean_path)
+            if new_decoded == clean_path:
+                break
+            clean_path = new_decoded
+
+        # 2. Strictly canonicalize backslashes to forward slashes cross-platform
+        # On POSIX/Linux, backslash is not a separator natively, allowing Windows-style
+        # traversal payloads (e.g. ..\..\windows\win.ini) to evade Path.resolve().
+        normalized = clean_path.replace("\\", "/")
+
         if self.base_dir:
-            # If a local test base_dir is active
-            p = Path(unquoted)
+            base_p = Path(self.base_dir).resolve()
+            p = Path(normalized)
             if not p.is_absolute():
-                p = Path(self.base_dir) / p
+                p = base_p / p
             try:
                 resolved = str(p.resolve())
             except Exception:
                 resolved = os.path.normpath(str(p))
-            return resolved
+            return resolved.replace("\\", "/")
 
         # Host POSIX normalization
-        norm = posixpath.normpath(unquoted)
+        norm = posixpath.normpath(normalized)
         if not norm.startswith("/"):
             norm = posixpath.normpath(posixpath.join("/home/kirito", norm))
         return norm
@@ -134,11 +147,21 @@ class FileManagerService:
         posix_norm = norm.replace("\\", "/")
 
         if self.base_dir:
-            norm_base = os.path.abspath(self.base_dir).replace("\\", "/")
-            if not posix_norm.startswith(norm_base):
+            base_p = Path(self.base_dir).resolve()
+            norm_base = str(base_p).replace("\\", "/")
+
+            # 1. Sandbox hierarchy containment check
+            try:
+                target_p = Path(norm).resolve()
+                target_p.relative_to(base_p)
+            except (ValueError, Exception):
                 return False, "boundary", f"Đường dẫn '{clean_path}' vượt ra ngoài thư mục cơ sở ranh giới an toàn."
 
-            # Check sensitive blacklist inside base_dir
+            # 2. Strict prefix check (avoiding prefix collision e.g. /tmp/testdir_evil)
+            if not (posix_norm == norm_base or posix_norm.startswith(norm_base + "/")):
+                return False, "boundary", f"Đường dẫn '{clean_path}' vượt ra ngoài thư mục cơ sở ranh giới an toàn."
+
+            # 3. Check sensitive blacklist inside base_dir
             rel = posixpath.relpath(posix_norm, norm_base)
             for pattern in SENSITIVE_FORBIDDEN_PATTERNS:
                 if pattern.search(rel) or pattern.search("/" + rel) or pattern.search(posix_norm):

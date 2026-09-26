@@ -109,6 +109,11 @@ class TestOptimizationAndSecurity(unittest.IsolatedAsyncioTestCase):
         m2 = DatabasePoolManager()
         self.assertIs(m1, m2)
 
+    async def asyncTearDown(self):
+        """Clean up shared HTTP client connection pools to prevent ResourceWarning."""
+        from app.core.http_client import http_client_manager
+        await http_client_manager.close()
+
 
 if __name__ == "__main__":
     unittest.main()

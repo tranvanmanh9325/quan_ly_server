@@ -125,6 +125,7 @@ class TestMediaDownloadEmpiricalChallenger(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
+        cls.client.close()
         shutil.rmtree(cls.work_dir, ignore_errors=True)
         # Cleanup published item from global manager
         pub_token_dir = media_storage_manager.public_dir / cls.token

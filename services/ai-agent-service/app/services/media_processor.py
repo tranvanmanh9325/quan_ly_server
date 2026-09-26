@@ -904,8 +904,9 @@ class MediaProcessor:
         Guards against Zip Slip (path traversal) vulnerabilities cross-platform.
         Ensures the relative archive path does not escape using '..' or absolute paths.
         """
-        p = Path(name)
-        return not p.is_absolute() and ".." not in p.parts and not name.startswith(("/", "\\"))
+        clean_name = str(name).strip().replace("\\", "/")
+        p = Path(clean_name)
+        return not p.is_absolute() and ".." not in p.parts and not clean_name.startswith(("/", "\\"))
 
     @classmethod
     def _unpack_via_python_libs(

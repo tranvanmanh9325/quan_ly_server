@@ -419,6 +419,7 @@ class TestMediaDownloadEndpoints(unittest.TestCase):
         md_router.media_storage_manager = self.test_manager
 
     def tearDown(self):
+        self.client.close()
         import app.services.media_storage_manager as msm_mod
         import app.routers.media_download as md_router
         msm_mod.media_storage_manager = self.original_manager

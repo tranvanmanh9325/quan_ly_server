@@ -17,6 +17,7 @@ import logging
 import os
 from pathlib import Path
 import shutil
+import socket
 import subprocess
 import tempfile
 import time
@@ -178,18 +179,17 @@ class TestStressConcurrencyMilestone4(unittest.IsolatedAsyncioTestCase):
         self.api_base = "http://127.0.0.1:8084"
 
         # Check if live server is reachable before attempting live HTTP streaming
+        # Use synchronous socket with guaranteed cleanup to avoid orphaned asyncio transports
         server_alive = False
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(0.2)
         try:
-            async with httpx.AsyncClient(timeout=0.5) as client:
-                res = await client.get(f"{self.api_base}/api/ai/health")
-                server_alive = res.status_code < 500
+            sock.connect(("127.0.0.1", 8084))
+            server_alive = True
         except Exception:
-            try:
-                async with httpx.AsyncClient(timeout=0.5) as client:
-                    res = await client.get(f"{self.api_base}/health")
-                    server_alive = res.status_code < 500
-            except Exception:
-                server_alive = False
+            server_alive = False
+        finally:
+            sock.close()
 
         if not server_alive:
             self.skipTest("Live FastAPI server at 127.0.0.1:8084 is not running - skipping live HTTP socket stress test")

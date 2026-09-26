@@ -3,21 +3,31 @@ Pytest configuration and shared fixtures for ai-agent-service test suite.
 """
 from pathlib import Path
 from typing import Generator
-import pytest
+try:
+    import pytest
+except ImportError:
+    pytest = None
 
 from app.core.brain_core import ArtificialBrain
 
 
-@pytest.fixture
-def temp_cortex_dir(tmp_path: Path) -> Generator[Path, None, None]:
-    """Provides an isolated temporary directory for HyperdimensionalCortex testing with guaranteed cleanup."""
-    yield tmp_path
-    ArtificialBrain.reset_instance()
+if pytest is not None:
+    @pytest.fixture
+    def temp_cortex_dir(tmp_path: Path) -> Generator[Path, None, None]:
+        """Provides an isolated temporary directory for HyperdimensionalCortex testing with guaranteed cleanup."""
+        yield tmp_path
+        ArtificialBrain.reset_instance()
 
+    @pytest.fixture(autouse=True)
+    def cleanup_brain_singleton() -> Generator[None, None, None]:
+        """Guarantees that any ArtificialBrain singleton is cleanly closed after each test."""
+        yield
+        ArtificialBrain.reset_instance()
 
-@pytest.fixture(autouse=True)
-def cleanup_brain_singleton() -> Generator[None, None, None]:
-    """Guarantees that any ArtificialBrain singleton is cleanly closed after each test."""
-    yield
-    ArtificialBrain.reset_instance()
+    @pytest.fixture(autouse=True)
+    async def cleanup_shared_http_clients():
+        """Guarantees that shared HttpClientManager is closed cleanly between tests."""
+        yield
+        from app.core.http_client import http_client_manager
+        await http_client_manager.close()
 

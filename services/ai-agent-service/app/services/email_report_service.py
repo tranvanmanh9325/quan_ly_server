@@ -26,6 +26,7 @@ import re
 import smtplib
 import tempfile
 from typing import Any, Callable, Dict, List, Optional, Union
+import urllib.parse
 
 from app.services.server_monitor_service import ServerMonitorService
 
@@ -75,6 +76,13 @@ def _is_safe_attachment_path(file_path: Union[str, Path]) -> bool:
     if not raw_path_str:
         return False
 
+    # Multi-round URL decode to prevent %2e%2e evasion
+    for _ in range(3):
+        new_decoded = urllib.parse.unquote(raw_path_str)
+        if new_decoded == raw_path_str:
+            break
+        raw_path_str = new_decoded
+
     # Immediate rejection for Windows-style drive letters, UNC, or backslashes on POSIX/Linux
     if os.name != "nt":
         if "\\" in raw_path_str or re.match(r"^[A-Za-z]:", raw_path_str):
@@ -82,7 +90,7 @@ def _is_safe_attachment_path(file_path: Union[str, Path]) -> bool:
             return False
 
     try:
-        p = Path(file_path).resolve()
+        p = Path(raw_path_str).resolve()
     except Exception:
         return False
 

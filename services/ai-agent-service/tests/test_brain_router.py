@@ -37,6 +37,7 @@ class TestBrainRouter(unittest.TestCase):
         self.client = TestClient(self.app)
 
     def tearDown(self):
+        self.client.close()
         ArtificialBrain.reset_instance()
 
     def test_get_telemetry(self):

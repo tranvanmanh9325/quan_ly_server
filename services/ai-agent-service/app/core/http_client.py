@@ -71,12 +71,20 @@ class HttpClientManager:
         """Clean shutdown of all pooled connection sockets."""
         if self._client is not None and not self._client.is_closed:
             logger.info("[HTTP-Client] Closing Shared AsyncClient...")
-            await self._client.aclose()
-            self._client = None
+            try:
+                await self._client.aclose()
+            except Exception as ex:
+                logger.debug("[HTTP-Client] Error closing Shared AsyncClient (possibly closed loop): %s", ex)
+            finally:
+                self._client = None
         if self._media_client is not None and not self._media_client.is_closed:
             logger.info("[HTTP-Client] Closing Media AsyncClient...")
-            await self._media_client.aclose()
-            self._media_client = None
+            try:
+                await self._media_client.aclose()
+            except Exception as ex:
+                logger.debug("[HTTP-Client] Error closing Media AsyncClient (possibly closed loop): %s", ex)
+            finally:
+                self._media_client = None
         logger.info("[HTTP-Client] All HTTP connection pools closed cleanly")
 
 

@@ -331,6 +331,10 @@ class TestFileTransferPortalAPI(unittest.TestCase):
     def setUpClass(cls):
         cls.client = TestClient(app)
 
+    @classmethod
+    def tearDownClass(cls):
+        cls.client.close()
+
     def setUp(self):
         self.test_dir = tempfile.mkdtemp(prefix="test_portal_api_")
         self.base_dir = Path(self.test_dir)

@@ -496,6 +496,7 @@ class TestEmpiricalDualDistributionAndHTTP206(unittest.TestCase):
         )
 
     def tearDown(self):
+        self.client.close()
         # Dọn dẹp bản ghi đã xuất bản
         token_dir = media_storage_manager.public_dir / self.record.token
         shutil.rmtree(token_dir, ignore_errors=True)

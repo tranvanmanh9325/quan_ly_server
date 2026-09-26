@@ -235,6 +235,7 @@ class TestFileTransferRouterIntegration(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
+        cls.client.close()
         transfer_storage_manager.base_dir = cls.orig_base_dir
         shutil.rmtree(cls.test_dir, ignore_errors=True)
 

@@ -25,7 +25,10 @@ from app.core.brain_core import (
     VN_TZ,
 )
 from app.services.ai_agent_tools import evaluate_spinal_safety_veto
-import pytest
+try:
+    import pytest
+except ImportError:
+    pytest = None
 
 
 

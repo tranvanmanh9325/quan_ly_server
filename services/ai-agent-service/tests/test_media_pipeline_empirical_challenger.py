@@ -469,6 +469,8 @@ class TestIPv4EnforcementAndYtDlpConfig(unittest.TestCase):
             # Kiểm tra thuộc tính local_address của transport pool
             pool = transport._pool
             self.assertEqual(pool._local_address, "0.0.0.0")
+            from app.core.http_client import http_client_manager
+            await http_client_manager.close()
         asyncio.run(run())
 
     def test_sync_ytdlp_download_options_and_limits(self):

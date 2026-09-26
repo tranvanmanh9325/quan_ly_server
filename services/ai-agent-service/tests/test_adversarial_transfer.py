@@ -90,6 +90,7 @@ class TestAdversarialRangeHeaders(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
+        cls.client.close()
         transfer_storage_manager.base_dir = cls.orig_base_dir
         shutil.rmtree(cls.test_dir, ignore_errors=True)
 
@@ -235,6 +236,7 @@ class TestPathTraversalAndInjection(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
+        cls.client.close()
         transfer_storage_manager.base_dir = cls.orig_base_dir
         shutil.rmtree(cls.test_dir, ignore_errors=True)
 
@@ -341,6 +343,7 @@ class TestConcurrencyRaceConditions(unittest.IsolatedAsyncioTestCase):
         self.client = TestClient(app)
 
     async def asyncTearDown(self):
+        self.client.close()
         transfer_storage_manager.base_dir = self.orig_base_dir
         shutil.rmtree(self.test_dir, ignore_errors=True)
 
@@ -470,6 +473,7 @@ class TestEdgeUploadsAndInterruptedStreams(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
+        cls.client.close()
         transfer_storage_manager.base_dir = cls.orig_base_dir
         shutil.rmtree(cls.test_dir, ignore_errors=True)
 

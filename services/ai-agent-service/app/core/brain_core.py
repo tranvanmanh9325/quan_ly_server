@@ -24,6 +24,7 @@ import math
 import mmap
 import os
 import struct
+import threading
 import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone, timedelta
@@ -958,25 +959,27 @@ class ArtificialBrain:
     """
 
     _instance: Optional[ArtificialBrain] = None
+    _lock: threading.RLock = threading.RLock()
 
     @classmethod
     def get_instance(cls, storage_dir: Optional[Path] = None) -> ArtificialBrain:
         """Singleton pattern ensuring all services share the exact same cognitive brain."""
-        if cls._instance is None:
-            env_cortex = os.getenv("CORTEX_STORAGE_DIR")
-            if env_cortex:
-                default_dir = Path(env_cortex)
-            elif storage_dir:
-                default_dir = storage_dir
-            elif Path("/app").exists() and os.access("/app", os.W_OK):
-                # Standard container root path (outside the git volume mount /app/app)
-                default_dir = Path("/app/cortex_data")
-            elif Path("/data/cortex").exists():
-                default_dir = Path("/data/cortex")
-            else:
-                default_dir = Path(__file__).resolve().parent.parent.parent / "cortex_storage"
-            cls._instance = cls(storage_dir=default_dir)
-        return cls._instance
+        with cls._lock:
+            if cls._instance is None:
+                env_cortex = os.getenv("CORTEX_STORAGE_DIR")
+                if env_cortex:
+                    default_dir = Path(env_cortex)
+                elif storage_dir:
+                    default_dir = storage_dir
+                elif Path("/app").exists() and os.access("/app", os.W_OK):
+                    # Standard container root path (outside the git volume mount /app/app)
+                    default_dir = Path("/app/cortex_data")
+                elif Path("/data/cortex").exists():
+                    default_dir = Path("/data/cortex")
+                else:
+                    default_dir = Path(__file__).resolve().parent.parent.parent / "cortex_storage"
+                cls._instance = cls(storage_dir=default_dir)
+            return cls._instance
 
     def __init__(self, storage_dir: Path) -> None:
         self.storage_dir = storage_dir
@@ -1001,12 +1004,13 @@ class ArtificialBrain:
     @classmethod
     def reset_instance(cls) -> None:
         """Safely closes and resets the shared singleton instance."""
-        if cls._instance is not None:
-            try:
-                cls._instance.close()
-            except Exception:
-                pass
-            cls._instance = None
+        with cls._lock:
+            if cls._instance is not None:
+                try:
+                    cls._instance.close()
+                except Exception:
+                    pass
+                cls._instance = None
 
     def close(self) -> None:
         """Flushes persistent state and cleanly closes the virtual cortex file."""

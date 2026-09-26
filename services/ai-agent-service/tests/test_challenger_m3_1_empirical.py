@@ -330,6 +330,7 @@ class TestChallengerM31EmpiricalSuite(unittest.IsolatedAsyncioTestCase):
             message_cache=self.mock_cache,
         )
         self.agent.memory_service = self.mock_memory_service
+        self.addCleanup(ArtificialBrain.reset_instance)
 
     # ──────────────────────────────────────────────────────────────────────────
     # SECTION 1: Adversarial Correction Detection & 5 Whys Classification

@@ -24,14 +24,12 @@ class TestBrainRouter(unittest.TestCase):
         self.storage_path = Path(self.temp_dir.name)
 
         # Safely close existing singleton if open
-        if ArtificialBrain._instance and hasattr(ArtificialBrain._instance, "cortex"):
-            try:
-                ArtificialBrain._instance.cortex.close()
-            except Exception:
-                pass
-        ArtificialBrain._instance = None
+        ArtificialBrain.reset_instance()
         self.brain = ArtificialBrain(storage_dir=self.storage_path)
         ArtificialBrain._instance = self.brain
+
+        self.addCleanup(ArtificialBrain.reset_instance)
+        self.addCleanup(self.temp_dir.cleanup)
 
         self.app = FastAPI()
         self.app.state.ai_agent = type("DummyAiAgent", (), {"brain": self.brain})()
@@ -39,13 +37,7 @@ class TestBrainRouter(unittest.TestCase):
         self.client = TestClient(self.app)
 
     def tearDown(self):
-        try:
-            if hasattr(self.brain, "cortex"):
-                self.brain.cortex.close()
-        except Exception:
-            pass
-        self.temp_dir.cleanup()
-        ArtificialBrain._instance = None
+        ArtificialBrain.reset_instance()
 
     def test_get_telemetry(self):
         """Test GET /api/ai/brain/telemetry returns all 6 neurochemicals and brain metrics."""

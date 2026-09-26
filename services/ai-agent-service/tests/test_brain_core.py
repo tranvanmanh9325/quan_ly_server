@@ -103,25 +103,25 @@ def test_virtual_memory_cortex_storage_and_recall(temp_cortex_dir):
     """Verifies storing into virtual memory (mmap) and zero-copy associative recall."""
     cortex_file = temp_cortex_dir / "test_hyper_cortex.bin"
     cortex = HyperdimensionalCortex(storage_path=cortex_file, max_capacity=100)
+    try:
+        # Store concepts
+        vec_ssh = cortex.encode_concept("Cổng SSH mặc định là 22 kết nối qua ngrok")
+        cortex.store_vector("ssh_port", vec_ssh, {"text": "Cổng SSH mặc định là 22 kết nối qua ngrok", "category": "network"})
 
-    # Store concepts
-    vec_ssh = cortex.encode_concept("Cổng SSH mặc định là 22 kết nối qua ngrok")
-    cortex.store_vector("ssh_port", vec_ssh, {"text": "Cổng SSH mặc định là 22 kết nối qua ngrok", "category": "network"})
+        vec_db = cortex.encode_concept("PostgreSQL 17 chạy trên port 5432")
+        cortex.store_vector("db_port", vec_db, {"text": "PostgreSQL 17 chạy trên port 5432", "category": "database"})
 
-    vec_db = cortex.encode_concept("PostgreSQL 17 chạy trên port 5432")
-    cortex.store_vector("db_port", vec_db, {"text": "PostgreSQL 17 chạy trên port 5432", "category": "database"})
+        assert cortex.vector_count == 2
 
-    assert cortex.vector_count == 2
-
-    # Associative query: query with similar phrasing
-    results = cortex.recall_nearest("Cổng SSH mặc định là 22 kết nối qua ngrok", top_k=1, threshold=0.90)
-    assert len(results) == 1
-    cid, sim, meta = results[0]
-    assert cid == "ssh_port"
-    assert sim >= 0.99
-    assert meta["category"] == "network"
-
-    cortex.close()
+        # Associative query: query with similar phrasing
+        results = cortex.recall_nearest("Cổng SSH mặc định là 22 kết nối qua ngrok", top_k=1, threshold=0.90)
+        assert len(results) == 1
+        cid, sim, meta = results[0]
+        assert cid == "ssh_port"
+        assert sim >= 0.99
+        assert meta["category"] == "network"
+    finally:
+        cortex.close()
 
 
 def test_global_workspace_lateral_inhibition():
@@ -144,33 +144,33 @@ def test_global_workspace_lateral_inhibition():
 def test_artificial_brain_full_lifecycle(temp_cortex_dir):
     """Verifies end-to-end integration of ArtificialBrain: Pulse, Interaction, and Prompt injection."""
     brain = ArtificialBrain(storage_dir=temp_cortex_dir)
+    try:
+        # 1. Innate knowledge is primed
+        assert brain.cortex.vector_count >= 4
 
-    # 1. Innate knowledge is primed
-    assert brain.cortex.vector_count >= 4
+        # 2. Step cognitive pulse with high CPU
+        signal = brain.step_pulse({"cpu_usage": 95.0, "ram_usage": 80.0})
+        assert signal is not None
+        assert "Cảnh báo sinh học" in signal.summary
+        assert brain.neuro.noradrenaline > 0.40
 
-    # 2. Step cognitive pulse with high CPU
-    signal = brain.step_pulse({"cpu_usage": 95.0, "ram_usage": 80.0})
-    assert signal is not None
-    assert "Cảnh báo sinh học" in signal.summary
-    assert brain.neuro.noradrenaline > 0.40
+        # 3. Perceive user interaction (positive)
+        brain.perceive_user_interaction("Tiểu Bảo Bảo làm việc rất tốt!", is_correction=False, task_success=True)
+        assert brain.neuro.dopamine > 0.55
+        assert len(brain.working_memory) == 2
 
-    # 3. Perceive user interaction (positive)
-    brain.perceive_user_interaction("Tiểu Bảo Bảo làm việc rất tốt!", is_correction=False, task_success=True)
-    assert brain.neuro.dopamine > 0.55
-    assert len(brain.working_memory) == 2
+        # 4. Sleep consolidation
+        consolidated = brain.consolidate_sleep_memories()
+        assert consolidated == 2
+        assert len(brain.working_memory) == 0
 
-    # 4. Sleep consolidation
-    consolidated = brain.consolidate_sleep_memories()
-    assert consolidated == 2
-    assert len(brain.working_memory) == 0
-
-    # 5. Cognitive prompt context string
-    prompt_ctx = brain.get_cognitive_prompt_context(user_query="Nhiệm vụ tối thượng của em là gì?")
-    assert "[🧠 TRẠNG THÁI NÃO BỘ NHẬN THỨC NỘI SINH - TIỂU BẢO BẢO]" in prompt_ctx
-    assert "Dopamine=" in prompt_ctx
-    assert "Free Energy" in prompt_ctx
-
-    brain.cortex.close()
+        # 5. Cognitive prompt context string
+        prompt_ctx = brain.get_cognitive_prompt_context(user_query="Nhiệm vụ tối thượng của em là gì?")
+        assert "[🧠 TRẠNG THÁI NÃO BỘ NHẬN THỨC NỘI SINH - TIỂU BẢO BẢO]" in prompt_ctx
+        assert "Dopamine=" in prompt_ctx
+        assert "Free Energy" in prompt_ctx
+    finally:
+        brain.close()
 
 
 def test_six_neurotransmitters_and_circumplex():
@@ -270,51 +270,52 @@ def test_circadian_pacemaker_24h():
 def test_adenosine_sleep_pressure_and_sws_flush(temp_cortex_dir):
     """Verifies Borbély Process S: Adenosine accumulates with wakefulness/activity and flushes in SWS."""
     brain = ArtificialBrain(storage_dir=temp_cortex_dir)
-    initial_adenosine = brain.neuro.adenosine
+    try:
+        initial_adenosine = brain.neuro.adenosine
 
-    # Activity accumulates sleep pressure
-    brain.perceive_user_interaction("Thao tác kiểm tra tải microservices", is_correction=False, task_success=True)
-    assert brain.neuro.adenosine > initial_adenosine
+        # Activity accumulates sleep pressure
+        brain.perceive_user_interaction("Thao tác kiểm tra tải microservices", is_correction=False, task_success=True)
+        assert brain.neuro.adenosine > initial_adenosine
 
-    brain.neuro.accumulate_adenosine(0.50)
-    high_adenosine = brain.neuro.adenosine
-    assert high_adenosine >= 0.50
+        brain.neuro.accumulate_adenosine(0.50)
+        high_adenosine = brain.neuro.adenosine
+        assert high_adenosine >= 0.50
 
-    # SWS consolidation flushes 85% of accumulated sleep pressure
-    brain.consolidate_sleep_memories()
-    assert brain.neuro.adenosine < high_adenosine
-    assert brain.neuro.adenosine <= high_adenosine * 0.20
-
-    brain.cortex.close()
+        # SWS consolidation flushes 85% of accumulated sleep pressure
+        brain.consolidate_sleep_memories()
+        assert brain.neuro.adenosine < high_adenosine
+        assert brain.neuro.adenosine <= high_adenosine * 0.20
+    finally:
+        brain.close()
 
 
 def test_synaptic_pruning_homeostasis(temp_cortex_dir):
     """Verifies Tononi Synaptic Homeostasis Hypothesis (SHY): Prunes weak synapses and protects pinned facts."""
     cortex_file = temp_cortex_dir / "prune_test_cortex.bin"
     cortex = HyperdimensionalCortex(storage_path=cortex_file, max_capacity=20)
+    try:
+        # 1. Pinned innate facts
+        v1 = cortex.encode_concept("Tiểu Bảo Bảo trung thành tuyệt đối với anh Mạnh")
+        cortex.store_vector("pinned_identity", v1, {"text": "Tiểu Bảo Bảo", "pinned": True, "salience": 1.0})
 
-    # 1. Pinned innate facts
-    v1 = cortex.encode_concept("Tiểu Bảo Bảo trung thành tuyệt đối với anh Mạnh")
-    cortex.store_vector("pinned_identity", v1, {"text": "Tiểu Bảo Bảo", "pinned": True, "salience": 1.0})
+        # 2. Ephemeral unpinned facts with varied salience
+        v2 = cortex.encode_concept("Nhiệt độ phòng máy chủ hôm nay là 26 độ")
+        cortex.store_vector("ephemeral_temp", v2, {"text": "26 độ", "pinned": False, "salience": 0.20})
 
-    # 2. Ephemeral unpinned facts with varied salience
-    v2 = cortex.encode_concept("Nhiệt độ phòng máy chủ hôm nay là 26 độ")
-    cortex.store_vector("ephemeral_temp", v2, {"text": "26 độ", "pinned": False, "salience": 0.20})
+        v3 = cortex.encode_concept("Quy trình sao lưu khẩn cấp dữ liệu SSD")
+        cortex.store_vector("important_backup", v3, {"text": "Backup", "pinned": False, "salience": 0.85})
 
-    v3 = cortex.encode_concept("Quy trình sao lưu khẩn cấp dữ liệu SSD")
-    cortex.store_vector("important_backup", v3, {"text": "Backup", "pinned": False, "salience": 0.85})
+        assert cortex.vector_count == 3
 
-    assert cortex.vector_count == 3
-
-    # Prune 1 weakest synapse
-    pruned = cortex.prune_weakest_synapses(num_to_prune=1)
-    assert len(pruned) == 1
-    assert pruned[0] == "ephemeral_temp"  # Lowest salience evicted!
-    assert "pinned_identity" in cortex.entry_index  # Pinned is protected!
-    assert "important_backup" in cortex.entry_index
-    assert cortex.pruned_synapses_count == 1
-
-    cortex.close()
+        # Prune 1 weakest synapse
+        pruned = cortex.prune_weakest_synapses(num_to_prune=1)
+        assert len(pruned) == 1
+        assert pruned[0] == "ephemeral_temp"  # Lowest salience evicted!
+        assert "pinned_identity" in cortex.entry_index  # Pinned is protected!
+        assert "important_backup" in cortex.entry_index
+        assert cortex.pruned_synapses_count == 1
+    finally:
+        cortex.close()
 
 
 def test_spinal_safety_veto_circuit_breaker():
@@ -348,55 +349,58 @@ def test_dream_engine_sws_and_epiphany(temp_cortex_dir):
     from app.services.dream_engine import SubconsciousDreamEngine
 
     brain = ArtificialBrain(storage_dir=temp_cortex_dir)
-    # Add dummy working memory
-    brain.perceive_user_interaction("Lưu ý tối ưu L3 Cache cho Nginx và Haswell", is_correction=False, task_success=True)
+    try:
+        # Add dummy working memory
+        brain.perceive_user_interaction("Lưu ý tối ưu L3 Cache cho Nginx và Haswell", is_correction=False, task_success=True)
 
-    class DummyLlmRouter:
-        async def complete(self, **kwargs):
-            return {
-                "choices": [{
-                    "message": {
-                        "content": '{"topic": "Tối ưu L3 Cache qua Zero-Copy", "insight": "Giảm tải 40% memory bus bằng mmap streaming.", "sisterly_note": "Em đã tối ưu xong, anh yên tâm ngủ ngon nhé!"}'
-                    }
-                }]
-            }
+        class DummyLlmRouter:
+            async def complete(self, **kwargs):
+                return {
+                    "choices": [{
+                        "message": {
+                            "content": '{"topic": "Tối ưu L3 Cache qua Zero-Copy", "insight": "Giảm tải 40% memory bus bằng mmap streaming.", "sisterly_note": "Em đã tối ưu xong, anh yên tâm ngủ ngon nhé!"}'
+                        }
+                    }]
+                }
 
-    class DummySshClient:
-        async def execute_command(self, cmd):
-            return "0.15 0.20 0.18 1/120 12345"
+        class DummySshClient:
+            async def execute_command(self, cmd):
+                return "0.15 0.20 0.18 1/120 12345"
 
-    dream = SubconsciousDreamEngine(
-        brain=brain,
-        llm_router=DummyLlmRouter(),
-        ssh_client=DummySshClient(),
-        storage_dir=temp_cortex_dir,
-    )
+        dream = SubconsciousDreamEngine(
+            brain=brain,
+            llm_router=DummyLlmRouter(),
+            ssh_client=DummySshClient(),
+            storage_dir=temp_cortex_dir,
+        )
 
-    # Test SWS consolidation
-    import asyncio
-    loop = asyncio.new_event_loop()
-    sws_res = loop.run_until_complete(dream.run_sws_cycle())
-    assert sws_res["phase"] == "SWS"
-    assert sws_res["consolidated_vectors"] == 1
-    assert len(brain.working_memory) == 0
-    assert "adenosine" in sws_res
+        # Test SWS consolidation
+        import asyncio
+        loop = asyncio.new_event_loop()
+        try:
+            sws_res = loop.run_until_complete(dream.run_sws_cycle())
+            assert sws_res["phase"] == "SWS"
+            assert sws_res["consolidated_vectors"] == 1
+            assert len(brain.working_memory) == 0
+            assert "adenosine" in sws_res
 
-    # Test REM dream generation
-    rem_res = loop.run_until_complete(dream.run_rem_dream_cycle(force=True))
-    assert rem_res is not None
-    assert rem_res["topic"] == "Tối ưu L3 Cache qua Zero-Copy"
-    assert dream.pending_morning_epiphany is not None
+            # Test REM dream generation
+            rem_res = loop.run_until_complete(dream.run_rem_dream_cycle(force=True))
+            assert rem_res is not None
+            assert rem_res["topic"] == "Tối ưu L3 Cache qua Zero-Copy"
+            assert dream.pending_morning_epiphany is not None
 
-    # Test pop_morning_epiphany during morning window
-    dream.is_morning_window = lambda: True
-    msg = dream.pop_morning_epiphany()
-    assert msg is not None
-    assert "Chào buổi sáng anh Mạnh!" in msg
-    assert "Tối ưu L3 Cache qua Zero-Copy" in msg
-    assert dream.pending_morning_epiphany is None  # Popped & consumed!
-
-    loop.close()
-    brain.cortex.close()
+            # Test pop_morning_epiphany during morning window
+            dream.is_morning_window = lambda: True
+            msg = dream.pop_morning_epiphany()
+            assert msg is not None
+            assert "Chào buổi sáng anh Mạnh!" in msg
+            assert "Tối ưu L3 Cache qua Zero-Copy" in msg
+            assert dream.pending_morning_epiphany is None  # Popped & consumed!
+        finally:
+            loop.close()
+    finally:
+        brain.close()
 
 
 if __name__ == "__main__":

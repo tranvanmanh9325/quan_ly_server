@@ -14,8 +14,13 @@ Exhaustively tests _is_valid_ngrok_url in network_service.py against:
 - Positive verification of legitimate ngrok tunnels (Zero False Positives)
 """
 
+import sys
+from pathlib import Path
 import unittest
 from typing import List, Tuple
+
+# Ensure services/ai-agent-service is in sys.path for unittest discovery without preset PYTHONPATH
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.services.network_service import _is_valid_ngrok_url, is_valid_ngrok_url
 

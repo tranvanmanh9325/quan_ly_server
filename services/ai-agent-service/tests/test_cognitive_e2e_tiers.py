@@ -97,9 +97,11 @@ class TestTier1FeatureCoverage(unittest.IsolatedAsyncioTestCase):
         self.agent = _create_mock_ai_agent()
         self.temp_dir = tempfile.TemporaryDirectory()
         self.storage_path = Path(self.temp_dir.name)
+        self.addCleanup(ArtificialBrain.reset_instance)
 
     def tearDown(self):
         self.temp_dir.cleanup()
+        ArtificialBrain.reset_instance()
 
     # ── Feature 1: Kahneman 3-Tier Gating & Metacognitive Stream ──
 
@@ -458,9 +460,11 @@ class TestTier2BoundaryAndCornerCases(unittest.IsolatedAsyncioTestCase):
         self.agent = _create_mock_ai_agent()
         self.temp_dir = tempfile.TemporaryDirectory()
         self.storage_path = Path(self.temp_dir.name)
+        self.addCleanup(ArtificialBrain.reset_instance)
 
     def tearDown(self):
         self.temp_dir.cleanup()
+        ArtificialBrain.reset_instance()
 
     # ── Feature 1 Boundary: Kahneman Gating Extreme Edges ──
 
@@ -747,9 +751,11 @@ class TestTier3CrossFeatureCombinations(unittest.IsolatedAsyncioTestCase):
         self.agent = _create_mock_ai_agent()
         self.temp_dir = tempfile.TemporaryDirectory()
         self.storage_path = Path(self.temp_dir.name)
+        self.addCleanup(ArtificialBrain.reset_instance)
 
     def tearDown(self):
         self.temp_dir.cleanup()
+        ArtificialBrain.reset_instance()
 
     def test_t3_comb_01_gating_and_spinal_veto_dual_interlock(self):
         """Kahneman Gating (L1) and Spinal Safety Veto (L2) form a dual-layer interlock on lethal ops."""
@@ -835,9 +841,11 @@ class TestTier4RealWorldApplicationScenarios(unittest.IsolatedAsyncioTestCase):
         self.agent = _create_mock_ai_agent()
         self.temp_dir = tempfile.TemporaryDirectory()
         self.storage_path = Path(self.temp_dir.name)
+        self.addCleanup(ArtificialBrain.reset_instance)
 
     def tearDown(self):
         self.temp_dir.cleanup()
+        ArtificialBrain.reset_instance()
 
     async def test_t4_scenario_01_sre_incident_debugging_and_oom_recovery(self):
         """Scenario 1: SRE Incident - OOM kill diagnosed, 5 Whys root cause, and 3.2GB RAM mitigation."""

@@ -105,6 +105,7 @@ class TestChallengerM32Empirical(unittest.IsolatedAsyncioTestCase):
             self.neuro.BASELINES["acetylcholine"] = 0.30
         if hasattr(self.neuro, "HALF_LIVES") and isinstance(self.neuro.HALF_LIVES, dict):
             self.neuro.HALF_LIVES["acetylcholine"] = 180.0
+        self.addCleanup(ArtificialBrain.reset_instance)
 
     # ──────────────────────────────────────────────────────────────────────────
     # GROUP 1: EMPIRICAL HEBBIAN LTP (LONG-TERM POTENTIATION) TESTS

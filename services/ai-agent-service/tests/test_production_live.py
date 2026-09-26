@@ -149,8 +149,7 @@ async def run_production_verification():
     # Phase 6: Persistence Across Brain Re-Instantiation
     # ──────────────────────────────────────────────────────────────────────────
     print("\n[Phase 6] Kiểm tra tính bền vững (Persistence) qua khởi động lại...")
-    brain.cortex.close()
-    ArtificialBrain._instance = None  # Reset singleton to simulate cold reboot
+    ArtificialBrain.reset_instance()  # Reset singleton to simulate cold reboot
 
     new_brain = ArtificialBrain.get_instance(storage_dir=storage_path.parent)
     assert new_brain.cortex.vector_count >= 5, "Cortex vectors must persist after restart"
@@ -205,6 +204,9 @@ async def run_production_verification():
 
     assert len(reply) > 50, "Reply must be a substantive response"
     assert "anh Mạnh" in reply or "Mạnh" in reply, "Persona must address user properly"
+
+    # Clean up brain instance and virtual memory mapping
+    ArtificialBrain.reset_instance()
 
     print("\n" + "=" * 70)
     print("✅ TẤT CẢ 7 PHÂN HỆ PRODUCT VERIFICATION ĐÃ VƯỢT QUA VỚI ĐIỂM SỐ 100%!")

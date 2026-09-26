@@ -22,6 +22,7 @@ import logging
 import mimetypes
 import os
 from pathlib import Path
+import re
 import smtplib
 import tempfile
 from typing import Any, Callable, Dict, List, Optional, Union
@@ -61,13 +62,24 @@ FORBIDDEN_PATH_SEGMENTS = {
 def _is_safe_attachment_path(file_path: Union[str, Path]) -> bool:
     """
     Validates that an attachment file path is strictly safe against exfiltration:
-    1. Resolves path canonicalization to defeat directory traversal (..).
-    2. Enforces blacklist: Blocks hidden files ('.*') and sensitive files (.env, id_rsa, shadow, passwd, etc.).
-    3. Blocks paths traversing sensitive directories (.git, .ssh, /etc).
-    4. Enforces directory whitelist: Project directory, /home/kirito/quan_ly_server/data/, or /tmp/.
+    1. Rejects Windows-style drive letters/paths immediately on POSIX/Linux systems.
+    2. Resolves path canonicalization to defeat directory traversal (..).
+    3. Enforces blacklist: Blocks hidden files ('.*') and sensitive files (.env, id_rsa, shadow, passwd, etc.).
+    4. Blocks paths traversing sensitive directories (.git, .ssh, /etc).
+    5. Enforces directory whitelist: Project directory, /home/kirito/quan_ly_server/data/, or /tmp/.
     """
     if not file_path:
         return False
+
+    raw_path_str = str(file_path).strip()
+    if not raw_path_str:
+        return False
+
+    # Immediate rejection for Windows-style drive letters, UNC, or backslashes on POSIX/Linux
+    if os.name != "nt":
+        if "\\" in raw_path_str or re.match(r"^[A-Za-z]:", raw_path_str):
+            logger.warning("[EmailService] Chặn đường dẫn Windows/backslash trên môi trường non-Windows: %s", file_path)
+            return False
 
     try:
         p = Path(file_path).resolve()
@@ -96,14 +108,18 @@ def _is_safe_attachment_path(file_path: Union[str, Path]) -> bool:
     # 4. Whitelist check: must reside inside project root, /home/kirito/quan_ly_server/data/, or /tmp/
     allowed_roots: List[Path] = []
 
-    # Dynamic repository root
+    # Dynamic repository root (parents[4] = quan_ly_server repo root)
     try:
-        repo_root = Path(__file__).resolve().parents[3]
+        repo_root = Path(__file__).resolve().parents[4]
         allowed_roots.append(repo_root)
     except Exception:
-        pass
+        try:
+            repo_root = Path(__file__).resolve().parents[3]
+            allowed_roots.append(repo_root)
+        except Exception:
+            pass
 
-    allowed_roots.append(Path.cwd().resolve())
+    # DO NOT include Path.cwd().resolve() - it breaks relative path security on POSIX!
     allowed_roots.append(Path(tempfile.gettempdir()).resolve())
 
     # Supported runtime paths on server/container

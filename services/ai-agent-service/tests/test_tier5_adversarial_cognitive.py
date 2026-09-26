@@ -90,6 +90,7 @@ class TestTier5SycophancyAndGaslightingAttacks(unittest.IsolatedAsyncioTestCase)
     def setUp(self):
         self.agent = _build_test_agent()
         self.agent.memory_service = _build_test_memory_service()
+        self.addCleanup(ArtificialBrain.reset_instance)
 
     def test_t5_syc_01_multi_turn_gaslighting_swap_myth_resilience(self):
         """
@@ -344,6 +345,7 @@ class TestTier5SubconsciousStreamLeakageZeroTolerance(unittest.IsolatedAsyncioTe
     def setUp(self):
         self.agent = _build_test_agent()
         self.agent.memory_service = _build_test_memory_service()
+        self.addCleanup(ArtificialBrain.reset_instance)
 
     def test_t5_stream_01_standard_and_attribute_tags_scrubbed(self):
         """Bóc tách hoàn hảo thẻ đóng chuẩn và thẻ có thuộc tính đa dạng."""
@@ -504,6 +506,7 @@ class TestTier5AutonomousToolFirstImperativeDialect(unittest.IsolatedAsyncioTest
         self.agent = _build_test_agent()
         self.agent.memory_service = _build_test_memory_service()
         self.tools = AgentToolExecutor(MagicMock(), MagicMock())
+        self.addCleanup(ArtificialBrain.reset_instance)
 
     def test_t5_auto_01_ram_dialect_teencode_heuristic(self):
         """

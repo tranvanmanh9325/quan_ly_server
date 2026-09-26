@@ -152,6 +152,15 @@ class TestEmailReportServiceEmail(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(_is_safe_attachment_path("/etc/passwd"))
         self.assertFalse(_is_safe_attachment_path(".git/config"))
         self.assertFalse(_is_safe_attachment_path("C:\\Windows\\System32\\cmd.exe"))
+        # Adversarial cross-platform path traversal & UNC bypass vectors
+        self.assertFalse(_is_safe_attachment_path(r"\..\..\Windows"))
+        self.assertFalse(_is_safe_attachment_path(r"\Windows\System32\cmd.exe"))
+        self.assertFalse(_is_safe_attachment_path(r"\etc\hosts"))
+        self.assertFalse(_is_safe_attachment_path(r"\\localhost\c$\Windows\win.ini"))
+        self.assertFalse(_is_safe_attachment_path(r"\\127.0.0.1\c$\Windows\win.ini"))
+        self.assertFalse(_is_safe_attachment_path("C:cmd.exe"))
+        self.assertFalse(_is_safe_attachment_path("C:../Windows/win.ini"))
+        self.assertFalse(_is_safe_attachment_path(r"\bootmgr"))
 
     @patch("smtplib.SMTP")
     async def test_send_email_blocks_sensitive_attachments(self, mock_smtp_cls):

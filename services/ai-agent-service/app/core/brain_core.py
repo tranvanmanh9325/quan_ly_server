@@ -551,6 +551,18 @@ class HyperdimensionalCortex:
                 pass
             self._file_obj = None
 
+    def __enter__(self) -> HyperdimensionalCortex:
+        return self
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        self.close()
+
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except Exception:
+            pass
+
     def _persist_metadata(self) -> None:
         """Saves metadata index to sidecar file for rapid identification."""
         meta_file = self.storage_path.with_suffix(".meta.json")
@@ -985,6 +997,36 @@ class ArtificialBrain:
         self._prime_innate_knowledge()
         # Restore persistent neurochemical state and pulses if saved
         self._load_state()
+
+    @classmethod
+    def reset_instance(cls) -> None:
+        """Safely closes and resets the shared singleton instance."""
+        if cls._instance is not None:
+            try:
+                cls._instance.close()
+            except Exception:
+                pass
+            cls._instance = None
+
+    def close(self) -> None:
+        """Flushes persistent state and cleanly closes the virtual cortex file."""
+        if hasattr(self, "cortex") and self.cortex:
+            try:
+                self.cortex.close()
+            except Exception:
+                pass
+
+    def __enter__(self) -> ArtificialBrain:
+        return self
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        self.close()
+
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except Exception:
+            pass
 
     def _save_state(self) -> None:
         """Persists neurochemical state, pulse counter, and working memory to disk."""

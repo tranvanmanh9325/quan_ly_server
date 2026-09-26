@@ -27,6 +27,7 @@ import json
 import socket
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
+import urllib.parse
 import httpx
 
 from app.services.network_service import (
@@ -34,6 +35,8 @@ from app.services.network_service import (
     get_ngrok_status,
     restart_ngrok_tunnel,
     get_network_info,
+    _is_valid_ngrok_url,
+    is_valid_ngrok_url,
 )
 
 
@@ -357,9 +360,10 @@ class TestNetworkServiceNetworkInfo(unittest.IsolatedAsyncioTestCase):
         mock_sock_cls.return_value.__enter__.return_value = mock_sock
 
         async def mock_api_fallback(url, **kwargs):
-            if "ipinfo.io" in str(url):
+            host = (urllib.parse.urlparse(str(url)).hostname or "").lower()
+            if host in ("ipinfo.io", "www.ipinfo.io"):
                 raise httpx.ConnectTimeout("ipinfo timeout")
-            elif "api.ipify.org" in str(url):
+            elif host in ("api.ipify.org", "www.api.ipify.org"):
                 r = MagicMock()
                 r.status_code = 200
                 r.json.return_value = {"ip": "118.71.62.215"}
@@ -403,6 +407,49 @@ class TestNetworkServiceNetworkInfo(unittest.IsolatedAsyncioTestCase):
         res = await self.service.get_network_info()
         self.assertEqual(res["status"], "success")
         self.assertEqual(res["internal_ip"], "192.168.0.150")
+
+
+class TestNgrokUrlValidation(unittest.TestCase):
+    """Comprehensive security and contract tests for _is_valid_ngrok_url (CWE-184 prevention)."""
+
+    def test_valid_legitimate_ngrok_urls(self):
+        valid_cases = [
+            "https://dashboard.ngrok-free.app",
+            "https://api.ngrok-free.app",
+            "https://new-url-123.ngrok-free.app",
+            "https://discovered-subdomain.ngrok-free.dev",
+            "tcp://0.tcp.ap.ngrok.io:22222",
+            "tcp://0.tcp.ngrok.io:12345",
+            "https://inst1.ngrok.io",
+            "https://custom-name.ngrok.app",
+            "http://sub.ngrok.io:8080",
+        ]
+        for u in valid_cases:
+            self.assertTrue(_is_valid_ngrok_url(u), f"Expected {u} to be valid")
+            self.assertTrue(is_valid_ngrok_url(u), f"Expected {u} to be valid via public alias")
+
+    def test_adversarial_bypass_attempts_rejected(self):
+        attack_vectors = [
+            "https://ngrok.io.attacker.com",
+            "https://attacker-ngrok.io",
+            "https://attacker.com/ngrok.io",
+            "https://attacker.com?q=ngrok.io",
+            "https://ngrok-free.app.evil.com",
+            "https://evil-ngrok-free.app",
+            "javascript:alert(1)//ngrok.io",
+            "ftp://dashboard.ngrok-free.app",
+            "data:text/html,ngrok.io",
+            "",
+            None,
+            "not a url",
+            "https://",
+        ]
+        for evil_url in attack_vectors:
+            self.assertFalse(_is_valid_ngrok_url(evil_url), f"Expected {evil_url} to be blocked")
+
+    def test_scheme_restriction(self):
+        self.assertTrue(_is_valid_ngrok_url("https://acc1.ngrok-free.app", allowed_schemes=("https",)))
+        self.assertFalse(_is_valid_ngrok_url("tcp://0.tcp.ngrok.io:12345", allowed_schemes=("https",)))
 
 
 if __name__ == "__main__":

@@ -24,6 +24,8 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import urllib.parse
 import urllib.request
 
+from app.services.network_service import _is_valid_ngrok_url
+
 logger = logging.getLogger(__name__)
 
 # Configurable storage root path with fallback to standard /tmp overlayfs
@@ -141,7 +143,7 @@ class MediaStorageManager:
                         data = json.loads(out)
                         for t in data.get("tunnels", []):
                             pub_url = t.get("public_url", "")
-                            if pub_url.startswith("https://") and ("ngrok" in pub_url):
+                            if _is_valid_ngrok_url(pub_url, allowed_schemes=("https",)):
                                 return pub_url.rstrip("/")
                 except Exception:
                     continue
@@ -208,7 +210,7 @@ class MediaStorageManager:
                             data = json.loads(resp.read().decode("utf-8"))
                             for tunnel in data.get("tunnels", []):
                                 pub_url = tunnel.get("public_url", "")
-                                if pub_url.startswith("https://") and ("ngrok" in pub_url):
+                                if _is_valid_ngrok_url(pub_url, allowed_schemes=("https",)):
                                     _cached_internet_url = pub_url.rstrip("/")
                                     _cached_url_timestamp = now
                                     logger.info(

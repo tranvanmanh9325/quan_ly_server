@@ -16,7 +16,8 @@ import json
 import logging
 import re
 import socket
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
+import urllib.parse
 import httpx
 
 from app.core.ssh_client import SshClient
@@ -28,6 +29,74 @@ VN_TZ = timezone(timedelta(hours=7))
 NGROK_DEFAULT_PORTS: List[int] = [4040, 4041, 4042, 4043, 4044]
 NGROK_CONFIRM_TOKEN: str = "RESTART_CONFIRMED"
 TUNNEL_NAME_REGEX: re.Pattern = re.compile(r"^[a-zA-Z0-9_\-]+$")
+
+ALLOWED_NGROK_DOMAINS: Tuple[str, ...] = (
+    "ngrok.io",
+    "ngrok-free.app",
+    "ngrok.app",
+    "ngrok-free.dev",
+    "ngrok.dev",
+)
+
+ALLOWED_NGROK_SCHEMES: Tuple[str, ...] = ("https", "http", "tcp")
+
+
+DNS_LABEL_REGEX: re.Pattern = re.compile(
+    r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$"
+)
+
+
+def _is_valid_ngrok_url(
+    url: Optional[str],
+    allowed_schemes: Optional[Tuple[str, ...]] = ALLOWED_NGROK_SCHEMES,
+) -> bool:
+    """
+    RFC 3986-compliant Ngrok URL validation eliminating CodeQL CWE-184,
+    WHATWG parser differentials, and invalid port exceptions.
+    """
+    if not url or not isinstance(url, str):
+        return False
+
+    clean_url = url.strip()
+    if not clean_url:
+        return False
+
+    # Block backslashes, null bytes, and unescaped whitespace to eliminate WHATWG differentials
+    if any(c in clean_url for c in ("\\", "\t", "\r", "\n", " ", "\x00")):
+        return False
+
+    try:
+        parsed = urllib.parse.urlparse(clean_url)
+    except Exception:
+        return False
+
+    if allowed_schemes:
+        if not parsed.scheme or parsed.scheme.lower() not in allowed_schemes:
+            return False
+
+    # Validate port bounds and catch malformed ports
+    try:
+        if parsed.port is not None:
+            if not (1 <= parsed.port <= 65535):
+                return False
+    except (ValueError, TypeError):
+        return False
+
+    hostname = (parsed.hostname or "").lower()
+    if not hostname:
+        return False
+
+    # Validate hostname conformity against DNS labels (rejects invalid chars & encodings)
+    if not DNS_LABEL_REGEX.match(hostname):
+        return False
+
+    return any(
+        hostname == domain or hostname.endswith("." + domain)
+        for domain in ALLOWED_NGROK_DOMAINS
+    )
+
+
+is_valid_ngrok_url = _is_valid_ngrok_url
 
 EXTERNAL_IP_APIS: List[str] = [
     "https://ipinfo.io/json",

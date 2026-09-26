@@ -493,12 +493,12 @@ class AgentToolExecutor:
     _TOOL_CLUSTER_CORE = {
         "run_command",
         "get_system_health_report",
-        "calculate",
         "get_weather",
-        "browser_search_google",
+        "get_server_location",
         "download_media_video",
+        "download_media_audio",
         "create_file_transfer_portal",
-        "schedule_reminder",
+        "browser_search_google",
     }
 
     _SHORT_SERVER_RE = re.compile(r"\b(ip|top|df|free|port|load|log|ps|ram|cpu|ssh|swap)\b", re.IGNORECASE)
@@ -510,7 +510,7 @@ class AgentToolExecutor:
         re.IGNORECASE,
     )
     _SHORT_SERVER_HEALTH_RE = re.compile(
-        r"\b(sức khỏe|suc khoe|health|health report|tail log|service log|restart service|check service|reboot service)\b",
+        r"\b(sức khỏe|suc khoe|health|health report|tail log|service log|restart service|check service|reboot service|dịch vụ|dich vu|systemctl|đang active|active không|is-active|service status)\b",
         re.IGNORECASE,
     )
     _SHORT_NOTES_RE = re.compile(
@@ -618,7 +618,7 @@ class AgentToolExecutor:
         is_server = bool(self._SHORT_SERVER_RE.search(q)) or any(k in q for k in (
             "server", "máy chủ", "bộ nhớ", "ổ đĩa", "dung lượng",
             "docker", "container", "tiến trình", "process", "htop", "cortex",
-            "trạng thái", "kiểm tra", "vị trí", "đăng nhập", "session", "reboot", "uptime", "sức khỏe",
+            "trạng thái", "kiểm tra", "vị trí", "đăng nhập", "session", "phiên", "phiên kết nối", "phiên làm việc", "reboot", "uptime", "sức khỏe",
             "bật bao lâu", "mở bao lâu", "chạy bao lâu", "hoạt động bao lâu", "máy đã bật", "máy em"
         ))
 
@@ -672,7 +672,9 @@ class AgentToolExecutor:
             "sức khỏe", "suc khoe", "health", "system health", "service status", "check service",
             "restart service", "tail service logs", "container health", "docker status",
             "bựa ni máy chủ răng", "máy chủ răng", "có đầy đĩa k", "đầy đĩa", "đầy đĩa không",
-            "kiểm tra sức khỏe", "kiem tra suc khoe"
+            "kiểm tra sức khỏe", "kiem tra suc khoe",
+            "dịch vụ", "dich vu", "trạng thái dịch vụ", "systemctl",
+            "đang active", "active không", "is-active", "service status"
         ))
 
         is_notes = False
@@ -795,8 +797,9 @@ class AgentToolExecutor:
             selected.update(self._TOOL_CLUSTER_CORE)
 
         # Priority Pruning: Enforce strict token budget (max 6 tools when archive/facebook present, else max 8)
-        has_heavy_cluster = bool(
-            is_archive or is_fb or (selected & (self._TOOL_CLUSTER_ARCHIVE | self._TOOL_CLUSTER_FACEBOOK))
+        is_facebook = is_fb
+        has_heavy_cluster = is_archive or is_facebook or bool(
+            selected & ((self._TOOL_CLUSTER_ARCHIVE - {"run_command"}) | self._TOOL_CLUSTER_FACEBOOK)
         )
         max_tools = 6 if has_heavy_cluster else 8
 
@@ -815,6 +818,7 @@ class AgentToolExecutor:
                 *(["get_ngrok_status", "get_network_info"] if is_network else []),
                 *(["create_note", "search_notes"] if is_notes else []),
                 *(["create_cron_job", "list_cron_jobs"] if is_cron else []),
+                *(["recover_archive_password", "extract_archive_file"] if (is_archive and any(k in q for k in ("mật khẩu", "password", "pass", "crack", "bẻ khóa", "khôi phục"))) else ["extract_archive_file", "read_archive_file"] if is_archive else []),
                 *(["move_or_rename_file"] if (is_file_manager and is_rename_or_move) else ["write_file_content"] if (is_file_manager and is_write) else ["get_disk_usage"] if (is_file_manager and is_disk) else ["list_files", "read_file_content"] if is_file_manager else []),
                 *(["download_media_video"] if is_media and not is_audio else []),
                 *(["download_media_audio"] if is_audio else []),

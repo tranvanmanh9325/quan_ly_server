@@ -473,6 +473,103 @@ class TestAdversarialWindowsUNCAndDriveLetters(unittest.IsolatedAsyncioTestCase)
                     f"UNC path '{up}' was not blocked in sandbox! Result: {res}",
                 )
 
+    async def test_windows_drive_letters_write_in_sandbox(self):
+        """Verifies write_file_content blocks Windows drive paths in sandbox mode."""
+        drive_paths = [
+            "C:/Windows/win.ini",
+            r"C:\Windows\System32\cmd.exe",
+            "D:/etc/passwd",
+            r"D:\boot.ini",
+            "E:/sensitive_data.txt",
+        ]
+        for dp in drive_paths:
+            with self.subTest(drive_path=dp):
+                res = await self.file_svc.write_file_content(dp, "malicious payload")
+                self.assertEqual(
+                    res.get("status"),
+                    "security_veto",
+                    f"Windows drive write '{dp}' was not vetoed! Result: {res}",
+                )
+
+    async def test_windows_drive_letters_list_in_sandbox(self):
+        """Verifies list_files blocks Windows drive paths in sandbox mode."""
+        drive_paths = [
+            "C:/Windows/",
+            r"C:\Windows\System32",
+            "D:/etc",
+            r"D:\boot",
+            "E:/data",
+        ]
+        for dp in drive_paths:
+            with self.subTest(drive_path=dp):
+                res = await self.file_svc.list_files(dp)
+                self.assertEqual(
+                    res.get("status"),
+                    "security_veto",
+                    f"Windows drive list '{dp}' was not vetoed! Result: {res}",
+                )
+
+    async def test_windows_drive_letters_in_host_mode(self):
+        """Verifies read, write, and list block Windows drive paths in host mode (base_dir=None)."""
+        host_svc = FileManagerService(ssh_client=MockSshClient(), base_dir=None)
+        drive_paths = [
+            "C:/Windows/win.ini",
+            "D:/etc/passwd",
+            r"D:\boot.ini",
+            "E:/sensitive_data.txt",
+        ]
+        for dp in drive_paths:
+            with self.subTest(drive_path=dp, op="read"):
+                res_r = await host_svc.read_file_content(dp)
+                self.assertEqual(res_r.get("status"), "security_veto")
+
+            with self.subTest(drive_path=dp, op="write"):
+                res_w = await host_svc.write_file_content(dp, "data")
+                self.assertEqual(res_w.get("status"), "security_veto")
+
+            with self.subTest(drive_path=dp, op="list"):
+                res_l = await host_svc.list_files(dp)
+                self.assertEqual(res_l.get("status"), "security_veto")
+
+    async def test_unc_paths_write_and_list_in_sandbox(self):
+        """Verifies write and list block UNC paths in sandbox mode."""
+        unc_paths = [
+            r"\\192.168.1.1\share\secret.txt",
+            "//192.168.1.1/share/secret.txt",
+            r"\\server\share\sub",
+            "//server/share/sub",
+        ]
+        for up in unc_paths:
+            with self.subTest(unc_path=up, op="write"):
+                res_w = await self.file_svc.write_file_content(up, "payload")
+                self.assertIn(res_w.get("status"), ("security_veto", "error"))
+
+            with self.subTest(unc_path=up, op="list"):
+                res_l = await self.file_svc.list_files(up)
+                self.assertIn(res_l.get("status"), ("security_veto", "error"))
+
+    async def test_unc_paths_in_host_mode(self):
+        """Verifies read, write, and list block UNC paths in host mode."""
+        host_svc = FileManagerService(ssh_client=MockSshClient(), base_dir=None)
+        unc_paths = [
+            r"\\192.168.1.1\share\secret.txt",
+            "//192.168.1.1/share/secret.txt",
+            r"\\server\share\sub",
+            "//server/share/sub",
+        ]
+        for up in unc_paths:
+            with self.subTest(unc_path=up, op="read"):
+                res_r = await host_svc.read_file_content(up)
+                self.assertIn(res_r.get("status"), ("security_veto", "error"))
+
+            with self.subTest(unc_path=up, op="write"):
+                res_w = await host_svc.write_file_content(up, "data")
+                self.assertIn(res_w.get("status"), ("security_veto", "error"))
+
+            with self.subTest(unc_path=up, op="list"):
+                res_l = await host_svc.list_files(up)
+                self.assertIn(res_l.get("status"), ("security_veto", "error"))
+
 
 if __name__ == "__main__":
     unittest.main()

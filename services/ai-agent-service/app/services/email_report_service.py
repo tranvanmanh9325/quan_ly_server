@@ -83,9 +83,16 @@ def _is_safe_attachment_path(file_path: Union[str, Path]) -> bool:
             break
         raw_path_str = new_decoded
 
+    canonical = raw_path_str.replace("\\", "/")
+
+    # Immediate rejection for UNC network share paths (prevents Windows SMB negotiation hang and NTLM leaks)
+    if canonical.startswith("//"):
+        logger.warning("[EmailService] Chặn đường dẫn UNC network share: %s", file_path)
+        return False
+
     # Immediate rejection for Windows-style drive letters, UNC, or backslashes on POSIX/Linux
     if os.name != "nt":
-        if "\\" in raw_path_str or re.match(r"^[A-Za-z]:", raw_path_str):
+        if "\\" in raw_path_str or re.match(r"^[A-Za-z]:(/|\.\.|$)", canonical):
             logger.warning("[EmailService] Chặn đường dẫn Windows/backslash trên môi trường non-Windows: %s", file_path)
             return False
 

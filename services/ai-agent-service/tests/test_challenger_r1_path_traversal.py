@@ -481,6 +481,11 @@ class TestAdversarialWindowsUNCAndDriveLetters(unittest.IsolatedAsyncioTestCase)
             "D:/etc/passwd",
             r"D:\boot.ini",
             "E:/sensitive_data.txt",
+            "C:cmd.exe",
+            "C:../Windows/win.ini",
+            "D:cmd.exe",
+            "D:../sensitive.txt",
+            "%43%3acmd.exe",
         ]
         for dp in drive_paths:
             with self.subTest(drive_path=dp):
@@ -499,6 +504,10 @@ class TestAdversarialWindowsUNCAndDriveLetters(unittest.IsolatedAsyncioTestCase)
             "D:/etc",
             r"D:\boot",
             "E:/data",
+            "C:cmd.exe",
+            "D:cmd.exe",
+            "C:../Windows/win.ini",
+            "%43%3acmd.exe",
         ]
         for dp in drive_paths:
             with self.subTest(drive_path=dp):
@@ -517,6 +526,11 @@ class TestAdversarialWindowsUNCAndDriveLetters(unittest.IsolatedAsyncioTestCase)
             "D:/etc/passwd",
             r"D:\boot.ini",
             "E:/sensitive_data.txt",
+            "C:cmd.exe",
+            "C:../Windows/win.ini",
+            "D:cmd.exe",
+            "D:../sensitive.txt",
+            "%43%3acmd.exe",
         ]
         for dp in drive_paths:
             with self.subTest(drive_path=dp, op="read"):
@@ -570,7 +584,31 @@ class TestAdversarialWindowsUNCAndDriveLetters(unittest.IsolatedAsyncioTestCase)
                 res_l = await host_svc.list_files(up)
                 self.assertIn(res_l.get("status"), ("security_veto", "error"))
 
+    async def test_null_byte_injection_vetoed(self):
+        """Verifies raw and URL-encoded null bytes are rejected across sandbox and host modes."""
+        null_payloads = [
+            "/home/kirito/file\0.txt",
+            "/home/kirito/safe.txt%00.env",
+            "test\0.txt",
+            "%00payload.bin",
+            "safe.txt\x00.php",
+        ]
+        host_svc = FileManagerService(ssh_client=MockSshClient(), base_dir=None)
+        for np in null_payloads:
+            with self.subTest(null_path=np, mode="sandbox"):
+                res_sb_r = await self.file_svc.read_file_content(np)
+                self.assertIn(res_sb_r.get("status"), ("security_veto", "error"))
+                res_sb_w = await self.file_svc.write_file_content(np, "data")
+                self.assertIn(res_sb_w.get("status"), ("security_veto", "error"))
+
+            with self.subTest(null_path=np, mode="host"):
+                res_h_r = await host_svc.read_file_content(np)
+                self.assertIn(res_h_r.get("status"), ("security_veto", "error"))
+                res_h_w = await host_svc.write_file_content(np, "data")
+                self.assertIn(res_h_w.get("status"), ("security_veto", "error"))
+
 
 if __name__ == "__main__":
     unittest.main()
+
 

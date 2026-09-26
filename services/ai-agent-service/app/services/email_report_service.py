@@ -73,7 +73,7 @@ def _is_safe_attachment_path(file_path: Union[str, Path]) -> bool:
         return False
 
     raw_path_str = str(file_path).strip()
-    if not raw_path_str:
+    if not raw_path_str or "\0" in raw_path_str:
         return False
 
     # Multi-round URL decode to prevent %2e%2e evasion
@@ -83,6 +83,9 @@ def _is_safe_attachment_path(file_path: Union[str, Path]) -> bool:
             break
         raw_path_str = new_decoded
 
+    if not raw_path_str or "\0" in raw_path_str:
+        return False
+
     canonical = raw_path_str.replace("\\", "/")
 
     # Immediate rejection for UNC network share paths (prevents Windows SMB negotiation hang and NTLM leaks)
@@ -90,9 +93,14 @@ def _is_safe_attachment_path(file_path: Union[str, Path]) -> bool:
         logger.warning("[EmailService] Chặn đường dẫn UNC network share: %s", file_path)
         return False
 
+    # Immediate rejection for Windows drive-relative paths (e.g. C:cmd.exe, D:file.txt) cross-platform
+    if re.match(r"^[A-Za-z]:(?![/\\])", raw_path_str):
+        logger.warning("[EmailService] Chặn đường dẫn Windows drive-relative: %s", file_path)
+        return False
+
     # Immediate rejection for Windows-style drive letters, UNC, or backslashes on POSIX/Linux
     if os.name != "nt":
-        if "\\" in raw_path_str or re.match(r"^[A-Za-z]:(/|\.\.|$)", canonical):
+        if "\\" in raw_path_str or re.match(r"^[A-Za-z]:", canonical):
             logger.warning("[EmailService] Chặn đường dẫn Windows/backslash trên môi trường non-Windows: %s", file_path)
             return False
 
@@ -120,22 +128,8 @@ def _is_safe_attachment_path(file_path: Union[str, Path]) -> bool:
             logger.warning("[EmailService] Chặn file nằm trong thư mục nhạy cảm (%s): %s", part, file_path)
             return False
 
-    # 4. Whitelist check: must reside inside project root, /home/kirito/quan_ly_server/data/, or /tmp/
-    allowed_roots: List[Path] = []
-
-    # Dynamic repository root (parents[4] = quan_ly_server repo root)
-    try:
-        repo_root = Path(__file__).resolve().parents[4]
-        allowed_roots.append(repo_root)
-    except Exception:
-        try:
-            repo_root = Path(__file__).resolve().parents[3]
-            allowed_roots.append(repo_root)
-        except Exception:
-            pass
-
-    # DO NOT include Path.cwd().resolve() - it breaks relative path security on POSIX!
-    allowed_roots.append(Path(tempfile.gettempdir()).resolve())
+    # 4. Whitelist check: must reside inside /tmp, /home/kirito/quan_ly_server/data/, /home/kirito/quan_ly_server, or d:/GitHub/quan_ly_server
+    allowed_roots: List[Path] = [Path(tempfile.gettempdir()).resolve()]
 
     # Supported runtime paths on server/container
     for candidate in [

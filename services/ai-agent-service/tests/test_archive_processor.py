@@ -98,6 +98,43 @@ class TestArchiveProcessor(unittest.TestCase):
         self.assertEqual(extracted_dict["deep/secret.txt"], b"Noi dung 7z sieu bao mat")
         self.assertEqual(extracted_dict["readme.md"], b"hello world")
 
+    def test_is_safe_path_blocks_traversal_and_drive_letters(self):
+        """Verifies _is_safe_path blocks traversal, absolute paths, drive letters, and UNC shares."""
+        unsafe_paths = [
+            "../secret.txt",
+            "../../etc/passwd",
+            "/etc/shadow",
+            "\\windows\\win.ini",
+            "//server/share/file.txt",
+            r"\\192.168.1.1\share\payload.bin",
+            "C:cmd.exe",
+            "C:/Windows/win.ini",
+            r"C:\Windows\System32\cmd.exe",
+            "D:/data/secret.txt",
+            "d:relative_file.txt",
+            "%43%3acmd.exe",
+            "%44%3a/secret.txt",
+            "%2e%2e/etc/passwd",
+            "",
+            "   ",
+            ".",
+            "file\0.txt",
+            "%00payload.sh",
+        ]
+        for p in unsafe_paths:
+            with self.subTest(path=p):
+                self.assertFalse(MediaProcessor._is_safe_path(p), f"Path '{p}' should be blocked by _is_safe_path")
+
+        safe_paths = [
+            "file.txt",
+            "subfolder/data.json",
+            "nested/deep/directory/report.pdf",
+            "archive_entry.md",
+        ]
+        for p in safe_paths:
+            with self.subTest(path=p):
+                self.assertTrue(MediaProcessor._is_safe_path(p), f"Path '{p}' should be allowed by _is_safe_path")
+
 
 if __name__ == "__main__":
     unittest.main()

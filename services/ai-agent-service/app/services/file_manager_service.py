@@ -62,7 +62,7 @@ BINARY_EXTENSIONS = frozenset({
 })
 
 MAX_READ_CHARS_LIMIT: int = 2000
-INJECTION_PATTERN = re.compile(r"[;&|`$\n\r]")
+INJECTION_PATTERN = re.compile(r"[\x00;&|`$\n\r]")
 
 
 def _format_size(size_bytes: int) -> str:
@@ -118,8 +118,10 @@ class FileManagerService:
         if self.base_dir:
             base_p = Path(self.base_dir).resolve()
             p = Path(normalized)
-            if not p.is_absolute():
+            if not p.is_absolute() and not p.drive and not re.match(r"^[A-Za-z]:", normalized):
                 p = base_p / p
+            elif re.match(r"^[A-Za-z]:(?![/])", normalized):
+                p = base_p / re.sub(r"^[A-Za-z]:", "", normalized)
             try:
                 resolved = str(p.resolve())
             except Exception:
@@ -153,13 +155,21 @@ class FileManagerService:
             unquoted = new_decoded
         canonical_raw = unquoted.replace("\\", "/")
 
+        # Early rejection for null bytes (prevents poison null byte attacks and string truncation)
+        if "\x00" in unquoted or "\x00" in clean_path:
+            return False, "boundary", "Đường dẫn không hợp lệ. Phát hiện ký tự null byte."
+
         # Early rejection for UNC network share paths
         if canonical_raw.startswith("//"):
             return False, "boundary", "UNC network share path không hợp lệ."
 
         # Early rejection for Windows drive paths on Linux server or host mode
-        if (os.name != "nt" or self.base_dir is None) and re.match(r"^[A-Za-z]:(/|\.\.|$)", canonical_raw):
+        if (os.name != "nt" or self.base_dir is None) and re.match(r"^[A-Za-z]:", canonical_raw):
             return False, "boundary", "Windows drive path không hợp lệ trên Linux server."
+
+        # Early rejection for Windows drive-relative paths (e.g. C:cmd.exe, D:foo) cross-platform
+        if re.match(r"^[A-Za-z]:(?![/])", canonical_raw):
+            return False, "boundary", "Windows drive-relative path không hợp lệ."
 
         norm = self.normalize_posix_path(clean_path)
         posix_norm = norm.replace("\\", "/")
@@ -422,16 +432,7 @@ class FileManagerService:
                 "message": "Đường dẫn không hợp lệ. Phát hiện ký tự nguy hiểm.",
             }
 
-        # 1. Extension inspection for binary files
-        _, ext = os.path.splitext(clean_path)
-        if ext.lower() in BINARY_EXTENSIONS:
-            return {
-                "status": "error",
-                "reason": "binary_file",
-                "message": f"Không thể đọc tệp nhị phân ({ext}). Chỉ hỗ trợ các tệp văn bản.",
-            }
-
-        # 2. Security validation: Whitelist boundary & Sensitive blacklist
+        # 1. Security validation: Whitelist boundary & Sensitive blacklist
         is_valid, v_type, reason = self.validate_path_security(clean_path, action="read")
         if not is_valid:
             if v_type == "sensitive":
@@ -444,6 +445,15 @@ class FileManagerService:
                 "status": "security_veto",
                 "path": clean_path,
                 "message": f"Từ chối đọc tệp do vi phạm ranh giới an toàn: {reason}",
+            }
+
+        # 2. Extension inspection for binary files
+        _, ext = os.path.splitext(clean_path)
+        if ext.lower() in BINARY_EXTENSIONS:
+            return {
+                "status": "error",
+                "reason": "binary_file",
+                "message": f"Không thể đọc tệp nhị phân ({ext}). Chỉ hỗ trợ các tệp văn bản.",
             }
 
         target_path = self.normalize_posix_path(clean_path)

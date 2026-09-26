@@ -21,6 +21,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 from typing import List, Optional, Tuple
+import urllib.parse
 
 import httpx
 try:
@@ -902,11 +903,24 @@ class MediaProcessor:
     def _is_safe_path(name: str) -> bool:
         """
         Guards against Zip Slip (path traversal) vulnerabilities cross-platform.
-        Ensures the relative archive path does not escape using '..' or absolute paths.
+        Ensures the relative archive path does not escape using '..' or absolute paths,
+        Windows drive letters (e.g. C:cmd.exe), UNC paths (//share), or leading slashes.
         """
-        clean_name = str(name).strip().replace("\\", "/")
+        clean_name = str(name).strip()
+        if not clean_name or "\0" in clean_name or clean_name in (".", ".."):
+            return False
+        for _ in range(3):
+            new_decoded = urllib.parse.unquote(clean_name)
+            if new_decoded == clean_name:
+                break
+            clean_name = new_decoded
+        if not clean_name or "\0" in clean_name or clean_name in (".", ".."):
+            return False
+        clean_name = clean_name.replace("\\", "/")
+        if clean_name.startswith(("/", "\\", "//")) or bool(re.match(r"^[A-Za-z]:", clean_name)):
+            return False
         p = Path(clean_name)
-        return not p.is_absolute() and ".." not in p.parts and not clean_name.startswith(("/", "\\"))
+        return not p.is_absolute() and ".." not in p.parts and "." not in p.parts
 
     @classmethod
     def _unpack_via_python_libs(

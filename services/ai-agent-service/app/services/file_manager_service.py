@@ -153,8 +153,12 @@ class FileManagerService:
             unquoted = new_decoded
         canonical_raw = unquoted.replace("\\", "/")
 
+        # Early rejection for UNC network share paths
+        if canonical_raw.startswith("//"):
+            return False, "boundary", "UNC network share path không hợp lệ."
+
         # Early rejection for Windows drive paths on Linux server or host mode
-        if (os.name != "nt" or self.base_dir is None) and re.match(r"^[A-Za-z]:", canonical_raw):
+        if (os.name != "nt" or self.base_dir is None) and re.match(r"^[A-Za-z]:(/|\.\.|$)", canonical_raw):
             return False, "boundary", "Windows drive path không hợp lệ trên Linux server."
 
         norm = self.normalize_posix_path(clean_path)

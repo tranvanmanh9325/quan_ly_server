@@ -143,6 +143,20 @@ class FileManagerService:
         violation_type: "boundary" | "sensitive" | None
         """
         clean_path = str(raw_path).strip()
+
+        # Multi-round URL unquoting to prevent nested percent-encoding bypass (e.g. %43%3a/...)
+        unquoted = clean_path
+        for _ in range(3):
+            new_decoded = urllib.parse.unquote(unquoted)
+            if new_decoded == unquoted:
+                break
+            unquoted = new_decoded
+        canonical_raw = unquoted.replace("\\", "/")
+
+        # Early rejection for Windows drive paths on Linux server or host mode
+        if (os.name != "nt" or self.base_dir is None) and re.match(r"^[A-Za-z]:", canonical_raw):
+            return False, "boundary", "Windows drive path không hợp lệ trên Linux server."
+
         norm = self.normalize_posix_path(clean_path)
         posix_norm = norm.replace("\\", "/")
 
@@ -208,8 +222,6 @@ class FileManagerService:
                 "message": "Đường dẫn không hợp lệ. Phát hiện ký tự nguy hiểm.",
             }
 
-        target_path = self.normalize_posix_path(clean_path)
-
         # Security boundary check for directory listing
         is_valid, v_type, reason = self.validate_path_security(clean_path, action="list")
         if not is_valid:
@@ -224,6 +236,8 @@ class FileManagerService:
                 "path": clean_path,
                 "message": f"Từ chối liệt kê thư mục do vi phạm ranh giới an toàn: {reason}",
             }
+
+        target_path = self.normalize_posix_path(clean_path)
 
         # Check local filesystem execution if base_dir or existing local path
         if self.base_dir or os.path.exists(target_path):
@@ -413,8 +427,6 @@ class FileManagerService:
                 "message": f"Không thể đọc tệp nhị phân ({ext}). Chỉ hỗ trợ các tệp văn bản.",
             }
 
-        target_path = self.normalize_posix_path(clean_path)
-
         # 2. Security validation: Whitelist boundary & Sensitive blacklist
         is_valid, v_type, reason = self.validate_path_security(clean_path, action="read")
         if not is_valid:
@@ -429,6 +441,8 @@ class FileManagerService:
                 "path": clean_path,
                 "message": f"Từ chối đọc tệp do vi phạm ranh giới an toàn: {reason}",
             }
+
+        target_path = self.normalize_posix_path(clean_path)
 
         # 3. Local filesystem read
         if self.base_dir or os.path.exists(target_path):

@@ -115,6 +115,7 @@ def evaluate_spinal_safety_veto(command: str, confirm_token: Optional[str] = Non
 # ── Action Risk Tri-Tier (M4 Autonomous Action Gating) ──
 ACTION_TIER_1_SAFE = "TIER_1_SAFE"
 ACTION_TIER_2_REVERSIBLE = "TIER_2_REVERSIBLE"
+ACTION_TIER_2_OPERATIONAL = ACTION_TIER_2_REVERSIBLE
 ACTION_TIER_3_LETHAL = "TIER_3_LETHAL"
 
 _SAFE_DIAGNOSTIC_COMMAND_PATTERN = re.compile(
@@ -215,9 +216,35 @@ def classify_action_risk(tool_name: str, tool_args: Optional[Dict[str, Any]] = N
         "list_blocked_ips",
         "get_honeypot_log",
         "get_attack_history",
+        # ── M6 Omni Super-Agent Tier 1 Safe Multimedia & Document Tools ──
+        "edit_video_clip",
+        "compress_video",
+        "convert_video_format",
+        "convert_audio_format",
+        "trim_audio_clip",
+        "normalize_audio_volume",
+        "convert_and_resize_image",
+        "generate_custom_qr",
+        "merge_pdf_documents",
+        "split_pdf_document",
+        "extract_document_text",
+        "translate_text",
+        "inspect_media_metadata",
+        "download_direct_file",
+        "extract_clean_web_article",
     }
     if tool_name in tier1_tools:
         return ACTION_TIER_1_SAFE
+
+    if tool_name == "execute_system_script":
+        script_code = (tool_args or {}).get("script_code", "")
+        confirm = (tool_args or {}).get("confirm", "")
+        if confirm == "CONFIRM_DANGEROUS_ACTION":
+            return ACTION_TIER_2_REVERSIBLE
+        for pattern in _SPINAL_VETO_PATTERNS:
+            if pattern.search(script_code):
+                return ACTION_TIER_3_LETHAL
+        return ACTION_TIER_2_REVERSIBLE
 
     tier2_tools = {
         "extract_archive_file",
@@ -249,6 +276,9 @@ def classify_action_risk(tool_name: str, tool_args: Optional[Dict[str, Any]] = N
         # ── Milestone 3 Tier 2 Reversible Security Guardian Tools ──
         "block_ip",
         "unblock_ip",
+        # ── M6 Omni Super-Agent Tier 2 System Mastery Tools ──
+        "manage_docker_containers",
+        "optimize_system_resources",
     }
     if tool_name in tier2_tools:
         return ACTION_TIER_2_REVERSIBLE
@@ -338,6 +368,11 @@ class AgentToolExecutor:
         file_manager_service: Any = None,
         security_monitor_service: Any = None,
         honeypot_service: Any = None,
+        multimedia_service: Any = None,
+        document_service: Any = None,
+        universal_downloader: Any = None,
+        web_article_extractor: Any = None,
+        system_mastery_service: Any = None,
     ):
         self.ssh_client = ssh_client
         self.message_cache = message_cache
@@ -348,6 +383,13 @@ class AgentToolExecutor:
         self.memory_service = memory_service
         self.security_monitor_service = security_monitor_service
         self.honeypot_service = honeypot_service
+
+        # M6 Omni Super-Agent Sub-services
+        self._multimedia_service = multimedia_service
+        self._document_service = document_service
+        self._universal_downloader = universal_downloader
+        self._web_article_extractor = web_article_extractor
+        self._system_mastery_service = system_mastery_service
 
         # DB Connection Pool
         from app.core.db import db_manager
@@ -393,6 +435,56 @@ class AgentToolExecutor:
     def set_memory_service(self, memory_service: Any) -> None:
         """Inject the AgentMemoryService for self-improving capabilities."""
         self.memory_service = memory_service
+
+    def set_multimedia_service(self, service: Any) -> None:
+        self._multimedia_service = service
+
+    def set_document_service(self, service: Any) -> None:
+        self._document_service = service
+
+    def set_universal_downloader(self, service: Any) -> None:
+        self._universal_downloader = service
+
+    def set_web_article_extractor(self, service: Any) -> None:
+        self._web_article_extractor = service
+
+    def set_system_mastery_service(self, service: Any) -> None:
+        self._system_mastery_service = service
+
+    @property
+    def multimedia_service(self) -> Any:
+        if self._multimedia_service is None:
+            from app.services.multimedia_service import MultimediaService
+            self._multimedia_service = MultimediaService()
+        return self._multimedia_service
+
+    @property
+    def document_service(self) -> Any:
+        if self._document_service is None:
+            from app.services.document_service import DocumentService
+            self._document_service = DocumentService()
+        return self._document_service
+
+    @property
+    def universal_downloader(self) -> Any:
+        if self._universal_downloader is None:
+            from app.services.universal_downloader import UniversalDownloader
+            self._universal_downloader = UniversalDownloader()
+        return self._universal_downloader
+
+    @property
+    def web_article_extractor(self) -> Any:
+        if self._web_article_extractor is None:
+            from app.services.web_article_extractor import WebArticleExtractor
+            self._web_article_extractor = WebArticleExtractor(browser_agent=self.browser_agent)
+        return self._web_article_extractor
+
+    @property
+    def system_mastery_service(self) -> Any:
+        if self._system_mastery_service is None:
+            from app.services.system_mastery_service import SystemMasteryService
+            self._system_mastery_service = SystemMasteryService(ssh_client=self.ssh_client)
+        return self._system_mastery_service
 
     # Expose Action Risk Tri-Tier on class
     ACTION_TIER_1_SAFE = ACTION_TIER_1_SAFE
@@ -447,14 +539,45 @@ class AgentToolExecutor:
         "remember_for_later",
         "complete_task",
     }
-    _TOOL_CLUSTER_MEDIA = {
-        "download_media_video",
-        "download_media_audio",
-        "run_command",
-    }
     _TOOL_CLUSTER_TRANSFER = {
         "create_file_transfer_portal",
         "run_command",
+    }
+
+    # ── M6 Omni Super-Agent Expanded Clusters (R1 - R4) ──
+    _TOOL_CLUSTER_MEDIA = {
+        "edit_video_clip",
+        "compress_video",
+        "convert_video_format",
+        "convert_audio_format",
+        "trim_audio_clip",
+        "normalize_audio_volume",
+        "convert_and_resize_image",
+        "generate_custom_qr",
+        "inspect_media_metadata",
+        "download_media_video",
+        "download_media_audio",
+    }
+    _TOOL_CLUSTER_DOCS = {
+        "merge_pdf_documents",
+        "split_pdf_document",
+        "extract_document_text",
+        "translate_text",
+        "read_file_content",
+        "inspect_media_metadata",
+    }
+    _TOOL_CLUSTER_WEB = {
+        "download_direct_file",
+        "extract_clean_web_article",
+        "browser_search_google",
+        "browser_navigate",
+    }
+    _TOOL_CLUSTER_SYSTEM = {
+        "run_command",
+        "execute_system_script",
+        "manage_docker_containers",
+        "optimize_system_resources",
+        "get_system_health_report",
     }
 
     # ── M5 Extended Tool Clusters (R1 - R8) ──
@@ -531,6 +654,51 @@ class AgentToolExecutor:
     _SHORT_SERVER_RE = re.compile(r"\b(ip|top|df|free|port|load|log|ps|ram|cpu|ssh|swap)\b", re.IGNORECASE)
     _SHORT_TASK_RE = re.compile(r"\b(task|done|việc)\b", re.IGNORECASE)
     _SHORT_WEB_RE = re.compile(r"\b(web|url|link|form)\b", re.IGNORECASE)
+
+    # ── M6 Super-Agent Semantic Scoping Patterns (R1 - R4) ──
+    _SHORT_MEDIA_STUDIO_RE = re.compile(
+        r"\b("
+        r"cắt(?:\s+\w+)?\s+(?:video|clip)|cat(?:\s+\w+)?\s+(?:video|clip)|nén(?:\s+\w+)?\s+video|nen(?:\s+\w+)?\s+video|compress\s+video|giảm\s+dung\s+lượng\s+video|giam\s+dung\s+luong\s+video|"
+        r"đổi\s+đuôi\s+video|doi\s+duoi\s+video|chuyển\s+định\s+dạng\s+video|chuyen\s+dinh\s+dang\s+video|convert\s+video|mp4\s+sang|mkv\s+sang|tạo\s+gif|tao\s+gif|làm\s+gif|lam\s+gif|"
+        r"đổi\s+đuôi\s+nhạc|doi\s+duoi\s+nhac|convert\s+audio|chuyển\s+định\s+dạng\s+âm\s+thanh|chuyen\s+dinh\s+dang\s+am\s+thanh|flac\s+sang|wav\s+sang|m4a\s+sang|320k(?:bps)?|"
+        r"cắt(?:\s+\w+)?\s+(?:nhạc|audio|bài hát)|cat(?:\s+\w+)?\s+(?:nhac|audio|bai hat)|làm\s+nhạc\s+chuông|lam\s+nhac\s+chuong|nhạc\s+chuông|nhac\s+chuong|trim\s+audio|"
+        r"chuẩn\s+hóa\s+âm\s+lượng|chuan\s+hoa\s+am\s+luong|cân\s+bằng\s+âm\s+lượng|can\s+bang\s+am\s+luong|tang\s+am\s+luong|tăng\s+âm\s+lượng|giam\s+am\s+luong|giảm\s+âm\s+lượng|loudnorm|ebu\s+r128|"
+        r"resize\s+ảnh|resize\s+anh|nén\s+ảnh|nen\s+anh|đổi\s+kích\s+thước\s+ảnh|doi\s+kich\s+thuoc\s+anh|webp\s+sang|png\s+sang|jpg\s+sang|chuyển\s+ảnh\s+sang|chuyen\s+anh\s+sang|"
+        r"tạo(?:\s+mã)?\s+qr|tao(?:\s+ma)?\s+qr|sinh\s+qr|mã\s+qr|ma\s+qr|qr\s+code|qr\s+wifi|qr\s+ngân\s+hàng|quet\s+qr|quét\s+qr|"
+        r"metadata|thông\s+tin\s+video|thong\s+tin\s+video|thông\s+tin\s+audio|thong\s+tin\s+audio|ffprobe|exif|độ\s+phân\s+giải\s+video|do\s+phan\s+giai\s+video|codec\s+video"
+        r")\b",
+        re.IGNORECASE,
+    )
+
+    _SHORT_DOCS_RE = re.compile(
+        r"\b("
+        r"gộp(?:\s+[\w\s]{1,25})?\s+pdf|gop(?:\s+[\w\s]{1,25})?\s+pdf|merge\s+pdf|ghép(?:\s+[\w\s]{1,25})?\s+pdf|ghep(?:\s+[\w\s]{1,25})?\s+pdf|nối(?:\s+[\w\s]{1,25})?\s+pdf|noi(?:\s+[\w\s]{1,25})?\s+pdf|"
+        r"tách(?:\s+[\w\s\d\-]{1,35})?\s+pdf|tach(?:\s+[\w\s\d\-]{1,35})?\s+pdf|split\s+pdf|cắt\s+trang\s+pdf|cat\s+trang\s+pdf|trích\s+trang\s+pdf|trich\s+trang\s+pdf|tách(?:\s+\w+)?\s+trang|tach(?:\s+\w+)?\s+trang|"
+        r"đọc(?:\s+[\w\s]{1,40})?\s+(?:pdf|docx|word)|doc(?:\s+[\w\s]{1,40})?\s+(?:pdf|docx|word)|"
+        r"nội\s+dung\s+file(?:\s+[\w\s]{1,20})?\s+(?:pdf|docx|word)|noi\s+dung\s+file(?:\s+[\w\s]{1,20})?\s+(?:pdf|docx|word)|"
+        r"trích\s+xuất\s+văn\s+bản|trich\s+xuat\s+van\s+ban|extract\s+text|đọc\s+word|doc\s+word|đọc\s+docx|doc\s+docx|file\s+docx|file\s+pdf|tệp\s+docx|tep\s+docx|"
+        r"dịch|dich|translate|dịch\s+văn\s+bản|dich\s+van\s+ban|dịch\s+sang|nghĩa\s+là\s+gì|nghia\s+la\s+gi"
+        r")\b",
+        re.IGNORECASE,
+    )
+
+    _SHORT_WEB_DOWNLOAD_ARTICLE_RE = re.compile(
+        r"\b("
+        r"tải\s+tệp|tai\s+tep|tải\s+file|tai\s+file|download\s+file|download\s+direct|tải\s+link|tai\s+link|file\s+zip|file\s+iso|"
+        r"bóc\s+tách\s+bài\s+viết|boc\s+tach\s+bai\s+viet|bóc\s+bài\s+viết|boc\s+bai\s+viet|đọc\s+bài\s+báo|doc\s+bai\s+bao|bài\s+báo|bai\s+bao|đọc\s+báo|doc\s+bao|trích\s+xuất\s+bài\s+viết|trich\s+xuat\s+bai\s+viet|extract\s+article|nội\s+dung\s+bài\s+báo|noi\s+dung\s+bai\s+bao|tóm\s+tắt\s+bài\s+báo|tom\s+tat\s+bai\s+bao|tóm\s+tắt\s+bài\s+viết|tom\s+tat\s+bai\s+viet"
+        r")\b",
+        re.IGNORECASE,
+    )
+
+    _SHORT_SYSTEM_ROOT_RE = re.compile(
+        r"\b("
+        r"chạy\s+script|chay\s+script|execute\s+script|script\s+bash|script\s+python|chạy\s+code\s+python|chay\s+code\s+python|chạy\s+kịch\s+bản|chay\s+kich\s+ban|kịch\s+bản\s+bash|kich\s+ban\s+bash|kịch\s+bản\s+python|kich\s+ban\s+python|"
+        r"quản\s+lý\s+docker|quan\s+ly\s+docker|docker\s+restart|restart\s+container|khởi\s+động\s+lại\s+container|khoi\s+dong\s+lai\s+container|dừng\s+container|dung\s+container|stop\s+container|bật\s+container|bat\s+container|start\s+container|"
+        r"xóa\s+rác\s+docker|xoa\s+rac\s+docker|docker\s+prune|dọn\s+dẹp\s+hệ\s+thống|don\s+dep\s+he\s+thong|giải\s+phóng\s+ram|giai\s+phong\s+ram|drop_caches|giảm\s+tải\s+ram|giam\s+tai\s+ram|dọn(?:\s+dẹp)?\s+ram|don(?:\s+dep)?\s+ram|"
+        r"tối\s+ưu\s+máy\s+chủ|toi\s+uu\s+may\s+chu|tối\s+ưu\s+server|toi\s+uu\s+server|tối\s+ưu\s+hệ\s+thống|toi\s+uu\s+he\s+thong|root|sudo"
+        r")\b",
+        re.IGNORECASE,
+    )
 
     _SHORT_REMINDER_RE = re.compile(
         r"\b(nhắc|nhac|remind|reminder|alarm|hẹn giờ|hen gio|đặt lịch|dat lich|lịch nhắc|lich nhac)\b",
@@ -661,9 +829,10 @@ class AgentToolExecutor:
             "bật bao lâu", "mở bao lâu", "chạy bao lâu", "hoạt động bao lâu", "máy đã bật", "máy em"
         ))
 
-        is_archive = any(k in q for k in (
-            "zip", "rar", "7z", "tar", "gz", "nén", "giải nén", "mật khẩu",
-            "password", "pass", "crack", "bẻ khóa", "khôi phục", "archive", "extract"
+        is_archive = bool(re.search(r"\b(?:zip|rar|7z|tar|gz|archive|extract|crack)\b", q)) or any(k in q for k in (
+            ".zip", ".rar", ".7z", ".tar", ".gz", ".tgz",
+            "nén", "giải nén", "mật khẩu",
+            "password", "bẻ khóa", "khôi phục"
         ))
 
         is_fb = any(k in q for k in (
@@ -681,10 +850,10 @@ class AgentToolExecutor:
         ))
 
         is_weather = any(k in q for k in (
-            "thời tiết", "weather", "nhiệt độ", "độ ẩm", "mưa", "nắng",
+            "thời tiết", "thoi tiet", "weather", "nhiệt độ", "độ ẩm", "mưa", "nắng",
             "dự báo", "bão", "không khí", "trời", "nóng", "lạnh", "gió",
             "áp thấp", "mưa rào", "giông", "rét", "ấm", "sương mù",
-            "wttr", "a răng", "bựa ni"
+            "wttr", "a răng", "bựa ni", "bua ni"
         ))
 
         is_reminder = bool(self._SHORT_REMINDER_RE.search(q)) or any(k in q for k in (
@@ -790,12 +959,28 @@ class AgentToolExecutor:
             "security report", "báo cáo an ninh", "lịch sử tấn công", "lich su tan cong"
         ))
 
-        if is_media:
+        is_media_studio = bool(self._SHORT_MEDIA_STUDIO_RE.search(q))
+        is_docs = bool(self._SHORT_DOCS_RE.search(q))
+        is_web_extract = bool(self._SHORT_WEB_DOWNLOAD_ARTICLE_RE.search(q))
+        is_system_root = bool(self._SHORT_SYSTEM_ROOT_RE.search(q))
+
+        if is_media_studio:
+            selected.update(self._TOOL_CLUSTER_MEDIA)
+        elif is_media:
             if is_audio:
                 selected.update(self._TOOL_CLUSTER_MEDIA)
             else:
                 selected.add("download_media_video")
                 selected.add("run_command")
+
+        if is_docs:
+            selected.update(self._TOOL_CLUSTER_DOCS)
+
+        if is_web_extract:
+            selected.update(self._TOOL_CLUSTER_WEB)
+
+        if is_system_root:
+            selected.update(self._TOOL_CLUSTER_SYSTEM)
 
         if is_transfer:
             selected.update(self._TOOL_CLUSTER_TRANSFER)
@@ -849,10 +1034,20 @@ class AgentToolExecutor:
         if not selected:
             selected.update(self._TOOL_CLUSTER_CORE)
 
-        # Priority Pruning: Enforce strict token budget (max 6 tools when archive/facebook present, else max 8)
+        # Priority Pruning: Enforce strict token budget (max 6 tools when heavy cluster present, else max 8)
         is_facebook = is_fb
-        has_heavy_cluster = is_archive or is_facebook or bool(
-            selected & ((self._TOOL_CLUSTER_ARCHIVE - {"run_command"}) | self._TOOL_CLUSTER_FACEBOOK)
+        has_heavy_cluster = (
+            is_archive
+            or is_facebook
+            or is_media_studio
+            or bool(
+                selected
+                & (
+                    (self._TOOL_CLUSTER_ARCHIVE - {"run_command"})
+                    | self._TOOL_CLUSTER_FACEBOOK
+                    | (self._TOOL_CLUSTER_MEDIA - {"download_media_video", "download_media_audio", "run_command"})
+                )
+            )
         )
         max_tools = 6 if has_heavy_cluster else 8
 
@@ -865,9 +1060,52 @@ class AgentToolExecutor:
             is_honeypot = any(k in q for k in ("honeypot", "bẫy", "kẻ thất bại", "ke that bai", "credentials", "mật khẩu hacker"))
             is_history = any(k in q for k in ("lịch sử", "lich su", "history", "các vụ tấn công", "nhật ký tấn công"))
             is_list_blk = any(k in q for k in ("danh sách chặn", "danh sach chan", "ai đang bị chặn", "ip bị chặn", "list block", "đang bị chặn"))
+            is_restart = any(k in q for k in ("restart", "khởi động lại", "khoi dong lai", "reboot service", "restart service", "restart container"))
+
+            # R1 - R4 Specific intent flags
+            is_edit_vid = any(k in q for k in ("cắt video", "cat video", "cắt clip", "cat clip", "edit video", "cắt đoạn video", "cat doan video"))
+            is_comp_vid = any(k in q for k in ("nén video", "nen video", "compress video", "giảm dung lượng video", "giam dung luong video"))
+            is_conv_vid = any(k in q for k in ("đổi đuôi video", "doi duoi video", "convert video", "chuyển định dạng video", "mp4 sang", "mkv sang", "tạo gif", "tao gif"))
+            is_conv_aud = any(k in q for k in ("đổi đuôi nhạc", "doi duoi nhac", "convert audio", "flac sang", "wav sang", "m4a sang", "320k"))
+            is_trim_aud = any(k in q for k in ("cắt nhạc", "cat nhac", "cắt audio", "cat audio", "nhạc chuông", "nhac chuong", "trim audio"))
+            is_norm_aud = any(k in q for k in ("chuẩn hóa âm lượng", "chuan hoa am luong", "cân bằng âm lượng", "can bang am luong", "loudnorm", "ebu r128"))
+            is_img_proc = any(k in q for k in ("resize ảnh", "resize anh", "nén ảnh", "nen anh", "đổi kích thước ảnh", "doi kich thuoc anh", "doi kich thuoc", "đổi kích thước", "chuyển ảnh sang", "chuyen anh sang", "webp", "png sang jpg", "jpg sang png"))
+            is_qr_gen   = any(k in q for k in ("mã qr", "ma qr", "qr code", "tạo qr", "tao qr", "sinh qr", "quet qr", "quét qr"))
+            is_meta_chk = any(k in q for k in ("metadata", "thông tin video", "thông tin audio", "ffprobe", "exif", "codec"))
+
+            is_mrg_pdf  = any(k in q for k in ("gộp pdf", "gop pdf", "merge pdf", "ghép pdf", "ghep pdf", "nối pdf", "noi pdf", "gộp các file pdf", "gop cac file pdf", "gộp file pdf", "gop file pdf")) or bool(re.search(r"\b(?:gộp|gop|ghép|ghep|nối|noi|merge)\s+.*pdf\b", q))
+            is_splt_pdf = any(k in q for k in ("tách pdf", "tach pdf", "split pdf", "cắt trang pdf", "trích trang pdf", "tách các trang", "tach cac trang", "tách trang", "tach trang", "tach file pdf", "tách file pdf")) or bool(re.search(r"\b(?:tách|tach|split|cắt trang|cat trang|trích trang|trich trang)\s+.*pdf\b", q))
+            is_ext_doc  = any(k in q for k in ("đọc pdf", "doc pdf", "trích xuất văn bản", "trich xuat van ban", "extract text", "đọc word", "doc word", "đọc docx", "doc docx", "doc file docx", "đọc file docx", "nội dung file", "noi dung file", "báo cáo pdf", "bao cao pdf", "file báo cáo", "file bao cao")) or bool(re.search(r"\b(?:đọc|doc|xem|trích|trich|nội dung|noi dung)\s+.*(?:pdf|docx|tài liệu|tai lieu|văn bản|van ban)\b", q))
+            is_trans    = any(k in q for k in ("dịch", "dich", "translate", "dịch văn bản", "dịch sang", "nghĩa là gì")) or bool(re.search(r"\b(?:dịch|dich|translate)\s+.*(?:sang|tiếng|tieng|văn bản|van ban|tài liệu|tai lieu|text)\b", q))
+
+            is_dl_file  = any(k in q for k in ("tải tệp", "tai tep", "tải file trực tiếp", "download direct", "tải link", "tải file zip", "tải file iso", "download file", "tải file"))
+            is_ext_art  = any(k in q for k in ("bóc tách bài viết", "boc tach bai viet", "đọc bài báo", "doc bai bao", "bài báo", "bai bao", "đọc báo", "doc bao", "trích xuất bài viết", "extract article", "nội dung bài báo", "tóm tắt bài báo", "tóm tắt bài viết"))
+
+            is_sys_scr  = any(k in q for k in ("chạy script", "chay script", "execute script", "script bash", "script python", "chạy code python", "chạy kịch bản", "chay kich ban", "kịch bản bash", "kich ban bash", "kịch bản python", "kich ban python"))
+            is_dck_mgmt = any(k in q for k in ("quản lý docker", "docker restart", "restart container", "khởi động lại container", "khoi dong lai container", "dừng container", "stop container", "bật container", "start container", "docker prune", "xóa rác docker", "container docker"))
+            is_sys_opt  = any(k in q for k in ("tối ưu hệ thống", "toi uu he thong", "dọn dẹp hệ thống", "giải phóng ram", "giai phong ram", "drop_caches", "tối ưu máy chủ", "tối ưu server", "dọn ram", "don ram", "dọn dẹp ram", "don dep ram"))
 
             priority_order: List[str] = [
-                # 1. Specialized Intent Boosters (Mỗi intent đưa 1-2 công cụ cốt lõi nhất lên đỉnh)
+                # 1. Specialized Intent Boosters (Mỗi intent đưa các công cụ cốt lõi nhất lên đỉnh)
+                *(["edit_video_clip"] if is_edit_vid else []),
+                *(["compress_video"] if is_comp_vid else []),
+                *(["convert_video_format"] if is_conv_vid else []),
+                *(["convert_audio_format"] if is_conv_aud else []),
+                *(["trim_audio_clip"] if is_trim_aud else []),
+                *(["normalize_audio_volume"] if is_norm_aud else []),
+                *(["convert_and_resize_image"] if is_img_proc else []),
+                *(["generate_custom_qr"] if is_qr_gen else []),
+                *(["inspect_media_metadata"] if is_meta_chk else []),
+                *(["merge_pdf_documents"] if is_mrg_pdf else []),
+                *(["split_pdf_document"] if is_splt_pdf else []),
+                *(["extract_document_text"] if is_ext_doc else []),
+                *(["translate_text"] if is_trans else []),
+                *(["download_direct_file"] if is_dl_file else []),
+                *(["extract_clean_web_article"] if is_ext_art else []),
+                *(["execute_system_script"] if is_sys_scr else []),
+                *(["manage_docker_containers"] if is_dck_mgmt else []),
+                *(["optimize_system_resources"] if is_sys_opt else []),
+
                 *(["unblock_ip"] if (is_security and is_unblock) else []),
                 *(["block_ip"] if (is_security and is_block and not is_unblock) else []),
                 *(["get_honeypot_log"] if (is_security and is_honeypot) else []),
@@ -877,7 +1115,8 @@ class AgentToolExecutor:
                 *(["create_file_transfer_portal"] if is_transfer else []),
                 *(["schedule_reminder", "list_scheduled_reminders"] if is_reminder else []),
                 *(["calculate", "convert_units"] if is_calc else []),
-                *(["get_system_health_report", "check_service_status"] if is_server_health else []),
+                *(["restart_service"] if is_restart else []),
+                *(["get_system_health_report", "check_service_status", "restart_service"] if is_server_health else []),
                 *(["send_email", "generate_report"] if is_email else []),
                 *(["get_ngrok_status", "get_network_info"] if is_network else []),
                 *(["create_note", "search_notes"] if is_notes else []),
@@ -906,7 +1145,27 @@ class AgentToolExecutor:
                 "download_media_audio",
                 "get_weather",
 
-                # 4. Secondary Operations (Thao tác chi tiết hơn)
+                # 4. M6 Secondary Operations & Conversions
+                "edit_video_clip",
+                "compress_video",
+                "convert_video_format",
+                "convert_audio_format",
+                "trim_audio_clip",
+                "normalize_audio_volume",
+                "convert_and_resize_image",
+                "generate_custom_qr",
+                "merge_pdf_documents",
+                "split_pdf_document",
+                "extract_document_text",
+                "translate_text",
+                "inspect_media_metadata",
+                "download_direct_file",
+                "extract_clean_web_article",
+                "manage_docker_containers",
+                "optimize_system_resources",
+                "execute_system_script",
+
+                # 5. Diagnostic & Passive Utilities
                 "block_ip",
                 "unblock_ip",
                 "get_honeypot_log",
@@ -929,8 +1188,6 @@ class AgentToolExecutor:
                 "generate_report",
                 "cancel_reminder",
                 "list_scheduled_reminders",
-
-                # 5. Diagnostic & Passive Utilities
                 "get_server_location",
                 "get_server_active_sessions",
                 "server_capture_screenshot",
@@ -985,11 +1242,14 @@ class AgentToolExecutor:
         query: str = "",
         history: Optional[List[Dict[str, Any]]] = None,
         excluded_tools: Optional[set] = None,
+        force_all: bool = False,
+        last_user_query: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
+        effective_query = last_user_query if last_user_query is not None else query
         excluded = set(excluded_tools or set())
         scoped_allowed: Optional[Set[str]] = None
-        if query or history:
-            scoped_allowed = self._resolve_scoped_tool_names(query=query, history=history)
+        if not force_all and (effective_query or history):
+            scoped_allowed = self._resolve_scoped_tool_names(query=effective_query, history=history)
         tools = [
             # ── Server Management ──
             {
@@ -1028,13 +1288,13 @@ class AgentToolExecutor:
                 "type": "function",
                 "function": {
                     "name": "run_command",
-                    "description": "Thực thi lệnh shell an toàn trên server qua SSH (CPU, RAM, Disk, Docker, Logs).",
+                    "description": "Thực thi trực tiếp lệnh shell toàn quyền (unrestricted root/sudo) trên máy chủ qua SSH (CPU, RAM, Disk, Docker, Package Management, Logs) với vi mạch an toàn tủy sống bảo vệ.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "command": {
                                 "type": "string",
-                                "description": "Lệnh bash (ví dụ: 'free -h', 'docker ps', 'df -h /').",
+                                "description": "Lệnh bash (ví dụ: 'free -h', 'docker ps', 'df -h /', 'apt update').",
                             }
                         },
                         "required": ["command"],
@@ -2255,6 +2515,295 @@ class AgentToolExecutor:
                     },
                 },
             },
+            # ── M6 Omni Super-Agent: R1 Multimedia Studio Suite ──
+            {
+                "type": "function",
+                "function": {
+                    "name": "edit_video_clip",
+                    "description": "Cắt đoạn clip từ tệp video hoặc URL theo mốc thời gian bắt đầu và thời lượng. Hỗ trợ cắt nhanh không mã hóa lại (-c copy) hoặc re-encode chất lượng cao qua FFmpeg.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "input_path_or_url": {"type": "string", "description": "Đường dẫn file video cục bộ trên máy chủ hoặc URL media cần cắt."},
+                            "start_time": {"type": "string", "description": "Mốc thời gian bắt đầu, định dạng HH:MM:SS hoặc SS (ví dụ: '00:01:30' hoặc '90')."},
+                            "duration": {"type": "string", "description": "Thời lượng đoạn cần cắt, định dạng HH:MM:SS hoặc số giây (ví dụ: '30' hoặc '00:00:45')."},
+                            "output_format": {"type": "string", "enum": ["mp4", "mkv", "mov", "webm", "gif"], "default": "mp4", "description": "Định dạng tệp video đầu ra."},
+                            "reencode": {"type": "boolean", "default": False, "description": "True nếu muốn re-encode chính xác từng frame, False để cắt siêu tốc không nén lại (-c copy)."}
+                        },
+                        "required": ["input_path_or_url", "start_time", "duration"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "compress_video",
+                    "description": "Nén dung lượng video tự động sử dụng thuật toán 2-pass bitrate của FFmpeg để đưa kích thước file về dưới ngưỡng mục tiêu (mặc định < 50MB) gửi mượt mà qua Telegram.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "input_path_or_url": {"type": "string", "description": "Đường dẫn file video hoặc URL cần nén."},
+                            "target_size_mb": {"type": "number", "default": 48.0, "description": "Dung lượng đích mong muốn tính bằng MB (khuyến nghị 45.0 - 48.0 MB cho Telegram)."}
+                        },
+                        "required": ["input_path_or_url"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "convert_video_format",
+                    "description": "Chuyển đổi định dạng video qua lại giữa MP4, MKV, AVI, MOV, WEBM và Animated GIF tối ưu hóa hiển thị.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "input_path_or_url": {"type": "string", "description": "Đường dẫn file video nguồn hoặc URL."},
+                            "target_format": {"type": "string", "enum": ["mp4", "mkv", "avi", "mov", "webm", "gif"], "description": "Định dạng đích cần chuyển đổi."},
+                            "preset": {"type": "string", "enum": ["ultrafast", "fast", "medium", "slow"], "default": "fast", "description": "Mức độ cân đối giữa tốc độ xử lý và độ nén."}
+                        },
+                        "required": ["input_path_or_url", "target_format"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "convert_audio_format",
+                    "description": "Chuyển đổi âm thanh chuyên nghiệp đa định dạng (FLAC, WAV, M4A, OGG, AAC -> MP3) với tùy chỉnh bitrate phòng thu lên tới 320kbps.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "input_path_or_url": {"type": "string", "description": "Đường dẫn file âm thanh hoặc URL."},
+                            "target_format": {"type": "string", "enum": ["mp3", "aac", "wav", "flac", "ogg", "m4a"], "default": "mp3", "description": "Định dạng audio đích."},
+                            "bitrate": {"type": "string", "enum": ["128k", "192k", "256k", "320k"], "default": "320k", "description": "Chất lượng âm thanh đầu ra."}
+                        },
+                        "required": ["input_path_or_url"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "trim_audio_clip",
+                    "description": "Cắt đoạn âm thanh hoặc nhạc chuông chính xác theo thời gian bắt đầu và thời lượng.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "input_path_or_url": {"type": "string", "description": "Đường dẫn file âm thanh hoặc URL nguồn."},
+                            "start_time": {"type": "string", "description": "Thời điểm bắt đầu (ví dụ: '00:00:15' hoặc '15')."},
+                            "duration": {"type": "string", "description": "Thời lượng đoạn nhạc cần trích xuất (ví dụ: '30' hoặc '00:00:30')."}
+                        },
+                        "required": ["input_path_or_url", "start_time", "duration"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "normalize_audio_volume",
+                    "description": "Tự động chuẩn hóa và cân bằng âm lượng tệp âm thanh theo chuẩn phát thanh châu Âu EBU R128 (loudnorm filter), loại bỏ hiện tượng âm lượng quá nhỏ hoặc rè méo tiếng.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "input_path_or_url": {"type": "string", "description": "Đường dẫn file âm thanh hoặc URL nguồn."}
+                        },
+                        "required": ["input_path_or_url"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "convert_and_resize_image",
+                    "description": "Xử lý ảnh chuyên nghiệp in-memory/file: Chuyển đổi định dạng (WEBP, HEIC, PNG, JPG), thay đổi kích thước theo tỷ lệ chuẩn, và nén giảm dung lượng mà vẫn giữ độ nét.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "input_path_or_url": {"type": "string", "description": "Đường dẫn file ảnh cục bộ hoặc URL ảnh."},
+                            "format": {"type": "string", "enum": ["jpg", "png", "webp"], "default": "webp", "description": "Định dạng ảnh đầu ra."},
+                            "max_width": {"type": "integer", "description": "Chiều rộng tối đa (pixels), giữ nguyên tỷ lệ khung hình."},
+                            "max_height": {"type": "integer", "description": "Chiều cao tối đa (pixels), giữ nguyên tỷ lệ khung hình."},
+                            "quality": {"type": "integer", "default": 85, "description": "Chất lượng nén từ 1-100 (khuyến nghị 80-90)."}
+                        },
+                        "required": ["input_path_or_url"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "generate_custom_qr",
+                    "description": "Sinh mã QR Code độ phân giải cao in-memory từ nội dung bất kỳ (WiFi, URL, tin nhắn, số tài khoản, vCard) với nhãn tiêu đề và màu sắc tùy chỉnh.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "content": {"type": "string", "description": "Nội dung cần mã hóa thành mã QR (chuỗi URL, cấu hình WiFi: 'WIFI:S:MySSID;T:WPA;P:MyPassword;;', văn bản)."},
+                            "label": {"type": "string", "description": "Nhãn hiển thị bên dưới hoặc chú thích cho mã QR."},
+                            "fill_color": {"type": "string", "default": "#0f172a", "description": "Mã màu Hex cho các điểm ảnh QR."},
+                            "back_color": {"type": "string", "default": "#ffffff", "description": "Mã màu nền Hex cho mã QR."}
+                        },
+                        "required": ["content"]
+                    }
+                }
+            },
+
+            # ── M6 Omni Super-Agent: R2 Document & Knowledge Processing ──
+            {
+                "type": "function",
+                "function": {
+                    "name": "merge_pdf_documents",
+                    "description": "Gộp nhiều tệp PDF riêng lẻ thành một tệp PDF duy nhất với thứ tự xác định bằng PyMuPDF tốc độ cao.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "file_paths": {"type": "array", "items": {"type": "string"}, "description": "Danh sách các đường dẫn tệp PDF theo thứ tự cần gộp."},
+                            "output_name": {"type": "string", "description": "Tên tệp PDF đầu ra mong muốn (ví dụ: 'tai_lieu_tong_hop.pdf')."}
+                        },
+                        "required": ["file_paths"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "split_pdf_document",
+                    "description": "Tách một tệp PDF lớn thành tệp con chứa các trang được chỉ định.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "file_path": {"type": "string", "description": "Đường dẫn tệp PDF cần trích xuất trang."},
+                            "page_ranges": {"type": "string", "description": "Phạm vi các trang cần lấy, đánh số từ 1 (ví dụ: '1-3, 5, 8-10')."},
+                            "output_name": {"type": "string", "description": "Tên tệp kết quả đầu ra."}
+                        },
+                        "required": ["file_path", "page_ranges"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "extract_document_text",
+                    "description": "Trích xuất toàn bộ nội dung văn bản thuần sạch sẽ từ các tệp tài liệu số (PDF, DOCX, TXT, MD, CSV, JSON, LOG).",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "file_path": {"type": "string", "description": "Đường dẫn tới tệp tài liệu trên máy chủ."},
+                            "max_characters": {"type": "integer", "default": 10000, "description": "Giới hạn số ký tự tối đa cần trích xuất để nạp vào ngữ cảnh AI."}
+                        },
+                        "required": ["file_path"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "translate_text",
+                    "description": "Dịch thuật văn bản đa ngôn ngữ siêu tốc và chuẩn xác (Anh, Việt, Trung, Nhật, Hàn, Pháp, Đức...) bảo toàn văn phong chuyên môn.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "text": {"type": "string", "description": "Đoạn văn bản cần dịch."},
+                            "target_lang": {"type": "string", "default": "vi", "description": "Mã ngôn ngữ đích (ví dụ: 'vi', 'en', 'zh', 'ja', 'ko', 'fr')."},
+                            "source_lang": {"type": "string", "default": "auto", "description": "Mã ngôn ngữ nguồn ('auto' để tự động nhận diện)."}
+                        },
+                        "required": ["text"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "inspect_media_metadata",
+                    "description": "Trích xuất siêu dữ liệu chi tiết chuyên sâu của tệp video, âm thanh hoặc hình ảnh qua ffprobe và EXIF (độ phân giải, codec, fps, bitrate, audio channels, sample rate, thời lượng, tag ID3).",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "file_path_or_url": {"type": "string", "description": "Đường dẫn tệp phương tiện cục bộ hoặc URL."}
+                        },
+                        "required": ["file_path_or_url"]
+                    }
+                }
+            },
+
+            # ── M6 Omni Super-Agent: R3 Universal Internet Extraction ──
+            {
+                "type": "function",
+                "function": {
+                    "name": "download_direct_file",
+                    "description": "Tải tệp bất kỳ từ internet (ISO, ZIP, tài liệu, file nhị phân, drivers) hỗ trợ streaming chunked trực tiếp ra đĩa tạm, resume tải tiếp và báo cáo tiến độ chi tiết.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "url": {"type": "string", "description": "Đường dẫn URL trực tiếp của tệp cần tải về."},
+                            "custom_filename": {"type": "string", "description": "Tên tệp tùy chỉnh muốn lưu lại trên máy chủ."},
+                            "timeout_seconds": {"type": "integer", "default": 300, "description": "Thời gian chờ tối đa cho quá trình tải."}
+                        },
+                        "required": ["url"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "extract_clean_web_article",
+                    "description": "Bóc tách bài viết sạch từ trang báo điện tử hoặc blog bất kỳ, loại bỏ hoàn toàn các mã script, CSS, quảng cáo, menu điều hướng, và trả về định dạng Markdown cấu trúc rõ ràng cho AI đọc hiểu.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "url": {"type": "string", "description": "URL bài viết hoặc trang tin tức cần bóc tách nội dung."}
+                        },
+                        "required": ["url"]
+                    }
+                }
+            },
+
+            # ── M6 Omni Super-Agent: R4 Unrestricted Root System Mastery ──
+            {
+                "type": "function",
+                "function": {
+                    "name": "execute_system_script",
+                    "description": "Thực thi trực tiếp script hoàn chỉnh (Bash shell hoặc Python 3) trên máy chủ kirito-server với quyền hạn được phân cấp an toàn, trả về stdout, stderr và mã thoát.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "script_code": {"type": "string", "description": "Mã nguồn script đầy đủ cần thực thi."},
+                            "interpreter": {"type": "string", "enum": ["bash", "python3"], "default": "bash", "description": "Trình thông dịch để chạy script."},
+                            "timeout_seconds": {"type": "integer", "default": 60, "description": "Thời gian chờ tối đa (giây)."}
+                        },
+                        "required": ["script_code"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "manage_docker_containers",
+                    "description": "Điều hành toàn diện vòng đời các container Docker trên máy chủ (start, stop, restart, inspect, logs, prune rác container/images thừa).",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "action": {"type": "string", "enum": ["start", "stop", "restart", "inspect", "logs", "prune"], "description": "Hành động quản trị container."},
+                            "container_name": {"type": "string", "description": "Tên container (ví dụ: 'dashboard_ai_agent', 'dashboard_db', 'dashboard_frontend'). Bắt buộc khi action != 'prune'."},
+                            "force": {"type": "boolean", "default": False, "description": "Cưỡng chế thực thi nếu container bị treo."}
+                        },
+                        "required": ["action"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "optimize_system_resources",
+                    "description": "Tự động tối ưu hóa tài nguyên máy chủ kirito-server: Đồng bộ và giải phóng RAM đệm (sync && drop_caches), dọn dẹp các image/container Docker rác (docker system prune -f), và xoay vòng dọn log thừa.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "clean_docker": {"type": "boolean", "default": True, "description": "Dọn dẹp rác Docker."},
+                            "drop_caches": {"type": "boolean", "default": True, "description": "Giải phóng pagecache, dentries và inodes trong RAM Linux."}
+                        }
+                    }
+                }
+            },
         ]
         filtered_tools: List[Dict[str, Any]] = []
         for t in tools:
@@ -2271,16 +2820,83 @@ class AgentToolExecutor:
         # Only prune if scoping was actively invoked (i.e. query or history provided)
         if scoped_allowed is not None and len(filtered_tools) > 2:
             import json
-            reverse_priority = [
+            q_lower = (effective_query or "").lower()
+
+            # Detect actively boosted tools from user query to protect them from being dropped
+            protected_tools = set()
+            if any(k in q_lower for k in ("tải mp3", "tai mp3", "nhạc", "nhac", "audio", "mp3", "bài hát", "bai hat")):
+                protected_tools.add("download_media_audio")
+            if any(k in q_lower for k in ("tải video", "tai video", "video", "clip", "mp4", "down video", "tiktok", "youtube")):
+                protected_tools.add("download_media_video")
+            if any(k in q_lower for k in ("restart", "khởi động lại", "khoi dong lai", "reboot service")):
+                protected_tools.add("restart_service")
+            if any(k in q_lower for k in ("cắt video", "cat video", "cắt clip", "cat clip", "edit video", "cắt đoạn video", "cat doan video")):
+                protected_tools.add("edit_video_clip")
+            if any(k in q_lower for k in ("nén video", "nen video", "compress video", "giảm dung lượng video", "giam dung luong video")):
+                protected_tools.add("compress_video")
+            if any(k in q_lower for k in ("đổi đuôi video", "doi duoi video", "convert video", "chuyển định dạng video", "mp4 sang", "mkv sang", "tạo gif", "tao gif")):
+                protected_tools.add("convert_video_format")
+            if any(k in q_lower for k in ("đổi đuôi nhạc", "doi duoi nhac", "convert audio", "flac sang", "wav sang", "m4a sang", "320k")):
+                protected_tools.add("convert_audio_format")
+            if any(k in q_lower for k in ("cắt nhạc", "cat nhac", "cắt audio", "cat audio", "nhạc chuông", "nhac chuong", "trim audio")):
+                protected_tools.add("trim_audio_clip")
+            if any(k in q_lower for k in ("chuẩn hóa âm lượng", "chuan hoa am luong", "cân bằng âm lượng", "can bang am luong", "loudnorm", "ebu r128")):
+                protected_tools.add("normalize_audio_volume")
+            if any(k in q_lower for k in ("resize ảnh", "resize anh", "nén ảnh", "nen anh", "đổi kích thước ảnh", "doi kich thuoc anh", "doi kich thuoc", "đổi kích thước", "chuyển ảnh sang", "webp", "png sang jpg", "jpg sang png")):
+                protected_tools.add("convert_and_resize_image")
+            if any(k in q_lower for k in ("mã qr", "ma qr", "qr code", "tạo qr", "tao qr", "sinh qr", "quet qr", "quét qr")):
+                protected_tools.add("generate_custom_qr")
+            if any(k in q_lower for k in ("metadata", "thông tin video", "thông tin audio", "ffprobe", "exif", "codec")):
+                protected_tools.add("inspect_media_metadata")
+            if any(k in q_lower for k in ("gộp pdf", "gop pdf", "merge pdf", "ghép pdf", "ghep pdf", "nối pdf", "noi pdf", "gộp các file pdf", "gop cac file pdf", "gộp file pdf", "gop file pdf")) or bool(re.search(r"\b(?:gộp|gop|ghép|ghep|nối|noi|merge)\s+.*pdf\b", q_lower)):
+                protected_tools.add("merge_pdf_documents")
+            if any(k in q_lower for k in ("tách pdf", "tach pdf", "split pdf", "cắt trang pdf", "trích trang pdf", "tách các trang", "tach cac trang", "tách trang", "tach trang", "tach file pdf", "tách file pdf")) or bool(re.search(r"\b(?:tách|tach|split|cắt trang|cat trang|trích trang|trich trang)\s+.*pdf\b", q_lower)):
+                protected_tools.add("split_pdf_document")
+            if any(k in q_lower for k in ("đọc pdf", "doc pdf", "trích xuất văn bản", "trich xuat van ban", "extract text", "đọc word", "doc word", "đọc docx", "đọc nội dung file", "doc noi dung file", "báo cáo pdf", "bao cao pdf", "nội dung file", "file pdf", "doc file docx", "đọc file docx")) or bool(re.search(r"\b(?:đọc|doc|xem|trích|trich|nội dung|noi dung)\s+.*(?:pdf|docx|tài liệu|tai lieu|văn bản|van ban)\b", q_lower)):
+                protected_tools.add("extract_document_text")
+            if any(k in q_lower for k in ("dịch", "dich", "translate", "dịch văn bản", "dịch sang", "nghĩa là gì")):
+                protected_tools.add("translate_text")
+            if any(k in q_lower for k in ("tải tệp", "tai tep", "tải file trực tiếp", "download direct", "tải link", "tải file zip", "tải file iso", "download file", "tải file", "download file iso")):
+                protected_tools.add("download_direct_file")
+            if any(k in q_lower for k in ("bóc tách bài viết", "boc tach bai viet", "bóc bài viết", "boc bai viet", "đọc bài báo", "doc bai bao", "bài báo", "bai bao", "đọc báo", "doc bao", "trích xuất bài viết", "extract article", "nội dung bài báo", "tóm tắt bài báo", "tóm tắt bài viết")):
+                protected_tools.add("extract_clean_web_article")
+            if any(k in q_lower for k in ("chạy script", "chay script", "execute script", "script bash", "script python", "chạy code python", "chay code python", "chạy kịch bản", "chay kich ban", "kịch bản bash", "kich ban bash", "kịch bản python", "kich ban python")):
+                protected_tools.add("execute_system_script")
+            if any(k in q_lower for k in ("quản lý docker", "docker restart", "restart container", "khởi động lại container", "khoi dong lai container", "dừng container", "stop container", "bật container", "start container", "docker prune", "xóa rác docker", "container docker")):
+                protected_tools.add("manage_docker_containers")
+            if any(k in q_lower for k in ("tối ưu hệ thống", "toi uu he thong", "dọn dẹp hệ thống", "giải phóng ram", "giai phong ram", "drop_caches", "tối ưu máy chủ", "tối ưu server", "giải phóng ram đệm", "dọn ram", "don ram", "dọn dẹp ram", "don dep ram")):
+                protected_tools.add("optimize_system_resources")
+            if any(k in q_lower for k in ("honeypot", "bẫy", "bay", "kẻ thất bại", "ke that bai")):
+                protected_tools.add("get_honeypot_log")
+            if any(k in q_lower for k in ("lịch sử", "lich su", "history", "tấn công", "tan cong")):
+                protected_tools.add("get_attack_history")
+            if any(k in q_lower for k in ("thời tiết", "thoi tiet", "weather", "nhiệt độ", "nhiet do", "mưa", "mua")):
+                protected_tools.add("get_weather")
+            if any(k in q_lower for k in ("dọn ram", "don ram", "dọn dẹp ram", "don dep ram")):
+                protected_tools.add("optimize_system_resources")
+            if any(k in q_lower for k in ("cân bằng âm lượng", "can bang am luong")):
+                protected_tools.add("normalize_audio_volume")
+
+            unprotected_drop_priority = [
                 "browser_press_key", "browser_scroll", "browser_type", "browser_click",
                 "facebook_capture_screenshot", "recover_archive_password", "complete_task",
                 "remember_for_later", "get_server_active_sessions", "server_capture_screenshot",
                 "facebook_send_reply", "facebook_get_messages", "browser_search_google",
                 "browser_navigate", "get_server_location", "extract_archive_file",
                 "read_archive_file", "get_attack_history", "get_honeypot_log", "list_blocked_ips",
-                "unblock_ip", "block_ip", "get_security_report", "get_weather", "download_media_audio",
-                "download_media_video", "run_command"
+                "unblock_ip", "block_ip", "get_security_report", "get_weather",
+                "calculate", "convert_units", "query_database", "create_file_transfer_portal",
+                "list_files", "read_file_content", "write_file_content", "move_or_rename_file", "get_disk_usage",
+                "download_media_audio", "download_media_video", "get_system_health_report", "check_service_status",
+                "inspect_media_metadata", "convert_and_resize_image", "normalize_audio_volume",
+                "trim_audio_clip", "convert_audio_format", "convert_video_format", "compress_video",
+                "edit_video_clip", "generate_custom_qr", "split_pdf_document", "merge_pdf_documents",
+                "extract_document_text", "translate_text", "extract_clean_web_article",
+                "download_direct_file", "optimize_system_resources", "manage_docker_containers",
+                "execute_system_script", "run_command"
             ]
+            reverse_priority = [t for t in unprotected_drop_priority if t not in protected_tools] + [t for t in unprotected_drop_priority if t in protected_tools]
+
             while len(filtered_tools) > 2 and (len(json.dumps(filtered_tools, ensure_ascii=False)) / 3.5) > 700.0:
                 dropped = False
                 for candidate in reverse_priority:
@@ -2564,8 +3180,8 @@ class AgentToolExecutor:
                 veto_err = evaluate_spinal_safety_veto(cmd, tool_args.get("confirm"))
                 if veto_err:
                     return veto_err
-                # Raw output; RTK compression applied at chat-loop level before inserting into history
-                return await self.ssh_client.execute_command(cmd)
+                # Raw output; unrestricted=True lifts artificial barriers while guarding spinal hardware safety
+                return await self.ssh_client.execute_command(cmd, unrestricted=True)
 
             if tool_name == "read_archive_file":
                 fpath = tool_args.get("file_path", "").strip()
@@ -3781,6 +4397,371 @@ class AgentToolExecutor:
                     return f"🔓 **Đã gỡ bỏ thành công lệnh chặn đối với IP `{ip}` trên tường lửa máy chủ.** Địa chỉ IP này hiện đã có thể kết nối lại bình thường."
                 else:
                     return f"❌ Lỗi khi gỡ chặn IP `{ip}`: {res.get('message', 'Lỗi không xác định')}"
+
+            # ── M6 Omni Super-Agent Dispatchers (R1 - R4) ──
+            if tool_name == "edit_video_clip":
+                in_target = str(tool_args.get("input_path_or_url", "")).strip()
+                start_time = str(tool_args.get("start_time", "00:00:00")).strip()
+                duration = tool_args.get("duration")
+                out_format = str(tool_args.get("output_format", "mp4")).strip()
+                reencode = bool(tool_args.get("reencode", False))
+                res = await self.multimedia_service.edit_video_clip(
+                    input_path_or_url=in_target,
+                    start_time=start_time,
+                    duration=str(duration) if duration is not None else None,
+                    output_format=out_format,
+                    reencode=reencode,
+                )
+                if res.get("status") == "ok":
+                    msg = (
+                        f"✂️ **Cắt clip video thành công!**\n"
+                        f"• Thời lượng: {res.get('duration_processed', duration)}s\n"
+                        f"• Định dạng: {res.get('output_format', out_format)}\n"
+                        f"• Dung lượng: {res.get('file_size_formatted', 'N/A')}\n"
+                        f"• Đường dẫn: `{res.get('output_path', '')}`"
+                    )
+                    if res.get("delivery") == "direct":
+                        msg += "\n• Phương thức: Sẵn sàng gửi trực tiếp qua Telegram (<= 50MB)."
+                    elif res.get("public_url"):
+                        msg += f"\n• Link tải trực tiếp (Dual-Delivery): {res.get('public_url')}"
+                    return msg
+                return f"❌ Lỗi khi cắt clip video: {res.get('message', 'Không rõ nguyên nhân')}"
+
+            if tool_name == "compress_video":
+                in_target = str(tool_args.get("input_path_or_url", "")).strip()
+                target_mb = float(tool_args.get("target_size_mb", 48.0))
+                res = await self.multimedia_service.compress_video(
+                    input_path_or_url=in_target,
+                    target_size_mb=target_mb,
+                )
+                if res.get("status") == "ok":
+                    return (
+                        f"🗜️ **Nén video thành công qua FFmpeg 2-pass bitrate!**\n"
+                        f"• Dung lượng ban đầu: {res.get('original_size_formatted', 'N/A')}\n"
+                        f"• Dung lượng sau nén: {res.get('compressed_size_formatted', 'N/A')} (< {target_mb}MB)\n"
+                        f"• Tỷ lệ giảm: {res.get('compression_ratio', 'N/A')}\n"
+                        f"• Video Bitrate: {res.get('video_bitrate_kbps', 'N/A')} kbps\n"
+                        f"• Đường dẫn: `{res.get('output_path', '')}`\n"
+                        f"• Trạng thái: Đã tối ưu hoàn hảo để gửi qua Telegram."
+                    )
+                return f"❌ Lỗi khi nén video: {res.get('message', 'Không rõ nguyên nhân')}"
+
+            if tool_name == "convert_video_format":
+                in_target = str(tool_args.get("input_path_or_url", "")).strip()
+                target_fmt = str(tool_args.get("target_format", "mp4")).strip()
+                preset = str(tool_args.get("preset", "fast")).strip()
+                res = await self.multimedia_service.convert_video_format(
+                    input_path_or_url=in_target,
+                    target_format=target_fmt,
+                    preset=preset,
+                )
+                if res.get("status") == "ok":
+                    return (
+                        f"🔄 **Chuyển đổi định dạng video thành công!**\n"
+                        f"• Định dạng đích: **{target_fmt.upper()}**\n"
+                        f"• Dung lượng tệp: {res.get('file_size_formatted', 'N/A')}\n"
+                        f"• Đường dẫn: `{res.get('output_path', '')}`"
+                    )
+                return f"❌ Lỗi khi chuyển đổi video: {res.get('message', 'Không rõ nguyên nhân')}"
+
+            if tool_name == "convert_audio_format":
+                in_target = str(tool_args.get("input_path_or_url", "")).strip()
+                target_fmt = str(tool_args.get("target_format", "mp3")).strip()
+                bitrate = str(tool_args.get("bitrate", "320k")).strip()
+                res = await self.multimedia_service.convert_audio_format(
+                    input_path_or_url=in_target,
+                    target_format=target_fmt,
+                    bitrate=bitrate,
+                )
+                if res.get("status") == "ok":
+                    return (
+                        f"🎵 **Chuyển đổi âm thanh chuyên nghiệp thành công!**\n"
+                        f"• Định dạng: **{target_fmt.upper()}** ({bitrate})\n"
+                        f"• Dung lượng: {res.get('file_size_formatted', 'N/A')}\n"
+                        f"• Đường dẫn: `{res.get('output_path', '')}`"
+                    )
+                return f"❌ Lỗi khi chuyển đổi âm thanh: {res.get('message', 'Không rõ nguyên nhân')}"
+
+            if tool_name == "trim_audio_clip":
+                in_target = str(tool_args.get("input_path_or_url", "")).strip()
+                start_time = str(tool_args.get("start_time", "00:00:00")).strip()
+                duration = tool_args.get("duration")
+                res = await self.multimedia_service.trim_audio_clip(
+                    input_path_or_url=in_target,
+                    start_time=start_time,
+                    duration=str(duration) if duration is not None else None,
+                )
+                if res.get("status") == "ok":
+                    return (
+                        f"✂️ **Cắt đoạn âm thanh / nhạc chuông thành công!**\n"
+                        f"• Mốc bắt đầu: {start_time}\n"
+                        f"• Thời lượng: {duration}s\n"
+                        f"• Dung lượng: {res.get('file_size_formatted', 'N/A')}\n"
+                        f"• Đường dẫn: `{res.get('output_path', '')}`"
+                    )
+                return f"❌ Lỗi khi cắt âm thanh: {res.get('message', 'Không rõ nguyên nhân')}"
+
+            if tool_name == "normalize_audio_volume":
+                in_target = str(tool_args.get("input_path_or_url", "")).strip()
+                res = await self.multimedia_service.normalize_audio_volume(
+                    input_path_or_url=in_target,
+                )
+                if res.get("status") == "ok":
+                    return (
+                        f"🔊 **Chuẩn hóa âm lượng EBU R128 thành công!**\n"
+                        f"• Chuẩn áp dụng: EBU R128 (loudnorm filter)\n"
+                        f"• Đường dẫn: `{res.get('output_path', '')}`\n"
+                        f"• Dung lượng: {res.get('file_size_formatted', 'N/A')}"
+                    )
+                return f"❌ Lỗi khi chuẩn hóa âm lượng: {res.get('message', 'Không rõ nguyên nhân')}"
+
+            if tool_name == "convert_and_resize_image":
+                in_target = str(tool_args.get("input_path_or_url", "")).strip()
+                fmt = str(tool_args.get("format", "webp")).strip()
+                max_w = tool_args.get("max_width")
+                max_h = tool_args.get("max_height")
+                quality = int(tool_args.get("quality", 85))
+                res = await self.multimedia_service.convert_and_resize_image(
+                    input_path_or_url=in_target,
+                    format=fmt,
+                    max_width=int(max_w) if max_w is not None else None,
+                    max_height=int(max_h) if max_h is not None else None,
+                    quality=quality,
+                )
+                if res.get("status") == "ok":
+                    return (
+                        f"🖼️ **Xử lý hình ảnh thành công!**\n"
+                        f"• Định dạng: **{fmt.upper()}** (Chất lượng: {quality}%)\n"
+                        f"• Kích thước: {res.get('width', 'N/A')}x{res.get('height', 'N/A')} px\n"
+                        f"• Dung lượng: {res.get('file_size_formatted', 'N/A')}\n"
+                        f"• Đường dẫn: `{res.get('output_path', '')}`"
+                    )
+                return f"❌ Lỗi khi xử lý ảnh: {res.get('message', 'Không rõ nguyên nhân')}"
+
+            if tool_name == "generate_custom_qr":
+                content = str(tool_args.get("content", "")).strip()
+                label = tool_args.get("label")
+                fill_c = str(tool_args.get("fill_color", "#0f172a")).strip()
+                back_c = str(tool_args.get("back_color", "#ffffff")).strip()
+                res = await self.multimedia_service.generate_custom_qr(
+                    content=content,
+                    label=str(label) if label else None,
+                    fill_color=fill_c,
+                    back_color=back_c,
+                )
+                if res.get("status") == "ok":
+                    out_path = res.get("output_path", "")
+                    if pending_photos is not None and out_path:
+                        pending_photos.clear()
+                        pending_photos.append((f"Mã QR: {label or content[:30]}", out_path))
+                    return (
+                        f"📱 **Sinh mã QR Code độ nét cao thành công!**\n"
+                        f"• Nội dung: `{content[:100]}{'...' if len(content) > 100 else ''}`\n"
+                        f"• Nhãn chú thích: {label or 'Không có'}\n"
+                        f"• Kích thước: {res.get('width', 0)}x{res.get('height', 0)} px\n"
+                        f"• Đường dẫn tệp: `{out_path}`"
+                    )
+                return f"❌ Lỗi khi sinh mã QR: {res.get('message', 'Không rõ nguyên nhân')}"
+
+            if tool_name == "merge_pdf_documents":
+                files = tool_args.get("file_paths", [])
+                out_name = tool_args.get("output_name")
+                res = await self.document_service.merge_pdf_documents(
+                    file_paths=files,
+                    output_name=out_name,
+                )
+                if res.get("status") == "ok":
+                    return (
+                        f"📑 **Gộp tệp PDF thành công!**\n"
+                        f"• Số lượng tệp đã gộp: {res.get('total_files_merged', len(files))}\n"
+                        f"• Tổng số trang: {res.get('total_pages', 'N/A')}\n"
+                        f"• Dung lượng: {res.get('file_size_formatted', 'N/A')}\n"
+                        f"• Đường dẫn: `{res.get('output_path', '')}`"
+                    )
+                return f"❌ Lỗi khi gộp tệp PDF: {res.get('message', 'Không rõ nguyên nhân')}"
+
+            if tool_name == "split_pdf_document":
+                fpath = str(tool_args.get("file_path", "")).strip()
+                ranges = str(tool_args.get("page_ranges", "")).strip()
+                out_name = tool_args.get("output_name")
+                res = await self.document_service.split_pdf_document(
+                    file_path=fpath,
+                    page_ranges=ranges,
+                    output_name=out_name,
+                )
+                if res.get("status") == "ok":
+                    return (
+                        f"📄 **Tách trang PDF thành công!**\n"
+                        f"• Các trang đã trích xuất: `{res.get('pages_extracted', ranges)}`\n"
+                        f"• Tổng số trang trích xuất: {res.get('total_pages_extracted', 'N/A')}\n"
+                        f"• Dung lượng: {res.get('file_size_formatted', 'N/A')}\n"
+                        f"• Đường dẫn: `{res.get('output_path', '')}`"
+                    )
+                return f"❌ Lỗi khi tách trang PDF: {res.get('message', 'Không rõ nguyên nhân')}"
+
+            if tool_name == "extract_document_text":
+                fpath = str(tool_args.get("file_path", "")).strip()
+                max_chars = int(tool_args.get("max_characters", 10000))
+                res = await self.document_service.extract_document_text(
+                    file_path=fpath,
+                    max_chars=max_chars,
+                )
+                if res.get("status") == "ok":
+                    content = res.get("text", "")
+                    trunc_note = f"\n\n*(Đã trích xuất {len(content)} ký tự)*"
+                    return f"📖 **NỘI DUNG TÀI LIỆU `{res.get('file_name', fpath)}`**:\n\n{content[:max_chars]}{trunc_note}"
+                return f"❌ Lỗi khi đọc tài liệu: {res.get('message', 'Không rõ nguyên nhân')}"
+
+            if tool_name == "translate_text":
+                text = str(tool_args.get("text", "")).strip()
+                target_lang = str(tool_args.get("target_lang", "vi")).strip()
+                source_lang = str(tool_args.get("source_lang", "auto")).strip()
+                res = await self.document_service.translate_text(
+                    text=text,
+                    target_lang=target_lang,
+                    source_lang=source_lang,
+                )
+                if res.get("status") == "ok":
+                    return (
+                        f"🌐 **BẢN DỊCH ({res.get('source_lang', source_lang).upper()} ➔ {target_lang.upper()})**:\n\n"
+                        f"{res.get('translated_text', '')}"
+                    )
+                return f"❌ Lỗi khi dịch văn bản: {res.get('message', 'Không rõ nguyên nhân')}"
+
+            if tool_name == "inspect_media_metadata":
+                fpath = str(tool_args.get("file_path_or_url", "")).strip()
+                res = await self.document_service.inspect_media_metadata(
+                    file_path_or_url=fpath,
+                )
+                if res.get("status") == "ok":
+                    meta = res.get("metadata", {})
+                    mtype = res.get("media_type", "media")
+                    lines = [f"🔍 **SIÊU DỮ LIỆU KỸ THUẬT ({mtype.upper()})**:\n• Đường dẫn: `{fpath}`"]
+                    if res.get("file_size_formatted"):
+                        lines.append(f"• Dung lượng: {res.get('file_size_formatted')}")
+                    if "duration_sec" in meta:
+                        lines.append(f"• Thời lượng: {meta.get('duration_sec')}s")
+                    if "width" in meta and "height" in meta:
+                        lines.append(f"• Độ phân giải: {meta.get('width')}x{meta.get('height')}")
+                    if "codec_name" in meta:
+                        lines.append(f"• Codec: {meta.get('codec_name')}")
+                    if "bitrate_kbps" in meta:
+                        lines.append(f"• Bitrate: {meta.get('bitrate_kbps')} kbps")
+                    if "fps" in meta:
+                        lines.append(f"• Tốc độ khung hình (FPS): {meta.get('fps')}")
+                    if "channels" in meta:
+                        lines.append(f"• Kênh âm thanh: {meta.get('channels')} ({meta.get('sample_rate', '')} Hz)")
+                    if "exif" in meta and meta["exif"]:
+                        lines.append("• Thông tin EXIF máy ảnh:")
+                        for ek, ev in list(meta["exif"].items())[:5]:
+                            lines.append(f"  - {ek}: {ev}")
+                    return "\n".join(lines)
+                return f"❌ Lỗi khi trích xuất siêu dữ liệu: {res.get('message', 'Không rõ nguyên nhân')}"
+
+            if tool_name == "download_direct_file":
+                url = str(tool_args.get("url", "")).strip()
+                c_name = tool_args.get("custom_filename")
+                res = await self.universal_downloader.download_direct_file(
+                    url=url,
+                    custom_filename=c_name,
+                )
+                if res.get("status") == "success":
+                    return (
+                        f"📥 **Tải tệp thành công từ Internet!**\n"
+                        f"• Tên tệp: **{res.get('filename', '')}**\n"
+                        f"• Dung lượng: {res.get('file_size_formatted', 'N/A')}\n"
+                        f"• Tốc độ trung bình: {res.get('speed_formatted', 'N/A')}\n"
+                        f"• Thời gian tải: {res.get('elapsed_seconds', 'N/A')}s\n"
+                        f"• Đường dẫn lưu trữ: `{res.get('file_path', '')}`\n"
+                        f"• Resume hỗ trợ: {'Có' if res.get('resumed') else 'Không'}"
+                    )
+                return f"❌ Lỗi khi tải tệp: {res.get('message', 'Không rõ nguyên nhân')}"
+
+            if tool_name == "extract_clean_web_article":
+                url = str(tool_args.get("url", "")).strip()
+                res = await self.web_article_extractor.extract_clean_web_article(url=url)
+                if res.get("status") == "success":
+                    title = res.get("title", "Bài viết không tiêu đề")
+                    author = res.get("author")
+                    pdate = res.get("publish_date")
+                    wcount = res.get("word_count", 0)
+                    rtime = res.get("reading_time_min", 0)
+                    content = res.get("markdown_content", "")
+
+                    header_lines = [f"📰 **{title}**"]
+                    if author:
+                        header_lines.append(f"• Tác giả: {author}")
+                    if pdate:
+                        header_lines.append(f"• Thời gian: {pdate}")
+                    header_lines.append(f"• Độ dài: ~{wcount} từ (khoảng {rtime} phút đọc)")
+                    header_lines.append(f"• Nguồn: {url}")
+                    header_lines.append("\n---\n")
+                    header_lines.append(content[:15000])
+                    if len(content) > 15000:
+                        header_lines.append("\n\n*(Nội dung bài viết quá dài, đã hiển thị 15.000 ký tự đầu tiên)*")
+                    return "\n".join(header_lines)
+                return f"❌ Lỗi khi bóc tách bài viết: {res.get('message', 'Không rõ nguyên nhân')}"
+
+            if tool_name == "execute_system_script":
+                script_code = str(tool_args.get("script_code", "")).strip()
+                interp = str(tool_args.get("interpreter", "bash")).strip()
+                timeout = int(tool_args.get("timeout_seconds", 60))
+                confirm = tool_args.get("confirm")
+
+                veto_err = evaluate_spinal_safety_veto(script_code, confirm)
+                if veto_err:
+                    return veto_err
+
+                res = await self.system_mastery_service.execute_system_script(
+                    script_code=script_code,
+                    interpreter=interp,
+                    timeout=timeout,
+                )
+                if res.get("status") == "success":
+                    return (
+                        f"⚙️ **Thực thi script {res.get('interpreter')} thành công (exit code {res.get('exit_code')})!**\n"
+                        f"• Thời gian chạy: {res.get('execution_time_ms', 0)} ms\n"
+                        f"• Kết quả xuất ra (stdout/stderr):\n```\n{res.get('output', '').strip()}\n```"
+                    )
+                return (
+                    f"❌ **Thực thi script {res.get('interpreter')} thất bại (exit code {res.get('exit_code', -1)})!**\n"
+                    f"• {res.get('message', '')}\n"
+                    f"```\n{res.get('output', '').strip()}\n```"
+                )
+
+            if tool_name == "manage_docker_containers":
+                action = str(tool_args.get("action", "")).strip()
+                c_name = tool_args.get("container_name")
+                force = bool(tool_args.get("force", False))
+                res = await self.system_mastery_service.manage_docker_containers(
+                    action=action,
+                    container_name=c_name,
+                    force=force,
+                )
+                if res.get("status") == "success":
+                    out_text = res.get("output", "").strip()
+                    lines = [f"🐳 **Quản lý Docker ({action.upper()}) thành công!**"]
+                    if c_name:
+                        lines.append(f"• Container: `{c_name}`")
+                    if out_text:
+                        lines.append(f"• Kết quả:\n```\n{out_text[:3000]}\n```")
+                    return "\n".join(lines)
+                return f"❌ Lỗi quản lý Docker ({action}): {res.get('message', 'Không rõ nguyên nhân')}"
+
+            if tool_name == "optimize_system_resources":
+                res = await self.system_mastery_service.optimize_system_resources()
+                if res.get("status") == "success":
+                    freed = res.get("freed", {})
+                    after = res.get("after", {})
+                    steps = res.get("steps_executed", [])
+                    steps_formatted = "\n".join([f"  • {s}" for s in steps])
+                    return (
+                        f"🚀 **Tối ưu hóa tài nguyên máy chủ hoàn tất ({res.get('execution_time_sec', 0)}s)!**\n"
+                        f"• RAM khả dụng hiện tại: **{after.get('ram_available_mb', 0)} MB** (Đã giải phóng ~{freed.get('ram_freed_mb', 0)} MB)\n"
+                        f"• Dung lượng đĩa trống: **{after.get('disk_available_mb', 0)} MB** (Đã thu hồi ~{freed.get('disk_freed_mb', 0)} MB)\n"
+                        f"• Các bước tự động đã thực hiện:\n{steps_formatted}"
+                    )
+                return f"❌ Lỗi khi tối ưu hóa tài nguyên: {res.get('message', 'Không rõ nguyên nhân')}"
 
 
 

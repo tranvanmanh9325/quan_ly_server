@@ -196,6 +196,11 @@ class SshTunnelPool:
         }
 
 
+DEFAULT_ADMIN_TIMEOUT_SEC = 60
+MAX_ADMIN_TIMEOUT_SEC = 300
+EXTENDED_OUTPUT_CHARS = 8000
+
+
 class SshClient:
     """
     SSH Client with Multi-Tier Connection Architecture:
@@ -218,10 +223,17 @@ class SshClient:
             self.pool.total_count,
         )
 
-    async def _execute_on_host(self, host: str, port: int, command: str) -> str:
+    async def _execute_on_host(
+        self,
+        host: str,
+        port: int,
+        command: str,
+        timeout: int = COMMAND_TIMEOUT_SEC,
+        max_chars: int = MAX_OUTPUT_CHARS,
+    ) -> str:
         """Helper to run a command on a specific host:port endpoint with timeout."""
-        timed_cmd = f"timeout {COMMAND_TIMEOUT_SEC} {command}"
-        logger.info("[SSH] Executing command on %s:%d (cmd_length=%d)", host, port, len(timed_cmd))
+        timed_cmd = f"timeout {timeout} {command}"
+        logger.info("[SSH] Executing command on %s:%d (cmd_length=%d, timeout=%ds)", host, port, len(timed_cmd), timeout)
 
         async with asyncssh.connect(
             host,
@@ -234,7 +246,7 @@ class SshClient:
         ) as conn:
             result = await asyncio.wait_for(
                 conn.run(timed_cmd, check=False),
-                timeout=COMMAND_TIMEOUT_SEC + 5,
+                timeout=timeout + 5,
             )
             stdout_raw = result.stdout or ""
             stdout_str = stdout_raw.decode("utf-8", errors="replace") if isinstance(stdout_raw, bytes) else stdout_raw
@@ -249,17 +261,34 @@ class SshClient:
             if not output:
                 return "(lệnh không có output hoặc server không phản hồi)"
 
-            if len(output) > MAX_OUTPUT_CHARS:
-                output = output[:MAX_OUTPUT_CHARS] + "\n... [output bị cắt ngắn]"
+            if len(output) > max_chars:
+                output = output[:max_chars] + "\n... [output bị cắt ngắn]"
 
             return output
 
-    async def execute_command(self, command: str) -> str:
+    async def execute_command(
+        self,
+        command: str,
+        timeout: Optional[int] = None,
+        max_output_chars: Optional[int] = None,
+        unrestricted: bool = False,
+        allow_admin: bool = False,
+    ) -> str:
         """
-        Executes a shell command over SSH with security validation, timeout,
+        Executes a shell command over SSH with security validation, dynamic timeout,
         and automatic multi-tunnel failover.
+        
+        Args:
+            command: Shell command string to execute on the remote host.
+            timeout: Optional command timeout in seconds (clamped to 1..300s).
+                     Defaults to 60s for admin/unrestricted operations, 15s for standard.
+            max_output_chars: Optional maximum output character limit.
+                              Defaults to 8000 for admin/unrestricted operations, 1000 for standard.
+            unrestricted: If True, bypasses non-destructive administrative patterns.
+            allow_admin: Synonym/alias for unrestricted administration mode.
         """
-        violation = find_security_violation(command)
+        is_admin_mode = unrestricted or allow_admin
+        violation = find_security_violation(command, allow_admin=is_admin_mode, unrestricted=is_admin_mode)
         if violation:
             logger.warning("[SSH] Security violation blocked: %s", violation)
             return (
@@ -267,11 +296,33 @@ class SshClient:
                 "Chỉ được phép dùng các lệnh đọc (ps, docker ps, free, df, cat, date, v.v.)"
             )
 
+        # Determine effective timeout
+        if timeout is not None:
+            effective_timeout = max(1, min(int(timeout), MAX_ADMIN_TIMEOUT_SEC))
+        elif is_admin_mode:
+            effective_timeout = DEFAULT_ADMIN_TIMEOUT_SEC
+        else:
+            effective_timeout = COMMAND_TIMEOUT_SEC
+
+        # Determine effective output character limit
+        if max_output_chars is not None:
+            effective_max_chars = max(100, min(int(max_output_chars), EXTENDED_OUTPUT_CHARS))
+        elif is_admin_mode:
+            effective_max_chars = EXTENDED_OUTPUT_CHARS
+        else:
+            effective_max_chars = MAX_OUTPUT_CHARS
+
         # Tier 1: Try Primary LAN connection first
         lan_error: Optional[Exception] = None
         if self.host:
             try:
-                return await self._execute_on_host(self.host, self.port, command)
+                return await self._execute_on_host(
+                    self.host,
+                    self.port,
+                    command,
+                    timeout=effective_timeout,
+                    max_chars=effective_max_chars,
+                )
             except Exception as e:
                 lan_error = e
                 logger.warning(
@@ -296,7 +347,13 @@ class SshClient:
                     tunnel.usage_count,
                     tunnel.fail_count,
                 )
-                output = await self._execute_on_host(tunnel.host, tunnel.port, command)
+                output = await self._execute_on_host(
+                    tunnel.host,
+                    tunnel.port,
+                    command,
+                    timeout=effective_timeout,
+                    max_chars=effective_max_chars,
+                )
                 await self.pool.mark_success(tunnel)
                 return output
             except Exception as e:

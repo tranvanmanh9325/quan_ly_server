@@ -55,7 +55,7 @@ def sanitize_filename(filename: str, fallback: str = "downloaded_file.bin") -> s
         decoded = filename
 
     # Take only the basename and remove traversal characters
-    clean = Path(decoded).name.strip()
+    clean = Path(str(decoded).replace("\\", "/")).name.strip()
     clean = re.sub(r'[\/\\:\*\?"<>\|\x00-\x1f]', "_", clean)
     clean = re.sub(r"^\.+", "", clean)  # Strip leading dots (hidden / relative)
     clean = clean.strip(" .")

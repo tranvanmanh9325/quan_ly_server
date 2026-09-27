@@ -676,8 +676,7 @@ class AgentToolExecutor:
         r"tách(?:\s+[\w\s\d\-]{1,35})?\s+pdf|tach(?:\s+[\w\s\d\-]{1,35})?\s+pdf|split\s+pdf|cắt\s+trang\s+pdf|cat\s+trang\s+pdf|trích\s+trang\s+pdf|trich\s+trang\s+pdf|tách(?:\s+\w+)?\s+trang|tach(?:\s+\w+)?\s+trang|"
         r"đọc(?:\s+[\w\s]{1,40})?\s+(?:pdf|docx|word)|doc(?:\s+[\w\s]{1,40})?\s+(?:pdf|docx|word)|"
         r"nội\s+dung\s+file(?:\s+[\w\s]{1,20})?\s+(?:pdf|docx|word)|noi\s+dung\s+file(?:\s+[\w\s]{1,20})?\s+(?:pdf|docx|word)|"
-        r"trích\s+xuất\s+văn\s+bản|trich\s+xuat\s+van\s+ban|extract\s+text|đọc\s+word|doc\s+word|đọc\s+docx|doc\s+docx|file\s+docx|file\s+pdf|tệp\s+docx|tep\s+docx|"
-        r"dịch|dich|translate|dịch\s+văn\s+bản|dich\s+van\s+ban|dịch\s+sang|nghĩa\s+là\s+gì|nghia\s+la\s+gi"
+        r"(?:dịch|dich)(?!\s+(?:vụ|vu))\b|translate|dịch\s+văn\s+bản|dich\s+van\s+ban|dịch\s+sang|nghĩa\s+là\s+gì|nghia\s+la\s+gi"
         r")\b",
         re.IGNORECASE,
     )
@@ -1076,7 +1075,10 @@ class AgentToolExecutor:
             is_mrg_pdf  = any(k in q for k in ("gộp pdf", "gop pdf", "merge pdf", "ghép pdf", "ghep pdf", "nối pdf", "noi pdf", "gộp các file pdf", "gop cac file pdf", "gộp file pdf", "gop file pdf")) or bool(re.search(r"\b(?:gộp|gop|ghép|ghep|nối|noi|merge)\s+.*pdf\b", q))
             is_splt_pdf = any(k in q for k in ("tách pdf", "tach pdf", "split pdf", "cắt trang pdf", "trích trang pdf", "tách các trang", "tach cac trang", "tách trang", "tach trang", "tach file pdf", "tách file pdf")) or bool(re.search(r"\b(?:tách|tach|split|cắt trang|cat trang|trích trang|trich trang)\s+.*pdf\b", q))
             is_ext_doc  = any(k in q for k in ("đọc pdf", "doc pdf", "trích xuất văn bản", "trich xuat van ban", "extract text", "đọc word", "doc word", "đọc docx", "doc docx", "doc file docx", "đọc file docx", "nội dung file", "noi dung file", "báo cáo pdf", "bao cao pdf", "file báo cáo", "file bao cao")) or bool(re.search(r"\b(?:đọc|doc|xem|trích|trich|nội dung|noi dung)\s+.*(?:pdf|docx|tài liệu|tai lieu|văn bản|van ban)\b", q))
-            is_trans    = any(k in q for k in ("dịch", "dich", "translate", "dịch văn bản", "dịch sang", "nghĩa là gì")) or bool(re.search(r"\b(?:dịch|dich|translate)\s+.*(?:sang|tiếng|tieng|văn bản|van ban|tài liệu|tai lieu|text)\b", q))
+            has_service_kw = any(sv in q for sv in ("dịch vụ", "dich vu", "service"))
+            is_trans    = any(k in q for k in ("dịch văn bản", "dich van ban", "dịch sang", "dich sang", "nghĩa là gì", "nghia la gi", "translate")) or (
+                not has_service_kw and any(k in q for k in ("dịch", "dich"))
+            ) or bool(re.search(r"\b(?:dịch|dich|translate)(?!\s+(?:vụ|vu))\s+.*(?:sang|tiếng|tieng|văn bản|van ban|tài liệu|tai lieu|text)\b", q))
 
             is_dl_file  = any(k in q for k in ("tải tệp", "tai tep", "tải file trực tiếp", "download direct", "tải link", "tải file zip", "tải file iso", "download file", "tải file"))
             is_ext_art  = any(k in q for k in ("bóc tách bài viết", "boc tach bai viet", "đọc bài báo", "doc bai bao", "bài báo", "bai bao", "đọc báo", "doc bao", "trích xuất bài viết", "extract article", "nội dung bài báo", "tóm tắt bài báo", "tóm tắt bài viết"))
@@ -3180,8 +3182,8 @@ class AgentToolExecutor:
                 veto_err = evaluate_spinal_safety_veto(cmd, tool_args.get("confirm"))
                 if veto_err:
                     return veto_err
-                # Raw output; unrestricted=True lifts artificial barriers while guarding spinal hardware safety
-                return await self.ssh_client.execute_command(cmd, unrestricted=True)
+                # Raw output
+                return await self.ssh_client.execute_command(cmd)
 
             if tool_name == "read_archive_file":
                 fpath = tool_args.get("file_path", "").strip()

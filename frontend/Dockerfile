@@ -35,7 +35,19 @@ COPY nginx-global.conf /etc/nginx/nginx.conf
 
 # Replace default server config with SPA Cyberpunk routing configuration
 RUN rm /etc/nginx/conf.d/default.conf
+
+# 1. Copy security rules and dynamic blocklist into conf.d
+COPY conf.d/*.conf /etc/nginx/conf.d/
+
+# 2. Guarantee security_rules.conf is parsed FIRST by prepending '00-'
+# (Resolves unknown "bad_client" variable error due to alphabetic glob ordering)
+RUN mv /etc/nginx/conf.d/security_rules.conf /etc/nginx/conf.d/00-security_rules.conf
+
+# 3. Copy main reverse proxy server configuration
 COPY nginx.conf /etc/nginx/conf.d/
+
+# 4. Copy Cyberpunk Deception 403 error page into Nginx document root
+COPY html/403.html /usr/share/nginx/html/403.html
 
 EXPOSE 80
 CMD ["nginx", "-g", "daemon off;"]
@@ -47,6 +59,8 @@ CMD ["nginx", "-g", "daemon off;"]
 # ==============================================================================
 FROM nginx-base AS ci
 COPY dist /usr/share/nginx/html
+# Re-ensure 403.html is present in document root after dist copy
+COPY html/403.html /usr/share/nginx/html/403.html
 
 # ==============================================================================
 # TARGET: local (Default for Local Development / Direct Docker build)
@@ -54,3 +68,5 @@ COPY dist /usr/share/nginx/html
 # ==============================================================================
 FROM nginx-base AS local
 COPY --from=builder /app/dist /usr/share/nginx/html
+# Re-ensure 403.html is present in document root after dist copy
+COPY html/403.html /usr/share/nginx/html/403.html

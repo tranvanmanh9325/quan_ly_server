@@ -210,6 +210,11 @@ def classify_action_risk(tool_name: str, tool_args: Optional[Dict[str, Any]] = N
         "list_scheduled_reminders",
         "get_ngrok_status",
         "get_network_info",
+        # ── Milestone 3 Tier 1 Safe Read-Only Security Guardian Tools ──
+        "get_security_report",
+        "list_blocked_ips",
+        "get_honeypot_log",
+        "get_attack_history",
     }
     if tool_name in tier1_tools:
         return ACTION_TIER_1_SAFE
@@ -241,6 +246,9 @@ def classify_action_risk(tool_name: str, tool_args: Optional[Dict[str, Any]] = N
         "create_note",
         "delete_note",
         "query_database",
+        # ── Milestone 3 Tier 2 Reversible Security Guardian Tools ──
+        "block_ip",
+        "unblock_ip",
     }
     if tool_name in tier2_tools:
         return ACTION_TIER_2_REVERSIBLE
@@ -328,6 +336,8 @@ class AgentToolExecutor:
         email_report_service: Any = None,
         network_service: Any = None,
         file_manager_service: Any = None,
+        security_monitor_service: Any = None,
+        honeypot_service: Any = None,
     ):
         self.ssh_client = ssh_client
         self.message_cache = message_cache
@@ -336,6 +346,8 @@ class AgentToolExecutor:
         self.appointment_service = appointment_service
         self.telegram_bot = telegram_bot
         self.memory_service = memory_service
+        self.security_monitor_service = security_monitor_service
+        self.honeypot_service = honeypot_service
 
         # DB Connection Pool
         from app.core.db import db_manager
@@ -359,6 +371,12 @@ class AgentToolExecutor:
         self.email_report_service = email_report_service or EmailReportService(monitor_service=self.server_monitor_service)
         self.network_service = network_service or NetworkService(ssh_client=self.ssh_client)
         self.file_manager_service = file_manager_service or FileManagerService(ssh_client=self.ssh_client)
+
+    def set_security_monitor_service(self, service: Any) -> None:
+        self.security_monitor_service = service
+
+    def set_honeypot_service(self, service: Any) -> None:
+        self.honeypot_service = service
 
     def set_fb_service(self, fb_service: Any) -> None:
         self.fb_service = fb_service
@@ -488,6 +506,15 @@ class AgentToolExecutor:
         "get_disk_usage",
         "run_command",
     }
+    _TOOL_CLUSTER_SECURITY = {
+        "get_security_report",
+        "list_blocked_ips",
+        "get_honeypot_log",
+        "get_attack_history",
+        "block_ip",
+        "unblock_ip",
+        "run_command",
+    }
 
     # Cập nhật _TOOL_CLUSTER_CORE (Đúng 8 tools tinh túy)
     _TOOL_CLUSTER_CORE = {
@@ -542,6 +569,18 @@ class AgentToolExecutor:
     _PATH_PREFIX_RE = re.compile(r"(?:^|\s)(?:/(?:home|tmp|var|etc|usr|opt)(?:/[\w\.\-]+)*|\./[\w\.\-]+)\b")
     _SHORT_FILE_RE = re.compile(
         r"\b(file|folder|thư mục|thu muc|tệp tin|tep tin|tệp|tep|đọc file|doc file|xem file|danh sách file|danh sach file|ghi file|đổi tên file|doi ten file|dung lượng ổ đĩa|dung luong o dia|disk usage|du -sh)\b",
+        re.IGNORECASE,
+    )
+    _SHORT_SECURITY_RE = re.compile(
+        r"\b("
+        r"an ninh|an ninh mạng|bảo mật|bao mat|tấn công|tan cong|attack|attacker|threat|hacker|hack|"
+        r"block ip|chặn ip|chan ip|khóa ip|khoa ip|mở khóa ip|mo khoa ip|unblock ip|unblock|chặn|block|"
+        r"mở khóa|mo khoa|gỡ chặn|go chan|bỏ chặn|bo chan|"
+        r"honeypot|bẫy|kẻ thất bại|ke that bai|brute force|bruteforce|sqli|sql injection|"
+        r"xss|port scan|quét cổng|quet cong|iptables|firewall|tường lửa|tuong lua|"
+        r"blacklist|whitelist|danh sách đen|danh sách trắng|bị chặn|bi chan|"
+        r"lịch sử tấn công|lich su tan cong|báo cáo an ninh|bao cao an ninh"
+        r")\b",
         re.IGNORECASE,
     )
 
@@ -740,6 +779,17 @@ class AgentToolExecutor:
             ))
         )
 
+        is_security = bool(self._SHORT_SECURITY_RE.search(q)) or any(k in q for k in (
+            "an ninh", "bao mat", "bảo mật", "tấn công", "tan cong", "attack", "attacker",
+            "hacker", "hack", "block ip", "chặn ip", "chan ip", "khóa ip", "khoa ip", "chặn", "block",
+            "mở khóa", "mo khoa", "gỡ chặn", "go chan", "bỏ chặn", "bo chan",
+            "gỡ chặn ip", "mở khóa ip", "unblock ip", "unblock", "honeypot", "bẫy mật", "ke that bai", "kẻ thất bại",
+            "brute force", "bruteforce", "sqli", "port scan", "quet cong", "quét cổng",
+            "iptables", "firewall", "tường lửa", "tuong lua", "bị chặn", "bi chan",
+            "danh sách chặn", "danh sach chan", "danh sách đen", "blacklist", "whitelist",
+            "security report", "báo cáo an ninh", "lịch sử tấn công", "lich su tan cong"
+        ))
+
         if is_media:
             if is_audio:
                 selected.update(self._TOOL_CLUSTER_MEDIA)
@@ -755,6 +805,9 @@ class AgentToolExecutor:
 
         if is_reminder:
             selected.update(self._TOOL_CLUSTER_REMINDER)
+
+        if is_security:
+            selected.update(self._TOOL_CLUSTER_SECURITY)
 
         if is_server_health:
             selected.update(self._TOOL_CLUSTER_SERVER_HEALTH)
@@ -807,9 +860,20 @@ class AgentToolExecutor:
             is_rename_or_move = any(k in q for k in ("đổi tên", "doi ten", "move", "rename", "di chuyển", "di chuyen"))
             is_write = any(k in q for k in ("ghi file", "ghi noi dung", "ghi nội dung", "write file"))
             is_disk = any(k in q for k in ("dung lượng", "dung luong", "disk usage", "du -sh", "nặng nhất", "nang nhat"))
+            is_unblock = any(k in q for k in ("gỡ chặn", "go chan", "mở khóa", "mo khoa", "unblock", "bỏ chặn"))
+            is_block = any(k in q for k in ("chặn ip", "chan ip", "block ip", "khóa ip", "khoa ip", "chặn", "block"))
+            is_honeypot = any(k in q for k in ("honeypot", "bẫy", "kẻ thất bại", "ke that bai", "credentials", "mật khẩu hacker"))
+            is_history = any(k in q for k in ("lịch sử", "lich su", "history", "các vụ tấn công", "nhật ký tấn công"))
+            is_list_blk = any(k in q for k in ("danh sách chặn", "danh sach chan", "ai đang bị chặn", "ip bị chặn", "list block", "đang bị chặn"))
 
             priority_order: List[str] = [
                 # 1. Specialized Intent Boosters (Mỗi intent đưa 1-2 công cụ cốt lõi nhất lên đỉnh)
+                *(["unblock_ip"] if (is_security and is_unblock) else []),
+                *(["block_ip"] if (is_security and is_block and not is_unblock) else []),
+                *(["get_honeypot_log"] if (is_security and is_honeypot) else []),
+                *(["get_attack_history"] if (is_security and is_history) else []),
+                *(["list_blocked_ips"] if (is_security and is_list_blk) else []),
+                *(["get_security_report", "list_blocked_ips"] if is_security else []),
                 *(["create_file_transfer_portal"] if is_transfer else []),
                 *(["schedule_reminder", "list_scheduled_reminders"] if is_reminder else []),
                 *(["calculate", "convert_units"] if is_calc else []),
@@ -827,6 +891,8 @@ class AgentToolExecutor:
                 "run_command",
 
                 # 3. Primary Secondary Operations (Công cụ bổ trợ thường dùng)
+                "get_security_report",
+                "list_blocked_ips",
                 "get_system_health_report",
                 "check_service_status",
                 "calculate",
@@ -841,6 +907,10 @@ class AgentToolExecutor:
                 "get_weather",
 
                 # 4. Secondary Operations (Thao tác chi tiết hơn)
+                "block_ip",
+                "unblock_ip",
+                "get_honeypot_log",
+                "get_attack_history",
                 "restart_service",
                 "tail_service_logs",
                 "read_file_content",
@@ -2078,6 +2148,113 @@ class AgentToolExecutor:
                     },
                 },
             },
+
+            # ── Milestone 3: Autonomous Security Guardian Tools ──
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_security_report",
+                    "description": "Báo cáo tổng hợp tình trạng an ninh máy chủ real-time (threat level, số IP đang bị chặn, thống kê sự kiện tấn công 24h qua, top IP nguy hiểm).",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "list_blocked_ips",
+                    "description": "Liệt kê danh sách các địa chỉ IP đang bị chặn trên tường lửa máy chủ kèm lý do, thời điểm chặn và thời gian còn lại (TTL).",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_honeypot_log",
+                    "description": "Truy xuất danh sách credentials (tài khoản/mật khẩu) và probes mà kẻ tấn công đã thử trên bẫy Honeypot SSH 2222 và Telnet 23 'Kẻ thất bại'.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "limit": {
+                                "type": "integer",
+                                "description": "Số lượng bản ghi tối đa muốn lấy (mặc định: 50, tối đa: 200).",
+                                "default": 50,
+                            },
+                            "service": {
+                                "type": "string",
+                                "enum": ["all", "ssh", "telnet"],
+                                "description": "Lọc theo loại bẫy: 'all' (tất cả), 'ssh' (cổng 2222), hoặc 'telnet' (cổng 23). Mặc định là 'all'.",
+                                "default": "all",
+                            },
+                        },
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_attack_history",
+                    "description": "Tra cứu lịch sử các vụ tấn công mạng gần nhất được phát hiện bởi Security Guardian (SSH brute force, SQLi, XSS, Path Traversal, Port Scan, DDoS...).",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "limit": {
+                                "type": "integer",
+                                "description": "Số sự kiện tối đa cần tra cứu (mặc định: 50, tối đa: 200).",
+                                "default": 50,
+                            },
+                        },
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "block_ip",
+                    "description": "Chủ động chặn một địa chỉ IP trên tường lửa máy chủ (iptables/ufw DROP) với thời hạn hiệu lực TTL (Tier 2 Reversible). Có cơ chế Whitelist VETO bảo vệ.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "ip": {
+                                "type": "string",
+                                "description": "Địa chỉ IPv4 hoặc IPv6 cần chặn (ví dụ: '45.83.122.7').",
+                            },
+                            "reason": {
+                                "type": "string",
+                                "description": "Lý do chặn địa chỉ IP (ví dụ: 'Tấn công dò quét cổng', 'Admin yêu cầu chặn').",
+                            },
+                            "duration_seconds": {
+                                "type": "integer",
+                                "description": "Thời gian chặn tính bằng giây (mặc định: 86400 = 24 giờ).",
+                                "default": 86400,
+                            },
+                        },
+                        "required": ["ip", "reason"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "unblock_ip",
+                    "description": "Chủ động gỡ bỏ lệnh chặn (DROP) cho một địa chỉ IP trên tường lửa máy chủ (Tier 2 Reversible).",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "ip": {
+                                "type": "string",
+                                "description": "Địa chỉ IP cần gỡ lệnh chặn (ví dụ: '45.83.122.7').",
+                            },
+                        },
+                        "required": ["ip"],
+                    },
+                },
+            },
         ]
         filtered_tools: List[Dict[str, Any]] = []
         for t in tools:
@@ -2100,7 +2277,8 @@ class AgentToolExecutor:
                 "remember_for_later", "get_server_active_sessions", "server_capture_screenshot",
                 "facebook_send_reply", "facebook_get_messages", "browser_search_google",
                 "browser_navigate", "get_server_location", "extract_archive_file",
-                "read_archive_file", "get_weather", "download_media_audio",
+                "read_archive_file", "get_attack_history", "get_honeypot_log", "list_blocked_ips",
+                "unblock_ip", "block_ip", "get_security_report", "get_weather", "download_media_audio",
                 "download_media_video", "run_command"
             ]
             while len(filtered_tools) > 2 and (len(json.dumps(filtered_tools, ensure_ascii=False)) / 3.5) > 700.0:
@@ -3444,6 +3622,165 @@ class AgentToolExecutor:
                     item_lines = [f"• `{it['size']}` — `{it['path']}`" for it in top_items]
                     return f"{summary}\n" + "\n".join(item_lines)
                 return f"❌ {res.get('message', 'Lỗi phân tích ổ đĩa')}"
+
+            # ── Milestone 3: Security Guardian Tools Dispatch ──
+            if tool_name == "get_security_report":
+                sec_svc = self.security_monitor_service
+                if sec_svc is None:
+                    from app.services.security_monitor_service import SecurityMonitorService
+                    sec_svc = SecurityMonitorService.get_instance()
+                report = await sec_svc.get_security_report()
+
+                status = report.get("current_threat_status", "GREEN")
+                status_badges = {
+                    "CRITICAL": "🚨 [BÁO ĐỘNG ĐỎ - NGUY HIỂM CAO]",
+                    "ORANGE": "🟠 [CẢNH BÁO - ĐANG CÓ TẤN CÔNG]",
+                    "YELLOW": "🟡 [CHÚ Ý - CÓ DẤU HIỆU BẤT THƯỜNG]",
+                    "GREEN": "🟢 [HỆ THỐNG AN TOÀN - BÌNH THƯỜNG]",
+                }
+                badge = status_badges.get(status, "🛡️ [GIÁM SÁT AN NINH]")
+
+                lines = [
+                    f"{badge} **BÁO CÁO TỔNG QUAN TÌNH TRẠNG AN NINH MÁY CHỦ**\n",
+                    f"• Mức độ đe dọa hiện tại: **{status}**",
+                    f"• Số lượng IP đang bị khóa trên Firewall: **{report.get('active_blocked_ips_count', 0)} IP**",
+                    f"• Tổng số sự kiện tấn công ghi nhận 24h qua: **{report.get('attack_events_24h', {}).get('total_events', 0)} vụ**",
+                ]
+
+                by_type = report.get("attack_events_24h", {}).get("by_type", {})
+                if by_type:
+                    lines.append("\n📊 **Phân loại tấn công 24h qua**:")
+                    for atype, cnt in by_type.items():
+                        lines.append(f"  - `{atype}`: **{cnt}** lần")
+
+                top_ips = report.get("top_attacking_ips", [])
+                if top_ips:
+                    lines.append("\n🎯 **Top địa chỉ IP tấn công nhiều nhất**:")
+                    for idx, ip_info in enumerate(top_ips, 1):
+                        tag = " 🔒 [ĐÃ CHẶN]" if ip_info.get("is_blocked") else (" 🛡️ [WHITELIST]" if ip_info.get("is_whitelisted") else "")
+                        lines.append(f"  {idx}. `{ip_info.get('ip')}`: {ip_info.get('attack_count')} lần{tag}")
+
+                prot = report.get("system_protection", {})
+                uptime_h = prot.get("uptime_seconds", 0) // 3600
+                lines.append(f"\n⚙️ **Hệ thống phòng thủ**: Firewall: `{prot.get('firewall_mode')}` | Uptime Guardian: `{uptime_h}h`")
+                return "\n".join(lines)
+
+            if tool_name == "list_blocked_ips":
+                sec_svc = self.security_monitor_service
+                if sec_svc is None:
+                    from app.services.security_monitor_service import SecurityMonitorService
+                    sec_svc = SecurityMonitorService.get_instance()
+                blocked_list = await sec_svc.list_blocked_ips()
+                if not blocked_list:
+                    return "🛡️ **Hiện không có địa chỉ IP nào đang bị chặn trên tường lửa máy chủ.** Máy chủ an toàn tuyệt đối."
+
+                lines = [f"🔒 **DANH SÁCH {len(blocked_list)} ĐỊA CHỈ IP ĐANG BỊ KHÓA TRÊN FIREWALL (IPTABLES DROP)**:\n"]
+                for idx, rec in enumerate(blocked_list, 1):
+                    rem = rec.get("remaining_seconds", 0)
+                    rem_str = f"{rem // 3600} giờ {(rem % 3600) // 60} phút" if rem >= 3600 else f"{rem // 60} phút {rem % 60} giây"
+                    lines.append(
+                        f"{idx}. Địa chỉ IP: `{rec.get('ip')}` (Mức độ: `{rec.get('threat_level', 'HIGH')}`)\n"
+                        f"   - Lý do chặn: {rec.get('reason', 'Không có lý do')}\n"
+                        f"   - Thời điểm chặn: {rec.get('blocked_at')}\n"
+                        f"   - Tự động mở khóa sau: **{rem_str}** (Hết hạn: {rec.get('expires_at')})"
+                    )
+                return "\n".join(lines)
+
+            if tool_name == "get_honeypot_log":
+                hp_svc = self.honeypot_service
+                if hp_svc is None:
+                    from app.services.honeypot_service import HoneypotService
+                    hp_svc = HoneypotService.get_instance()
+                limit = max(1, min(int(tool_args.get("limit", 50)), 200))
+                svc_param = tool_args.get("service", "all")
+                svc_filter = None if svc_param == "all" else svc_param.lower().strip()
+
+                logs = await hp_svc.get_honeypot_log(limit=limit, service=svc_filter)
+                stats = hp_svc.get_stats()
+
+                lines = [
+                    f"🍯 **BÁO CÁO BẪY HONEYPOT 'KẺ THẤT BẠI' (SSH :2222 & TELNET :23)**\n",
+                    f"• Tổng số lần thăm dò (Probes): **{stats.get('total_probes', 0)}**",
+                    f"• Tổng số cặp credentials thu hoạch được: **{stats.get('total_credentials', 0)}** (từ {stats.get('unique_ips_count', 0)} IP độc nhất)",
+                ]
+
+                if not logs:
+                    lines.append("\nHiện chưa có thông tin đăng nhập nào bị bẫy ghi nhận.")
+                    return "\n".join(lines)
+
+                lines.append(f"\n📋 **Danh sách {len(logs)} lần thử đăng nhập gần nhất**:")
+                for idx, item in enumerate(logs, 1):
+                    srv = item.get("service", "unknown").upper()
+                    ts = item.get("captured_at", "")
+                    ip = item.get("ip", "unknown")
+                    user = item.get("username", "<empty>")
+                    pwd = item.get("password", "<empty>")
+                    lines.append(f"{idx}. `[{srv}]` Lúc {ts} từ IP `{ip}`: User: `{user}` | Pass: `{pwd}` (Lần thử #{item.get('attempt_count', 1)})")
+
+                return "\n".join(lines)
+
+            if tool_name == "get_attack_history":
+                sec_svc = self.security_monitor_service
+                if sec_svc is None:
+                    from app.services.security_monitor_service import SecurityMonitorService
+                    sec_svc = SecurityMonitorService.get_instance()
+                limit = max(1, min(int(tool_args.get("limit", 50)), 200))
+                events = await sec_svc.get_attack_history(limit=limit)
+
+                if not events:
+                    return "🛡️ Chưa có sự kiện tấn công mạng nào được ghi nhận trong lịch sử hệ thống."
+
+                lines = [f"⚔️ **LỊCH SỬ {len(events)} SỰ KIỆN TẤN CÔNG GẦN NHẤT PHÁT HIỆN ĐƯỢC**:\n"]
+                for idx, ev in enumerate(events, 1):
+                    level = ev.get("threat_level", "LOW")
+                    atype = ev.get("attack_type", "unknown")
+                    ip = ev.get("ip", "unknown")
+                    ts = ev.get("timestamp", "")
+                    svc = ev.get("target_service", "unknown")
+                    action = ev.get("action_taken", "none")
+                    act_tag = " [ĐÃ BLOCK 🔒]" if action == "iptables_drop" or "blocked" in action else (" [GIỚI HẠN TỐC ĐỘ ⏱️]" if action == "rate_limited" else "")
+
+                    payload = ev.get("raw_payload", "").strip().replace("\n", " ")
+                    payload_str = f"\n     Payload: `{payload[:80]}...`" if payload else ""
+
+                    lines.append(
+                        f"{idx}. `[{level}]` **{atype}** từ IP `{ip}`{act_tag}\n"
+                        f"   - Thời gian: {ts} | Dịch vụ đích: `{svc}`{payload_str}"
+                    )
+                return "\n".join(lines)
+
+            if tool_name == "block_ip":
+                sec_svc = self.security_monitor_service
+                if sec_svc is None:
+                    from app.services.security_monitor_service import SecurityMonitorService
+                    sec_svc = SecurityMonitorService.get_instance()
+                ip = str(tool_args.get("ip", "")).strip()
+                reason = str(tool_args.get("reason", "Admin block qua AI Agent")).strip()
+                duration = int(tool_args.get("duration_seconds", 86400))
+
+                res = await sec_svc.block_ip(ip=ip, reason=reason, duration_seconds=duration)
+                status = res.get("status")
+
+                if status == "veto":
+                    return f"🛑 [VETO BẢO VỆ AN TOÀN]: Không thể chặn địa chỉ IP `{ip}`! Địa chỉ này thuộc danh sách IP Whitelist an toàn (Loopback, LAN, Docker, Cloudflare, hoặc IP nhà của anh Mạnh)."
+                elif status == "success":
+                    hours = duration // 3600
+                    return f"🔒 **Đã khóa thành công IP `{ip}` trên tường lửa máy chủ!**\n• Lý do: {reason}\n• Thời hạn hiệu lực: {hours} giờ (tự động mở lúc {res.get('expires_at')})."
+                else:
+                    return f"❌ Không thể chặn IP `{ip}`: {res.get('message', 'Lỗi không xác định')}"
+
+            if tool_name == "unblock_ip":
+                sec_svc = self.security_monitor_service
+                if sec_svc is None:
+                    from app.services.security_monitor_service import SecurityMonitorService
+                    sec_svc = SecurityMonitorService.get_instance()
+                ip = str(tool_args.get("ip", "")).strip()
+
+                res = await sec_svc.unblock_ip(ip=ip, reason="Admin yêu cầu gỡ chặn qua AI Agent")
+                if res.get("status") == "success":
+                    return f"🔓 **Đã gỡ bỏ thành công lệnh chặn đối với IP `{ip}` trên tường lửa máy chủ.** Địa chỉ IP này hiện đã có thể kết nối lại bình thường."
+                else:
+                    return f"❌ Lỗi khi gỡ chặn IP `{ip}`: {res.get('message', 'Lỗi không xác định')}"
 
 
 

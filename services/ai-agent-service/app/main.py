@@ -21,6 +21,9 @@ from app.services.dream_engine import SubconsciousDreamEngine
 from app.routers import health, facebook, tiktok, openai_gateway, brain, media_download, file_transfer
 from app.services.media_storage_manager import media_storage_manager
 from app.services.transfer_storage_manager import transfer_storage_manager
+from app.services.security_alert_engine import SecurityAlertEngine
+from app.services.security_monitor_service import SecurityMonitorService
+from app.services.honeypot_service import HoneypotService
 
 logging.basicConfig(
     level=logging.INFO,
@@ -321,6 +324,27 @@ async def lifespan(app: FastAPI):
     fb_service.set_telegram_bot(telegram_bot)
     tiktok_service.set_telegram_bot(telegram_bot)
 
+    # 3b. Initialize Autonomous Security Guardian, Alert Engine & Honeypot (Milestone 3)
+    alert_engine = SecurityAlertEngine.get_instance(telegram_bot=telegram_bot)
+    sec_monitor = SecurityMonitorService.get_instance(ssh_client=ssh_client, alert_engine=alert_engine)
+    sec_monitor.set_alert_engine(alert_engine)
+    honeypot_service = HoneypotService.get_instance(
+        on_harvest_callback=alert_engine.handle_honeypot_harvest,
+        security_monitor=sec_monitor,
+        alert_engine=alert_engine,
+    )
+    honeypot_service.set_alert_engine(alert_engine)
+    honeypot_service.on_block_ip_callback = sec_monitor.block_ip
+
+    if hasattr(ai_agent, "tool_executor") and ai_agent.tool_executor:
+        ai_agent.tool_executor.set_security_monitor_service(sec_monitor)
+        ai_agent.tool_executor.set_honeypot_service(honeypot_service)
+
+    await alert_engine.start()
+    await sec_monitor.start()
+    await honeypot_service.start()
+    logger.info("[Lifespan] Autonomous Security Guardian, Alert Engine & Honeypot started successfully ✓")
+
     # Initialize AgentMemoryService (self-improving brain)
     memory_service = AgentMemoryService()
     memory_service.set_http_client(shared_http)
@@ -358,6 +382,9 @@ async def lifespan(app: FastAPI):
     app.state.telegram_bot = telegram_bot
     app.state.appointment_service = appointment_service
     app.state.dream_engine = dream_engine
+    app.state.security_alert_engine = alert_engine
+    app.state.security_monitor = sec_monitor
+    app.state.honeypot_service = honeypot_service
 
     # 5. Start background workers
     telegram_task        = asyncio.create_task(telegram_bot.start_polling())
@@ -378,6 +405,26 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down AI Agent & 9Router Service...")
     telegram_bot.stop()
     proactive_service.stop()
+
+    # Gracefully stop Security Services (drains pending alerts, closes sockets, cancels tasks)
+    try:
+        await honeypot_service.stop()
+        logger.info("[HoneypotService] Stopped cleanly on lifespan teardown ✓")
+    except Exception as e:
+        logger.error("[HoneypotService] Error stopping during shutdown: %s", e)
+
+    try:
+        await sec_monitor.stop()
+        logger.info("[SecurityGuardian] Stopped cleanly on lifespan teardown ✓")
+    except Exception as e:
+        logger.error("[SecurityGuardian] Error stopping during shutdown: %s", e)
+
+    try:
+        await alert_engine.stop()
+        logger.info("[SecurityAlertEngine] Stopped cleanly on lifespan teardown ✓")
+    except Exception as e:
+        logger.error("[SecurityAlertEngine] Error stopping during shutdown: %s", e)
+
     telegram_task.cancel()
     fb_scan_task.cancel()
     tiktok_scan_task.cancel()

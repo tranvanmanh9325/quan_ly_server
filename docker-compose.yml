@@ -130,6 +130,8 @@ services:
     ports:
       - "127.0.0.1:8084:8084"
       - "127.0.0.1:6080:6080"
+      - "2222:2222"
+      - "23:23"
     shm_size: '512m'
     volumes:
       # Mount application source code for instant updates without rebuilding container

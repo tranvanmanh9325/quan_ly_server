@@ -596,7 +596,7 @@ SSH_PATTERNS = [
 ]
 
 SQLI_PATTERNS = [
-    re.compile(r"\bUNION(?:\s+|/\*.*?\*/)+(?:ALL(?:\s+|/\*.*?\*/)+)?SELECT\b", re.IGNORECASE),
+    re.compile(r"\bUNION\s+(?:ALL\s+)?SELECT\b", re.IGNORECASE),
     re.compile(r"\bDROP\s+(?:TABLE|DATABASE|VIEW|PROCEDURE|INDEX)\b", re.IGNORECASE),
     re.compile(r"(?:'|\")\s*(?:OR|AND)\s*[\w'\"`]+\s*=\s*[\w'\"`]+", re.IGNORECASE),
     re.compile(r"\b(?:OR|AND)\s+\d+\s*=\s*\d+(?:\s*(?:--|#|/\*|;|$|\s))", re.IGNORECASE),

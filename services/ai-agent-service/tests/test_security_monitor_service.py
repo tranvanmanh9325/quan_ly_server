@@ -14,11 +14,14 @@ Tests:
 9. Lifecycle clean startup and shutdown (0 ResourceWarning).
 """
 
+from __future__ import annotations
+
 import asyncio
 import os
 import shutil
 import tempfile
 import time
+from typing import Any, Dict, List, Optional
 import unittest
 
 from app.services.security_monitor_service import (

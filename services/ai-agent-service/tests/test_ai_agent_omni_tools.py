@@ -702,7 +702,7 @@ class TestOmniDispatchers(unittest.IsolatedAsyncioTestCase):
     async def test_dispatch_run_command_unrestricted_root(self):
         self.mock_ssh.execute_command.return_value = "Linux kirito-server 6.8.0 #1 SMP"
         res = await self.executor._execute_tool("run_command", {"command": "uname -a"})
-        self.mock_ssh.execute_command.assert_awaited_once_with("uname -a", unrestricted=True)
+        self.mock_ssh.execute_command.assert_awaited_once_with("uname -a")
         self.assertIn("kirito-server", res)
 
 

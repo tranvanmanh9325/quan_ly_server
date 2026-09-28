@@ -19,4 +19,4 @@ pyzipper>=0.4.0
 yt-dlp>=2026.8.19
 aiofiles>=24.1.0
 qrcode[pil]>=7.4.2
-python-multipart>=0.0.9
+python-multipart>=0.0.32

@@ -27,6 +27,8 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 import java.util.regex.Pattern;
 
 @RestController
@@ -296,6 +298,53 @@ public class MetricsController {
      *   - 'journalctl -n 50' performs disk I/O
      * Container state and logs rarely change in <60s, so this TTL is safe.
      */
+    private static final String DOCKER_CONTAINERS_CMD =
+            "if command -v docker >/dev/null 2>&1; then docker ps -a --format '{{.ID}}|{{.Names}}|{{.Image}}|{{.Status}}|{{.Ports}}|{{.Label \"com.docker.compose.project\"}}|{{.Label \"com.docker.compose.service\"}}|{{.Label \"com.docker.compose.project.working_dir\"}}|{{.Label \"com.docker.compose.project.config_files\"}}'; else echo 'DOCKER_NOT_FOUND'; fi";
+
+    /**
+     * Parses raw stdout from DOCKER_CONTAINERS_CMD into a structured container list.
+     * Uses limit = -1 in split to preserve empty trailing fields for standalone containers.
+     */
+    private List<Map<String, String>> parseDockerContainersOutput(String dockerRaw) {
+        List<Map<String, String>> containers = new ArrayList<>();
+        if (dockerRaw == null || dockerRaw.isBlank() ||
+            "DOCKER_NOT_FOUND".equals(dockerRaw.trim()) ||
+            dockerRaw.trim().startsWith("Lỗi SSH") ||
+            dockerRaw.trim().startsWith("ERROR")) {
+            return containers;
+        }
+        for (String line : dockerRaw.trim().split("\n")) {
+            Map<String, String> container = parseDockerContainerLine(line);
+            if (container != null) {
+                containers.add(container);
+            }
+        }
+        return containers;
+    }
+
+    /**
+     * Parses a single pipe-delimited line from docker ps into a container map with 9 fields.
+     */
+    private Map<String, String> parseDockerContainerLine(String line) {
+        if (line == null) return null;
+        String trimmed = line.trim();
+        if (trimmed.isEmpty()) return null;
+        String[] parts = trimmed.split("\\|", -1);
+        if (parts.length < 3) return null;
+
+        Map<String, String> container = new HashMap<>();
+        container.put("id",          parts[0]);
+        container.put("name",        parts.length > 1 && parts[1] != null ? parts[1] : "");
+        container.put("image",       parts.length > 2 && parts[2] != null ? parts[2] : "");
+        container.put("status",      parts.length > 3 && parts[3] != null ? parts[3] : "");
+        container.put("ports",       parts.length > 4 && parts[4] != null ? parts[4] : "");
+        container.put("project",     parts.length > 5 && parts[5] != null ? parts[5] : "");
+        container.put("service",     parts.length > 6 && parts[6] != null ? parts[6] : "");
+        container.put("workingDir",  parts.length > 7 && parts[7] != null ? parts[7] : "");
+        container.put("configFiles", parts.length > 8 && parts[8] != null ? parts[8] : "");
+        return container;
+    }
+
     private Map<String, Object> getSlowMetrics() {
         long now = System.currentTimeMillis();
         Map<String, Object> cached = cachedSlowMetrics.get();
@@ -304,9 +353,8 @@ public class MetricsController {
         }
 
         try {
-            String dockerCmd = "if command -v docker >/dev/null 2>&1; then docker ps -a --format '{{.ID}}|{{.Names}}|{{.Image}}|{{.Status}}|{{.Ports}}'; else echo 'DOCKER_NOT_FOUND'; fi";
             String logsCmd   = "if [ -f /var/log/syslog ]; then tail -n 50 /var/log/syslog; elif command -v journalctl >/dev/null 2>&1; then journalctl -n 50 --no-pager; else dmesg | tail -n 50; fi";
-            String raw = sshService.executeCommand(dockerCmd + " ; echo '===SEP===' ; " + logsCmd);
+            String raw = sshService.executeCommand(DOCKER_CONTAINERS_CMD + " ; echo '===SEP===' ; " + logsCmd);
 
             Map<String, Object> result = new HashMap<>();
 
@@ -321,20 +369,11 @@ public class MetricsController {
             List<Map<String, String>> containers = new ArrayList<>();
             if ("DOCKER_NOT_FOUND".equals(dockerRaw)) {
                 dockerMap.put("status", "NOT_INSTALLED");
+            } else if (dockerRaw.startsWith("Lỗi SSH") || dockerRaw.startsWith("ERROR")) {
+                dockerMap.put("status", "ERROR");
             } else if (!dockerRaw.isEmpty()) {
                 dockerMap.put("status", "RUNNING");
-                for (String line : dockerRaw.split("\n")) {
-                    String[] t = line.split("\\|");
-                    if (t.length >= 3) {
-                        Map<String, String> cMap = new HashMap<>();
-                        cMap.put("id",     t[0]);
-                        cMap.put("name",   t.length > 1 ? t[1] : "");
-                        cMap.put("image",  t.length > 2 ? t[2] : "");
-                        cMap.put("status", t.length > 3 ? t[3] : "");
-                        cMap.put("ports",  t.length > 4 ? t[4] : "");
-                        containers.add(cMap);
-                    }
-                }
+                containers = parseDockerContainersOutput(dockerRaw);
             } else {
                 dockerMap.put("status", "ERROR");
             }
@@ -877,30 +916,20 @@ public class MetricsController {
 
     @GetMapping("/docker")
     public Map<String, Object> getDockerContainers() {
-        String cmd = "if command -v docker >/dev/null 2>&1; then docker ps -a --format '{{.ID}}|{{.Names}}|{{.Image}}|{{.Status}}|{{.Ports}}'; else echo 'DOCKER_NOT_FOUND'; fi";
-        String result = sshService.executeCommand(cmd);
+        String result = sshService.executeCommand(DOCKER_CONTAINERS_CMD);
         
         Map<String, Object> response = new HashMap<>();
         List<Map<String, String>> containers = new ArrayList<>();
         
         if (result != null && !result.isBlank()) {
-            if (result.trim().equals("DOCKER_NOT_FOUND")) {
+            String trimmed = result.trim();
+            if (trimmed.equals("DOCKER_NOT_FOUND")) {
                 response.put("status", "NOT_INSTALLED");
+            } else if (trimmed.startsWith("Lỗi SSH") || trimmed.startsWith("ERROR")) {
+                response.put("status", "ERROR");
             } else {
                 response.put("status", "RUNNING");
-                String[] lines = result.trim().split("\n");
-                for (String line : lines) {
-                    String[] parts = line.split("\\|");
-                    if (parts.length >= 3) {
-                        Map<String, String> container = new HashMap<>();
-                        container.put("id", parts[0]);
-                        container.put("name", parts.length > 1 ? parts[1] : "");
-                        container.put("image", parts.length > 2 ? parts[2] : "");
-                        container.put("status", parts.length > 3 ? parts[3] : "");
-                        container.put("ports", parts.length > 4 ? parts[4] : "");
-                        containers.add(container);
-                    }
-                }
+                containers = parseDockerContainersOutput(trimmed);
             }
         } else {
             response.put("status", "ERROR");
@@ -940,6 +969,286 @@ public class MetricsController {
     public Map<String, String> getDockerStats() {
         String cmd = "if command -v docker >/dev/null 2>&1; then docker stats --no-stream --format '{{.ID}}|{{.Name}}|{{.CPUPerc}}|{{.MemUsage}}|{{.NetIO}}' 2>/dev/null; else echo 'DOCKER_NOT_FOUND'; fi";
         return safeData(sshService.executeCommand(cmd));
+    }
+
+    // =========================================================================
+    // DOCKER COMPOSE SECURE .ENV MANAGEMENT & PROJECT CONTROL API (MILESTONE 2)
+    // =========================================================================
+
+    public record ValidatedPath(String project, String workingDir, String filePath, String bakPath) {}
+
+    private static final Pattern SAFE_PROJECT_NAME_PATTERN = Pattern.compile("^[a-zA-Z0-9_.-]{1,64}$");
+    private static final Pattern SAFE_DIR_PATH_PATTERN = Pattern.compile("^/home/kirito(/[a-zA-Z0-9_.-]+)*$");
+
+    /**
+     * Validates and resolves project and workingDir parameters to prevent Path Traversal,
+     * Null Byte injection, Windows drive letter escape, and Command Injection.
+     */
+    private ValidatedPath validateAndResolveEnvPath(String project, String workingDir) throws IllegalArgumentException {
+        if (project == null || !SAFE_PROJECT_NAME_PATTERN.matcher(project.trim()).matches()
+                || project.contains("..") || project.trim().equals(".")) {
+            throw new IllegalArgumentException("Invalid project name format. Allowed characters: a-z, A-Z, 0-9, _, ., - (max 64 chars)");
+        }
+        String cleanProject = project.trim();
+
+        String targetDir;
+        if (workingDir == null || workingDir.isBlank()) {
+            targetDir = "/home/kirito/" + cleanProject;
+        } else {
+            String normalized = workingDir.trim().replace('\\', '/');
+            // Reject traversal tokens, null bytes, URL encoded dots and home alias
+            if (normalized.contains("..") || normalized.contains("\0") ||
+                normalized.toLowerCase().contains("%2e") || normalized.contains("~")) {
+                throw new IllegalArgumentException("Invalid working directory: Path traversal attempt detected");
+            }
+            // Reject Windows drive letter pattern
+            if (normalized.matches("^[a-zA-Z]:.*")) {
+                throw new IllegalArgumentException("Invalid working directory: Windows drive letters are not allowed on Linux server");
+            }
+            // Normalize redundant slashes and trailing slash
+            normalized = normalized.replaceAll("/+", "/");
+            while (normalized.length() > 1 && normalized.endsWith("/")) {
+                normalized = normalized.substring(0, normalized.length() - 1);
+            }
+            // Whitelist boundary: must reside strictly under /home/kirito/ and contain only safe characters
+            if (!targetDirIsValidBoundary(normalized) || !SAFE_DIR_PATH_PATTERN.matcher(normalized).matches()
+                    || normalized.contains("/./") || normalized.endsWith("/.")) {
+                throw new IllegalArgumentException("Invalid working directory: workingDir must be within /home/kirito/ and contain only alphanumeric, _, ., - characters");
+            }
+            targetDir = normalized;
+        }
+
+        String filePath = targetDir + "/.env";
+        String bakPath = targetDir + "/.env.bak";
+        return new ValidatedPath(cleanProject, targetDir, filePath, bakPath);
+    }
+
+    private boolean targetDirIsValidBoundary(String dir) {
+        return dir.equals("/home/kirito") || dir.startsWith("/home/kirito/");
+    }
+
+    @GetMapping("/docker/env")
+    public Map<String, Object> getDockerEnv(
+            @RequestParam(required = false) String project,
+            @RequestParam(required = false) String workingDir) {
+        ValidatedPath path;
+        try {
+            path = validateAndResolveEnvPath(project, workingDir);
+        } catch (IllegalArgumentException e) {
+            return Map.of("status", "error", "message", e.getMessage());
+        }
+
+        String cmd = "if [ -f \"" + path.filePath() + "\" ]; then " +
+                     "base64 -w 0 \"" + path.filePath() + "\"; echo \"\"; echo \"===ENV_SEP===\"; " +
+                     "if [ -f \"" + path.bakPath() + "\" ]; then echo \"1\"; else echo \"0\"; fi; " +
+                     "else echo \"ENV_NOT_FOUND\"; fi";
+
+        String raw = sshService.executeCommand(cmd);
+        if (raw == null || raw.isBlank()) {
+            return Map.of("status", "error", "message", "No response returned from SSH server");
+        }
+
+        String trimmed = raw.trim();
+        if (trimmed.startsWith("ENV_NOT_FOUND")) {
+            return Map.of(
+                "status", "error",
+                "message", "File .env does not exist at " + path.filePath(),
+                "project", path.project(),
+                "filePath", path.filePath(),
+                "hasBackup", false
+            );
+        }
+        if (trimmed.startsWith("Lỗi SSH") || trimmed.startsWith("ERROR") || trimmed.startsWith("Error")) {
+            return Map.of("status", "error", "message", trimmed);
+        }
+
+        String[] parts = raw.split("===ENV_SEP===");
+        String b64 = parts[0].trim();
+        boolean hasBackup = parts.length > 1 && parts[1].trim().startsWith("1");
+
+        String decodedContent;
+        try {
+            byte[] decodedBytes = Base64.getDecoder().decode(b64);
+            decodedContent = new String(decodedBytes, StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            log.error("Failed to decode base64 .env content: {}", e.getMessage());
+            return Map.of("status", "error", "message", "Failed to decode .env content: " + e.getMessage());
+        }
+
+        Map<String, Object> response = new HashMap<>();
+        response.put("status", "success");
+        response.put("project", path.project());
+        response.put("filePath", path.filePath());
+        response.put("content", decodedContent);
+        response.put("hasBackup", hasBackup);
+        return response;
+    }
+
+    @PostMapping("/docker/env")
+    public Map<String, Object> updateDockerEnv(@RequestBody(required = false) Map<String, Object> body) {
+        if (body == null) {
+            return Map.of("status", "error", "message", "Request body cannot be empty");
+        }
+        String project = body.get("project") != null ? String.valueOf(body.get("project")) : null;
+        String workingDir = body.get("workingDir") != null ? String.valueOf(body.get("workingDir")) : null;
+        String content = body.get("content") != null ? String.valueOf(body.get("content")) : "";
+        boolean restartProject = Boolean.parseBoolean(String.valueOf(body.getOrDefault("restartProject", false)));
+
+        ValidatedPath path;
+        try {
+            path = validateAndResolveEnvPath(project, workingDir);
+        } catch (IllegalArgumentException e) {
+            return Map.of("status", "error", "message", e.getMessage());
+        }
+
+        if (content.length() > 1_000_000) {
+            return Map.of("status", "error", "message", "Payload too large: .env file content exceeds 1MB limit");
+        }
+
+        String b64 = Base64.getEncoder().encodeToString(content.getBytes(StandardCharsets.UTF_8));
+
+        StringBuilder cmd = new StringBuilder();
+        cmd.append("TARGET_DIR=\"").append(path.workingDir()).append("\"\n");
+        cmd.append("FILE_PATH=\"").append(path.filePath()).append("\"\n");
+        cmd.append("if [ ! -d \"$TARGET_DIR\" ]; then echo \"DIR_NOT_FOUND\"; exit 1; fi\n");
+        cmd.append("TS=$(date +%Y%m%d_%H%M%S)\n");
+        cmd.append("BAK_FILE=\"${FILE_PATH}.bak.$TS\"\n");
+        cmd.append("if [ -f \"$FILE_PATH\" ]; then\n");
+        cmd.append("    cp -f \"$FILE_PATH\" \"$BAK_FILE\" && cp -f \"$FILE_PATH\" \"${FILE_PATH}.bak\"\n");
+        cmd.append("    echo \"BACKUP:$BAK_FILE\"\n");
+        cmd.append("else\n");
+        cmd.append("    echo \"BACKUP:NONE\"\n");
+        cmd.append("fi\n");
+        cmd.append("echo '").append(b64).append("' | base64 -d > \"").append(path.filePath()).append(".tmp\" && mv -f \"").append(path.filePath()).append(".tmp\" \"$FILE_PATH\"\n");
+        cmd.append("if [ $? -eq 0 ]; then\n");
+        cmd.append("    echo \"WRITE_SUCCESS\"\n");
+        if (restartProject) {
+            // Non-blocking detached restart command allows HTTP response to return before container recreation
+            cmd.append("    ((sleep 1 && cd \"").append(path.workingDir()).append("\" && docker compose up -d) >/tmp/compose_up.log 2>&1 &)\n");
+        }
+        cmd.append("else\n");
+        cmd.append("    echo \"WRITE_FAILED\"\n");
+        cmd.append("    exit 1\n");
+        cmd.append("fi");
+
+        String res = sshService.executeCommand(cmd.toString());
+        if (res == null || res.isBlank()) {
+            return Map.of("status", "error", "message", "No response from server during .env update");
+        }
+        if (res.contains("DIR_NOT_FOUND")) {
+            return Map.of("status", "error", "message", "Target directory does not exist: " + path.workingDir());
+        }
+        if ((!res.contains("WRITE_SUCCESS") && !res.contains("WRITE:SUCCESS")) || res.startsWith("ERROR") || res.startsWith("Lỗi SSH")) {
+            return Map.of("status", "error", "message", "Failed to write .env file: " + res.trim());
+        }
+
+        String backupPath = path.bakPath();
+        for (String line : res.split("\n")) {
+            if (line.startsWith("BACKUP:")) {
+                String p = line.substring("BACKUP:".length()).trim();
+                if (!"NONE".equals(p) && !p.isBlank()) {
+                    backupPath = p;
+                }
+            }
+        }
+
+        Map<String, Object> response = new HashMap<>();
+        response.put("status", "success");
+        response.put("message", ".env file updated successfully");
+        response.put("backupPath", backupPath);
+        response.put("restarted", restartProject);
+        return response;
+    }
+
+    public Map<String, Object> saveDockerEnv(Map<String, Object> body) {
+        return updateDockerEnv(body);
+    }
+
+    @PostMapping("/docker/project/control")
+    public Map<String, Object> controlDockerProject(
+            @RequestBody(required = false) Map<String, Object> body,
+            @RequestParam(required = false) String project,
+            @RequestParam(required = false) String action,
+            @RequestParam(required = false) String workingDir) {
+
+        String proj = (body != null && body.get("project") != null) ? body.get("project").toString() : project;
+        String act  = (body != null && body.get("action") != null) ? body.get("action").toString() : action;
+        String dir  = (body != null && body.get("workingDir") != null) ? body.get("workingDir").toString() : workingDir;
+
+        ValidatedPath path;
+        try {
+            path = validateAndResolveEnvPath(proj, dir);
+        } catch (IllegalArgumentException e) {
+            return Map.of("status", "error", "message", e.getMessage());
+        }
+
+        if (act == null || !act.trim().matches("^(start|stop|restart|up)$")) {
+            return Map.of("status", "error", "message", "Invalid action: must be one of [start, stop, restart, up]");
+        }
+        String cleanAction = act.trim();
+
+        String composeAction = "up".equals(cleanAction) ? "up -d" : cleanAction;
+        String cmd = "(cd " + path.workingDir() + " && docker compose " + composeAction + ") 2>&1";
+        String res = sshService.executeCommand(cmd);
+
+        if (res == null || res.isBlank()) {
+            return Map.of(
+                "status", "error",
+                "action", cleanAction,
+                "project", path.project(),
+                "message", "Command returned no output or SSH execution failed"
+            );
+        }
+
+        String trimmed = res.trim();
+        String lower = trimmed.toLowerCase();
+
+        if (trimmed.startsWith("Lỗi SSH") || trimmed.startsWith("ERROR") || trimmed.startsWith("Error")) {
+            return Map.of(
+                "status", "error",
+                "action", cleanAction,
+                "project", path.project(),
+                "message", trimmed
+            );
+        }
+
+        if (lower.contains("no such file or directory")) {
+            return Map.of(
+                "status", "error",
+                "action", cleanAction,
+                "project", path.project(),
+                "message", "Working directory does not exist on disk: " + path.workingDir()
+            );
+        }
+
+        if (lower.contains("no configuration file provided") || lower.contains("can't find a suitable configuration file")) {
+            return Map.of(
+                "status", "error",
+                "action", cleanAction,
+                "project", path.project(),
+                "message", "Compose configuration file (docker-compose.yml) not found in " + path.workingDir()
+            );
+        }
+
+        if (lower.contains("error response from daemon") || lower.contains("failed to create") || lower.contains("unknown docker command")) {
+            return Map.of(
+                "status", "error",
+                "action", cleanAction,
+                "project", path.project(),
+                "message", trimmed
+            );
+        }
+
+        Map<String, Object> response = new HashMap<>();
+        response.put("status", "success");
+        response.put("action", cleanAction);
+        response.put("project", path.project());
+        response.put("output", trimmed);
+        return response;
+    }
+
+    public Map<String, Object> controlDockerProject(String project, String action, String workingDir) {
+        return controlDockerProject(null, project, action, workingDir);
     }
 
     @GetMapping("/disk-io")

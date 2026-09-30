@@ -332,12 +332,7 @@ class VideoEditorService:
             if clean_mode == "auto":
                 if region is None:
                     region = await self._auto_detect_text_region(input_file)
-                # Check OpenCV availability for inpainting
-                try:
-                    import cv2  # noqa: F401
-                    mode_used = "inpaint"
-                except (ImportError, ModuleNotFoundError):
-                    mode_used = "delogo"
+                mode_used = "delogo"
 
             # Validate target region coordinates
             target_region = region or {"x": 50, "y": 145, "w": 475, "h": 125}
@@ -349,6 +344,10 @@ class VideoEditorService:
             rh = int(target_region["h"])
 
             if mode_used == "delogo":
+                rx = max(1, rx)
+                ry = max(1, ry)
+                rw = max(1, rw)
+                rh = max(1, rh)
                 delogo_vf = f"delogo=x={rx}:y={ry}:w={rw}:h={rh}:show=0"
                 cmd = [
                     "ffmpeg", "-y",
@@ -446,9 +445,13 @@ class VideoEditorService:
             max_x, max_y = 0, 0
             found_text = False
 
+            frame_w, frame_h = 0, 0
             for frame_path in frames:
                 try:
                     with Image.open(frame_path) as img:
+                        if hasattr(img, "width") and isinstance(img.width, int):
+                            frame_w = max(frame_w, img.width)
+                            frame_h = max(frame_h, img.height)
                         data = pytesseract.image_to_data(img, output_type=pytesseract.Output.DICT)
                         n_boxes = len(data.get("text", []))
                         for i in range(n_boxes):
@@ -468,12 +471,14 @@ class VideoEditorService:
                     pass
 
             if found_text and max_x > min_x and max_y > min_y:
-                # Add a 10px margin around detected text
+                # Add a 10px margin around detected text clamped within frame borders
                 pad = 10
-                fx = max(0, min_x - pad)
-                fy = max(0, min_y - pad)
-                fw = (max_x - min_x) + (pad * 2)
-                fh = (max_y - min_y) + (pad * 2)
+                fx = max(1, min_x - pad) if frame_w > 2 else max(0, min_x - pad)
+                fy = max(1, min_y - pad) if frame_h > 2 else max(0, min_y - pad)
+                max_x_clamped = min(frame_w - 2, max_x + pad) if frame_w > 2 else max_x + pad
+                max_y_clamped = min(frame_h - 2, max_y + pad) if frame_h > 2 else max_y + pad
+                fw = max(1, max_x_clamped - fx)
+                fh = max(1, max_y_clamped - fy)
                 return {"x": fx, "y": fy, "w": fw, "h": fh}
 
             return default_fallback

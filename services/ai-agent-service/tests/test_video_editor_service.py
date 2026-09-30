@@ -32,11 +32,18 @@ import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
-# Ensure app directory is in sys.path
-REPO_ROOT = Path(__file__).resolve().parents[3]
-AI_AGENT_DIR = REPO_ROOT / "services" / "ai-agent-service"
-if str(AI_AGENT_DIR) not in sys.path:
-    sys.path.insert(0, str(AI_AGENT_DIR))
+# Ensure app directory is in sys.path safely across local and container environments
+_cur = Path(__file__).resolve()
+for _p in [_cur.parent] + list(_cur.parents):
+    if (_p / "app").is_dir():
+        if str(_p) not in sys.path:
+            sys.path.insert(0, str(_p))
+        break
+    if (_p / "services" / "ai-agent-service").is_dir():
+        _svc_dir = str(_p / "services" / "ai-agent-service")
+        if _svc_dir not in sys.path:
+            sys.path.insert(0, _svc_dir)
+        break
 
 from app.services.video_editor_service import (
     TELEGRAM_MAX_FILE_SIZE,

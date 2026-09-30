@@ -232,6 +232,16 @@ def classify_action_risk(tool_name: str, tool_args: Optional[Dict[str, Any]] = N
         "inspect_media_metadata",
         "download_direct_file",
         "extract_clean_web_article",
+        # ── Milestone 2 Professional Video Editor Tools ──
+        "remove_text_from_video",
+        "add_subtitle_to_video",
+        "apply_color_grade",
+        "stabilize_video",
+        "concatenate_videos",
+        "extract_frames",
+        "remove_watermark_region",
+        "enhance_video_quality",
+        "generate_video_thumbnail",
     }
     if tool_name in tier1_tools:
         return ACTION_TIER_1_SAFE
@@ -373,6 +383,7 @@ class AgentToolExecutor:
         universal_downloader: Any = None,
         web_article_extractor: Any = None,
         system_mastery_service: Any = None,
+        video_editor_service: Any = None,
     ):
         self.ssh_client = ssh_client
         self.message_cache = message_cache
@@ -390,6 +401,7 @@ class AgentToolExecutor:
         self._universal_downloader = universal_downloader
         self._web_article_extractor = web_article_extractor
         self._system_mastery_service = system_mastery_service
+        self._video_editor_service = video_editor_service
 
         # DB Connection Pool
         from app.core.db import db_manager
@@ -450,6 +462,16 @@ class AgentToolExecutor:
 
     def set_system_mastery_service(self, service: Any) -> None:
         self._system_mastery_service = service
+
+    def set_video_editor_service(self, service: Any) -> None:
+        self._video_editor_service = service
+
+    @property
+    def video_editor_service(self) -> Any:
+        if self._video_editor_service is None:
+            from app.services.video_editor_service import VideoEditorService
+            self._video_editor_service = VideoEditorService()
+        return self._video_editor_service
 
     @property
     def multimedia_service(self) -> Any:
@@ -557,6 +579,16 @@ class AgentToolExecutor:
         "inspect_media_metadata",
         "download_media_video",
         "download_media_audio",
+        # ── Milestone 2 Video Editor Tools ──
+        "remove_text_from_video",
+        "add_subtitle_to_video",
+        "apply_color_grade",
+        "stabilize_video",
+        "concatenate_videos",
+        "extract_frames",
+        "remove_watermark_region",
+        "enhance_video_quality",
+        "generate_video_thumbnail",
     }
     _TOOL_CLUSTER_DOCS = {
         "merge_pdf_documents",
@@ -665,7 +697,16 @@ class AgentToolExecutor:
         r"chuẩn\s+hóa\s+âm\s+lượng|chuan\s+hoa\s+am\s+luong|cân\s+bằng\s+âm\s+lượng|can\s+bang\s+am\s+luong|tang\s+am\s+luong|tăng\s+âm\s+lượng|giam\s+am\s+luong|giảm\s+âm\s+lượng|loudnorm|ebu\s+r128|"
         r"resize\s+ảnh|resize\s+anh|nén\s+ảnh|nen\s+anh|đổi\s+kích\s+thước\s+ảnh|doi\s+kich\s+thuoc\s+anh|webp\s+sang|png\s+sang|jpg\s+sang|chuyển\s+ảnh\s+sang|chuyen\s+anh\s+sang|"
         r"tạo(?:\s+mã)?\s+qr|tao(?:\s+ma)?\s+qr|sinh\s+qr|mã\s+qr|ma\s+qr|qr\s+code|qr\s+wifi|qr\s+ngân\s+hàng|quet\s+qr|quét\s+qr|"
-        r"metadata|thông\s+tin\s+video|thong\s+tin\s+video|thông\s+tin\s+audio|thong\s+tin\s+audio|ffprobe|exif|độ\s+phân\s+giải\s+video|do\s+phan\s+giai\s+video|codec\s+video"
+        r"metadata|thông\s+tin\s+video|thong\s+tin\s+video|thông\s+tin\s+audio|thong\s+tin\s+audio|ffprobe|exif|độ\s+phân\s+giải\s+video|do\s+phan\s+giai\s+video|codec\s+video|"
+        r"xóa\s+(?:text|chữ|chu|watermark|logo)|xoa\s+(?:text|chữ|chu|watermark|logo)|remove\s+text|delogo|"
+        r"thêm\s+phụ\s+đề|them\s+phu\s+de|gắn\s+phụ\s+đề|gan\s+phu\s+de|chèn\s+phụ\s+đề|chen\s+phu\s+de|add\s+subtitle|subtitles|vietsub|"
+        r"chỉnh\s+màu|chinh\s+mau|đổi\s+màu\s+video|doi\s+mau\s+video|color\s+grade|bộ\s+lọc\s+màu|bo\s+loc\s+mau|"
+        r"chống\s+rung|chong\s+rung|ổn\s+định\s+video|on\s+dinh\s+video|stabilize\s+video|vidstab|rung\s+lắc|rung\s+lac|"
+        r"ghép\s+video|ghep\s+video|nối\s+video|noi\s+video|concatenate\s+video|gộp\s+video|gop\s+video|"
+        r"trích\s+frame|trich\s+frame|cắt\s+frame|cat\s+frame|trích\s+xuất\s+frame|trich\s+xuat\s+frame|extract\s+frames|lấy\s+ảnh\s+từ\s+video|lay\s+anh\s+tu\s+video|"
+        r"xóa\s+vùng\s+watermark|xoa\s+vung\s+watermark|xóa\s+nhiều\s+watermark|xoa\s+nhieu\s+watermark|"
+        r"tăng\s+chất\s+lượng|tang\s+chat\s+luong|nâng\s+cao\s+chất\s+lượng|nang\s+cao\s+chat\s+luong|làm\s+nét\s+video|lam\s+net\s+video|khử\s+nhiễu\s+video|khu\s+nhieu\s+video|upscale\s+video|enhance\s+video|"
+        r"tạo\s+thumbnail|tao\s+thumbnail|ảnh\s+đại\s+diện\s+video|anh\s+dai\s+dien\s+video|thumbnail\s+video|generate\s+thumbnail|bìa\s+video|bia\s+video"
         r")\b",
         re.IGNORECASE,
     )
@@ -1087,8 +1128,28 @@ class AgentToolExecutor:
             is_dck_mgmt = any(k in q for k in ("quản lý docker", "docker restart", "restart container", "khởi động lại container", "khoi dong lai container", "dừng container", "stop container", "bật container", "start container", "docker prune", "xóa rác docker", "container docker"))
             is_sys_opt  = any(k in q for k in ("tối ưu hệ thống", "toi uu he thong", "dọn dẹp hệ thống", "giải phóng ram", "giai phong ram", "drop_caches", "tối ưu máy chủ", "tối ưu server", "dọn ram", "don ram", "dọn dẹp ram", "don dep ram"))
 
+            # Milestone 2 Video Editor intent flags
+            is_rm_txt   = any(k in q for k in ("xóa text", "xoa text", "xóa chữ", "xoa chu", "xóa watermark", "xoa watermark", "remove text", "delogo", "xóa logo", "xoa logo"))
+            is_add_sub  = any(k in q for k in ("thêm phụ đề", "them phu de", "gắn phụ đề", "gan phu de", "chèn phụ đề", "chen phu de", "add subtitle", "subtitles", "vietsub", "làm sub", "lam sub"))
+            is_clr_grd  = any(k in q for k in ("chỉnh màu", "chinh mau", "đổi màu video", "doi mau video", "color grade", "vivid", "vintage", "cinematic", "bộ lọc màu", "bo loc mau"))
+            is_stab_vid = any(k in q for k in ("chống rung", "chong rung", "ổn định video", "on dinh video", "stabilize video", "vidstab", "rung lắc", "rung lac"))
+            is_concat   = any(k in q for k in ("ghép video", "ghep video", "nối video", "noi video", "concatenate video", "gộp video", "gop video"))
+            is_ext_frm  = any(k in q for k in ("trích frame", "trich frame", "cắt frame", "cat frame", "trích xuất frame", "trich xuat frame", "extract frames", "lấy ảnh từ video", "lay anh tu video"))
+            is_rm_wm    = any(k in q for k in ("xóa nhiều watermark", "xoa nhieu watermark", "xóa vùng watermark", "xoa vung watermark", "xóa logo góc", "xoa logo goc"))
+            is_enh_vid  = any(k in q for k in ("tăng chất lượng", "tang chat luong", "nâng cao chất lượng", "nang cao chat luong", "làm nét video", "lam net video", "khử nhiễu video", "khu nhieu video", "upscale video", "enhance video", "sharpen video", "denoise video"))
+            is_gen_thm  = any(k in q for k in ("tạo thumbnail", "tao thumbnail", "ảnh đại diện video", "anh dai dien video", "thumbnail video", "generate thumbnail", "bìa video", "bia video"))
+
             priority_order: List[str] = [
                 # 1. Specialized Intent Boosters (Mỗi intent đưa các công cụ cốt lõi nhất lên đỉnh)
+                *(["remove_text_from_video"] if is_rm_txt else []),
+                *(["add_subtitle_to_video"] if is_add_sub else []),
+                *(["apply_color_grade"] if is_clr_grd else []),
+                *(["stabilize_video"] if is_stab_vid else []),
+                *(["concatenate_videos"] if is_concat else []),
+                *(["extract_frames"] if is_ext_frm else []),
+                *(["remove_watermark_region"] if is_rm_wm else []),
+                *(["enhance_video_quality"] if is_enh_vid else []),
+                *(["generate_video_thumbnail"] if is_gen_thm else []),
                 *(["edit_video_clip"] if is_edit_vid else []),
                 *(["compress_video"] if is_comp_vid else []),
                 *(["convert_video_format"] if is_conv_vid else []),
@@ -2517,6 +2578,294 @@ class AgentToolExecutor:
                     },
                 },
             },
+            # ── Milestone 2: Professional Video Editor Tools (9 Tools) ──
+            {
+                "type": "function",
+                "function": {
+                    "name": "remove_text_from_video",
+                    "description": "Xóa chữ, text overlay, phụ đề tĩnh hoặc watermark trên video. Hỗ trợ 3 chế độ: 'delogo' (FFmpeg nội suy biên nhanh), 'inpaint' (OpenCV Telea tái tạo nền vân gỗ/cảnh tự nhiên), hoặc 'auto' (tự động phát hiện vùng chữ qua OCR Tesseract rồi xóa).",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "input_path_or_url": {"type": "string", "description": "Đường dẫn file video cục bộ trên máy chủ hoặc URL media cần xóa text."},
+                            "region": {
+                                "type": "object",
+                                "description": "Tọa độ hộp bao {x, y, w, h} của vùng chữ cần xóa. Nếu mode='auto' có thể bỏ trống để AI tự phát hiện.",
+                                "properties": {
+                                    "x": {"type": "integer", "description": "Tọa độ X điểm góc trên bên trái (pixels)."},
+                                    "y": {"type": "integer", "description": "Tọa độ Y điểm góc trên bên trái (pixels)."},
+                                    "w": {"type": "integer", "description": "Chiều rộng vùng chữ (pixels)."},
+                                    "h": {"type": "integer", "description": "Chiều cao vùng chữ (pixels)."}
+                                }
+                            },
+                            "mode": {
+                                "type": "string",
+                                "enum": ["delogo", "inpaint", "auto"],
+                                "default": "delogo",
+                                "description": "Chế độ xử lý: 'delogo' (nhanh), 'inpaint' (chất lượng cao qua OpenCV), 'auto' (tự phát hiện tọa độ)."
+                            },
+                            "output_format": {
+                                "type": "string",
+                                "enum": ["mp4", "mkv", "mov", "webm"],
+                                "default": "mp4",
+                                "description": "Định dạng tệp video đầu ra."
+                            }
+                        },
+                        "required": ["input_path_or_url"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "add_subtitle_to_video",
+                    "description": "Gắn phụ đề trực tiếp (hardsub burn-in) vào khung hình video. Hỗ trợ tệp phụ đề chuẩn .SRT hoặc văn bản thô tự động chia mốc thời gian, với tùy biến font chữ, màu sắc và vị trí hiển thị.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "input_path_or_url": {"type": "string", "description": "Đường dẫn file video cục bộ hoặc URL nguồn."},
+                            "subtitle_text_or_path": {"type": "string", "description": "Đường dẫn tệp .srt có sẵn hoặc đoạn văn bản phụ đề cần gắn vào video."},
+                            "style": {
+                                "type": "object",
+                                "description": "Tùy biến kiểu chữ phụ đề: fontsize (kích cỡ, mặc định 22), color (mã màu ASS hex, ví dụ '&H00FFFFFF' cho màu trắng), outline (màu viền chữ).",
+                                "properties": {
+                                    "fontsize": {"type": "integer", "default": 22, "description": "Kích cỡ phông chữ phụ đề."},
+                                    "color": {"type": "string", "default": "&H00FFFFFF", "description": "Mã màu chính của chữ phụ đề."},
+                                    "outline": {"type": "string", "default": "&H00000000", "description": "Mã màu viền chữ phụ đề."}
+                                }
+                            },
+                            "position": {
+                                "type": "string",
+                                "enum": ["bottom", "top", "center"],
+                                "default": "bottom",
+                                "description": "Vị trí đặt phụ đề trên khung hình video."
+                            },
+                            "output_format": {
+                                "type": "string",
+                                "enum": ["mp4", "mkv", "mov", "webm"],
+                                "default": "mp4",
+                                "description": "Định dạng video đầu ra."
+                            }
+                        },
+                        "required": ["input_path_or_url", "subtitle_text_or_path"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "apply_color_grade",
+                    "description": "Căn chỉnh màu sắc video chuyên nghiệp theo các preset thẩm mỹ (vivid, vintage, cinematic, cool, warm, bw) hoặc tùy biến thông số Equalizer chi tiết (contrast, brightness, saturation, gamma).",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "input_path_or_url": {"type": "string", "description": "Đường dẫn video cục bộ hoặc URL nguồn."},
+                            "preset": {
+                                "type": "string",
+                                "enum": ["vivid", "vintage", "cinematic", "cool", "warm", "bw", "custom"],
+                                "default": "vivid",
+                                "description": "Bộ lọc màu sắc nghệ thuật mong muốn."
+                            },
+                            "custom_eq": {
+                                "type": "object",
+                                "description": "Các thông số căn chỉnh khi chọn preset='custom'.",
+                                "properties": {
+                                    "contrast": {"type": "number", "default": 1.0, "description": "Độ tương phản (-2.0 đến 2.0)."},
+                                    "brightness": {"type": "number", "default": 0.0, "description": "Độ sáng (-1.0 đến 1.0)."},
+                                    "saturation": {"type": "number", "default": 1.0, "description": "Độ bão hòa màu (0.0 đến 3.0)."},
+                                    "gamma": {"type": "number", "default": 1.0, "description": "Hệ số Gamma (0.1 đến 10.0)."}
+                                }
+                            },
+                            "output_format": {
+                                "type": "string",
+                                "enum": ["mp4", "mkv", "mov", "webm"],
+                                "default": "mp4",
+                                "description": "Định dạng video đầu ra."
+                            }
+                        },
+                        "required": ["input_path_or_url"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "stabilize_video",
+                    "description": "Ổn định và loại bỏ hiện tượng rung lắc camera bằng thuật toán FFmpeg vidstab 2-pass (Pass 1 phân tích vector chuyển động, Pass 2 bù trừ biến dạng và làm sắc nét unsharp).",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "input_path_or_url": {"type": "string", "description": "Đường dẫn video bị rung hoặc URL nguồn."},
+                            "smoothing": {
+                                "type": "integer",
+                                "default": 10,
+                                "description": "Độ mượt mà chống rung (1 - 60, khuyến nghị 10 - 20)."
+                            },
+                            "output_format": {
+                                "type": "string",
+                                "enum": ["mp4", "mkv", "mov", "webm"],
+                                "default": "mp4",
+                                "description": "Định dạng video đầu ra."
+                            }
+                        },
+                        "required": ["input_path_or_url"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "concatenate_videos",
+                    "description": "Ghép nối liên tiếp nhiều đoạn video thành 1 video hoàn chỉnh theo thứ tự danh sách (hỗ trợ từ 1 đến 10 clip, tổng dung lượng đầu vào <= 500MB). Hỗ trợ stream-copy siêu tốc (-c copy) hoặc re-encode đồng bộ.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "input_paths": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "Danh sách các đường dẫn video hoặc URL cần ghép nối theo thứ tự (tối đa 10 clips)."
+                            },
+                            "output_format": {
+                                "type": "string",
+                                "enum": ["mp4", "mkv", "mov", "webm"],
+                                "default": "mp4",
+                                "description": "Định dạng video đầu ra."
+                            },
+                            "reencode": {
+                                "type": "boolean",
+                                "default": False,
+                                "description": "True nếu các video khác độ phân giải/codec cần mã hóa lại, False để ghép siêu tốc không nén lại."
+                            }
+                        },
+                        "required": ["input_paths"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "extract_frames",
+                    "description": "Trích xuất các khung hình (frames) tĩnh định kỳ từ video theo khoảng thời gian tùy chọn và tự động đóng gói toàn bộ vào tệp nén ZIP tiện lợi.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "input_path_or_url": {"type": "string", "description": "Đường dẫn video hoặc URL nguồn."},
+                            "interval_seconds": {
+                                "type": "number",
+                                "default": 1.0,
+                                "description": "Khoảng thời gian giữa các lần trích xuất ảnh tính bằng giây (ví dụ: 1.0 = mỗi giây 1 ảnh, 0.5 = mỗi giây 2 ảnh)."
+                            },
+                            "output_format": {
+                                "type": "string",
+                                "enum": ["jpg", "jpeg", "png"],
+                                "default": "jpg",
+                                "description": "Định dạng ảnh trích xuất."
+                            },
+                            "quality": {
+                                "type": "integer",
+                                "default": 2,
+                                "description": "Chất lượng ảnh JPEG (1 - 31 trong FFmpeg, 2 là chất lượng rất cao)."
+                            }
+                        },
+                        "required": ["input_path_or_url"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "remove_watermark_region",
+                    "description": "Xóa cùng lúc nhiều vùng watermark hoặc logo (tối đa 5 vùng) trên video bằng chuỗi bộ lọc FFmpeg chained delogo.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "input_path_or_url": {"type": "string", "description": "Đường dẫn video hoặc URL nguồn."},
+                            "regions": {
+                                "type": "array",
+                                "description": "Danh sách các vùng watermark cần xóa (tối đa 5 vùng), mỗi vùng là object {x, y, w, h}.",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "x": {"type": "integer", "description": "Tọa độ X (pixels)."},
+                                        "y": {"type": "integer", "description": "Tọa độ Y (pixels)."},
+                                        "w": {"type": "integer", "description": "Chiều rộng vùng watermark (pixels)."},
+                                        "h": {"type": "integer", "description": "Chiều cao vùng watermark (pixels)."}
+                                    },
+                                    "required": ["x", "y", "w", "h"]
+                                }
+                            },
+                            "output_format": {
+                                "type": "string",
+                                "enum": ["mp4", "mkv", "mov", "webm"],
+                                "default": "mp4",
+                                "description": "Định dạng video đầu ra."
+                            }
+                        },
+                        "required": ["input_path_or_url", "regions"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "enhance_video_quality",
+                    "description": "Nâng cấp chất lượng hình ảnh video bằng các bộ lọc chuyên sâu: làm sắc nét viền (sharpen), khử nhiễu hạt 3D (denoise qua hqdn3d), khử răng cưa đan xen (deinterlace qua yadif), siêu phân giải Lanczos x2 (upscale_2x), hoặc tăng cường độ tương phản sống động (hdr_tonemap).",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "input_path_or_url": {"type": "string", "description": "Đường dẫn video hoặc URL nguồn."},
+                            "preset": {
+                                "type": "string",
+                                "enum": ["sharpen", "denoise", "deinterlace", "upscale_2x", "hdr_tonemap"],
+                                "default": "sharpen",
+                                "description": "Bộ lọc nâng cấp chất lượng hình ảnh áp dụng."
+                            },
+                            "output_format": {
+                                "type": "string",
+                                "enum": ["mp4", "mkv", "mov", "webm"],
+                                "default": "mp4",
+                                "description": "Định dạng video đầu ra."
+                            }
+                        },
+                        "required": ["input_path_or_url"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "generate_video_thumbnail",
+                    "description": "Trích xuất ảnh đại diện (thumbnail / poster) sắc nét từ video tại mốc thời gian bất kỳ với kích thước co giãn giữ nguyên tỷ lệ khung hình.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "input_path_or_url": {"type": "string", "description": "Đường dẫn video hoặc URL nguồn."},
+                            "timestamp": {
+                                "type": "number",
+                                "default": 0.0,
+                                "description": "Mốc thời gian trích xuất thumbnail tính bằng giây (ví dụ: 10.5)."
+                            },
+                            "width": {
+                                "type": "integer",
+                                "default": 320,
+                                "description": "Chiều rộng thumbnail tối đa (pixels, giữ nguyên tỷ lệ khung hình)."
+                            },
+                            "height": {
+                                "type": "integer",
+                                "default": 240,
+                                "description": "Chiều cao thumbnail tối đa (pixels, giữ nguyên tỷ lệ khung hình)."
+                            },
+                            "output_format": {
+                                "type": "string",
+                                "enum": ["jpg", "png"],
+                                "default": "jpg",
+                                "description": "Định dạng ảnh thumbnail."
+                            }
+                        },
+                        "required": ["input_path_or_url"]
+                    }
+                }
+            },
             # ── M6 Omni Super-Agent: R1 Multimedia Studio Suite ──
             {
                 "type": "function",
@@ -2878,6 +3227,24 @@ class AgentToolExecutor:
                 protected_tools.add("optimize_system_resources")
             if any(k in q_lower for k in ("cân bằng âm lượng", "can bang am luong")):
                 protected_tools.add("normalize_audio_volume")
+            if any(k in q_lower for k in ("xóa text", "xoa text", "xóa chữ", "xoa chu", "xóa watermark", "xoa watermark", "remove text", "delogo", "xóa logo", "xoa logo")):
+                protected_tools.add("remove_text_from_video")
+            if any(k in q_lower for k in ("thêm phụ đề", "them phu de", "gắn phụ đề", "gan phu de", "chèn phụ đề", "chen phu de", "add subtitle", "subtitles", "vietsub", "làm sub", "lam sub")):
+                protected_tools.add("add_subtitle_to_video")
+            if any(k in q_lower for k in ("chỉnh màu", "chinh mau", "đổi màu video", "doi mau video", "color grade", "vivid", "vintage", "cinematic", "bộ lọc màu", "bo loc mau")):
+                protected_tools.add("apply_color_grade")
+            if any(k in q_lower for k in ("chống rung", "chong rung", "ổn định video", "on dinh video", "stabilize video", "vidstab", "rung lắc", "rung lac")):
+                protected_tools.add("stabilize_video")
+            if any(k in q_lower for k in ("ghép video", "ghep video", "nối video", "noi video", "concatenate video", "gộp video", "gop video")):
+                protected_tools.add("concatenate_videos")
+            if any(k in q_lower for k in ("trích frame", "trich frame", "cắt frame", "cat frame", "trích xuất frame", "trich xuat frame", "extract frames", "lấy ảnh từ video", "lay anh tu video")):
+                protected_tools.add("extract_frames")
+            if any(k in q_lower for k in ("xóa nhiều watermark", "xoa nhieu watermark", "xóa vùng watermark", "xoa vung watermark", "xóa logo góc", "xoa logo goc")):
+                protected_tools.add("remove_watermark_region")
+            if any(k in q_lower for k in ("tăng chất lượng", "tang chat luong", "nâng cao chất lượng", "nang cao chat luong", "làm nét video", "lam net video", "khử nhiễu video", "khu nhieu video", "upscale video", "enhance video", "sharpen video", "denoise video")):
+                protected_tools.add("enhance_video_quality")
+            if any(k in q_lower for k in ("tạo thumbnail", "tao thumbnail", "ảnh đại diện video", "anh dai dien video", "thumbnail video", "generate thumbnail", "bìa video", "bia video")):
+                protected_tools.add("generate_video_thumbnail")
 
             unprotected_drop_priority = [
                 "browser_press_key", "browser_scroll", "browser_type", "browser_click",
@@ -2890,7 +3257,9 @@ class AgentToolExecutor:
                 "calculate", "convert_units", "query_database", "create_file_transfer_portal",
                 "list_files", "read_file_content", "write_file_content", "move_or_rename_file", "get_disk_usage",
                 "download_media_audio", "download_media_video", "get_system_health_report", "check_service_status",
-                "inspect_media_metadata", "convert_and_resize_image", "normalize_audio_volume",
+                "generate_video_thumbnail", "extract_frames", "remove_watermark_region", "enhance_video_quality",
+                "apply_color_grade", "stabilize_video", "concatenate_videos", "add_subtitle_to_video",
+                "remove_text_from_video", "inspect_media_metadata", "convert_and_resize_image", "normalize_audio_volume",
                 "trim_audio_clip", "convert_audio_format", "convert_video_format", "compress_video",
                 "edit_video_clip", "generate_custom_qr", "split_pdf_document", "merge_pdf_documents",
                 "extract_document_text", "translate_text", "extract_clean_web_article",
@@ -4399,6 +4768,231 @@ class AgentToolExecutor:
                     return f"🔓 **Đã gỡ bỏ thành công lệnh chặn đối với IP `{ip}` trên tường lửa máy chủ.** Địa chỉ IP này hiện đã có thể kết nối lại bình thường."
                 else:
                     return f"❌ Lỗi khi gỡ chặn IP `{ip}`: {res.get('message', 'Lỗi không xác định')}"
+
+            # ── Milestone 2 Professional Video Editor Dispatchers ──
+            if tool_name == "remove_text_from_video":
+                in_target = str(tool_args.get("input_path_or_url", "")).strip()
+                region = tool_args.get("region")
+                mode = str(tool_args.get("mode", "delogo")).strip().lower()
+                out_format = str(tool_args.get("output_format", "mp4")).strip()
+                res = await self.video_editor_service.remove_text_from_video(
+                    input_path_or_url=in_target,
+                    region=region,
+                    mode=mode,
+                    output_format=out_format,
+                )
+                if res.get("status") == "ok":
+                    r = res.get("region", {})
+                    msg = (
+                        f"✨ **Xóa text/watermark video thành công!**\n"
+                        f"• Chế độ áp dụng: `{res.get('mode_used', mode)}` (yêu cầu: `{res.get('mode_requested', mode)}`)\n"
+                        f"• Tọa độ vùng xóa: `x={r.get('x')}, y={r.get('y')}, w={r.get('w')}, h={r.get('h')}`\n"
+                        f"• Dung lượng tệp: {res.get('file_size_formatted', 'N/A')}\n"
+                        f"• Đường dẫn: `{res.get('output_path', '')}`"
+                    )
+                    if res.get("delivery") == "direct":
+                        msg += "\n• Phương thức: Sẵn sàng gửi trực tiếp qua Telegram (<= 50MB)."
+                    elif res.get("internet_url"):
+                        msg += f"\n• Link tải trực tiếp (Dual-Delivery): {res.get('internet_url')}"
+                    return msg
+                return f"❌ Lỗi khi xóa text video: {res.get('message', 'Không rõ nguyên nhân')}"
+
+            if tool_name == "add_subtitle_to_video":
+                in_target = str(tool_args.get("input_path_or_url", "")).strip()
+                sub_input = str(tool_args.get("subtitle_text_or_path", "")).strip()
+                style = tool_args.get("style")
+                pos = str(tool_args.get("position", "bottom")).strip()
+                out_format = str(tool_args.get("output_format", "mp4")).strip()
+                res = await self.video_editor_service.add_subtitle_to_video(
+                    input_path_or_url=in_target,
+                    subtitle_text_or_path=sub_input,
+                    style=style,
+                    position=pos,
+                    output_format=out_format,
+                )
+                if res.get("status") == "ok":
+                    msg = (
+                        f"📝 **Gắn phụ đề vào video thành công!**\n"
+                        f"• Vị trí phụ đề: `{res.get('position', pos)}`\n"
+                        f"• Dung lượng tệp: {res.get('file_size_formatted', 'N/A')}\n"
+                        f"• Đường dẫn: `{res.get('output_path', '')}`"
+                    )
+                    if res.get("delivery") == "direct":
+                        msg += "\n• Phương thức: Sẵn sàng gửi trực tiếp qua Telegram (<= 50MB)."
+                    elif res.get("internet_url"):
+                        msg += f"\n• Link tải trực tiếp (Dual-Delivery): {res.get('internet_url')}"
+                    return msg
+                return f"❌ Lỗi khi gắn phụ đề video: {res.get('message', 'Không rõ nguyên nhân')}"
+
+            if tool_name == "apply_color_grade":
+                in_target = str(tool_args.get("input_path_or_url", "")).strip()
+                preset = str(tool_args.get("preset", "vivid")).strip()
+                custom_eq = tool_args.get("custom_eq")
+                out_format = str(tool_args.get("output_format", "mp4")).strip()
+                res = await self.video_editor_service.apply_color_grade(
+                    input_path_or_url=in_target,
+                    preset=preset,
+                    custom_eq=custom_eq,
+                    output_format=out_format,
+                )
+                if res.get("status") == "ok":
+                    msg = (
+                        f"🎨 **Chỉnh màu video thành công!**\n"
+                        f"• Bộ lọc preset: `{res.get('preset', preset)}`\n"
+                        f"• Dung lượng tệp: {res.get('file_size_formatted', 'N/A')}\n"
+                        f"• Đường dẫn: `{res.get('output_path', '')}`"
+                    )
+                    if res.get("delivery") == "direct":
+                        msg += "\n• Phương thức: Sẵn sàng gửi trực tiếp qua Telegram (<= 50MB)."
+                    elif res.get("internet_url"):
+                        msg += f"\n• Link tải trực tiếp (Dual-Delivery): {res.get('internet_url')}"
+                    return msg
+                return f"❌ Lỗi khi chỉnh màu video: {res.get('message', 'Không rõ nguyên nhân')}"
+
+            if tool_name == "stabilize_video":
+                in_target = str(tool_args.get("input_path_or_url", "")).strip()
+                smoothing = int(tool_args.get("smoothing", 10))
+                out_format = str(tool_args.get("output_format", "mp4")).strip()
+                res = await self.video_editor_service.stabilize_video(
+                    input_path_or_url=in_target,
+                    smoothing=smoothing,
+                    output_format=out_format,
+                )
+                if res.get("status") == "ok":
+                    msg = (
+                        f"🛡️ **Ổn định chống rung video 2-pass thành công!**\n"
+                        f"• Độ mượt smoothing: {res.get('smoothing', smoothing)}\n"
+                        f"• Dung lượng tệp: {res.get('file_size_formatted', 'N/A')}\n"
+                        f"• Đường dẫn: `{res.get('output_path', '')}`"
+                    )
+                    if res.get("delivery") == "direct":
+                        msg += "\n• Phương thức: Sẵn sàng gửi trực tiếp qua Telegram (<= 50MB)."
+                    elif res.get("internet_url"):
+                        msg += f"\n• Link tải trực tiếp (Dual-Delivery): {res.get('internet_url')}"
+                    return msg
+                return f"❌ Lỗi khi chống rung video: {res.get('message', 'Không rõ nguyên nhân')}"
+
+            if tool_name == "concatenate_videos":
+                in_paths = tool_args.get("input_paths", [])
+                out_format = str(tool_args.get("output_format", "mp4")).strip()
+                reencode = bool(tool_args.get("reencode", False))
+                res = await self.video_editor_service.concatenate_videos(
+                    input_paths=in_paths,
+                    output_format=out_format,
+                    reencode=reencode,
+                )
+                if res.get("status") == "ok":
+                    msg = (
+                        f"🎞️ **Ghép nối {res.get('clips_count', len(in_paths))} video thành công!**\n"
+                        f"• Chế độ nén: {'Re-encode chất lượng cao' if res.get('reencode') else 'Stream copy siêu tốc'}\n"
+                        f"• Dung lượng tệp: {res.get('file_size_formatted', 'N/A')}\n"
+                        f"• Đường dẫn: `{res.get('output_path', '')}`"
+                    )
+                    if res.get("delivery") == "direct":
+                        msg += "\n• Phương thức: Sẵn sàng gửi trực tiếp qua Telegram (<= 50MB)."
+                    elif res.get("internet_url"):
+                        msg += f"\n• Link tải trực tiếp (Dual-Delivery): {res.get('internet_url')}"
+                    return msg
+                return f"❌ Lỗi khi ghép video: {res.get('message', 'Không rõ nguyên nhân')}"
+
+            if tool_name == "extract_frames":
+                in_target = str(tool_args.get("input_path_or_url", "")).strip()
+                interval = float(tool_args.get("interval_seconds", 1.0))
+                out_fmt = str(tool_args.get("output_format", "jpg")).strip()
+                quality = int(tool_args.get("quality", 2))
+                res = await self.video_editor_service.extract_frames(
+                    input_path_or_url=in_target,
+                    interval_seconds=interval,
+                    output_format=out_fmt,
+                    quality=quality,
+                )
+                if res.get("status") == "ok":
+                    msg = (
+                        f"📸 **Trích xuất frames video thành công!**\n"
+                        f"• Số lượng frames: {res.get('frames_count', 0)}\n"
+                        f"• Chu kỳ trích xuất: mỗi {res.get('interval_seconds', interval)}s\n"
+                        f"• Tệp nén ZIP: `{res.get('zip_path', '')}`\n"
+                        f"• Dung lượng ZIP: {res.get('file_size_formatted', 'N/A')}"
+                    )
+                    if res.get("delivery") == "direct":
+                        msg += "\n• Phương thức: Sẵn sàng gửi trực tiếp qua Telegram (<= 50MB)."
+                    elif res.get("internet_url"):
+                        msg += f"\n• Link tải trực tiếp (Dual-Delivery): {res.get('internet_url')}"
+                    return msg
+                return f"❌ Lỗi khi trích xuất frames: {res.get('message', 'Không rõ nguyên nhân')}"
+
+            if tool_name == "remove_watermark_region":
+                in_target = str(tool_args.get("input_path_or_url", "")).strip()
+                regions = tool_args.get("regions", [])
+                out_format = str(tool_args.get("output_format", "mp4")).strip()
+                res = await self.video_editor_service.remove_watermark_region(
+                    input_path_or_url=in_target,
+                    regions=regions,
+                    output_format=out_format,
+                )
+                if res.get("status") == "ok":
+                    msg = (
+                        f"🧹 **Xóa {res.get('regions_count', len(regions))} vùng watermark thành công!**\n"
+                        f"• Bộ lọc áp dụng: Chained delogo filter\n"
+                        f"• Dung lượng tệp: {res.get('file_size_formatted', 'N/A')}\n"
+                        f"• Đường dẫn: `{res.get('output_path', '')}`"
+                    )
+                    if res.get("delivery") == "direct":
+                        msg += "\n• Phương thức: Sẵn sàng gửi trực tiếp qua Telegram (<= 50MB)."
+                    elif res.get("internet_url"):
+                        msg += f"\n• Link tải trực tiếp (Dual-Delivery): {res.get('internet_url')}"
+                    return msg
+                return f"❌ Lỗi khi xóa nhiều watermark: {res.get('message', 'Không rõ nguyên nhân')}"
+
+            if tool_name == "enhance_video_quality":
+                in_target = str(tool_args.get("input_path_or_url", "")).strip()
+                preset = str(tool_args.get("preset", "sharpen")).strip()
+                out_format = str(tool_args.get("output_format", "mp4")).strip()
+                res = await self.video_editor_service.enhance_video_quality(
+                    input_path_or_url=in_target,
+                    preset=preset,
+                    output_format=out_format,
+                )
+                if res.get("status") == "ok":
+                    msg = (
+                        f"🚀 **Nâng cấp chất lượng video thành công!**\n"
+                        f"• Bộ lọc: `{res.get('preset', preset)}`\n"
+                        f"• Dung lượng tệp: {res.get('file_size_formatted', 'N/A')}\n"
+                        f"• Đường dẫn: `{res.get('output_path', '')}`"
+                    )
+                    if res.get("delivery") == "direct":
+                        msg += "\n• Phương thức: Sẵn sàng gửi trực tiếp qua Telegram (<= 50MB)."
+                    elif res.get("internet_url"):
+                        msg += f"\n• Link tải trực tiếp (Dual-Delivery): {res.get('internet_url')}"
+                    return msg
+                return f"❌ Lỗi khi nâng cấp chất lượng video: {res.get('message', 'Không rõ nguyên nhân')}"
+
+            if tool_name == "generate_video_thumbnail":
+                in_target = str(tool_args.get("input_path_or_url", "")).strip()
+                ts = float(tool_args.get("timestamp", 0.0))
+                w = int(tool_args.get("width", 320))
+                h = int(tool_args.get("height", 240))
+                out_fmt = str(tool_args.get("output_format", "jpg")).strip()
+                res = await self.video_editor_service.generate_video_thumbnail(
+                    input_path_or_url=in_target,
+                    timestamp=ts,
+                    width=w,
+                    height=h,
+                    output_format=out_fmt,
+                )
+                if res.get("status") == "ok":
+                    out_path = res.get("output_path", "")
+                    if pending_photos is not None and out_path:
+                        pending_photos.clear()
+                        pending_photos.append((f"Thumbnail video ({ts}s)", out_path))
+                    return (
+                        f"🖼️ **Tạo ảnh thumbnail video thành công!**\n"
+                        f"• Mốc thời gian: {ts}s\n"
+                        f"• Kích thước: {res.get('width', w)}x{res.get('height', h)} px\n"
+                        f"• Dung lượng: {res.get('file_size_formatted', 'N/A')}\n"
+                        f"• Đường dẫn tệp: `{out_path}`"
+                    )
+                return f"❌ Lỗi khi tạo thumbnail video: {res.get('message', 'Không rõ nguyên nhân')}"
 
             # ── M6 Omni Super-Agent Dispatchers (R1 - R4) ──
             if tool_name == "edit_video_clip":

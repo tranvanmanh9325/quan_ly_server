@@ -37,7 +37,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import urllib.parse
 
 import httpx
-from PIL import Image, ImageDraw, ImageFont
+from PIL import ExifTags, Image, ImageDraw, ImageFont
 import qrcode
 import qrcode.constants
 
@@ -95,6 +95,101 @@ class MultimediaService:
         except Exception as exc:
             logger.warning("[MultimediaService] Failed to create scratch directory %s: %s", self._temp_dir, exc)
 
+    def _get_allowed_bases(self) -> List[Path]:
+        """
+        Returns authorized sandbox base directories.
+        Permits scratch temp dirs, system temp, project repo root, and /home/kirito.
+        """
+        bases: List[Path] = []
+        if hasattr(self, "_temp_dir") and self._temp_dir:
+            bases.append(self._temp_dir.resolve())
+        bases.append(Path(tempfile.gettempdir()).resolve())
+        posix_tmp = Path("/tmp")
+        if posix_tmp.exists():
+            bases.append(posix_tmp.resolve())
+        bases.append(Path.cwd().resolve())
+
+        # Project root resolution (services/ai-agent-service/app/services -> repo root)
+        try:
+            repo_root = Path(__file__).resolve().parents[4]
+            bases.append(repo_root.resolve())
+        except (IndexError, ValueError):
+            pass
+
+        repo_explicit = Path("d:/GitHub/quan_ly_server")
+        if repo_explicit.exists():
+            bases.append(repo_explicit.resolve())
+
+        home_kirito = Path("/home/kirito")
+        if home_kirito.exists():
+            bases.append(home_kirito.resolve())
+
+        return bases
+
+    def _is_safe_in_sandbox(self, p: Path) -> bool:
+        """Checks if a resolved path is contained within authorized sandbox bases."""
+        allowed_bases = self._get_allowed_bases()
+        for base in allowed_bases:
+            try:
+                if p.is_relative_to(base):
+                    return True
+            except (ValueError, TypeError):
+                continue
+        return False
+
+    def _validate_path_security(self, raw_path: str) -> Path:
+        """
+        Validate path security to prevent path traversal, UNC attacks, drive injections,
+        and access outside authorized sandbox boundaries.
+        Returns: resolved Path if valid.
+        """
+        if not raw_path or not isinstance(raw_path, str):
+            raise ValueError("Đường dẫn tệp không hợp lệ.")
+
+        # Decode percent-encoded characters twice to catch double-encoding attacks
+        decoded = urllib.parse.unquote(raw_path)
+        decoded = urllib.parse.unquote(decoded)
+
+        # Normalize backslashes to forward slashes for unified cross-platform evaluation
+        normalized = decoded.replace("\\", "/")
+
+        # Reject UNC network paths (e.g. //server/share, \\server\share)
+        if normalized.startswith("//") or raw_path.startswith("\\\\"):
+            raise PermissionError(f"Truy cập đường dẫn mạng UNC bị từ chối: {raw_path}")
+
+        # Reject Windows drive letters (e.g. C:/, D:\, C:cmd.exe)
+        if re.search(r"^[A-Za-z]:", normalized):
+            if os.name != "nt":
+                raise PermissionError(f"Truy cập đường dẫn Windows drive letter bị từ chối: {raw_path}")
+            else:
+                # On Windows, relative drive letters or unauthorized drives outside sandbox must be blocked
+                if re.match(r"^[A-Za-z]:[^/]", normalized):
+                    raise PermissionError(f"Truy cập đường dẫn Windows drive letter bị từ chối: {raw_path}")
+                try:
+                    candidate = Path(normalized).resolve()
+                    if not self._is_safe_in_sandbox(candidate):
+                        raise PermissionError(f"Truy cập đường dẫn Windows drive letter bị từ chối: {raw_path}")
+                except PermissionError:
+                    raise
+                except Exception:
+                    raise PermissionError(f"Truy cập đường dẫn Windows drive letter bị từ chối: {raw_path}")
+
+        # Check for directory traversal sequences
+        parts = normalized.split("/")
+        if ".." in parts:
+            raise PermissionError(f"Phát hiện hành vi Path Traversal ('..'): {raw_path}")
+
+        # Sandbox Whitelist validation for POSIX paths and all resolved targets
+        try:
+            candidate_path = Path(normalized).resolve()
+        except Exception:
+            raise ValueError("Đường dẫn nằm ngoài thư mục sandbox được phép.")
+
+        if not self._is_safe_in_sandbox(candidate_path):
+            raise ValueError("Đường dẫn nằm ngoài thư mục sandbox được phép.")
+
+        return candidate_path
+
     async def _run_command(
         self,
         cmd: List[str],
@@ -145,18 +240,23 @@ class MultimediaService:
                 should_close_client = True
 
             try:
-                async with client.stream("GET", clean_input) as resp:
-                    resp.raise_for_status()
-                    with open(download_dest, "wb") as f:
-                        async for chunk in resp.aiter_bytes(chunk_size=65536):
-                            f.write(chunk)
-                return download_dest, True
+                try:
+                    async with client.stream("GET", clean_input) as resp:
+                        resp.raise_for_status()
+                        with open(download_dest, "wb") as f:
+                            async for chunk in resp.aiter_bytes(chunk_size=65536):
+                                f.write(chunk)
+                    return download_dest, True
+                except Exception:
+                    if download_dest.exists():
+                        download_dest.unlink(missing_ok=True)
+                    raise
             finally:
                 if should_close_client:
                     await client.aclose()
 
-        # Handle local filesystem path
-        local_path = Path(clean_input).resolve()
+        # Handle local filesystem path with path security and sandbox whitelist
+        local_path = self._validate_path_security(clean_input)
         if not local_path.exists():
             raise FileNotFoundError(f"Tệp không tồn tại: {clean_input}")
         return local_path, False
@@ -909,3 +1009,175 @@ class MultimediaService:
             **delivery_info,
             "message": f"Đã sinh mã QR Code độ phân giải cao thành công ({final_img.width}x{final_img.height} px).",
         }
+
+    # ─── 9. INSPECT MEDIA METADATA ───────────────────────────────────────────
+
+    async def inspect_media_metadata(
+        self,
+        input_path_or_url: str,
+    ) -> Dict[str, Any]:
+        """
+        Extracts comprehensive technical metadata for video, audio, and images using FFprobe and Pillow.
+        Zero-Disk Leak: transient downloaded remote media is reliably purged in finally.
+        """
+        clean_input = str(input_path_or_url).strip()
+        if not clean_input.lower().startswith(("http://", "https://")):
+            self._validate_path_security(clean_input)
+        input_file, is_transient = await self._resolve_input(input_path_or_url)
+        ext = input_file.suffix.lower()
+
+        try:
+            # 1. Image metadata inspection (Pillow + EXIF)
+            if ext in IMAGE_EXTENSIONS:
+                with Image.open(input_file) as img:
+                    w, h = img.size
+                    mode = img.mode
+                    img_format = img.format or ext.lstrip(".").upper()
+
+                    exif_data: Dict[str, Any] = {}
+                    try:
+                        raw_exif = img.getexif()
+                        if raw_exif:
+                            for tag_id, val in raw_exif.items():
+                                tag_name = ExifTags.TAGS.get(tag_id, str(tag_id))
+                                if isinstance(val, (int, float, str)):
+                                    exif_data[tag_name] = val
+                    except Exception:
+                        pass
+
+                    file_size = input_file.stat().st_size
+                    size_kb = round(file_size / 1024, 1)
+                    summary = (
+                        f"🖼️ Siêu dữ liệu Hình ảnh ({img_format}):\n"
+                        f"- Kích thước: {w} x {h} px\n"
+                        f"- Không gian màu: {mode}\n"
+                        f"- Dung lượng: {size_kb} KB"
+                    )
+                    if "Make" in exif_data or "Model" in exif_data:
+                        summary += f"\n- Thiết bị chụp: {exif_data.get('Make', '')} {exif_data.get('Model', '')}".strip()
+                    if "DateTime" in exif_data:
+                        summary += f"\n- Ngày chụp: {exif_data.get('DateTime')}"
+
+                    return {
+                        "status": "ok",
+                        "tool": "inspect_media_metadata",
+                        "media_type": "image",
+                        "format": img_format,
+                        "file_size": file_size,
+                        "file_size_formatted": f"{size_kb} KB",
+                        "metadata": {
+                            "width": w,
+                            "height": h,
+                            "mode": mode,
+                            "format": img_format,
+                            "exif": exif_data,
+                        },
+                        "summary": summary,
+                        "message": f"Đã trích xuất thông số ảnh {w}x{h} px ({img_format}).",
+                    }
+
+            # 2. Audio & Video metadata inspection (FFprobe JSON)
+            probe_cmd = [
+                "ffprobe",
+                "-v", "quiet",
+                "-print_format", "json",
+                "-show_format",
+                "-show_streams",
+                "-show_chapters",
+                str(input_file),
+            ]
+            code, stdout, stderr = await self._run_command(probe_cmd, timeout=30)
+            if code != 0:
+                err_msg = stderr.decode(errors="replace").strip()
+                return {
+                    "status": "error",
+                    "tool": "inspect_media_metadata",
+                    "message": f"FFprobe trích xuất metadata thất bại: {err_msg[-150:]}",
+                }
+
+            data = json.loads(stdout.decode(errors="replace"))
+            fmt = data.get("format", {})
+            streams = data.get("streams", [])
+
+            video_stream: Optional[Dict[str, Any]] = None
+            audio_stream: Optional[Dict[str, Any]] = None
+            subtitle_streams: List[Dict[str, Any]] = []
+
+            for s in streams:
+                ctype = s.get("codec_type")
+                if ctype == "video" and not video_stream:
+                    video_stream = s
+                elif ctype == "audio" and not audio_stream:
+                    audio_stream = s
+                elif ctype == "subtitle":
+                    subtitle_streams.append(s)
+
+            duration_sec = float(fmt.get("duration", 0.0))
+            mins, secs = divmod(int(duration_sec), 60)
+            hours, mins = divmod(mins, 60)
+            dur_str = f"{hours:02d}:{mins:02d}:{secs:02d}" if hours > 0 else f"{mins:02d}:{secs:02d}"
+
+            media_type = "video" if video_stream else ("audio" if audio_stream else "media")
+            file_size = int(fmt.get("size", input_file.stat().st_size))
+            size_mb = round(file_size / (1024 * 1024), 2)
+            formatted_size = f"{size_mb} MB" if size_mb >= 1.0 else f"{round(file_size / 1024, 1)} KB"
+
+            meta_details: Dict[str, Any] = {
+                "duration_sec": round(duration_sec, 2),
+                "duration_formatted": dur_str,
+                "format_name": fmt.get("format_name", ext),
+                "bitrate_kbps": int(fmt.get("bit_rate", 0)) // 1000 if fmt.get("bit_rate") else 0,
+            }
+
+            summary_lines: List[str] = [
+                f"{'🎬 Video' if media_type == 'video' else '🎵 Audio'} Metadata ({fmt.get('format_name', ext)}):",
+                f"- Dung lượng: {formatted_size}",
+                f"- Thời lượng: {dur_str} ({round(duration_sec, 1)}s)",
+            ]
+            if meta_details["bitrate_kbps"] > 0:
+                summary_lines.append(f"- Bitrate tổng: {meta_details['bitrate_kbps']} kbps")
+
+            if video_stream:
+                fps = video_stream.get("r_frame_rate", "")
+                vw = video_stream.get("width")
+                vh = video_stream.get("height")
+                vcodec = video_stream.get("codec_name", "").upper()
+                meta_details["width"] = vw
+                meta_details["height"] = vh
+                meta_details["codec_name"] = vcodec
+                meta_details["fps"] = fps
+                summary_lines.append(f"- Hình ảnh: {vw}x{vh} ({vcodec}, {fps} fps)")
+
+            if audio_stream:
+                acodec = audio_stream.get("codec_name", "").upper()
+                channels = audio_stream.get("channels", 2)
+                srate = audio_stream.get("sample_rate", "")
+                meta_details["audio_codec"] = acodec
+                meta_details["channels"] = channels
+                meta_details["sample_rate"] = srate
+                summary_lines.append(f"- Âm thanh: {acodec} ({srate}Hz, {channels} kênh)")
+
+            tags = fmt.get("tags", {})
+            if tags:
+                meta_details["tags"] = {}
+                for k in ("title", "artist", "album", "year", "genre", "encoder"):
+                    val = tags.get(k) or tags.get(k.upper())
+                    if val:
+                        meta_details["tags"][k] = val
+                        summary_lines.append(f"- {k.capitalize()}: {val}")
+
+            return {
+                "status": "ok",
+                "tool": "inspect_media_metadata",
+                "media_type": media_type,
+                "format": fmt.get("format_name", ext),
+                "file_size": file_size,
+                "file_size_formatted": formatted_size,
+                "metadata": meta_details,
+                "summary": "\n".join(summary_lines),
+                "message": f"Đã trích xuất thông số kỹ thuật media ({media_type.upper()}) thành công.",
+            }
+
+        finally:
+            if is_transient and input_file.exists():
+                input_file.unlink(missing_ok=True)

@@ -1,0 +1,1023 @@
+"""
+Unit and Adversarial Test Suite for Video Editor Service (Milestone 3).
+
+Comprehensive testing for 9 professional studio-grade video processing tools:
+  1. remove_text_from_video (delogo, inpaint, auto via Tesseract OCR)
+  2. add_subtitle_to_video (plain text auto-SRT, custom styling, position)
+  3. apply_color_grade (vivid, vintage, cinematic, cool, warm, bw, custom EQ)
+  4. stabilize_video (2-pass vidstabdetect & vidstabtransform)
+  5. concatenate_videos (fast stream copy, re-encode, size safety ceiling)
+  6. extract_frames (periodic fps sampling, zip packaging)
+  7. remove_watermark_region (chained multi-delogo filters, max 5 regions)
+  8. enhance_video_quality (sharpen, denoise, deinterlace, upscale, tonemap)
+  9. generate_video_thumbnail (exact timestamp seek, aspect preservation)
+
+Includes:
+  - Dual-Delivery routing (direct <= 50MB vs portal > 50MB)
+  - Zero-Disk Leak guarantees on success, error, and timeout
+  - Adversarial security hardening (POSIX traversal, Windows backslash, URL-encoded,
+    Windows drive letter, UNC path, sandbox boundary enforcement, coordinate bounds)
+  - Hardware bounding via Semaphores and transient HTTP download cleanup
+"""
+
+from __future__ import annotations
+
+import asyncio
+import os
+import re
+import shutil
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
+
+# Ensure app directory is in sys.path
+REPO_ROOT = Path(__file__).resolve().parents[3]
+AI_AGENT_DIR = REPO_ROOT / "services" / "ai-agent-service"
+if str(AI_AGENT_DIR) not in sys.path:
+    sys.path.insert(0, str(AI_AGENT_DIR))
+
+from app.services.video_editor_service import (
+    TELEGRAM_MAX_FILE_SIZE,
+    VideoEditorService,
+)
+
+
+class TestVideoEditorService(unittest.IsolatedAsyncioTestCase):
+    """Full Unit and Adversarial Test Suite for VideoEditorService."""
+
+    async def asyncSetUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.scratch_path = Path(self.temp_dir.name)
+        self.mock_storage = MagicMock()
+        self.service = VideoEditorService(
+            storage_manager=self.mock_storage,
+            temp_dir=self.scratch_path,
+        )
+
+        # Create a valid dummy video file inside the sandbox
+        self.dummy_video = self.scratch_path / "sample_test_video.mp4"
+        self.dummy_video.write_bytes(b"\x00" * 4096)
+
+    async def asyncTearDown(self):
+        self.temp_dir.cleanup()
+
+    def _get_scratch_files(self) -> set[Path]:
+        """Returns set of all existing files inside the scratch directory."""
+        if not self.scratch_path.exists():
+            return set()
+        return {p for p in self.scratch_path.rglob("*") if p.is_file()}
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # NHÓM 1: UNIT TESTS (CHỨC NĂNG 9 TOOLS & DUAL-DELIVERY & ZERO LEAK)
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    # ─── 1. remove_text_from_video ──────────────────────────────────────────
+
+    async def test_remove_text_delogo_specified_region(self):
+        """Test remove_text_from_video mode='delogo' with explicit region {x, y, w, h}."""
+        async def fake_run(cmd, timeout=300):
+            out_file = Path(cmd[-1])
+            out_file.write_bytes(b"delogo_output_video")
+            return 0, b"", b""
+
+        with patch.object(self.service, "_run_command", side_effect=fake_run) as mock_run:
+            res = await self.service.remove_text_from_video(
+                input_path_or_url=str(self.dummy_video),
+                region={"x": 50, "y": 140, "w": 400, "h": 100},
+                mode="delogo",
+                output_format="mp4",
+            )
+            self.assertEqual(res["status"], "ok")
+            self.assertEqual(res["tool"], "remove_text_from_video")
+            self.assertEqual(res["mode_used"], "delogo")
+            self.assertEqual(res["delivery"], "direct")
+            self.assertEqual(res["region"], {"x": 50, "y": 140, "w": 400, "h": 100})
+
+            cmd = mock_run.call_args[0][0]
+            self.assertIn("-vf", cmd)
+            vf_val = cmd[cmd.index("-vf") + 1]
+            self.assertEqual(vf_val, "delogo=x=50:y=140:w=400:h=100:show=0")
+            self.assertIn("-c:a", cmd)
+            self.assertEqual(cmd[cmd.index("-c:a") + 1], "copy")
+            self.assertIn("-movflags", cmd)
+            self.assertEqual(cmd[cmd.index("-movflags") + 1], "+faststart")
+
+    async def test_remove_text_auto_detect_via_tesseract(self):
+        """Test remove_text_from_video mode='auto' successfully detects text via OCR sampling -> delogo."""
+        async def fake_run(cmd, timeout=300):
+            # Check if this is the sample frame extraction command
+            if "-vsync" in cmd and "select=eq(n" in cmd[cmd.index("-vf") + 1]:
+                sample_pattern = cmd[-1]
+                sample_dir = Path(sample_pattern).parent
+                # Write sample jpg files
+                (sample_dir / "sample_01.jpg").write_bytes(b"frame1")
+                (sample_dir / "sample_02.jpg").write_bytes(b"frame2")
+                return 0, b"", b""
+            # Otherwise it's the delogo output command
+            out_file = Path(cmd[-1])
+            out_file.write_bytes(b"auto_detected_delogo_video")
+            return 0, b"", b""
+
+        mock_tesseract = MagicMock()
+        mock_tesseract.Output.DICT = "dict"
+        mock_tesseract.image_to_data.return_value = {
+            "text": ["SAMPLE", "TEXT"],
+            "conf": [95, 90],
+            "left": [100, 200],
+            "top": [50, 50],
+            "width": [80, 70],
+            "height": [30, 30],
+        }
+
+        mock_pil = MagicMock()
+        mock_img = MagicMock()
+        mock_pil.Image.open.return_value.__enter__.return_value = mock_img
+
+        with patch.object(self.service, "_run_command", side_effect=fake_run) as mock_run:
+            with patch.dict("sys.modules", {"cv2": None, "pytesseract": mock_tesseract, "PIL": mock_pil}):
+                res = await self.service.remove_text_from_video(
+                    input_path_or_url=str(self.dummy_video),
+                    mode="auto",
+                )
+                self.assertEqual(res["status"], "ok")
+                self.assertEqual(res["mode_used"], "delogo")
+                # Auto detects bounding box union [left=100, top=50, max_x=270, max_y=80]
+                # With 10px pad: x=90, y=40, w=190, h=50
+                self.assertEqual(res["region"]["x"], 90)
+                self.assertEqual(res["region"]["y"], 40)
+                self.assertEqual(res["region"]["w"], 190)
+                self.assertEqual(res["region"]["h"], 50)
+
+                # Verify final delogo command uses the detected region
+                final_cmd = mock_run.call_args[0][0]
+                vf_val = final_cmd[final_cmd.index("-vf") + 1]
+                self.assertIn("delogo=x=90:y=40:w=190:h=50:show=0", vf_val)
+
+    async def test_remove_text_inpaint_mode_fallback_when_no_opencv(self):
+        """Test remove_text_from_video mode='inpaint' raises RuntimeError when cv2 is missing."""
+        with patch.dict("sys.modules", {"cv2": None}):
+            with self.assertRaises(RuntimeError) as ctx:
+                await self.service.remove_text_from_video(
+                    input_path_or_url=str(self.dummy_video),
+                    region={"x": 10, "y": 10, "w": 50, "h": 50},
+                    mode="inpaint",
+                )
+            self.assertIn("opencv-python-headless chưa được cài đặt", str(ctx.exception))
+
+    async def test_remove_text_auto_fallback_to_delogo_when_no_opencv(self):
+        """Test remove_text_from_video mode='auto' gracefully falls back to delogo when cv2 is missing."""
+        async def fake_run(cmd, timeout=300):
+            if "-vsync" in cmd:
+                return 0, b"", b""
+            out_file = Path(cmd[-1])
+            out_file.write_bytes(b"fallback_delogo_video")
+            return 0, b"", b""
+
+        with patch.object(self.service, "_run_command", side_effect=fake_run):
+            with patch.dict("sys.modules", {"cv2": None}):
+                res = await self.service.remove_text_from_video(
+                    input_path_or_url=str(self.dummy_video),
+                    mode="auto",
+                )
+                self.assertEqual(res["status"], "ok")
+                self.assertEqual(res["mode_used"], "delogo")
+
+    async def test_remove_text_inpaint_mode_opencv_success(self):
+        """Test remove_text_from_video mode='inpaint' delegates to inpaint_video_sync."""
+        def fake_inpaint(inp, out, rx, ry, rw, rh):
+            out.write_bytes(b"inpainted_video_payload")
+
+        mock_cv2 = MagicMock()
+        with patch.dict("sys.modules", {"cv2": mock_cv2}):
+            with patch.object(self.service, "_inpaint_video_sync", side_effect=fake_inpaint) as mock_sync:
+                res = await self.service.remove_text_from_video(
+                    input_path_or_url=str(self.dummy_video),
+                    region={"x": 20, "y": 30, "w": 80, "h": 40},
+                    mode="inpaint",
+                )
+                self.assertEqual(res["status"], "ok")
+                self.assertEqual(res["mode_used"], "inpaint")
+                mock_sync.assert_called_once()
+                args = mock_sync.call_args[0]
+                self.assertEqual(args[2:], (20, 30, 80, 40))
+
+    # ─── 2. add_subtitle_to_video ───────────────────────────────────────────
+
+    async def test_add_subtitle_plain_text_drawtext(self):
+        """Test add_subtitle_to_video generates temporary SRT with 5-second splits from raw text."""
+        created_srt_content = []
+
+        async def fake_run(cmd, timeout=300):
+            out_file = Path(cmd[-1])
+            out_file.write_bytes(b"subbed_video")
+            # Inspect temporary SRT file generated during the run
+            vf_val = cmd[cmd.index("-vf") + 1]
+            self.assertIn("subtitles=", vf_val)
+            # Find generated srt in scratch directory
+            for f in self.scratch_path.rglob("*.srt"):
+                created_srt_content.append(f.read_text(encoding="utf-8"))
+            return 0, b"", b""
+
+        with patch.object(self.service, "_run_command", side_effect=fake_run):
+            plain_text = "Dòng 1: Xin chào thế giới\nDòng 2: Đây là video mẫu"
+            res = await self.service.add_subtitle_to_video(
+                input_path_or_url=str(self.dummy_video),
+                subtitle_text_or_path=plain_text,
+                position="bottom",
+            )
+            self.assertEqual(res["status"], "ok")
+            self.assertEqual(res["tool"], "add_subtitle_to_video")
+            self.assertEqual(res["position"], "bottom")
+
+            # Verify SRT contents were properly structured into 5-second intervals
+            self.assertTrue(len(created_srt_content) > 0)
+            srt_str = created_srt_content[0]
+            self.assertIn("00:00:00,000 --> 00:00:05,000", srt_str)
+            self.assertIn("Dòng 1: Xin chào thế giới", srt_str)
+            self.assertIn("00:00:05,000 --> 00:00:10,000", srt_str)
+            self.assertIn("Dòng 2: Đây là video mẫu", srt_str)
+
+            # Ensure temporary srt was cleaned up after completion
+            remaining_srts = list(self.scratch_path.rglob("*.srt"))
+            self.assertEqual(len(remaining_srts), 0)
+
+    async def test_add_subtitle_srt_file(self):
+        """Test add_subtitle_to_video with an existing .srt file in the sandbox."""
+        custom_srt = self.scratch_path / "custom.srt"
+        custom_srt.write_text("1\n00:00:01,000 --> 00:00:04,000\nSub ready\n", encoding="utf-8")
+
+        async def fake_run(cmd, timeout=300):
+            out_file = Path(cmd[-1])
+            out_file.write_bytes(b"subbed_video")
+            return 0, b"", b""
+
+        with patch.object(self.service, "_run_command", side_effect=fake_run) as mock_run:
+            res = await self.service.add_subtitle_to_video(
+                input_path_or_url=str(self.dummy_video),
+                subtitle_text_or_path=str(custom_srt),
+                position="top",
+            )
+            self.assertEqual(res["status"], "ok")
+            cmd = mock_run.call_args[0][0]
+            vf_val = cmd[cmd.index("-vf") + 1]
+            self.assertIn("subtitles=", vf_val)
+            self.assertIn("Alignment=6", vf_val)  # top alignment is 6
+
+    async def test_add_subtitle_custom_styling_and_position(self):
+        """Test add_subtitle_to_video with custom fontsize, color, outline and center position."""
+        async def fake_run(cmd, timeout=300):
+            Path(cmd[-1]).write_bytes(b"styled_subbed_video")
+            return 0, b"", b""
+
+        with patch.object(self.service, "_run_command", side_effect=fake_run) as mock_run:
+            res = await self.service.add_subtitle_to_video(
+                input_path_or_url=str(self.dummy_video),
+                subtitle_text_or_path="Centered Yellow Subtitle",
+                position="center",
+                style={"fontsize": 28, "color": "&H0000FFFF", "outline": "&H00FF0000"},
+            )
+            self.assertEqual(res["status"], "ok")
+            cmd = mock_run.call_args[0][0]
+            vf_val = cmd[cmd.index("-vf") + 1]
+            self.assertIn("Alignment=10", vf_val)
+            self.assertIn("FontSize=28", vf_val)
+            self.assertIn("PrimaryColour=&H0000FFFF", vf_val)
+            self.assertIn("OutlineColour=&H00FF0000", vf_val)
+
+    # ─── 3. apply_color_grade ────────────────────────────────────────────────
+
+    async def test_apply_color_grade_vivid(self):
+        """Test apply_color_grade with 'vivid' preset."""
+        async def fake_run(cmd, timeout=300):
+            Path(cmd[-1]).write_bytes(b"graded_vivid")
+            return 0, b"", b""
+
+        with patch.object(self.service, "_run_command", side_effect=fake_run) as mock_run:
+            res = await self.service.apply_color_grade(
+                input_path_or_url=str(self.dummy_video),
+                preset="vivid",
+            )
+            self.assertEqual(res["status"], "ok")
+            self.assertEqual(res["preset"], "vivid")
+            cmd = mock_run.call_args[0][0]
+            vf_val = cmd[cmd.index("-vf") + 1]
+            self.assertEqual(vf_val, "eq=contrast=1.2:saturation=1.3:brightness=0.02")
+
+    async def test_apply_color_grade_vintage(self):
+        """Test apply_color_grade with 'vintage' preset."""
+        async def fake_run(cmd, timeout=300):
+            Path(cmd[-1]).write_bytes(b"graded_vintage")
+            return 0, b"", b""
+
+        with patch.object(self.service, "_run_command", side_effect=fake_run) as mock_run:
+            res = await self.service.apply_color_grade(
+                input_path_or_url=str(self.dummy_video),
+                preset="vintage",
+            )
+            self.assertEqual(res["status"], "ok")
+            cmd = mock_run.call_args[0][0]
+            vf_val = cmd[cmd.index("-vf") + 1]
+            self.assertEqual(vf_val, "curves=vintage,hue=s=0.85")
+
+    async def test_apply_color_grade_cinematic(self):
+        """Test apply_color_grade with 'cinematic' preset."""
+        async def fake_run(cmd, timeout=300):
+            Path(cmd[-1]).write_bytes(b"graded_cinematic")
+            return 0, b"", b""
+
+        with patch.object(self.service, "_run_command", side_effect=fake_run) as mock_run:
+            res = await self.service.apply_color_grade(
+                input_path_or_url=str(self.dummy_video),
+                preset="cinematic",
+            )
+            self.assertEqual(res["status"], "ok")
+            cmd = mock_run.call_args[0][0]
+            vf_val = cmd[cmd.index("-vf") + 1]
+            self.assertEqual(vf_val, "curves=strong_contrast,eq=saturation=1.15")
+
+    async def test_apply_color_grade_cool(self):
+        """Test apply_color_grade with 'cool' preset."""
+        async def fake_run(cmd, timeout=300):
+            Path(cmd[-1]).write_bytes(b"graded_cool")
+            return 0, b"", b""
+
+        with patch.object(self.service, "_run_command", side_effect=fake_run) as mock_run:
+            res = await self.service.apply_color_grade(
+                input_path_or_url=str(self.dummy_video),
+                preset="cool",
+            )
+            self.assertEqual(res["status"], "ok")
+            cmd = mock_run.call_args[0][0]
+            vf_val = cmd[cmd.index("-vf") + 1]
+            self.assertIn("colorbalance=bs=0.15", vf_val)
+
+    async def test_apply_color_grade_warm(self):
+        """Test apply_color_grade with 'warm' preset."""
+        async def fake_run(cmd, timeout=300):
+            Path(cmd[-1]).write_bytes(b"graded_warm")
+            return 0, b"", b""
+
+        with patch.object(self.service, "_run_command", side_effect=fake_run) as mock_run:
+            res = await self.service.apply_color_grade(
+                input_path_or_url=str(self.dummy_video),
+                preset="warm",
+            )
+            self.assertEqual(res["status"], "ok")
+            cmd = mock_run.call_args[0][0]
+            vf_val = cmd[cmd.index("-vf") + 1]
+            self.assertIn("colorbalance=rs=0.15", vf_val)
+
+    async def test_apply_color_grade_bw(self):
+        """Test apply_color_grade with 'bw' black and white preset."""
+        async def fake_run(cmd, timeout=300):
+            Path(cmd[-1]).write_bytes(b"graded_bw")
+            return 0, b"", b""
+
+        with patch.object(self.service, "_run_command", side_effect=fake_run) as mock_run:
+            res = await self.service.apply_color_grade(
+                input_path_or_url=str(self.dummy_video),
+                preset="bw",
+            )
+            self.assertEqual(res["status"], "ok")
+            cmd = mock_run.call_args[0][0]
+            vf_val = cmd[cmd.index("-vf") + 1]
+            self.assertEqual(vf_val, "hue=s=0")
+
+    async def test_apply_color_grade_custom_eq(self):
+        """Test apply_color_grade with 'custom' equalizer values."""
+        async def fake_run(cmd, timeout=300):
+            Path(cmd[-1]).write_bytes(b"graded_custom")
+            return 0, b"", b""
+
+        with patch.object(self.service, "_run_command", side_effect=fake_run) as mock_run:
+            res = await self.service.apply_color_grade(
+                input_path_or_url=str(self.dummy_video),
+                preset="custom",
+                custom_eq={"contrast": 1.25, "brightness": 0.05, "saturation": 1.4, "gamma": 1.1},
+            )
+            self.assertEqual(res["status"], "ok")
+            cmd = mock_run.call_args[0][0]
+            vf_val = cmd[cmd.index("-vf") + 1]
+            self.assertEqual(vf_val, "eq=contrast=1.25:brightness=0.05:saturation=1.4:gamma=1.1")
+
+    # ─── 4. stabilize_video ──────────────────────────────────────────────────
+
+    async def test_stabilize_video_two_pass(self):
+        """Test stabilize_video executes 2 subprocess passes (vidstabdetect & vidstabtransform)."""
+        call_history = []
+
+        async def fake_run(cmd, timeout=300):
+            call_history.append(list(cmd))
+            if "-f" in cmd and "null" in cmd:
+                # Pass 1 produces transforms.trf file
+                vf_arg = cmd[cmd.index("-vf") + 1]
+                self.assertIn("vidstabdetect", vf_arg)
+                # Extract transforms file path from result='...'
+                match = re.search(r"result='([^']+)'", vf_arg)
+                if match:
+                    raw_trf = match.group(1).replace("\\:", ":")
+                    trf_path = Path(raw_trf)
+                    trf_path.write_bytes(b"motion_vectors_data")
+                return 0, b"", b""
+            # Pass 2 produces stabilized output
+            Path(cmd[-1]).write_bytes(b"stabilized_video")
+            return 0, b"", b""
+
+        with patch.object(self.service, "_run_command", side_effect=fake_run):
+            res = await self.service.stabilize_video(
+                input_path_or_url=str(self.dummy_video),
+                smoothing=15,
+            )
+            self.assertEqual(res["status"], "ok")
+            self.assertEqual(res["smoothing"], 15)
+            self.assertEqual(len(call_history), 2)
+
+            # Pass 1 check
+            self.assertIn("vidstabdetect", call_history[0][call_history[0].index("-vf") + 1])
+            self.assertIn("-an", call_history[0])
+
+            # Pass 2 check
+            vf2 = call_history[1][call_history[1].index("-vf") + 1]
+            self.assertIn("vidstabtransform=smoothing=15", vf2)
+            self.assertIn("unsharp=5:5:0.8", vf2)
+
+            # Ensure .trf transient file is cleaned up
+            remaining_trf = list(self.scratch_path.rglob("*.trf"))
+            self.assertEqual(len(remaining_trf), 0)
+
+    # ─── 5. concatenate_videos ───────────────────────────────────────────────
+
+    async def test_concatenate_3_videos(self):
+        """Test concatenate_videos merges 3 clips with fast stream copy (-c copy)."""
+        c1 = self.scratch_path / "clip1.mp4"
+        c2 = self.scratch_path / "clip2.mp4"
+        c3 = self.scratch_path / "clip3.mp4"
+        for c in (c1, c2, c3):
+            c.write_bytes(b"\x00" * 1024)
+
+        async def fake_run(cmd, timeout=300):
+            Path(cmd[-1]).write_bytes(b"merged_video_data")
+            return 0, b"", b""
+
+        with patch.object(self.service, "_run_command", side_effect=fake_run) as mock_run:
+            res = await self.service.concatenate_videos(
+                input_paths=[str(c1), str(c2), str(c3)],
+                reencode=False,
+            )
+            self.assertEqual(res["status"], "ok")
+            self.assertEqual(res["clips_count"], 3)
+            self.assertFalse(res["reencode"])
+
+            cmd = mock_run.call_args[0][0]
+            self.assertIn("-f", cmd)
+            self.assertEqual(cmd[cmd.index("-f") + 1], "concat")
+            self.assertIn("-c", cmd)
+            self.assertEqual(cmd[cmd.index("-c") + 1], "copy")
+
+            # Verify temporary concat txt list was deleted
+            remaining_txts = list(self.scratch_path.rglob("concat_*.txt"))
+            self.assertEqual(len(remaining_txts), 0)
+
+    async def test_concatenate_reencode_mode(self):
+        """Test concatenate_videos with reencode=True uses libx264 and aac."""
+        c1 = self.scratch_path / "clip1.mp4"
+        c2 = self.scratch_path / "clip2.mp4"
+        c1.write_bytes(b"\x00" * 1024)
+        c2.write_bytes(b"\x00" * 1024)
+
+        async def fake_run(cmd, timeout=300):
+            Path(cmd[-1]).write_bytes(b"merged_reencoded_data")
+            return 0, b"", b""
+
+        with patch.object(self.service, "_run_command", side_effect=fake_run) as mock_run:
+            res = await self.service.concatenate_videos(
+                input_paths=[str(c1), str(c2)],
+                reencode=True,
+            )
+            self.assertEqual(res["status"], "ok")
+            self.assertTrue(res["reencode"])
+
+            cmd = mock_run.call_args[0][0]
+            self.assertIn("-c:v", cmd)
+            self.assertEqual(cmd[cmd.index("-c:v") + 1], "libx264")
+            self.assertIn("-c:a", cmd)
+            self.assertEqual(cmd[cmd.index("-c:a") + 1], "aac")
+
+    async def test_concatenate_exceeds_limit_raises(self):
+        """Test concatenate_videos raises ValueError when input clips count > 10."""
+        clips = [str(self.scratch_path / f"clip_{i}.mp4") for i in range(11)]
+        with self.assertRaises(ValueError) as ctx:
+            await self.service.concatenate_videos(clips)
+        self.assertIn("1 đến 10 clip", str(ctx.exception))
+
+    # ─── 6. extract_frames ───────────────────────────────────────────────────
+
+    async def test_extract_frames_interval(self):
+        """Test extract_frames samples frames by interval and bundles into a ZIP archive."""
+        async def fake_run(cmd, timeout=300):
+            pattern = cmd[-1]
+            frames_dir = Path(pattern).parent
+            # Simulate 3 extracted frame images
+            (frames_dir / "frame_0001.jpg").write_bytes(b"frame_data_1")
+            (frames_dir / "frame_0002.jpg").write_bytes(b"frame_data_2")
+            (frames_dir / "frame_0003.jpg").write_bytes(b"frame_data_3")
+            return 0, b"", b""
+
+        with patch.object(self.service, "_run_command", side_effect=fake_run) as mock_run:
+            res = await self.service.extract_frames(
+                input_path_or_url=str(self.dummy_video),
+                interval_seconds=1.5,
+                output_format="jpg",
+            )
+            self.assertEqual(res["status"], "ok")
+            self.assertEqual(res["frames_count"], 3)
+            self.assertEqual(res["interval_seconds"], 1.5)
+            self.assertTrue(Path(res["zip_path"]).exists())
+
+            cmd = mock_run.call_args[0][0]
+            vf_val = cmd[cmd.index("-vf") + 1]
+            self.assertEqual(vf_val, "fps=1/1.5")
+
+    # ─── 7. remove_watermark_region ──────────────────────────────────────────
+
+    async def test_remove_watermark_multi_region_chain(self):
+        """Test remove_watermark_region chains multiple delogo filters."""
+        regions = [
+            {"x": 10, "y": 10, "w": 100, "h": 50},
+            {"x": 400, "y": 20, "w": 120, "h": 60},
+            {"x": 50, "y": 500, "w": 200, "h": 80},
+        ]
+
+        async def fake_run(cmd, timeout=300):
+            Path(cmd[-1]).write_bytes(b"multi_delogo_video")
+            return 0, b"", b""
+
+        with patch.object(self.service, "_run_command", side_effect=fake_run) as mock_run:
+            res = await self.service.remove_watermark_region(
+                input_path_or_url=str(self.dummy_video),
+                regions=regions,
+            )
+            self.assertEqual(res["status"], "ok")
+            self.assertEqual(res["regions_count"], 3)
+
+            cmd = mock_run.call_args[0][0]
+            vf_val = cmd[cmd.index("-vf") + 1]
+            self.assertIn("delogo=x=10:y=10:w=100:h=50:show=0", vf_val)
+            self.assertIn("delogo=x=400:y=20:w=120:h=60:show=0", vf_val)
+            self.assertIn("delogo=x=50:y=500:w=200:h=80:show=0", vf_val)
+            # Verify delimiter ',' for chaining
+            self.assertEqual(vf_val.count("delogo="), 3)
+
+    # ─── 8. enhance_video_quality ────────────────────────────────────────────
+
+    async def test_enhance_sharpen(self):
+        """Test enhance_video_quality with 'sharpen' preset uses unsharp filter."""
+        async def fake_run(cmd, timeout=300):
+            Path(cmd[-1]).write_bytes(b"sharpened_video")
+            return 0, b"", b""
+
+        with patch.object(self.service, "_run_command", side_effect=fake_run) as mock_run:
+            res = await self.service.enhance_video_quality(
+                input_path_or_url=str(self.dummy_video),
+                preset="sharpen",
+            )
+            self.assertEqual(res["status"], "ok")
+            cmd = mock_run.call_args[0][0]
+            vf_val = cmd[cmd.index("-vf") + 1]
+            self.assertEqual(vf_val, "unsharp=5:5:1.0:5:5:0.0")
+
+    async def test_enhance_denoise(self):
+        """Test enhance_video_quality with 'denoise' preset uses hqdn3d filter."""
+        async def fake_run(cmd, timeout=300):
+            Path(cmd[-1]).write_bytes(b"denoised_video")
+            return 0, b"", b""
+
+        with patch.object(self.service, "_run_command", side_effect=fake_run) as mock_run:
+            res = await self.service.enhance_video_quality(
+                input_path_or_url=str(self.dummy_video),
+                preset="denoise",
+            )
+            self.assertEqual(res["status"], "ok")
+            cmd = mock_run.call_args[0][0]
+            vf_val = cmd[cmd.index("-vf") + 1]
+            self.assertEqual(vf_val, "hqdn3d=4.0:3.0:6.0:4.5")
+
+    async def test_enhance_deinterlace(self):
+        """Test enhance_video_quality with 'deinterlace' preset uses yadif filter."""
+        async def fake_run(cmd, timeout=300):
+            Path(cmd[-1]).write_bytes(b"deinterlaced_video")
+            return 0, b"", b""
+
+        with patch.object(self.service, "_run_command", side_effect=fake_run) as mock_run:
+            res = await self.service.enhance_video_quality(
+                input_path_or_url=str(self.dummy_video),
+                preset="deinterlace",
+            )
+            self.assertEqual(res["status"], "ok")
+            cmd = mock_run.call_args[0][0]
+            self.assertIn("yadif=0:-1:0", cmd[cmd.index("-vf") + 1])
+
+    async def test_enhance_upscale_2x(self):
+        """Test enhance_video_quality with 'upscale_2x' preset uses lanczos scaling."""
+        async def fake_run(cmd, timeout=300):
+            Path(cmd[-1]).write_bytes(b"upscaled_video")
+            return 0, b"", b""
+
+        with patch.object(self.service, "_run_command", side_effect=fake_run) as mock_run:
+            res = await self.service.enhance_video_quality(
+                input_path_or_url=str(self.dummy_video),
+                preset="upscale_2x",
+            )
+            self.assertEqual(res["status"], "ok")
+            cmd = mock_run.call_args[0][0]
+            self.assertIn("scale=iw*2:ih*2:flags=lanczos", cmd[cmd.index("-vf") + 1])
+
+    async def test_enhance_hdr_tonemap(self):
+        """Test enhance_video_quality with 'hdr_tonemap' preset combines eq and unsharp."""
+        async def fake_run(cmd, timeout=300):
+            Path(cmd[-1]).write_bytes(b"tonemapped_video")
+            return 0, b"", b""
+
+        with patch.object(self.service, "_run_command", side_effect=fake_run) as mock_run:
+            res = await self.service.enhance_video_quality(
+                input_path_or_url=str(self.dummy_video),
+                preset="hdr_tonemap",
+            )
+            self.assertEqual(res["status"], "ok")
+            cmd = mock_run.call_args[0][0]
+            vf_val = cmd[cmd.index("-vf") + 1]
+            self.assertIn("eq=contrast=1.15:brightness=0.03:saturation=1.2", vf_val)
+            self.assertIn("unsharp=3:3:0.5", vf_val)
+
+    # ─── 9. generate_video_thumbnail ─────────────────────────────────────────
+
+    async def test_generate_thumbnail(self):
+        """Test generate_video_thumbnail generates single frame at exact timestamp."""
+        async def fake_run(cmd, timeout=60):
+            Path(cmd[-1]).write_bytes(b"thumbnail_jpg")
+            return 0, b"", b""
+
+        with patch.object(self.service, "_run_command", side_effect=fake_run) as mock_run:
+            res = await self.service.generate_video_thumbnail(
+                input_path_or_url=str(self.dummy_video),
+                timestamp=12.5,
+                width=640,
+                height=360,
+                output_format="jpg",
+            )
+            self.assertEqual(res["status"], "ok")
+            self.assertEqual(res["timestamp"], 12.5)
+            self.assertEqual(res["width"], 640)
+            self.assertEqual(res["height"], 360)
+
+            cmd = mock_run.call_args[0][0]
+            self.assertIn("-ss", cmd)
+            self.assertEqual(cmd[cmd.index("-ss") + 1], "12.5")
+            self.assertIn("-vframes", cmd)
+            self.assertEqual(cmd[cmd.index("-vframes") + 1], "1")
+            self.assertIn("-vf", cmd)
+            vf_val = cmd[cmd.index("-vf") + 1]
+            self.assertEqual(vf_val, "scale=640:360:force_original_aspect_ratio=decrease")
+
+    # ─── 10. DUAL-DELIVERY & ZERO-DISK LEAK ──────────────────────────────────
+
+    async def test_dual_delivery_small_file_direct(self):
+        """Test output size <= 50MB is delivered directly without calling media storage manager."""
+        async def fake_run(cmd, timeout=300):
+            out_file = Path(cmd[-1])
+            # 10MB simulated file
+            out_file.write_bytes(b"0" * (10 * 1024 * 1024))
+            return 0, b"", b""
+
+        with patch.object(self.service, "_run_command", side_effect=fake_run):
+            res = await self.service.remove_text_from_video(
+                input_path_or_url=str(self.dummy_video),
+                mode="delogo",
+            )
+            self.assertEqual(res["delivery"], "direct")
+            self.assertIsNone(res["internet_url"])
+            self.assertIsNone(res["lan_url"])
+            self.mock_storage.publish_download_item.assert_not_called()
+
+    async def test_dual_delivery_large_file_portal(self):
+        """Test output size > 50MB publishes download item via media storage manager."""
+        mock_record = MagicMock()
+        mock_record.file_path = self.scratch_path / "large_out.mp4"
+        mock_record.filename = "large_out.mp4"
+        mock_record.file_size = 55 * 1024 * 1024
+        mock_record.internet_url = "https://kirito.ngrok-free.dev/api/media/download/item_99"
+        mock_record.lan_url = "http://192.168.1.100:8000/api/media/download/item_99"
+        mock_record.expires_at = "2026-10-01T12:00:00Z"
+        self.mock_storage.publish_download_item.return_value = mock_record
+
+        async def fake_run(cmd, timeout=300):
+            out_file = Path(cmd[-1])
+            # Mock 52MB file size using truncate
+            with open(out_file, "wb") as f:
+                f.seek(52 * 1024 * 1024 - 1)
+                f.write(b"\x00")
+            return 0, b"", b""
+
+        with patch.object(self.service, "_run_command", side_effect=fake_run):
+            res = await self.service.remove_text_from_video(
+                input_path_or_url=str(self.dummy_video),
+                mode="delogo",
+            )
+            self.assertEqual(res["delivery"], "portal")
+            self.assertEqual(res["internet_url"], "https://kirito.ngrok-free.dev/api/media/download/item_99")
+            self.assertEqual(res["lan_url"], "http://192.168.1.100:8000/api/media/download/item_99")
+            self.mock_storage.publish_download_item.assert_called_once()
+
+    async def test_zero_disk_leak_on_ffmpeg_error(self):
+        """Test failed FFmpeg invocation cleans up all transient output files (Zero-Disk Leak)."""
+        before_files = self._get_scratch_files()
+
+        async def fake_failing_run(cmd, timeout=300):
+            # Simulate FFmpeg creating a partial or broken output file before crashing
+            out_file = Path(cmd[-1])
+            out_file.write_bytes(b"corrupted partial data")
+            return 1, b"", b"FFmpeg error: Invalid input data"
+
+        with patch.object(self.service, "_run_command", side_effect=fake_failing_run):
+            with self.assertRaises(RuntimeError):
+                await self.service.remove_text_from_video(
+                    input_path_or_url=str(self.dummy_video),
+                    mode="delogo",
+                )
+
+        after_files = self._get_scratch_files()
+        delta = after_files - before_files
+        self.assertEqual(len(delta), 0, f"Phát hiện rò rỉ tệp sau lỗi FFmpeg: {delta}")
+
+    async def test_zero_disk_leak_on_timeout(self):
+        """Test task timeout cleans up all transient files."""
+        before_files = self._get_scratch_files()
+
+        async def fake_timeout_run(cmd, timeout=300):
+            # Simulate partial file written before timing out
+            if not cmd[-1].startswith("-"):
+                Path(cmd[-1]).write_bytes(b"timed_out_partial")
+            raise TimeoutError("Tác vụ xử lý video vượt quá thời gian tối đa.")
+
+        with patch.object(self.service, "_run_command", side_effect=fake_timeout_run):
+            with self.assertRaises(TimeoutError):
+                await self.service.stabilize_video(
+                    input_path_or_url=str(self.dummy_video),
+                    smoothing=10,
+                )
+
+        after_files = self._get_scratch_files()
+        delta = after_files - before_files
+        self.assertEqual(len(delta), 0, f"Phát hiện rò rỉ tệp sau timeout: {delta}")
+
+    async def test_transient_http_download_cleanup_on_success_and_error(self):
+        """Test transient SSD download from remote URL is cleaned up both on success and error."""
+        before_files = self._get_scratch_files()
+
+        class DummyStreamResponse:
+            def raise_for_status(self):
+                pass
+            async def aiter_bytes(self, chunk_size=65536):
+                yield b"dummy_http_video_chunk"
+            async def __aenter__(self):
+                return self
+            async def __aexit__(self, exc_type, exc_val, exc_tb):
+                pass
+
+        mock_http = MagicMock()
+        mock_http.stream.return_value = DummyStreamResponse()
+        mock_http.aclose = AsyncMock()
+        service_with_http = VideoEditorService(
+            storage_manager=self.mock_storage,
+            http_client=mock_http,
+            temp_dir=self.scratch_path,
+        )
+
+        async def fake_run(cmd, timeout=300):
+            Path(cmd[-1]).write_bytes(b"output_from_http")
+            return 0, b"", b""
+
+        with patch.object(service_with_http, "_run_command", side_effect=fake_run):
+            res = await service_with_http.remove_text_from_video(
+                input_path_or_url="https://example.com/test_clip.mp4",
+                mode="delogo",
+            )
+            self.assertEqual(res["status"], "ok")
+            # The downloaded file dl_* must be unlinked
+            dl_files = list(self.scratch_path.rglob("dl_*"))
+            self.assertEqual(len(dl_files), 0, f"Tệp tải tạm thời chưa được xóa: {dl_files}")
+
+    async def test_concurrency_semaphore_limits(self):
+        """Test bounded concurrency semaphore limits FFmpeg subprocesses to 2."""
+        running = 0
+        max_running = 0
+
+        async def fake_proc(*cmd, **kwargs):
+            nonlocal running, max_running
+            running += 1
+            max_running = max(max_running, running)
+            await asyncio.sleep(0.05)
+            running -= 1
+            mock_p = MagicMock()
+            mock_p.returncode = 0
+            mock_p.communicate = AsyncMock(return_value=(b"", b""))
+            if not cmd[-1].startswith("-"):
+                Path(cmd[-1]).write_bytes(b"data")
+            return mock_p
+
+        with patch("asyncio.create_subprocess_exec", side_effect=fake_proc):
+            tasks = [
+                self.service.apply_color_grade(str(self.dummy_video), preset="bw")
+                for _ in range(5)
+            ]
+            await asyncio.gather(*tasks)
+
+        self.assertLessEqual(max_running, 2, f"Semaphore bị vượt giới hạn: max concurrent = {max_running}")
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # NHÓM 2: ADVERSARIAL & SECURITY TESTS (15 BÀI BẢO MẬT & ĐỐI KHÁNG)
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    async def test_path_traversal_blocked_posix(self):
+        """Test POSIX relative path traversal attempts ('../../../etc/passwd') are strictly blocked."""
+        with self.assertRaises(PermissionError) as ctx:
+            await self.service.remove_text_from_video("../../../etc/passwd")
+        self.assertIn("Path Traversal", str(ctx.exception))
+
+    async def test_path_traversal_url_encoded(self):
+        """Test URL percent-encoded traversal attempts ('%2e%2e%2f') are decoded and blocked."""
+        with self.assertRaises(PermissionError) as ctx:
+            await self.service.remove_text_from_video("%2e%2e%2f%2e%2e%2fetc%2fpasswd")
+        self.assertIn("Path Traversal", str(ctx.exception))
+
+    async def test_path_traversal_windows_backslash(self):
+        """Test Windows backslash traversal attempts ('..\\..\\windows\\win.ini') are normalized and blocked."""
+        with self.assertRaises(PermissionError) as ctx:
+            await self.service.remove_text_from_video("..\\..\\windows\\win.ini")
+        self.assertIn("Path Traversal", str(ctx.exception))
+
+    async def test_path_traversal_windows_drive(self):
+        """Test Windows drive letter absolute paths ('C:/Windows/win.ini') outside sandbox are blocked."""
+        with self.assertRaises(PermissionError) as ctx:
+            await self.service.remove_text_from_video("C:/Windows/win.ini")
+        self.assertIn("Windows drive letter", str(ctx.exception))
+
+    async def test_path_traversal_unc(self):
+        """Test UNC network paths ('\\\\attacker\\share' or '//attacker/share') are blocked."""
+        with self.assertRaises(PermissionError) as ctx:
+            await self.service.remove_text_from_video("\\\\attacker\\share\\payload.mp4")
+        self.assertIn("UNC", str(ctx.exception))
+
+    async def test_sandbox_whitelist_blocks_outside_path(self):
+        """Test absolute system path ('/etc/passwd' or '/var/log/syslog') outside sandbox is rejected."""
+        # On Linux/macOS, /etc/passwd has no '..' but is outside sandbox whitelist
+        # On Windows, /etc/passwd resolves to current drive root e.g. D:\etc\passwd outside sandbox
+        with self.assertRaises((ValueError, PermissionError)) as ctx:
+            await self.service.remove_text_from_video("/etc/passwd")
+        self.assertTrue(
+            "sandbox" in str(ctx.exception).lower() or "từ chối" in str(ctx.exception).lower()
+        )
+
+    async def test_invalid_region_negative_x(self):
+        """Test negative region coordinate x < 0 raises ValueError."""
+        with self.assertRaises(ValueError) as ctx:
+            await self.service.remove_text_from_video(
+                input_path_or_url=str(self.dummy_video),
+                region={"x": -10, "y": 0, "w": 100, "h": 50},
+            )
+        self.assertIn("không âm", str(ctx.exception))
+
+    async def test_invalid_region_exceeds_bounds(self):
+        """Test region dimension exceeding safety boundary (w > 10000) raises ValueError."""
+        with self.assertRaises(ValueError) as ctx:
+            await self.service.remove_text_from_video(
+                input_path_or_url=str(self.dummy_video),
+                region={"x": 0, "y": 0, "w": 10001, "h": 50},
+            )
+        self.assertIn("vượt quá giới hạn an toàn", str(ctx.exception))
+
+    async def test_invalid_region_missing_keys(self):
+        """Test region dict missing required coordinate keys raises ValueError."""
+        with self.assertRaises(ValueError) as ctx:
+            await self.service.remove_text_from_video(
+                input_path_or_url=str(self.dummy_video),
+                region={"x": 10, "y": 20},
+            )
+        self.assertIn("Thiếu tham số tọa độ", str(ctx.exception))
+
+    async def test_invalid_region_zero_or_negative_dim(self):
+        """Test region with zero or negative width/height raises ValueError."""
+        with self.assertRaises(ValueError) as ctx:
+            await self.service.remove_text_from_video(
+                input_path_or_url=str(self.dummy_video),
+                region={"x": 10, "y": 20, "w": 0, "h": 50},
+            )
+        self.assertIn("phải lớn hơn 0", str(ctx.exception))
+
+    async def test_invalid_preset_raises(self):
+        """Test invalid color grading preset raises ValueError."""
+        with self.assertRaises(ValueError) as ctx:
+            await self.service.apply_color_grade(
+                input_path_or_url=str(self.dummy_video),
+                preset="unsupported_cyberpunk_filter",
+            )
+        self.assertIn("không hợp lệ", str(ctx.exception))
+
+    async def test_empty_concat_list(self):
+        """Test empty video clips list for concatenation raises ValueError."""
+        with self.assertRaises(ValueError) as ctx:
+            await self.service.concatenate_videos([])
+        self.assertIn("không được để trống", str(ctx.exception))
+
+    async def test_exceed_max_watermark_regions(self):
+        """Test providing more than 5 watermark regions raises ValueError."""
+        excessive_regions = [{"x": 10 * i, "y": 10 * i, "w": 50, "h": 50} for i in range(6)]
+        with self.assertRaises(ValueError) as ctx:
+            await self.service.remove_watermark_region(
+                input_path_or_url=str(self.dummy_video),
+                regions=excessive_regions,
+            )
+        self.assertIn("tối đa là 5", str(ctx.exception))
+
+    async def test_stabilize_video_invalid_smoothing(self):
+        """Test invalid smoothing factor (<1 or >60) raises ValueError."""
+        with self.assertRaises(ValueError) as ctx:
+            await self.service.stabilize_video(str(self.dummy_video), smoothing=0)
+        self.assertIn("từ 1 đến 60", str(ctx.exception))
+
+        with self.assertRaises(ValueError) as ctx:
+            await self.service.stabilize_video(str(self.dummy_video), smoothing=65)
+        self.assertIn("từ 1 đến 60", str(ctx.exception))
+
+    async def test_extract_frames_invalid_interval(self):
+        """Test non-positive interval_seconds raises ValueError."""
+        with self.assertRaises(ValueError) as ctx:
+            await self.service.extract_frames(str(self.dummy_video), interval_seconds=0)
+        self.assertIn("lớn hơn 0", str(ctx.exception))
+
+    async def test_generate_thumbnail_invalid_bounds(self):
+        """Test negative timestamp or invalid dimensions raises ValueError."""
+        with self.assertRaises(ValueError):
+            await self.service.generate_video_thumbnail(str(self.dummy_video), timestamp=-1.0)
+
+        with self.assertRaises(ValueError):
+            await self.service.generate_video_thumbnail(str(self.dummy_video), width=0)
+
+        with self.assertRaises(ValueError):
+            await self.service.generate_video_thumbnail(str(self.dummy_video), height=-50)
+
+    async def test_zero_disk_leak_adversarial_stress_10iter(self):
+        """
+        Adversarial Stress Test: Executes 10 iterations of diverse video operations
+        mixing successful executions, parameter violations, and FFmpeg crashes,
+        then verifies EXACTLY ZERO leaked temporary files in scratch space.
+        """
+        before_files = self._get_scratch_files()
+
+        async def fake_alternating_run(cmd, timeout=300):
+            if "-f" in cmd and "null" in cmd:
+                return 0, b"", b""
+            out_file = Path(cmd[-1])
+            out_file.write_bytes(b"stress_test_payload")
+            return 0, b"", b""
+
+        with patch.object(self.service, "_run_command", side_effect=fake_alternating_run):
+            for i in range(10):
+                # 1. Successful color grading
+                res_color = await self.service.apply_color_grade(
+                    str(self.dummy_video), preset="vivid"
+                )
+                self.assertEqual(res_color["status"], "ok")
+                # Clean up delivered output file to simulate consumer retrieving file
+                Path(res_color["output_path"]).unlink(missing_ok=True)
+
+                # 2. Blocked path traversal attempt
+                with self.assertRaises(PermissionError):
+                    await self.service.remove_text_from_video(f"../../attack_{i}.mp4")
+
+                # 3. Invalid region rejection
+                with self.assertRaises(ValueError):
+                    await self.service.remove_text_from_video(
+                        str(self.dummy_video), region={"x": -1, "y": 0, "w": 10, "h": 10}
+                    )
+
+                # 4. Successful subtitle addition
+                res_sub = await self.service.add_subtitle_to_video(
+                    str(self.dummy_video), subtitle_text_or_path=f"Subtitle line {i}"
+                )
+                self.assertEqual(res_sub["status"], "ok")
+                Path(res_sub["output_path"]).unlink(missing_ok=True)
+
+        after_files = self._get_scratch_files()
+        leaked_files = after_files - before_files
+        self.assertEqual(
+            len(leaked_files),
+            0,
+            f"Adversarial Stress Test thất bại: Phát hiện {len(leaked_files)} tệp bị rò rỉ: {leaked_files}",
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()

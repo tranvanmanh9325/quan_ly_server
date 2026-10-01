@@ -62,15 +62,19 @@ class GroqKeyPool:
             return None
 
         async with self._lock:
-            best = self._heap[0]
-            # Fair rotation: increment usage count and update heap in O(log N)
+            now = time.monotonic()
+            available = [e for e in self._heap if e.available_at <= now]
+            if available:
+                best = min(available, key=lambda e: (e.usage_count, e.key_id))
+            else:
+                best = min(self._heap, key=lambda e: (e.available_at, e.usage_count, e.key_id))
             best.usage_count += 1
-            heapq.heapreplace(self._heap, best)
             return best.api_key
 
     async def mark_rate_limited(self, key: str) -> None:
+        clean = key.strip() if key else ""
         async with self._lock:
-            entry = self._entries_map.get(key)
+            entry = self._entries_map.get(clean)
             if not entry:
                 return
             entry.fail_count += 1
@@ -79,7 +83,6 @@ class GroqKeyPool:
             jitter = random.uniform(0.5, 3.0)
             cooldown_time = base_backoff + jitter
             entry.available_at = time.monotonic() + cooldown_time
-            heapq.heapify(self._heap)
             masked = f"#{entry.key_id} [REDACTED]"
             logger.warning(
                 "[GroqKeyPool] Key %s rate-limited (fail_count=%d, backoff=%.1fs).",
@@ -87,10 +90,14 @@ class GroqKeyPool:
             )
 
     async def mark_success(self, key: str) -> None:
+        clean = key.strip() if key else ""
         async with self._lock:
-            entry = self._entries_map.get(key)
-            if entry and entry.fail_count > 0:
-                entry.fail_count = 0
+            entry = self._entries_map.get(clean)
+            if entry:
+                if entry.fail_count > 0:
+                    entry.fail_count = 0
+                if entry.available_at > 0.0:
+                    entry.available_at = 0.0
 
     def get_status(self) -> str:
         now = time.monotonic()

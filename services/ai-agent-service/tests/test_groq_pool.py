@@ -123,6 +123,59 @@ class TestGroqKeyPool(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("99999", log_content, "Hậu tố API key bị rò rỉ trong log!")
         self.assertIn("#0 [REDACTED]", log_content, "Phải ghi nhãn ẩn danh hóa #0 [REDACTED]!")
 
+    async def test_cooldown_expiry_fair_rotation_recovery(self):
+        """
+        Kiểm tra sau khi key hết cooldown (available_at lùi về quá khứ):
+        Key đó phải tái hòa nhập công bằng vào pool dựa trên usage_count và không bị bỏ đói (starvation).
+        """
+        pool = GroqKeyPool(["key_a", "key_b"])
+        # key_a được bốc đầu tiên
+        k1 = await pool.get_next_key()
+        self.assertEqual(k1, "key_a")
+        # key_a bị rate limit
+        await pool.mark_rate_limited("key_a")
+
+        # Trong thời gian cooldown, key_b phục vụ 2 requests
+        k2 = await pool.get_next_key()
+        self.assertEqual(k2, "key_b")
+        k3 = await pool.get_next_key()
+        self.assertEqual(k3, "key_b")
+
+        # Giả lập thời gian trôi qua, cooldown của key_a đã hết
+        entry_a = pool._entries_map["key_a"]
+        entry_a.available_at = time.monotonic() - 1.0
+
+        # Hiện tại: key_a usage=1, key_b usage=2. Cả hai đều available.
+        # Key tiếp theo BẮT BUỘC phải là key_a (ít dùng hơn), không được bỏ đói key_a.
+        k4 = await pool.get_next_key()
+        self.assertEqual(k4, "key_a", "Key A đã hết cooldown nhưng bị bỏ đói do so sánh sai timestamp quá khứ!")
+
+        # Sau khi key_a đạt usage=2 (bằng key_b), lượt tiếp theo hòa hoãn theo key_id FIFO: key_a (#0) rồi key_b (#1)
+        k5 = await pool.get_next_key()
+        self.assertEqual(k5, "key_a")
+        k6 = await pool.get_next_key()
+        self.assertEqual(k6, "key_b")
+
+    async def test_all_keys_in_cooldown_picks_soonest(self):
+        """Kiểm tra khi toàn bộ keys đều trong cooldown, pool bốc key hết hạn sớm nhất."""
+        pool = GroqKeyPool(["key_slow", "key_fast"])
+        now = time.monotonic()
+        pool._entries_map["key_slow"].available_at = now + 60.0
+        pool._entries_map["key_fast"].available_at = now + 5.0
+
+        picked = await pool.get_next_key()
+        self.assertEqual(picked, "key_fast", "Phải bốc key có available_at sớm nhất khi tất cả đều dính cooldown.")
+
+    async def test_mark_success_resets_available_at(self):
+        """Kiểm tra mark_success xóa cả cooldown available_at về 0.0."""
+        pool = GroqKeyPool(["key_z"])
+        await pool.mark_rate_limited("key_z")
+        self.assertGreater(pool._entries_map["key_z"].available_at, 0.0)
+
+        await pool.mark_success(" key_z ")
+        self.assertEqual(pool._entries_map["key_z"].fail_count, 0)
+        self.assertEqual(pool._entries_map["key_z"].available_at, 0.0)
+
     def test_status_string(self):
         """Kiểm tra chuỗi trạng thái hoạt động."""
         pool = GroqKeyPool(["k1", "k2"])
@@ -132,3 +185,4 @@ class TestGroqKeyPool(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

@@ -12,6 +12,7 @@ import posixpath
 import re
 import secrets
 import shutil
+import subprocess
 import tempfile
 import urllib.parse
 import zipfile
@@ -437,7 +438,12 @@ class VideoEditorService:
                     "ffmpeg", "-y",
                     "-i", str(input_file),
                     "-vf", delogo_vf,
+                    "-c:v", "libx264", "-preset", "fast", "-crf", "22",
+                    "-pix_fmt", "yuv420p",
                     "-c:a", "copy",
+                    "-map", "0:v:0",
+                    "-map", "0:a?",
+                    "-map_metadata", "0",
                     "-movflags", "+faststart",
                     str(output_file),
                 ]
@@ -603,19 +609,23 @@ class VideoEditorService:
 
         try:
             # Check duration via ffprobe to evenly sample 5 frames across the video
+            duration = 0.0
             probe_cmd = [
                 "ffprobe", "-v", "error",
                 "-show_entries", "format=duration",
                 "-of", "default=noprint_wrappers=1:nokey=1",
                 str(input_file),
             ]
-            p_code, p_stdout, _ = await self._run_command(probe_cmd, timeout=10)
-            duration = 0.0
-            if p_code == 0:
-                try:
-                    duration = float(p_stdout.decode(errors="ignore").strip())
-                except Exception:
-                    duration = 0.0
+            try:
+                p_code, p_stdout, _ = await self._run_command(probe_cmd, timeout=10)
+                if p_code == 0:
+                    try:
+                        duration = float(p_stdout.decode(errors="ignore").strip())
+                    except Exception:
+                        duration = 0.0
+            except Exception as p_exc:
+                logger.debug("[VideoEditorService] Probe duration failed: %s", p_exc)
+                duration = 0.0
 
             if duration >= 0.5:
                 vf_expr = f"fps=5/{duration:.4f}"
@@ -627,6 +637,7 @@ class VideoEditorService:
                 "ffmpeg", "-y",
                 "-i", str(input_file),
                 "-vf", vf_expr,
+                "-vframes", "5",
                 "-vsync", "0",
                 str(sample_dir / "sample_%02d.jpg"),
             ]
@@ -817,8 +828,13 @@ class VideoEditorService:
         raw_video_path = self._temp_dir / f"inp_raw_{token}.mp4"
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
         out = cv2.VideoWriter(str(raw_video_path), fourcc, fps, (width, height))
+        if not out.isOpened():
+            cap.release()
+            raw_video_path.unlink(missing_ok=True)
+            raise RuntimeError(f"Không thể khởi tạo OpenCV VideoWriter để ghi video tại {raw_video_path.name}")
 
         try:
+            frames_written = 0
             try:
                 while cap.isOpened():
                     ret, frame = cap.read()
@@ -826,9 +842,13 @@ class VideoEditorService:
                         break
                     inpainted = cv2.inpaint(frame, mask, 3, cv2.INPAINT_TELEA)
                     out.write(inpainted)
+                    frames_written += 1
             finally:
                 cap.release()
                 out.release()
+
+            if frames_written == 0:
+                raise RuntimeError(f"Không thể đọc bất kỳ frame nào từ video đầu vào: {input_file}")
 
             # Probe SAR to prevent aspect ratio distortion on anamorphic video
             sar_filter: Optional[str] = None
@@ -839,9 +859,8 @@ class VideoEditorService:
                     "-of", "default=noprint_wrappers=1:nokey=1",
                     str(input_file),
                 ]
-                import subprocess
                 p_sar = subprocess.run(probe_sar_cmd, capture_output=True, text=True, timeout=10)
-                sar_val = p_sar.stdout.strip()
+                sar_val = p_sar.stdout.strip().splitlines()[0].strip() if p_sar.stdout.strip() else ""
                 if sar_val and sar_val not in ("1:1", "0:1", "N/A"):
                     clean_sar = sar_val.replace(":", "/")
                     if re.match(r"^\d+/\d+$", clean_sar):
@@ -868,11 +887,13 @@ class VideoEditorService:
                 "-movflags", "+faststart",
                 str(output_file),
             ])
-            import subprocess
-            proc = subprocess.run(merge_cmd, capture_output=True)
-            if proc.returncode != 0:
-                err = proc.stderr.decode(errors="replace")
-                raise RuntimeError(f"FFmpeg ghép âm thanh sau khi inpaint thất bại: {err[-200:]}")
+            try:
+                proc = subprocess.run(merge_cmd, capture_output=True, timeout=300)
+                if proc.returncode != 0:
+                    err = proc.stderr.decode(errors="replace")
+                    raise RuntimeError(f"FFmpeg ghép âm thanh sau khi inpaint thất bại: {err[-200:]}")
+            except subprocess.TimeoutExpired:
+                raise RuntimeError("FFmpeg ghép âm thanh sau khi inpaint bị timeout quá 300 giây.")
         finally:
             raw_video_path.unlink(missing_ok=True)
 

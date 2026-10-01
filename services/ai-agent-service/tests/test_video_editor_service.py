@@ -1457,6 +1457,123 @@ class TestVideoEditorService(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(detected[0]["x"], 10)
                 self.assertEqual(detected[0]["y"], 10)
 
+    async def test_delogo_mode_preserves_multi_audio_and_metadata(self):
+        """Robustness: Delogo mode maps all audio streams (-map 0:a?), preserves metadata (-map_metadata 0), and ensures yuv420p."""
+        async def fake_run(cmd, timeout=300):
+            if "stream=width,height" in " ".join(cmd):
+                return 0, b"320x240\n", b""
+            if cmd and str(cmd[-1]).endswith(".mp4"):
+                Path(cmd[-1]).write_bytes(b"delogo_multi_audio_out")
+            return 0, b"", b""
+
+        with patch.object(self.service, "_run_command", side_effect=fake_run) as mock_run:
+            res = await self.service.remove_text_from_video(
+                input_path_or_url=str(self.dummy_video),
+                region={"x": 10, "y": 10, "w": 50, "h": 20},
+                mode="delogo",
+            )
+            self.assertEqual(res["status"], "ok")
+            delogo_cmd = mock_run.call_args[0][0]
+            self.assertIn("-map", delogo_cmd)
+            self.assertIn("0:v:0", delogo_cmd)
+            self.assertIn("0:a?", delogo_cmd)
+            self.assertIn("-map_metadata", delogo_cmd)
+            self.assertIn("0", delogo_cmd)
+            self.assertIn("-pix_fmt", delogo_cmd)
+            self.assertIn("yuv420p", delogo_cmd)
+
+    def test_inpaint_video_sync_merge_timeout_handling(self):
+        """Robustness: Inpaint worker catches subprocess.TimeoutExpired during merge and raises clear RuntimeError."""
+        import subprocess
+        mock_cv2 = MagicMock()
+        mock_cap = MagicMock()
+        mock_cap.isOpened.side_effect = [True, True, False]
+        mock_cap.get.side_effect = lambda prop: 30.0 if prop == mock_cv2.CAP_PROP_FPS else (320 if prop == mock_cv2.CAP_PROP_FRAME_WIDTH else 240)
+        dummy_frame = MagicMock()
+        mock_cap.read.return_value = (True, dummy_frame)
+        mock_cv2.VideoCapture.return_value = mock_cap
+        mock_cv2.inpaint.return_value = dummy_frame
+
+        def fake_subprocess_run(cmd, capture_output=True, text=False, timeout=None):
+            if "setsar" in " ".join(cmd) or "stream=sample_aspect_ratio" in " ".join(cmd):
+                res = MagicMock()
+                res.returncode = 0
+                res.stdout = "1:1"
+                return res
+            raise subprocess.TimeoutExpired(cmd=cmd, timeout=300)
+
+        output_file = self.service._temp_dir / "test_timeout_out.mp4"
+
+        with patch.dict("sys.modules", {"cv2": mock_cv2}):
+            with patch("subprocess.run", side_effect=fake_subprocess_run):
+                with self.assertRaises(RuntimeError) as ctx:
+                    self.service._inpaint_video_sync(
+                        input_file=self.dummy_video,
+                        output_file=output_file,
+                        rx_or_regions=[{"x": 10, "y": 10, "w": 50, "h": 20}],
+                    )
+                self.assertIn("timeout", str(ctx.exception).lower())
+
+    def test_inpaint_video_sync_videowriter_failure_raises(self):
+        """Robustness: Inpaint worker raises RuntimeError if cv2.VideoWriter fails to initialize."""
+        mock_cv2 = MagicMock()
+        mock_cap = MagicMock()
+        mock_cap.isOpened.return_value = True
+        mock_cap.get.side_effect = lambda prop: 30.0 if prop == mock_cv2.CAP_PROP_FPS else (320 if prop == mock_cv2.CAP_PROP_FRAME_WIDTH else 240)
+        mock_cv2.VideoCapture.return_value = mock_cap
+        mock_writer = MagicMock()
+        mock_writer.isOpened.return_value = False
+        mock_cv2.VideoWriter.return_value = mock_writer
+
+        output_file = self.service._temp_dir / "test_vw_fail.mp4"
+
+        with patch.dict("sys.modules", {"cv2": mock_cv2}):
+            with self.assertRaises(RuntimeError) as ctx:
+                self.service._inpaint_video_sync(
+                    input_file=self.dummy_video,
+                    output_file=output_file,
+                    rx_or_regions=[{"x": 10, "y": 10, "w": 50, "h": 20}],
+                )
+            self.assertIn("OpenCV VideoWriter", str(ctx.exception))
+            mock_cap.release.assert_called()
+
+    def test_inpaint_video_sync_zero_frames_raises(self):
+        """Robustness: Inpaint worker raises RuntimeError if 0 frames could be read from input video."""
+        mock_cv2 = MagicMock()
+        mock_cap = MagicMock()
+        mock_cap.isOpened.return_value = True
+        mock_cap.get.side_effect = lambda prop: 30.0 if prop == mock_cv2.CAP_PROP_FPS else (320 if prop == mock_cv2.CAP_PROP_FRAME_WIDTH else 240)
+        mock_cap.read.return_value = (False, None)
+        mock_cv2.VideoCapture.return_value = mock_cap
+        mock_writer = MagicMock()
+        mock_writer.isOpened.return_value = True
+        mock_cv2.VideoWriter.return_value = mock_writer
+
+        output_file = self.service._temp_dir / "test_zero_frames.mp4"
+
+        with patch.dict("sys.modules", {"cv2": mock_cv2}):
+            with self.assertRaises(RuntimeError) as ctx:
+                self.service._inpaint_video_sync(
+                    input_file=self.dummy_video,
+                    output_file=output_file,
+                    rx_or_regions=[{"x": 10, "y": 10, "w": 50, "h": 20}],
+                )
+            self.assertIn("Không thể đọc bất kỳ frame nào", str(ctx.exception))
+
+    async def test_auto_detect_text_region_probe_exception_graceful(self):
+        """Robustness: ffprobe duration probe exception or timeout is caught gracefully and falls back without crash."""
+        async def fake_run(cmd, timeout=30):
+            if "format=duration" in " ".join(cmd):
+                raise asyncio.TimeoutError("Probe timeout")
+            if "-vsync" in cmd:
+                return 0, b"", b""
+            return 0, b"", b""
+
+        with patch.object(self.service, "_run_command", side_effect=fake_run):
+            with patch.dict("sys.modules", {"pytesseract": None}):
+                detected = await self.service._auto_detect_text_region(self.dummy_video)
+                self.assertEqual(detected, [])
+
 
 if __name__ == "__main__":
     unittest.main()

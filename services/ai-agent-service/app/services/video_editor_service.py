@@ -344,23 +344,6 @@ class VideoEditorService:
                 else:
                     detected_regions = [region]
 
-                # R3: If no persistent overlay text was detected, preserve original video without filtering
-                if not detected_regions:
-                    shutil.copy2(input_file, output_file)
-                    delivery_info = self._publish_or_direct(output_file, title="Video gốc (không phát hiện text overlay)")
-                    success = True
-                    return {
-                        "status": "ok",
-                        "tool": "remove_text_from_video",
-                        "mode_requested": clean_mode,
-                        "mode_used": candidate_mode,
-                        "region": {},
-                        "regions": [],
-                        "output_path": str(output_file),
-                        **delivery_info,
-                        "message": "Không phát hiện text hoặc watermark cố định (overlay) nào cần xóa trong video. Đã giữ nguyên video gốc.",
-                    }
-
                 mode_used = candidate_mode
                 target_regions = detected_regions
             else:
@@ -370,6 +353,23 @@ class VideoEditorService:
                     target_regions = region
                 else:
                     target_regions = [region]
+
+            # R3: If no text/watermark regions need to be removed, preserve original video intact
+            if not target_regions:
+                shutil.copy2(input_file, output_file)
+                delivery_info = self._publish_or_direct(output_file, title="Video gốc (không có vùng text overlay)")
+                success = True
+                return {
+                    "status": "ok",
+                    "tool": "remove_text_from_video",
+                    "mode_requested": clean_mode,
+                    "mode_used": mode_used,
+                    "region": {},
+                    "regions": [],
+                    "output_path": str(output_file),
+                    **delivery_info,
+                    "message": "Không phát hiện text hoặc watermark cố định (overlay) nào cần xóa trong video. Đã giữ nguyên video gốc.",
+                }
 
             # Validate all target region coordinates
             for reg in target_regions:
@@ -513,6 +513,41 @@ class VideoEditorService:
             merged = new_merged
         return merged
 
+    @staticmethod
+    def _merge_overlapping_boxes(boxes: List[Tuple[int, int, int, int]]) -> List[Tuple[int, int, int, int]]:
+        """Merges any overlapping bounding boxes into a single enclosing box."""
+        if not boxes:
+            return []
+        merged = list(boxes)
+        changed = True
+        while changed:
+            changed = False
+            new_merged = []
+            skip_indices = set()
+            for i in range(len(merged)):
+                if i in skip_indices:
+                    continue
+                combined = merged[i]
+                for j in range(i + 1, len(merged)):
+                    if j in skip_indices:
+                        continue
+                    b2 = merged[j]
+                    x1 = max(combined[0], b2[0])
+                    y1 = max(combined[1], b2[1])
+                    x2 = min(combined[0] + combined[2], b2[0] + b2[2])
+                    y2 = min(combined[1] + combined[3], b2[1] + b2[3])
+                    if x2 > x1 and y2 > y1:
+                        nx = min(combined[0], b2[0])
+                        ny = min(combined[1], b2[1])
+                        nw = max(combined[0] + combined[2], b2[0] + b2[2]) - nx
+                        nh = max(combined[1] + combined[3], b2[1] + b2[3]) - ny
+                        combined = (nx, ny, nw, nh)
+                        skip_indices.add(j)
+                        changed = True
+                new_merged.append(combined)
+            merged = new_merged
+        return merged
+
     async def _auto_detect_text_region(self, input_file: Path) -> List[Dict[str, int]]:
         """
         Samples keyframes and runs pytesseract to identify static overlay text / watermark boxes.
@@ -525,11 +560,31 @@ class VideoEditorService:
         sample_dir.mkdir(parents=True, exist_ok=True)
 
         try:
+            # Check duration via ffprobe to evenly sample 5 frames across the video
+            probe_cmd = [
+                "ffprobe", "-v", "error",
+                "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                str(input_file),
+            ]
+            p_code, p_stdout, _ = await self._run_command(probe_cmd, timeout=10)
+            duration = 0.0
+            if p_code == 0:
+                try:
+                    duration = float(p_stdout.decode(errors="ignore").strip())
+                except Exception:
+                    duration = 0.0
+
+            if duration >= 0.5:
+                vf_expr = f"fps=5/{duration:.4f}"
+            else:
+                vf_expr = "select=eq(n\\,0)+eq(n\\,50)+eq(n\\,100)+eq(n\\,200)+eq(n\\,400)"
+
             # Extract 5 sample frames spread across the video
             cmd = [
                 "ffmpeg", "-y",
                 "-i", str(input_file),
-                "-vf", "select=eq(n\\,0)+eq(n\\,50)+eq(n\\,100)+eq(n\\,200)+eq(n\\,400)",
+                "-vf", vf_expr,
                 "-vsync", "0",
                 str(sample_dir / "sample_%02d.jpg"),
             ]
@@ -575,7 +630,11 @@ class VideoEditorService:
 
             frame_area = frame_w * frame_h
             n_frames = len(raw_frame_boxes)
-            min_matches = 3 if n_frames >= 5 else min(3, n_frames)
+            # R2: To reliably distinguish overlay from scene text, we require multi-frame comparison.
+            # If fewer than 2 frames are available, overlay persistence across frames cannot be verified.
+            if n_frames < 2:
+                return []
+            min_matches = 3 if n_frames >= 5 else max(2, min(3, n_frames))
 
             # 1. Per-frame merge and sanity check (< 25% area)
             processed_frames: List[List[Tuple[int, int, int, int]]] = []
@@ -621,24 +680,27 @@ class VideoEditorService:
                         if not is_duplicate:
                             accepted_overlay_boxes.append(rep_box)
 
-            # 3. Add padding & clamp within frame boundaries
-            results: List[Dict[str, int]] = []
+            # 3. Add padding & clamp within frame boundaries, then merge any overlapping boxes
+            padded_boxes: List[Tuple[int, int, int, int]] = []
             pad = 10
             for b in accepted_overlay_boxes:
-                fx = max(0, b[0] - pad)
-                fy = max(0, b[1] - pad)
-                fw = b[2] + 2 * pad
-                fh = b[3] + 2 * pad
-                if frame_w > 0:
-                    fx = min(frame_w - 1, fx)
-                    fw = min(frame_w - fx, fw)
-                if frame_h > 0:
-                    fy = min(frame_h - 1, fy)
-                    fh = min(frame_h - fy, fh)
+                x1 = max(0, b[0] - pad)
+                y1 = max(0, b[1] - pad)
+                x2 = min(frame_w, b[0] + b[2] + pad) if frame_w > 0 else (b[0] + b[2] + pad)
+                y2 = min(frame_h, b[1] + b[3] + pad) if frame_h > 0 else (b[1] + b[3] + pad)
+                fw = max(1, x2 - x1)
+                fh = max(1, y2 - y1)
 
                 if frame_area > 0 and (fw * fh) > 0.25 * frame_area:
                     continue
-                results.append({"x": fx, "y": fy, "w": fw, "h": fh})
+                padded_boxes.append((x1, y1, fw, fh))
+
+            merged_padded = self._merge_overlapping_boxes(padded_boxes)
+            results: List[Dict[str, int]] = []
+            for b in merged_padded:
+                if frame_area > 0 and (b[2] * b[3]) > 0.25 * frame_area:
+                    continue
+                results.append({"x": b[0], "y": b[1], "w": b[2], "h": b[3]})
 
             return results
 

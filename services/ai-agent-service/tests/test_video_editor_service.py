@@ -1192,6 +1192,128 @@ class TestVideoEditorService(unittest.IsolatedAsyncioTestCase):
                     self.assertTrue(out_p.exists())
                     out_p.unlink(missing_ok=True)
 
+    async def test_auto_detect_single_sample_does_not_falsely_detect_scene_text(self):
+        """R2 Adversarial: When video is too short to extract >=2 frames, transient scene text must NOT be detected."""
+        async def fake_run(cmd, timeout=30):
+            if "-vsync" in cmd:
+                sample_pattern = cmd[-1]
+                sample_dir = Path(sample_pattern).parent
+                (sample_dir / "sample_00.jpg").write_bytes(b"frame")
+                return 0, b"", b""
+            return 0, b"", b""
+
+        mock_tesseract = MagicMock()
+        mock_tesseract.Output.DICT = "dict"
+        mock_tesseract.image_to_data.return_value = {
+            "text": ["ROAD_SIGN"],
+            "conf": [85],
+            "left": [50],
+            "top": [50],
+            "width": [100],
+            "height": [30],
+        }
+
+        mock_pil = MagicMock()
+        mock_img = MagicMock()
+        mock_img.width = 1000
+        mock_img.height = 600
+        mock_pil.Image.open.return_value.__enter__.return_value = mock_img
+
+        with patch.object(self.service, "_run_command", side_effect=fake_run):
+            with patch.dict("sys.modules", {"pytesseract": mock_tesseract, "PIL": mock_pil}):
+                detected = await self.service._auto_detect_text_region(self.dummy_video)
+                self.assertEqual(detected, [])
+
+    async def test_auto_detect_padding_near_frame_edges_does_not_shift_or_skew(self):
+        """Edge Case: When text box is located at (2, 2, 50, 30), padding=10 should expand to (0, 0, 62, 42)."""
+        async def fake_run(cmd, timeout=30):
+            if "-vsync" in cmd:
+                sample_dir = Path(cmd[-1]).parent
+                for i in range(5):
+                    (sample_dir / f"sample_0{i}.jpg").write_bytes(b"frame")
+                return 0, b"", b""
+            return 0, b"", b""
+
+        mock_tesseract = MagicMock()
+        mock_tesseract.Output.DICT = "dict"
+        mock_tesseract.image_to_data.return_value = {
+            "text": ["CORNER_LOGO"],
+            "conf": [95],
+            "left": [2],
+            "top": [2],
+            "width": [50],
+            "height": [30],
+        }
+
+        mock_pil = MagicMock()
+        mock_img = MagicMock()
+        mock_img.width = 1000
+        mock_img.height = 600
+        mock_pil.Image.open.return_value.__enter__.return_value = mock_img
+
+        with patch.object(self.service, "_run_command", side_effect=fake_run):
+            with patch.dict("sys.modules", {"pytesseract": mock_tesseract, "PIL": mock_pil}):
+                detected = await self.service._auto_detect_text_region(self.dummy_video)
+                self.assertEqual(len(detected), 1)
+                b = detected[0]
+                self.assertEqual(b["x"], 0)
+                self.assertEqual(b["y"], 0)
+                self.assertEqual(b["w"], 62)
+                self.assertEqual(b["h"], 42)
+
+    async def test_auto_detect_merges_overlapping_boxes_after_padding(self):
+        """Edge Case: Boxes that overlap after padding are merged into one clean disjoint bounding box."""
+        async def fake_run(cmd, timeout=30):
+            if "-vsync" in cmd:
+                sample_dir = Path(cmd[-1]).parent
+                for i in range(5):
+                    (sample_dir / f"sample_0{i}.jpg").write_bytes(b"frame")
+                return 0, b"", b""
+            return 0, b"", b""
+
+        # Two boxes: (100, 100, 40, 20) and (145, 100, 40, 20), gap is 5px (< 2*pad=20px)
+        mock_tesseract = MagicMock()
+        mock_tesseract.Output.DICT = "dict"
+        mock_tesseract.image_to_data.return_value = {
+            "text": ["WORD_A", "WORD_B"],
+            "conf": [95, 95],
+            "left": [100, 145],
+            "top": [100, 100],
+            "width": [40, 40],
+            "height": [20, 20],
+        }
+
+        mock_pil = MagicMock()
+        mock_img = MagicMock()
+        mock_img.width = 1000
+        mock_img.height = 600
+        mock_pil.Image.open.return_value.__enter__.return_value = mock_img
+
+        with patch.object(self.service, "_run_command", side_effect=fake_run):
+            with patch.dict("sys.modules", {"pytesseract": mock_tesseract, "PIL": mock_pil}):
+                detected = await self.service._auto_detect_text_region(self.dummy_video)
+                # After padding & merge, must be 1 unified box, NOT 2 overlapping boxes
+                self.assertEqual(len(detected), 1)
+                b = detected[0]
+                self.assertEqual(b["x"], 90)
+                self.assertEqual(b["y"], 90)
+                self.assertEqual(b["w"], 105)
+                self.assertEqual(b["h"], 40)
+
+    async def test_remove_text_explicit_empty_region_list_preserves_original_video(self):
+        """R3 Edge Case: Calling remove_text_from_video with region=[] preserves original video without encoding."""
+        res = await self.service.remove_text_from_video(
+            input_path_or_url=str(self.dummy_video),
+            region=[],
+            mode="inpaint",
+        )
+        self.assertEqual(res["status"], "ok")
+        self.assertEqual(res["regions"], [])
+        out_p = Path(res["output_path"])
+        self.assertTrue(out_p.exists())
+        self.assertEqual(out_p.read_bytes(), self.dummy_video.read_bytes())
+        out_p.unlink(missing_ok=True)
+
 
 if __name__ == "__main__":
     unittest.main()

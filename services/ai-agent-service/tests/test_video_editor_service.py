@@ -1314,6 +1314,150 @@ class TestVideoEditorService(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(out_p.read_bytes(), self.dummy_video.read_bytes())
         out_p.unlink(missing_ok=True)
 
+    def test_inpaint_video_sync_multi_audio_and_sar_preservation(self):
+        """Edge Case: Inpaint sync worker maps all audio streams (-map 1:a?), sets pixel format yuv420p, and restores SAR."""
+        mock_cv2 = MagicMock()
+        mock_cap = MagicMock()
+        mock_cap.isOpened.side_effect = [True, True, False]
+        mock_cap.get.side_effect = lambda prop: 30.0 if prop == mock_cv2.CAP_PROP_FPS else (720 if prop == mock_cv2.CAP_PROP_FRAME_WIDTH else 576)
+        dummy_frame = MagicMock()
+        mock_cap.read.return_value = (True, dummy_frame)
+        mock_cv2.VideoCapture.return_value = mock_cap
+        mock_cv2.inpaint.return_value = dummy_frame
+
+        executed_commands = []
+
+        def fake_subprocess_run(cmd, capture_output=True, text=False, timeout=None):
+            executed_commands.append(cmd)
+            res = MagicMock()
+            res.returncode = 0
+            if "stream=sample_aspect_ratio" in " ".join(cmd):
+                res.stdout = "64:45"
+            else:
+                res.stdout = ""
+                res.stderr = b""
+            return res
+
+        output_file = self.service._temp_dir / "test_inp_out.mp4"
+
+        with patch.dict("sys.modules", {"cv2": mock_cv2}):
+            with patch("subprocess.run", side_effect=fake_subprocess_run):
+                self.service._inpaint_video_sync(
+                    input_file=self.dummy_video,
+                    output_file=output_file,
+                    rx_or_regions=[{"x": 10, "y": 10, "w": 50, "h": 20}],
+                )
+
+        # Verify merge command structure
+        merge_cmd = executed_commands[-1]
+        self.assertIn("-map", merge_cmd)
+        self.assertIn("1:a?", merge_cmd)
+        self.assertIn("-pix_fmt", merge_cmd)
+        self.assertIn("yuv420p", merge_cmd)
+        self.assertIn("-map_metadata", merge_cmd)
+        self.assertIn("1", merge_cmd)
+        self.assertIn("-vf", merge_cmd)
+        self.assertIn("setsar=sar=64/45", merge_cmd)
+
+    def test_inpaint_video_sync_out_of_bounds_region_copies_original(self):
+        """Edge Case: When inpaint regions lie completely outside the frame, original video is copied without CPU inpaint."""
+        mock_cv2 = MagicMock()
+        mock_cap = MagicMock()
+        mock_cap.isOpened.return_value = True
+        mock_cap.get.side_effect = lambda prop: 30.0 if prop == mock_cv2.CAP_PROP_FPS else (320 if prop == mock_cv2.CAP_PROP_FRAME_WIDTH else 240)
+        mock_cv2.VideoCapture.return_value = mock_cap
+
+        output_file = self.service._temp_dir / "test_inp_oob.mp4"
+
+        with patch.dict("sys.modules", {"cv2": mock_cv2}):
+            with patch("shutil.copy2") as mock_copy:
+                self.service._inpaint_video_sync(
+                    input_file=self.dummy_video,
+                    output_file=output_file,
+                    rx_or_regions=[{"x": 500, "y": 0, "w": 100, "h": 50}],
+                )
+                # Video lies at [0..320]x[0..240], box at x=500 is completely out-of-bounds
+                mock_copy.assert_called_once_with(self.dummy_video, output_file)
+                # cv2.inpaint must NOT be called
+                mock_cv2.inpaint.assert_not_called()
+
+    async def test_delogo_mode_clamps_regions_within_frame_boundaries(self):
+        """Edge Case: Delogo mode clamps bounding boxes to frame width/height to avoid FFmpeg error code 234."""
+        async def fake_run(cmd, timeout=300):
+            if "stream=width,height" in " ".join(cmd):
+                return 0, b"320x240\n", b""
+            if cmd and str(cmd[-1]).endswith(".mp4"):
+                Path(cmd[-1]).write_bytes(b"delogo_fake_output")
+            return 0, b"", b""
+
+        with patch.object(self.service, "_run_command", side_effect=fake_run) as mock_run:
+            res = await self.service.remove_text_from_video(
+                input_path_or_url=str(self.dummy_video),
+                region={"x": 300, "y": 200, "w": 50, "h": 50},
+                mode="delogo",
+            )
+            self.assertEqual(res["status"], "ok")
+            delogo_cmd = mock_run.call_args[0][0]
+            vf_flag = delogo_cmd[delogo_cmd.index("-vf") + 1]
+            # Must be clamped: x=300, y=200, w=19, h=39 (so x+w=319 <= 319, y+h=239 <= 239)
+            self.assertIn("delogo=x=300:y=200:w=19:h=39:show=0", vf_flag)
+
+    async def test_delogo_mode_all_regions_outside_frame_preserves_original_video(self):
+        """Edge Case: When all delogo regions lie completely outside the video frame, original video is preserved."""
+        async def fake_run(cmd, timeout=300):
+            if "stream=width,height" in " ".join(cmd):
+                return 0, b"320x240\n", b""
+            return 0, b"", b""
+
+        with patch.object(self.service, "_run_command", side_effect=fake_run):
+            res = await self.service.remove_text_from_video(
+                input_path_or_url=str(self.dummy_video),
+                region={"x": 500, "y": 400, "w": 50, "h": 50},
+                mode="delogo",
+            )
+            self.assertEqual(res["status"], "ok")
+            self.assertIn("bên ngoài khung hình", res["message"])
+            out_p = Path(res["output_path"])
+            self.assertTrue(out_p.exists())
+            self.assertEqual(out_p.read_bytes(), self.dummy_video.read_bytes())
+            out_p.unlink(missing_ok=True)
+
+    async def test_auto_detect_handles_float_confidence_strings(self):
+        """Robustness: Tesseract float confidence string (e.g. '88.5') is parsed correctly instead of discarded."""
+        async def fake_run(cmd, timeout=30):
+            if "-vsync" in cmd:
+                sample_dir = Path(cmd[-1]).parent
+                for i in range(5):
+                    (sample_dir / f"sample_0{i}.jpg").write_bytes(b"frame")
+                return 0, b"", b""
+            return 0, b"", b""
+
+        mock_tesseract = MagicMock()
+        mock_tesseract.Output.DICT = "dict"
+        mock_tesseract.image_to_data.return_value = {
+            "text": ["LOGO"],
+            "conf": ["88.5"],  # Float string
+            "left": [20],
+            "top": [20],
+            "width": [60],
+            "height": [25],
+        }
+
+        mock_pil = MagicMock()
+        mock_img = MagicMock()
+        mock_img.width = 1000
+        mock_img.height = 600
+        mock_pil.Image.open.return_value.__enter__.return_value = mock_img
+
+        with patch.object(self.service, "_run_command", side_effect=fake_run):
+            with patch.dict("sys.modules", {"pytesseract": mock_tesseract, "PIL": mock_pil}):
+                detected = await self.service._auto_detect_text_region(self.dummy_video)
+                # Should detect the box, not discard it because of float conf string
+                self.assertEqual(len(detected), 1)
+                self.assertEqual(detected[0]["x"], 10)
+                self.assertEqual(detected[0]["y"], 10)
+
 
 if __name__ == "__main__":
     unittest.main()
+

@@ -382,13 +382,55 @@ class VideoEditorService:
             rh = int(primary_region["h"])
 
             if mode_used == "delogo":
+                probe_cmd = [
+                    "ffprobe", "-v", "error",
+                    "-select_streams", "v:0",
+                    "-show_entries", "stream=width,height",
+                    "-of", "csv=s=x:p=0",
+                    str(input_file),
+                ]
+                p_code, p_out, _ = await self._run_command(probe_cmd, timeout=10)
+                vid_w, vid_h = 0, 0
+                if p_code == 0:
+                    try:
+                        wh_parts = p_out.decode(errors="ignore").strip().split("x")
+                        if len(wh_parts) == 2:
+                            vid_w, vid_h = int(wh_parts[0]), int(wh_parts[1])
+                    except Exception:
+                        vid_w, vid_h = 0, 0
+
                 delogo_filters = []
                 for reg in target_regions:
-                    drx = max(1, int(reg["x"]))
-                    dry = max(1, int(reg["y"]))
-                    drw = max(1, int(reg["w"]))
-                    drh = max(1, int(reg["h"]))
-                    delogo_filters.append(f"delogo=x={drx}:y={dry}:w={drw}:h={drh}:show=0")
+                    if vid_w > 0 and vid_h > 0:
+                        x1 = max(1, int(reg["x"]))
+                        y1 = max(1, int(reg["y"]))
+                        x2 = min(vid_w - 1, int(reg["x"]) + int(reg["w"]))
+                        y2 = min(vid_h - 1, int(reg["y"]) + int(reg["h"]))
+                        if x2 > x1 and y2 > y1:
+                            delogo_filters.append(f"delogo=x={x1}:y={y1}:w={x2 - x1}:h={y2 - y1}:show=0")
+                    else:
+                        drx = max(1, int(reg["x"]))
+                        dry = max(1, int(reg["y"]))
+                        drw = max(1, int(reg["w"]))
+                        drh = max(1, int(reg["h"]))
+                        delogo_filters.append(f"delogo=x={drx}:y={dry}:w={drw}:h={drh}:show=0")
+
+                if not delogo_filters:
+                    shutil.copy2(input_file, output_file)
+                    delivery_info = self._publish_or_direct(output_file, title="Video gốc (vùng chỉ định nằm ngoài khung hình)")
+                    success = True
+                    return {
+                        "status": "ok",
+                        "tool": "remove_text_from_video",
+                        "mode_requested": clean_mode,
+                        "mode_used": mode_used,
+                        "region": {},
+                        "regions": [],
+                        "output_path": str(output_file),
+                        **delivery_info,
+                        "message": "Các vùng chỉ định nằm hoàn toàn bên ngoài khung hình video. Đã giữ nguyên video gốc.",
+                    }
+
                 delogo_vf = ",".join(delogo_filters)
 
                 cmd = [
@@ -588,8 +630,12 @@ class VideoEditorService:
                 "-vsync", "0",
                 str(sample_dir / "sample_%02d.jpg"),
             ]
-            code, _, _ = await self._run_command(cmd, timeout=30)
-            if code != 0:
+            try:
+                code, _, _ = await self._run_command(cmd, timeout=30)
+                if code != 0:
+                    return []
+            except Exception as exc:
+                logger.warning("[VideoEditorService] Lấy sample frames thất bại hoặc timeout: %s", exc)
                 return []
 
             try:
@@ -615,9 +661,12 @@ class VideoEditorService:
                         data = pytesseract.image_to_data(img, output_type=pytesseract.Output.DICT)
                         n_boxes = len(data.get("text", []))
                         for i in range(n_boxes):
-                            conf = int(data["conf"][i]) if str(data["conf"][i]).isdigit() else -1
+                            try:
+                                conf = float(data["conf"][i])
+                            except (ValueError, TypeError):
+                                conf = -1.0
                             text = str(data["text"][i]).strip()
-                            if conf > 30 and len(text) > 0:
+                            if conf > 30.0 and len(text) > 0:
                                 x = int(data["left"][i])
                                 y = int(data["top"][i])
                                 w = int(data["width"][i])
@@ -721,6 +770,7 @@ class VideoEditorService:
         Re-assembles the video with original audio via FFmpeg stream copy.
         Supports either a single bounding box (rx, ry, rw, rh) or a list of region dicts.
         """
+        import math
         import cv2
         import numpy as np
 
@@ -728,9 +778,14 @@ class VideoEditorService:
         if not cap.isOpened():
             raise RuntimeError(f"Không thể mở video qua OpenCV: {input_file}")
 
-        fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        if not fps or fps <= 0 or math.isnan(fps):
+            fps = 30.0
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        if width <= 0 or height <= 0:
+            cap.release()
+            raise RuntimeError(f"Kích thước video không hợp lệ ({width}x{height}) khi mở bằng OpenCV: {input_file}")
 
         # Parse regions list
         regions_list: List[Dict[str, int]] = []
@@ -739,16 +794,24 @@ class VideoEditorService:
         elif isinstance(rx_or_regions, (int, float)) and ry is not None and rw is not None and rh is not None:
             regions_list = [{"x": int(rx_or_regions), "y": int(ry), "w": int(rw), "h": int(rh)}]
         else:
+            cap.release()
             raise ValueError("Tham số tọa độ không hợp lệ cho inpaint.")
 
-        # Create binary inpainting mask with tight regions
+        # Create binary inpainting mask with tight regions via rectangular intersection
         mask = np.zeros((height, width), dtype=np.uint8)
         for reg in regions_list:
-            rx = max(0, min(int(reg["x"]), width - 1))
-            ry = max(0, min(int(reg["y"]), height - 1))
-            rw = max(1, min(int(reg["w"]), width - rx))
-            rh = max(1, min(int(reg["h"]), height - ry))
-            mask[ry : ry + rh, rx : rx + rw] = 255
+            x1 = max(0, int(reg["x"]))
+            y1 = max(0, int(reg["y"]))
+            x2 = min(width, int(reg["x"]) + int(reg["w"]))
+            y2 = min(height, int(reg["y"]) + int(reg["h"]))
+            if x2 > x1 and y2 > y1:
+                mask[y1:y2, x1:x2] = 255
+
+        # If all specified regions lie completely outside the frame, preserve original video intact
+        if np.count_nonzero(mask) == 0:
+            cap.release()
+            shutil.copy2(input_file, output_file)
+            return
 
         token = secrets.token_hex(4)
         raw_video_path = self._temp_dir / f"inp_raw_{token}.mp4"
@@ -767,19 +830,44 @@ class VideoEditorService:
                 cap.release()
                 out.release()
 
-            # Combine video stream with original audio stream using FFmpeg
+            # Probe SAR to prevent aspect ratio distortion on anamorphic video
+            sar_filter: Optional[str] = None
+            try:
+                probe_sar_cmd = [
+                    "ffprobe", "-v", "error", "-select_streams", "v:0",
+                    "-show_entries", "stream=sample_aspect_ratio",
+                    "-of", "default=noprint_wrappers=1:nokey=1",
+                    str(input_file),
+                ]
+                import subprocess
+                p_sar = subprocess.run(probe_sar_cmd, capture_output=True, text=True, timeout=10)
+                sar_val = p_sar.stdout.strip()
+                if sar_val and sar_val not in ("1:1", "0:1", "N/A"):
+                    clean_sar = sar_val.replace(":", "/")
+                    if re.match(r"^\d+/\d+$", clean_sar):
+                        sar_filter = f"setsar=sar={clean_sar}"
+            except Exception as sar_exc:
+                logger.debug("[VideoEditorService] Could not probe SAR: %s", sar_exc)
+
+            # Combine video stream with all original audio streams using FFmpeg
             merge_cmd = [
                 "ffmpeg", "-y",
                 "-i", str(raw_video_path),
                 "-i", str(input_file),
+            ]
+            if sar_filter:
+                merge_cmd.extend(["-vf", sar_filter])
+            merge_cmd.extend([
                 "-c:v", "libx264", "-preset", "fast", "-crf", "22",
+                "-pix_fmt", "yuv420p",
                 "-c:a", "copy",
                 "-map", "0:v:0",
-                "-map", "1:a:0?",
+                "-map", "1:a?",
+                "-map_metadata", "1",
                 "-shortest",
                 "-movflags", "+faststart",
                 str(output_file),
-            ]
+            ])
             import subprocess
             proc = subprocess.run(merge_cmd, capture_output=True)
             if proc.returncode != 0:

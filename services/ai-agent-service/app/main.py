@@ -386,6 +386,15 @@ async def lifespan(app: FastAPI):
     telegram_bot.set_dream_engine(dream_engine)
     logger.info("[DreamEngine] Subconscious sleep & epiphany engine initialized ✓")
 
+    # Initialize Multi-Agent Teamwork Engine (/teamwork command)
+    from app.services.teamwork_engine import TeamworkEngine
+    teamwork_engine = TeamworkEngine(
+        llm_router=ai_agent.llm_router,
+        tool_executor=ai_agent.tools,
+    )
+    telegram_bot.set_teamwork_engine(teamwork_engine)
+    logger.info("[TeamworkEngine] Multi-Agent Teamwork engine initialized ✓")
+
     # 4. Attach to app state for dependency injection in routers
     app.state.llm_router = llm_router
     app.state.ssh_client = ssh_client
@@ -397,6 +406,7 @@ async def lifespan(app: FastAPI):
     app.state.telegram_bot = telegram_bot
     app.state.appointment_service = appointment_service
     app.state.dream_engine = dream_engine
+    app.state.teamwork_engine = teamwork_engine
     app.state.security_alert_engine = alert_engine
     app.state.security_monitor = sec_monitor
     app.state.honeypot_service = honeypot_service

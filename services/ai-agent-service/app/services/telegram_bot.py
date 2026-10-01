@@ -138,6 +138,8 @@ class TelegramBot:
         self.appointment_service: Optional[Any] = None
         self.memory_service: Optional[Any] = None  # AgentMemoryService — injected post-construction
         self.dream_engine: Optional[Any] = None    # SubconsciousDreamEngine — injected post-construction
+        self.teamwork_engine: Optional[Any] = None # TeamworkEngine — injected post-construction
+        self._last_teamwork_task: Optional[asyncio.Task] = None
         self.token = settings.TELEGRAM_BOT_TOKEN
         self.chat_id = settings.TELEGRAM_CHAT_ID
         self.polling_enabled = settings.TELEGRAM_POLLING_ENABLED
@@ -349,6 +351,10 @@ class TelegramBot:
     def set_dream_engine(self, dream_engine: Any) -> None:
         """Inject SubconsciousDreamEngine for morning epiphany delivery and /dream commands."""
         self.dream_engine = dream_engine
+
+    def set_teamwork_engine(self, engine: Any) -> None:
+        """Injects TeamworkEngine for multi-agent /teamwork commands."""
+        self.teamwork_engine = engine
 
     @property
     def api_url(self) -> str:
@@ -1390,7 +1396,8 @@ class TelegramBot:
                 "• /ram — Dung lượng RAM & Swap\n"
                 "• /disk — Dung lượng ổ cứng\n"
                 "• /lich — Xem danh sách lịch hẹn sắp tới\n"
-                "• /ai — Xóa bộ nhớ ngữ cảnh hội thoại\n\n"
+                "• /ai — Xóa bộ nhớ ngữ cảnh hội thoại\n"
+                "• /teamwork <mô tả task> — Triệu tập team AI chuyên sâu (Research, Analyze, Implement, Review)\n\n"
                 "🧠 *Lệnh nhận thức & trí nhớ tự học:*\n"
                 "• /brain — Xem trạng thái não bộ nhận thức, cảm xúc Russell & hóa chất thần kinh\n"
                 "• /dream — Kích hoạt chu kỳ giấc mơ REM & giác ngộ tiềm thức\n"
@@ -1641,10 +1648,125 @@ class TelegramBot:
             lines.append("\n💡 Gõ <code>xong việc #ID</code> để đánh dấu hoàn thành")
             await self.send_message(chat_id, "\n".join(lines))
 
+        elif raw_cmd == "/teamwork":
+            await self._handle_teamwork_command(chat_id, args)
+
         else:
             # Route unrecognized slash command to AI Agent
             reply = await self.chat_with_agent(chat_id, command)
             await self.send_message(chat_id, reply)
+
+    async def _handle_teamwork_command(self, chat_id: str, args: str) -> None:
+        """
+        Xử lý slash command /teamwork [task description]:
+        - Kiểm tra validation bài toán (tối thiểu 8 ký tự).
+        - Phản hồi Acknowledge tức thì (< 1s) với danh sách 4 vai trò.
+        - Khởi động background task _run_teamwork_background giải phóng polling loop bot.
+        """
+        task_desc = args.strip()
+
+        # 1. Kiểm tra validation mô tả bài toán
+        if not task_desc or len(task_desc) < 8:
+            usage_msg = (
+                "⚠️ <b>Lệnh /teamwork yêu cầu mô tả nhiệm vụ chi tiết!</b>\n\n"
+                "Vui lòng cung cấp mô tả chi tiết bài toán kỹ thuật (tối thiểu 8 ký tự).\n"
+                "📌 <b>Cú pháp:</b> <code>/teamwork &lt;mô tả bài toán / yêu cầu kỹ thuật&gt;</code>\n\n"
+                "💡 <b>Ví dụ:</b>\n"
+                "• <code>/teamwork Cách tối ưu Nginx để giảm latency</code>\n"
+                "• <code>/teamwork Thiết lập failover tự động cho PostgreSQL</code>"
+            )
+            await self.send_message(chat_id, usage_msg)
+            return
+
+        # 2. Kiểm tra nếu TeamworkEngine chưa sẵn sàng
+        if not self.teamwork_engine:
+            await self.send_message(chat_id, "⚠️ Dịch vụ Teamwork Engine chưa sẵn sàng. Vui lòng thử lại sau.")
+            return
+
+        # 3. Phản hồi tức thì < 1s (Acknowledge) kèm danh sách 4 vai trò
+        ack_text = (
+            "🚀 <b>Đang triệu tập Biệt đội Kỹ sư AI (Multi-Agent Teamwork)...</b>\n\n"
+            f"📋 <b>Nhiệm vụ:</b> <i>{html.escape(task_desc)}</i>\n\n"
+            "👥 <b>Thành viên & Vai trò:</b>\n"
+            "• 🔍 <b>Researcher Agent:</b> Khảo sát Google, GitHub & Tài liệu kỹ thuật chuyên sâu\n"
+            "• 🧠 <b>Analyst Agent:</b> Đánh giá kiến trúc, cân nhắc ưu/nhược điểm & chọn phương án tối ưu\n"
+            "• ⚙️ <b>Implementer Agent:</b> Xây dựng mã nguồn & cấu hình chi tiết (Zero TODOs)\n"
+            "• 🔎 <b>Reviewer Agent:</b> Kiểm tra bảo mật đối kháng, edge-cases & đánh giá rủi ro\n\n"
+            "⏳ <i>Tiến độ: Đang khởi động quy trình nghiên cứu...</i>"
+        )
+        status_res = await self.send_message_with_result(chat_id, ack_text)
+        status_msg_id = None
+        if isinstance(status_res, dict):
+            status_msg_id = status_res.get("message_id") or status_res.get("result", {}).get("message_id")
+
+        # 4. Kích hoạt background task giải phóng ngay lập tức luồng polling bot
+        bg_task = asyncio.create_task(
+            self._run_teamwork_background(
+                chat_id=chat_id,
+                task_desc=task_desc,
+                status_msg_id=status_msg_id,
+            )
+        )
+        self._last_teamwork_task = bg_task
+
+    async def _run_teamwork_background(
+        self, chat_id: str, task_desc: str, status_msg_id: Optional[int]
+    ) -> None:
+        """
+        Thực thi pipeline Multi-Agent Teamwork trong background:
+        - Typing indicator heartbeat.
+        - Callback cập nhật tiến độ từng pha qua edit_message_text.
+        - Gửi báo cáo Markdown hoàn chỉnh sau khi tổng hợp xong.
+        - Bắt ngoại lệ an toàn và giải phóng tài nguyên.
+        """
+        stop_typing = asyncio.Event()
+        typing_task = asyncio.create_task(self._send_typing_heartbeat(chat_id, stop_typing))
+
+        async def progress_cb(step_info: str) -> None:
+            if status_msg_id:
+                try:
+                    await self.edit_message_text(chat_id, status_msg_id, step_info)
+                except Exception as cb_err:
+                    logger.debug("[TelegramBot] Error updating teamwork progress: %s", cb_err)
+
+        try:
+            result = await self.teamwork_engine.execute_teamwork(
+                task_description=task_desc,
+                progress_callback=progress_cb,
+            )
+
+            # Cập nhật status message thành hoàn tất
+            if status_msg_id:
+                try:
+                    await self.edit_message_text(
+                        chat_id,
+                        status_msg_id,
+                        "✅ <b>Nhiệm vụ Teamwork đã hoàn thành xuất sắc (Hoàn tất)!</b> Báo cáo tổng hợp chi tiết đã gửi bên dưới 👇",
+                    )
+                except Exception as status_err:
+                    logger.debug("[TelegramBot] Failed to update completion status message: %s", status_err)
+
+            # Gửi báo cáo Markdown hoàn chỉnh (TelegramFormatter tự động chia chunks và cân bằng HTML)
+            report_text = getattr(result, "report_markdown", str(result))
+            await self.send_message(chat_id, report_text)
+
+        except Exception as err:
+            logger.error("[TelegramBot] Teamwork execution error: %s", err, exc_info=True)
+            err_msg = f"❌ <b>Có lỗi xảy ra trong quá trình chạy Teamwork:</b>\n<code>{html.escape(str(err))}</code>"
+            if status_msg_id:
+                try:
+                    await self.edit_message_text(chat_id, status_msg_id, err_msg)
+                except Exception:
+                    await self.send_message(chat_id, err_msg)
+            else:
+                await self.send_message(chat_id, err_msg)
+        finally:
+            stop_typing.set()
+            typing_task.cancel()
+            try:
+                await typing_task
+            except asyncio.CancelledError:
+                pass
 
     async def _on_video_debounce_timeout(self, chat_id: str, session: PendingVideoSession) -> None:
         """

@@ -20,10 +20,13 @@ class _KeyEntry:
         self.api_key: str = api_key
 
     def __lt__(self, other: '_KeyEntry') -> bool:
-        # Prioritize key that is available earliest; break ties by least used for fair balancing
+        # Prioritize key that is available earliest; break ties by least used for fair balancing;
+        # break remaining ties by key_id for deterministic FIFO ordering.
         if self.available_at != other.available_at:
             return self.available_at < other.available_at
-        return self.usage_count < other.usage_count
+        if self.usage_count != other.usage_count:
+            return self.usage_count < other.usage_count
+        return self.key_id < other.key_id
 
 
 class GroqKeyPool:
@@ -37,10 +40,10 @@ class GroqKeyPool:
     def __init__(self, api_keys: List[str]):
         self._entries_map: Dict[str, _KeyEntry] = {}
         self._heap: List[_KeyEntry] = []
-        for idx, k in enumerate(api_keys):
+        for k in api_keys:
             clean_key = k.strip() if k else ""
-            if clean_key:
-                entry = _KeyEntry(idx, clean_key)
+            if clean_key and clean_key not in self._entries_map:
+                entry = _KeyEntry(len(self._heap), clean_key)
                 self._entries_map[clean_key] = entry
                 self._heap.append(entry)
         heapq.heapify(self._heap)

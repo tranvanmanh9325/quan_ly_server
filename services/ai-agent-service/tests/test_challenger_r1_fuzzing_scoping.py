@@ -499,6 +499,18 @@ class TestPruningAndProtectedTools(unittest.TestCase):
 class TestNegativeScopingIntegrity(unittest.TestCase):
     """Verifies that non-video queries do NOT falsely scope video editor tools."""
 
+    VIDEO_EDITOR_TOOLS = frozenset({
+        "remove_text_from_video",
+        "add_subtitle_to_video",
+        "apply_color_grade",
+        "stabilize_video",
+        "concatenate_videos",
+        "extract_frames",
+        "remove_watermark_region",
+        "enhance_video_quality",
+        "generate_video_thumbnail",
+    })
+
     def setUp(self):
         self.executor = _create_mock_executor()
 
@@ -525,6 +537,63 @@ class TestNegativeScopingIntegrity(unittest.TestCase):
                     f"False positive: Query '{q}' incorrectly scoped 'remove_text_from_video'! Scoped: {scoped}",
                 )
 
+    def test_reviewer_r2_false_positive_benchmarks(self):
+        """Specifically verify the 4 benchmark queries flagged by Reviewer 2 scope ZERO video tools."""
+        benchmarks = [
+            "Thời tiết hôm nay lạnh không?",
+            "Gửi email cho sếp và thêm chữ ký cá nhân",
+            "Thêm text vào file word docx",
+            "Khử nhiễu file ghi âm bài giảng",
+        ]
+        for q in benchmarks:
+            with self.subTest(query=q):
+                scoped = self.executor._resolve_scoped_tool_names(query=q)
+                video_hits = set(scoped).intersection(self.VIDEO_EDITOR_TOOLS)
+                self.assertEqual(
+                    video_hits,
+                    set(),
+                    f"Benchmark query '{q}' produced false positive video tools: {video_hits}! All scoped: {scoped}",
+                )
+
+    def test_non_video_domains_comprehensive_negative_scoping(self):
+        """Comprehensive verification across weather, email, document, and audio domains."""
+        domain_queries = [
+            # 1. Weather queries (must not trigger apply_color_grade via 'lạnh', 'ấm áp')
+            "Thời tiết hôm nay lạnh không?",
+            "Hà nội hôm nay trời có lạnh không em",
+            "Trời có ấm áp không",
+            "Dự báo thời tiết cuối tuần trời lạnh hay ấm",
+            "Nhiệt độ ngoài trời hôm nay mát mẻ hay lạnh",
+            # 2. Email & signature queries (must not trigger add_subtitle_to_video via 'thêm chữ', 'thêm text')
+            "Gửi email cho sếp và thêm chữ ký cá nhân",
+            "Thêm text vào email mẫu",
+            "Gửi thư điện tử và chèn chữ ký giám đốc",
+            "Soạn thảo thư mời và thêm chữ ký công ty",
+            # 3. Documents & word processing (must not trigger subtitle or text removal)
+            "Thêm text vào file word docx",
+            "Thêm chữ vào ghi chú cuộc họp",
+            "Chèn text vào văn bản báo cáo docx",
+            "Bỏ chữ in hoa ở đầu mỗi đoạn",
+            "Xóa bỏ chữ ký cũ trong file word",
+            "Trích xuất văn bản từ tài liệu docx",
+            # 4. Audio & voice recordings (must not trigger enhance_video_quality via 'khử nhiễu')
+            "Khử nhiễu file ghi âm bài giảng",
+            "Lọc tạp âm và khử nhiễu đoạn ghi âm phỏng vấn",
+            "Cắt đoạn audio phỏng vấn 10 giây",
+            "Cân bằng âm lượng file podcast mp3",
+            "Chuyển đổi âm thanh ghi âm sang wav",
+        ]
+        for q in domain_queries:
+            with self.subTest(query=q):
+                scoped = self.executor._resolve_scoped_tool_names(query=q)
+                video_hits = set(scoped).intersection(self.VIDEO_EDITOR_TOOLS)
+                self.assertEqual(
+                    video_hits,
+                    set(),
+                    f"False positive detected: Non-video query '{q}' triggered video tools {video_hits}! Scoped: {scoped}",
+                )
+
 
 if __name__ == "__main__":
     unittest.main()
+

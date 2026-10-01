@@ -77,9 +77,9 @@ class GroqKeyPool:
             cooldown_time = base_backoff + jitter
             entry.available_at = time.monotonic() + cooldown_time
             heapq.heapify(self._heap)
-            masked = key[-6:] if len(key) > 6 else "***"
+            masked = f"#{entry.key_id} [REDACTED]"
             logger.warning(
-                "[GroqKeyPool] Key ...%s rate-limited (fail_count=%d, backoff=%.1fs).",
+                "[GroqKeyPool] Key %s rate-limited (fail_count=%d, backoff=%.1fs).",
                 masked, entry.fail_count, cooldown_time
             )
 

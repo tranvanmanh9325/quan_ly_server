@@ -90,6 +90,14 @@ class TeamworkEngine:
                 max_tokens=max_tokens,
                 requested_model=model or self.default_model,
             )
+            # If requested model was rejected or unavailable, retry with router's default optimal model
+            if not resp and (model or self.default_model):
+                resp = await self.llm_router.complete(
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    requested_model=None,
+                )
             if resp and isinstance(resp, dict):
                 choices = resp.get("choices")
                 if choices and len(choices) > 0:

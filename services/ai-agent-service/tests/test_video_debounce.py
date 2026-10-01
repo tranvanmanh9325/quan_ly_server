@@ -160,19 +160,90 @@ class TestVideoDebounceManager(unittest.IsolatedAsyncioTestCase):
         mock_media = MagicMock()
         pipeline = LightweightVideoPipeline(mock_media)
 
+        # 1. Test with explicit video_path
+        test_video_path = "/tmp/test_dir/tutorial.mp4"
         context = pipeline._compose_agent_context(
             filename="tutorial.mp4",
             duration=50,
             instruction="Xem video và tóm tắt",
             transcript="Xin chào các bạn hôm nay tôi hướng dẫn cài đặt server",
             visual_summary="[Khung hình 00:00]: Màn hình hiển thị terminal Linux.\n[Khung hình 00:25]: Trình duyệt đang tải web.",
+            video_path=test_video_path,
         )
 
+        # Assert dynamic fields exist
         self.assertIn("PHÂN TÍCH VIDEO ĐA PHƯƠNG THỨC", context)
         self.assertIn("tutorial.mp4", context)
         self.assertIn("00:50", context)
+        self.assertIn("Xem video và tóm tắt", context)
         self.assertIn("Xin chào các bạn hôm nay tôi hướng dẫn", context)
         self.assertIn("Màn hình hiển thị terminal Linux", context)
+        self.assertIn(test_video_path, context)
+
+        # Assert 100% elimination of legacy hardcoded strings
+        self.assertNotIn("Trung Thu", context)
+        self.assertNotIn("Drone show", context)
+        self.assertNotIn("Nghệ An", context)
+        self.assertNotIn("WinMart", context)
+        self.assertNotIn("Mama Hi", context)
+        self.assertNotIn("500 thiết bị bay", context)
+
+        # 2. Test without video_path (backwards compatibility)
+        context_no_path = pipeline._compose_agent_context(
+            filename="sample.mp4",
+            duration=125,
+            instruction="Phân tích nội dung",
+            transcript="Nội dung lời thoại mẫu",
+            visual_summary="Hình ảnh mẫu",
+        )
+        self.assertIn("sample.mp4", context_no_path)
+        self.assertIn("02:05", context_no_path)
+        self.assertNotIn("• Đường dẫn tệp cục bộ (video_path):", context_no_path)
+        self.assertNotIn("Trung Thu", context_no_path)
+
+    def test_video_analysis_pipeline_alias(self):
+        """Test that VideoAnalysisPipeline is properly aliased to LightweightVideoPipeline."""
+        from app.services.video_pipeline import VideoAnalysisPipeline
+        self.assertIs(VideoAnalysisPipeline, LightweightVideoPipeline)
+
+    def test_telegram_bot_is_video_edit_intent(self):
+        """Test detection of video editing intent vs standard analysis in TelegramBotService."""
+        from app.services.telegram_bot import TelegramBotService
+
+        # True cases: Edit intents
+        edit_queries = [
+            "Xóa text góc dưới video giúp anh",
+            "xoa chu tren video",
+            "xóa watermark và logo",
+            "delogo video nay",
+            "chỉnh màu cinematic cho đoạn này",
+            "ổn định video chống rung",
+            "cắt clip 10s đầu",
+            "nén video này cho nhẹ",
+            "thêm phụ đề tiếng việt",
+            "làm nét video",
+            "tạo thumbnail cho video",
+        ]
+        for query in edit_queries:
+            self.assertTrue(
+                TelegramBotService._is_video_edit_intent(query),
+                f"Query '{query}' should be recognized as video edit intent",
+            )
+
+        # False cases: Standard analysis/summary intents or empty
+        non_edit_queries = [
+            "Tóm tắt nội dung video này giúp anh",
+            "Video này nói về chủ đề gì thế em?",
+            "Phiên âm lời thoại cuộc họp trong video",
+            "Xem clip và cho biết người trong video đang làm gì",
+            "",
+            None,
+        ]
+        for query in non_edit_queries:
+            self.assertFalse(
+                TelegramBotService._is_video_edit_intent(query),
+                f"Query '{query}' should NOT be recognized as video edit intent",
+            )
 
 
 if __name__ == "__main__":

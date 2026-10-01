@@ -261,7 +261,7 @@ class LightweightVideoPipeline:
 
             # Parallel Task 1: Extract and Transcribe Audio
             audio_task = asyncio.create_task(
-                self._extract_and_transcribe_audio(video_path, audio_path, duration)
+                self._extract_and_transcribe_audio(video_path, audio_path, duration, instruction=instruction)
             )
 
             # Parallel Task 2: Extract and Analyze Keyframes
@@ -279,11 +279,12 @@ class LightweightVideoPipeline:
                 instruction=instruction,
                 transcript=transcript,
                 visual_summary=visual_summary,
+                video_path=video_path,
             )
             return context
 
     async def _extract_and_transcribe_audio(
-        self, video_path: str, audio_path: str, duration: int
+        self, video_path: str, audio_path: str, duration: int, instruction: str = ""
     ) -> str:
         """
         Extracts 16kHz mono MP3 via FFmpeg with single thread to conserve CPU,
@@ -320,16 +321,13 @@ class LightweightVideoPipeline:
                 audio_bytes = f.read()
 
             logger.info("[VideoPipeline] Audio extracted: %d bytes. Calling Groq Whisper STT...", len(audio_bytes))
+            prompt_bias = instruction.strip() if instruction.strip() else ""
             transcript = await self.media.transcribe_voice(
                 audio_bytes=audio_bytes,
                 filename="video_audio.mp3",
                 language="vi",
                 duration=duration,
-                prompt_bias=(
-                    "Sự kiện Tết Trung thu, trình diễn nghệ thuật drone show ánh sáng, "
-                    "Quảng trường Hồ Chí Minh, TP Vinh, Nghệ An, siêu thị WinMart, bánh trung thu Mama Hi, "
-                    "đêm hội, 500 thiết bị bay, bắn pháo hoa, mở cửa tự do miễn phí vé"
-                ),
+                prompt_bias=prompt_bias,
             )
             return transcript if transcript else "(Video không có lời thoại rõ ràng hoặc chỉ có nhạc nền)"
 
@@ -420,48 +418,39 @@ class LightweightVideoPipeline:
         instruction: str,
         transcript: str,
         visual_summary: str,
+        video_path: str = "",
     ) -> str:
         """Constructs high-density multimodal context for the AI Agent with Cross-Modal Discrepancy Resolution."""
         mins, secs = divmod(duration, 60)
         dur_str = f"{mins:02d}:{secs:02d}"
 
+        header_lines = [
+            "[🎬 PHÂN TÍCH VIDEO ĐA PHƯƠNG THỨC CHUYÊN SÂU]",
+            f"• Tệp video: {filename} (Thời lượng: {dur_str})",
+        ]
+        if video_path:
+            header_lines.append(f"• Đường dẫn tệp cục bộ (video_path): {video_path}")
+        header_lines.append(f"• Yêu cầu từ anh Mạnh: {instruction}")
+
+        header_section = "\n".join(header_lines)
+
         context = (
-            f"[🎬 PHÂN TÍCH VIDEO ĐA PHƯƠNG THỨC CHUYÊN SÂU]\n"
-            f"• Tệp video: {filename} (Thời lượng: {dur_str})\n"
-            f"• Yêu cầu từ anh Mạnh: {instruction}\n\n"
-            f"🖼️ [NGUỒN 1 - THỊ GIÁC & CHỮ IN TRÊN MÀN HÌNH (OCR Keyframes - Ground Truth Thực Thể)]:\n"
+            f"{header_section}\n\n"
+            f"🖼️ [NGUỒN 1 - THỊ GIÁC & CHỮ IN TRÊN MÀN HÌNH (OCR Keyframes)]:\n"
             f"{visual_summary}\n\n"
-            f"🎧 [NGUỒN 2 - LỜI THOẠI ÂM THANH (Whisper STT - Mạch Tự Sự & Chi Tiết Thời Gian)]:\n"
+            f"🎧 [NGUỒN 2 - LỜI THOẠI ÂM THANH (Whisper STT)]:\n"
             f"{transcript}\n\n"
-            f"⚖️ [QUY TẮC PHÂN GIẢI ĐỐI CHIẾU CHÉO & KẾT LUẬN GROUND TRUTH]:\n"
-            f"1. ĐỊA ĐIỂM CHUẨN XÁC:\n"
-            f"   - Tên địa điểm: **Quảng trường Hồ Chí Minh** (tọa lạc tại trung tâm **TP. Vinh, tỉnh Nghệ An** - quê Bác, có tượng đài Bác Hồ và cờ đỏ sao vàng ở phía xa, kênh TikTok review @luonkhapvinh_ = Luôn Khắp Vinh Nghệ An).\n"
-            f"   - Lưu ý quan trọng: Tên quảng trường là 'Quảng trường Hồ Chí Minh' (ở Nghệ An), TUYỆT ĐỐI KHÔNG nhầm lẫn thành 'TP. Hồ Chí Minh' hay 'Quảng trường 30/4'.\n"
-            f"2. SỰ KIỆN & CÁC HOẠT ĐỘNG:\n"
-            f"   - Đêm hội Tết Trung Thu với điểm nhấn là **Màn trình diễn nghệ thuật ánh sáng Drone Show với 500 thiết bị bay (drone)** tạo các hình khối phát sáng (sao, bướm, hoa...) kết hợp **bắn pháo hoa rực rỡ**.\n"
-            f"3. THỜI GIAN CHUẨN XÁC:\n"
-            f"   - 19h00 tối ngày 12/9 (đêm hội chính thức) và bay thử/tổng duyệt lúc 12h đêm 11/9.\n"
-            f"   - Giờ chuẩn xác duy nhất cho đêm hội chính thức là 19h00 ngày 12/09.\n"
-            f"4. ĐƠN VỊ TỔ CHỨC / ĐỒNG HÀNH & VÉ VÀO CỬA:\n"
-            f"   - Siêu thị WinMart / cửa hàng WinMart+ & Bánh Trung Thu Mama Hi đồng hành tổ chức.\n"
-            f"   - Vé vào cửa: Mở cửa tự do HOÀN TOÀN MIỄN PHÍ cho người dân và du khách.\n"
-            f"5. BẢNG CẦU NỐI NGỮ ÂM (Phonetic Bridge) để giải mã âm thanh méo:\n"
-            f"   - 'trúng thú' -> 'Trung thu'\n"
-            f"   - 'đôi ôn show' / 'đô lôn xấu' -> 'Drone show (500 thiết bị bay)'\n"
-            f"   - 'ngờ nghề An' -> 'ở Nghệ An'\n"
-            f"   - 'cung mang và hóa' -> 'bắn pháo hoa'\n"
-            f"   - 'Quảng Trường Hồ Cí Minh' -> 'Quảng trường Hồ Chí Minh (TP. Vinh, Nghệ An)'\n\n"
-            f"📌 YÊU CẦU TRÌNH BÀY CHO TIỂU BẢO BẢO:\n"
-            f"1. Mở đầu bằng 1 câu tổng quan trực diện (chuẩn BLUF) về sự kiện.\n"
-            f"2. Trình bày thông tin chính súc tích, hoàn chỉnh theo bố cục emoji:\n"
-            f"   • 🎯 Sự kiện: Đêm hội Tết Trung Thu với điểm nhấn là trình diễn ánh sáng Drone Show & bắn pháo hoa nghệ thuật.\n"
-            f"   • ⏰ Thời gian: 19h00 ngày 12/09 (đêm chính thức) & bay thử nghiệm đêm 11/09.\n"
-            f"   • 📍 Địa điểm: Quảng trường Hồ Chí Minh (TP. Vinh, Nghệ An).\n"
-            f"   • 🏢 Đơn vị đồng hành: Siêu thị WinMart & Bánh Trung Thu Mama Hi.\n"
-            f"   • 🎟️ Vé vào cửa: Hoàn toàn MIỄN PHÍ, tự do tham quan.\n"
-            f"   • ✨ Điểm nhấn nổi bật: 500 thiết bị bay (drone) xếp hình ánh sáng nghệ thuật khổng lồ trên bầu trời kết hợp pháo hoa.\n"
-            f"3. TUYỆT ĐỐI KHÔNG chia timeline từng giây (00:00, 00:08...) làm rối mắt người dùng.\n"
-            f"4. KHÔNG tự bịa hoặc nhắc đến các lỗi kỹ thuật giải mã âm thanh trong câu trả lời người dùng.\n"
-            f"5. Đảm bảo câu trả lời trọn vẹn, không bị cụt lửng, giữ văn phong thông minh, ấm áp và tôn trọng gửi anh Mạnh."
+            f"⚖️ [QUY TẮC TỔNG HỢP & PHÂN GIẢI ĐỐI CHIẾU CHÉO]:\n"
+            f"1. ĐỐI CHIẾU THỰC THỂ: Kết hợp hình ảnh thực tế (OCR chữ in trên màn hình, banner, biểu tượng) và lời thoại âm thanh để xác định chính xác các thực thể, bối cảnh, sự kiện, thời gian hoặc nhân vật xuất hiện trong video.\n"
+            f"2. NGUYÊN TẮC TRỌNG TÂM: Tập trung giải quyết trực tiếp yêu cầu của anh Mạnh ('{instruction}').\n"
+            f"   - Nếu yêu cầu là tóm tắt/phân tích: Trình bày súc tích, theo chuẩn BLUF (kết luận trực diện), nêu rõ diễn biến và thông điệp chính.\n"
+            f"   - Nếu yêu cầu là biên tập video (xóa chữ/watermark, cắt clip, chỉnh màu, lọc âm, nén...): Sử dụng đường dẫn tệp video_path để kích hoạt công cụ xử lý tương ứng.\n"
+            f"3. TÔN TRỌNG SỰ THẬT KHÁCH QUAN: Chỉ kết luận dựa trên nội dung thực tế từ NGUỒN 1 và NGUỒN 2 ở trên; tuyệt đối KHÔNG tự bịa đặt, suy đoán vô căn cứ hoặc thêm các chi tiết không có trong video.\n"
+            f"4. PHONG CÁCH TRÌNH BÀY: Tiếng Việt gãy gọn, thông minh, chuyên nghiệp, ấm áp gửi anh Mạnh."
         )
         return context
+
+
+# Backward-compatibility alias
+VideoAnalysisPipeline = LightweightVideoPipeline
+

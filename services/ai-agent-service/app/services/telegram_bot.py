@@ -1576,6 +1576,50 @@ class TelegramBot:
         }
         await self.send_message(chat_id, msg, reply_markup=reply_markup)
 
+    @staticmethod
+    def _is_video_edit_intent(instruction: str) -> bool:
+        """
+        Phát hiện ý định biên tập video (xóa text/watermark, cắt clip, chỉnh màu,
+        chống rung, nén, chuyển đổi định dạng...) từ caption hoặc chỉ đạo của người dùng.
+        """
+        if not instruction:
+            return False
+        q = instruction.lower().strip()
+        edit_keywords = (
+            # Xóa text / watermark / logo / phụ đề
+            "xóa text", "xoa text", "xóa chữ", "xoa chu",
+            "xóa watermark", "xoa watermark", "xóa logo", "xoa logo",
+            "remove text", "delogo", "xóa sạch", "xoa sach",
+            "loại bỏ chữ", "loai bo chu", "loại bỏ text", "loai bo text",
+            "bỏ chữ", "bo chu", "bỏ text", "bo text",
+            "xóa phụ đề", "xoa phu de", "xóa sub", "xoa sub",
+            "làm sạch video", "lam sach video", "clean text",
+            "remove watermark", "watermark removal", "text removal",
+            # Thêm phụ đề / chèn chữ
+            "thêm phụ đề", "them phu de", "thêm subtitle", "them subtitle",
+            "thêm sub", "them sub", "chèn chữ", "chen chu", "chèn text", "chen text",
+            "burn sub", "burn subtitle", "add subtitle",
+            # Chỉnh màu
+            "chỉnh màu", "chinh mau", "filter màu", "filter mau",
+            "color grade", "cinematic", "vintage", "vivid", "lọc màu", "loc mau",
+            # Chống rung / ổn định
+            "chống rung", "chong rung", "ổn định video", "on dinh video",
+            "khử rung", "khu rung", "stabilize",
+            # Cắt / Ghép / Nối
+            "cắt video", "cat video", "cắt clip", "cat clip",
+            "ghép video", "ghep video", "nối video", "noi video",
+            "merge video", "concatenate", "trim video",
+            # Nén / Đổi định dạng
+            "nén video", "nen video", "giảm dung lượng", "giam dung luong",
+            "convert video", "đổi đuôi", "doi duoi", "sang gif", "thành gif",
+            # Nâng chất lượng / Thumbnail
+            "làm nét", "lam net", "khử nhiễu", "khu nhieu",
+            "nâng chất lượng", "nang chat luong", "enhance video",
+            "trích frame", "trich frame", "lấy thumbnail", "lay thumbnail",
+            "tạo thumbnail", "tao thumbnail",
+        )
+        return any(k in q for k in edit_keywords)
+
     async def _on_video_process_pipeline(
         self, chat_id: str, session: PendingVideoSession, instruction: str
     ) -> None:
@@ -1583,24 +1627,49 @@ class TelegramBot:
         Executes the Lightweight Video Pipeline and feeds multimodal context to AI Agent.
         """
         try:
-            await self.send_message(
-                chat_id,
-                f"⚡ <i>Đang phân tích video theo yêu cầu:</i> \"{instruction}\"...\n"
-                f"<i>(Tiểu Bảo Bảo đang trích xuất âm thanh và khung hình)</i>",
-            )
+            is_edit = self._is_video_edit_intent(instruction)
+            if is_edit:
+                await self.send_message(
+                    chat_id,
+                    f"⚡ <i>Đang chuẩn bị biên tập video theo yêu cầu:</i> \"{instruction}\"...\n"
+                    f"<i>(Tiểu Bảo Bảo đang phân tích khung hình và kiểm tra cấu trúc tệp)</i>",
+                )
+            else:
+                await self.send_message(
+                    chat_id,
+                    f"⚡ <i>Đang phân tích video theo yêu cầu:</i> \"{instruction}\"...\n"
+                    f"<i>(Tiểu Bảo Bảo đang trích xuất âm thanh và khung hình)</i>",
+                )
+
             context = await self._video_pipeline.process_video(
                 video_path=session.video_path,
                 filename=session.metadata.filename,
                 duration=session.metadata.duration,
                 instruction=instruction,
             )
-            prompt = f"{context}\n\n[Chỉ đạo/Yêu cầu từ anh Mạnh]: {instruction}"
+
+            if is_edit:
+                prompt = (
+                    f"{context}\n\n"
+                    f"🎯 [YÊU CẦU BIÊN TẬP VIDEO]:\n"
+                    f"• Đường dẫn file video trên máy chủ: `{session.video_path}`\n"
+                    f"• Tên file gốc: `{session.metadata.filename}` | Thời lượng: {session.metadata.duration}s\n"
+                    f"• Yêu cầu từ anh Mạnh: \"{instruction}\"\n"
+                    f"👉 Hãy gọi công cụ biên tập video phù hợp với tham số `input_path_or_url='{session.video_path}'`."
+                )
+            else:
+                prompt = (
+                    f"{context}\n\n"
+                    f"[THÔNG TIN TỆP NGUỒN TRÊN MÁY CHỦ]: `{session.video_path}`\n"
+                    f"[Chỉ đạo/Yêu cầu từ anh Mạnh]: {instruction}"
+                )
+
             reply = await self.chat_with_agent(chat_id, prompt)
             await self.send_message(chat_id, reply)
         except Exception as err:
             logger.error("[TelegramBot] Error running video pipeline for %s: %s", chat_id, err, exc_info=True)
             await self.send_message(
-                chat_id, f"Xin lỗi anh Mạnh, đã xảy ra lỗi trong quá trình phân tích video ({err})."
+                chat_id, f"Xin lỗi anh Mạnh, đã xảy ra lỗi trong quá trình xử lý video ({err})."
             )
 
     async def _handle_video_message(
@@ -2274,3 +2343,8 @@ class TelegramBot:
 
     def stop(self) -> None:
         self._running = False
+
+
+# Backward-compatibility alias
+TelegramBotService = TelegramBot
+

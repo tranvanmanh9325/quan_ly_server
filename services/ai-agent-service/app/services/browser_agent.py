@@ -20,9 +20,10 @@ import io
 import logging
 import re
 import time
+import html
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Tuple, cast
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 try:
     from PIL import Image
@@ -967,6 +968,29 @@ class BrowserAgentService:
                     return results;
                 }
                 """)
+
+                # Secondary organic search fallback if Google returns 0 results (e.g. CAPTCHA on cloud server IP)
+                if not top_results:
+                    try:
+                        import httpx
+                        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"}
+                        async with httpx.AsyncClient(headers=headers, follow_redirects=True, timeout=12.0) as client:
+                            ddg_resp = await client.get(f"https://html.duckduckgo.com/html/?q={quote(query)}")
+                            if ddg_resp.status_code == 200:
+                                blocks = re.findall(r'<h2[^>]*class=\"result__title\"[^>]*>.*?<a[^>]*href=\"([^\"]*uddg=[^\"]*)\"[^>]*>(.*?)</a>', ddg_resp.text, re.DOTALL)
+                                for href, title_html in blocks[:5]:
+                                    title = html.unescape(re.sub(r'<[^>]+>', '', title_html).strip())
+                                    raw_url = unquote(href.split('uddg=')[1].split('&')[0])
+                                    if raw_url.startswith("http"):
+                                        top_results.append({
+                                            "title": title or raw_url,
+                                            "url": raw_url,
+                                            "snippet": f"Organic web search result for query: {query}",
+                                        })
+                                if top_results:
+                                    logger.info("[BrowserAgent] Secondary search retrieved %d organic results for '%s'", len(top_results), query)
+                    except Exception as fallback_err:
+                        logger.warning("[BrowserAgent] Secondary search fallback failed: %s", fallback_err)
 
                 page_text = await self._extract_page_text(page, max_chars=3000)
                 img_path = await self._screenshot(page, f"google_{_safe_filename(query)}")

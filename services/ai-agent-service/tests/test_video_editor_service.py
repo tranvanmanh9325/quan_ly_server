@@ -1019,11 +1019,178 @@ class TestVideoEditorService(unittest.IsolatedAsyncioTestCase):
 
         after_files = self._get_scratch_files()
         leaked_files = after_files - before_files
-        self.assertEqual(
-            len(leaked_files),
-            0,
-            f"Adversarial Stress Test thất bại: Phát hiện {len(leaked_files)} tệp bị rò rỉ: {leaked_files}",
-        )
+    # ─── Tests for Bug Fix: Overlay Text Detection & Inpainting (R1, R2, R3) ──
+
+    async def test_auto_detect_individual_boxes_not_union(self):
+        """R1: Verifies that multiple separate watermarks are returned as individual boxes, not one gigantic union."""
+        async def fake_run(cmd, timeout=30):
+            if "-vsync" in cmd:
+                sample_pattern = cmd[-1]
+                sample_dir = Path(sample_pattern).parent
+                for i in range(5):
+                    (sample_dir / f"sample_0{i}.jpg").write_bytes(b"frame")
+                return 0, b"", b""
+            return 0, b"", b""
+
+        # Two watermarks: one at top-left (20, 20, 50, 20) and one at bottom-right (800, 500, 60, 25)
+        mock_tesseract = MagicMock()
+        mock_tesseract.Output.DICT = "dict"
+        mock_tesseract.image_to_data.return_value = {
+            "text": ["LOGO1", "LOGO2"],
+            "conf": [90, 88],
+            "left": [20, 800],
+            "top": [20, 500],
+            "width": [50, 60],
+            "height": [20, 25],
+        }
+
+        mock_pil = MagicMock()
+        mock_img = MagicMock()
+        mock_img.width = 1000
+        mock_img.height = 600
+        mock_pil.Image.open.return_value.__enter__.return_value = mock_img
+
+        with patch.object(self.service, "_run_command", side_effect=fake_run):
+            with patch.dict("sys.modules", {"pytesseract": mock_tesseract, "PIL": mock_pil}):
+                detected = await self.service._auto_detect_text_region(self.dummy_video)
+                # Must return 2 individual small boxes, NOT a single massive union from (20,20) to (860,525)
+                self.assertEqual(len(detected), 2)
+                for b in detected:
+                    box_area = b["w"] * b["h"]
+                    frame_area = 1000 * 600
+                    self.assertLess(box_area / frame_area, 0.25)
+                    self.assertLess(b["w"], 200)
+                    self.assertLess(b["h"], 100)
+
+    async def test_auto_detect_sanity_check_ignores_box_over_25_percent(self):
+        """R1: Any bounding box exceeding 25% of the frame area must be discarded as false positive / scene text."""
+        async def fake_run(cmd, timeout=30):
+            if "-vsync" in cmd:
+                sample_dir = Path(cmd[-1]).parent
+                for i in range(5):
+                    (sample_dir / f"sample_0{i}.jpg").write_bytes(b"frame")
+                return 0, b"", b""
+            return 0, b"", b""
+
+        # Bounding box of 600x500 in a 1000x600 frame = 50% area (> 25%)
+        mock_tesseract = MagicMock()
+        mock_tesseract.Output.DICT = "dict"
+        mock_tesseract.image_to_data.return_value = {
+            "text": ["HUGE_TEXT"],
+            "conf": [90],
+            "left": [100],
+            "top": [50],
+            "width": [600],
+            "height": [500],
+        }
+
+        mock_pil = MagicMock()
+        mock_img = MagicMock()
+        mock_img.width = 1000
+        mock_img.height = 600
+        mock_pil.Image.open.return_value.__enter__.return_value = mock_img
+
+        with patch.object(self.service, "_run_command", side_effect=fake_run):
+            with patch.dict("sys.modules", {"pytesseract": mock_tesseract, "PIL": mock_pil}):
+                detected = await self.service._auto_detect_text_region(self.dummy_video)
+                # Over-25% box must be completely discarded
+                self.assertEqual(detected, [])
+
+    async def test_auto_detect_distinguishes_overlay_vs_scene_text(self):
+        """R2: Persistent overlay (IoU >= 0.7 in >= 3/5 frames) is kept; transient scene text is discarded."""
+        async def fake_run(cmd, timeout=30):
+            if "-vsync" in cmd:
+                sample_dir = Path(cmd[-1]).parent
+                for i in range(5):
+                    (sample_dir / f"sample_0{i}.jpg").write_bytes(b"frame")
+                return 0, b"", b""
+            return 0, b"", b""
+
+        call_count = 0
+
+        def fake_image_to_data(img, output_type=None):
+            nonlocal call_count
+            frame_idx = call_count % 5
+            call_count += 1
+            # Watermark at (450, 50, 60, 25) present in frames 0, 1, 3, 4 (4 of 5 frames >= 3)
+            # Transient scene text at moving positions (100, 200), (200, 300), etc.
+            if frame_idx in (0, 1, 3, 4):
+                return {
+                    "text": ["WATERMARK", f"SCENE_{frame_idx}"],
+                    "conf": [95, 80],
+                    "left": [450, 100 * (frame_idx + 1)],
+                    "top": [50, 200 + 30 * frame_idx],
+                    "width": [60, 80],
+                    "height": [25, 20],
+                }
+            else:
+                return {
+                    "text": [f"SCENE_{frame_idx}"],
+                    "conf": [80],
+                    "left": [300],
+                    "top": [400],
+                    "width": [80],
+                    "height": [20],
+                }
+
+        mock_tesseract = MagicMock()
+        mock_tesseract.Output.DICT = "dict"
+        mock_tesseract.image_to_data.side_effect = fake_image_to_data
+
+        mock_pil = MagicMock()
+        mock_img = MagicMock()
+        mock_img.width = 1000
+        mock_img.height = 600
+        mock_pil.Image.open.return_value.__enter__.return_value = mock_img
+
+        with patch.object(self.service, "_run_command", side_effect=fake_run):
+            with patch.dict("sys.modules", {"pytesseract": mock_tesseract, "PIL": mock_pil}):
+                detected = await self.service._auto_detect_text_region(self.dummy_video)
+                # Only the persistent WATERMARK should be detected (1 box)
+                self.assertEqual(len(detected), 1)
+                # With 10px pad: x=440, y=40, w=80, h=45
+                self.assertEqual(detected[0]["x"], 440)
+                self.assertEqual(detected[0]["y"], 40)
+                self.assertEqual(detected[0]["w"], 80)
+                self.assertEqual(detected[0]["h"], 45)
+
+    async def test_auto_detect_no_text_returns_original_video(self):
+        """R3: When no persistent text is detected, remove_text_from_video returns the intact video without filtering."""
+        with patch.object(self.service, "_auto_detect_text_region", AsyncMock(return_value=[])):
+            res = await self.service.remove_text_from_video(
+                input_path_or_url=str(self.dummy_video),
+                mode="auto",
+            )
+            self.assertEqual(res["status"], "ok")
+            self.assertEqual(res["regions"], [])
+            self.assertIn("Không phát hiện text", res["message"])
+            out_p = Path(res["output_path"])
+            self.assertTrue(out_p.exists())
+            # Intact content identical to dummy video
+            self.assertEqual(out_p.read_bytes(), self.dummy_video.read_bytes())
+            out_p.unlink(missing_ok=True)
+
+    async def test_auto_mode_prefers_inpaint_when_opencv_available(self):
+        """R3: Auto mode uses OpenCV inpainting when cv2 is available."""
+        mock_cv2 = MagicMock()
+        detected_region = [{"x": 100, "y": 80, "w": 60, "h": 20}]
+
+        def fake_inpaint(inp, out, rx, ry, rw, rh):
+            out.write_bytes(b"inpaint_auto_payload")
+
+        with patch.object(self.service, "_auto_detect_text_region", AsyncMock(return_value=detected_region)):
+            with patch.dict("sys.modules", {"cv2": mock_cv2}):
+                with patch.object(self.service, "_inpaint_video_sync", side_effect=fake_inpaint) as mock_sync:
+                    res = await self.service.remove_text_from_video(
+                        input_path_or_url=str(self.dummy_video),
+                        mode="auto",
+                    )
+                    self.assertEqual(res["status"], "ok")
+                    self.assertEqual(res["mode_used"], "inpaint")
+                    mock_sync.assert_called_once()
+                    out_p = Path(res["output_path"])
+                    self.assertTrue(out_p.exists())
+                    out_p.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

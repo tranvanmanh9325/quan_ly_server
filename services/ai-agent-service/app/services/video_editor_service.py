@@ -304,16 +304,17 @@ class VideoEditorService:
     async def remove_text_from_video(
         self,
         input_path_or_url: str,
-        region: Optional[Dict[str, int]] = None,
+        region: Optional[Union[Dict[str, int], List[Dict[str, int]]]] = None,
         mode: str = "delogo",
         output_format: str = "mp4",
     ) -> Dict[str, Any]:
         """
         Removes text, watermark, or static overlays from video.
         Modes supported:
-          - 'delogo': Native fast FFmpeg delogo filter (default).
+          - 'delogo': Native fast FFmpeg delogo filter.
           - 'inpaint': High-quality OpenCV Telea inpainting.
-          - 'auto': Automatic detection of text bounding box via OCR sampling, then delogo/inpaint.
+          - 'auto': Automatic detection of persistent overlay text via OCR sampling across keyframes,
+                    distinguishing fixed overlays from scene text, then applying OpenCV inpainting (or delogo fallback).
         """
         valid_modes = {"delogo", "inpaint", "auto"}
         clean_mode = str(mode).strip().lower()
@@ -330,25 +331,66 @@ class VideoEditorService:
         try:
             # Handle 'auto' mode: Detect text bounding box across sample frames
             if clean_mode == "auto":
+                try:
+                    import cv2  # noqa: F401
+                    candidate_mode = "inpaint"
+                except (ImportError, ModuleNotFoundError):
+                    candidate_mode = "delogo"
+
                 if region is None:
-                    region = await self._auto_detect_text_region(input_file)
-                mode_used = "delogo"
+                    detected_regions = await self._auto_detect_text_region(input_file)
+                elif isinstance(region, list):
+                    detected_regions = region
+                else:
+                    detected_regions = [region]
 
-            # Validate target region coordinates
-            target_region = region or {"x": 50, "y": 145, "w": 475, "h": 125}
-            self._validate_region_dict(target_region)
+                # R3: If no persistent overlay text was detected, preserve original video without filtering
+                if not detected_regions:
+                    shutil.copy2(input_file, output_file)
+                    delivery_info = self._publish_or_direct(output_file, title="Video gốc (không phát hiện text overlay)")
+                    success = True
+                    return {
+                        "status": "ok",
+                        "tool": "remove_text_from_video",
+                        "mode_requested": clean_mode,
+                        "mode_used": candidate_mode,
+                        "region": {},
+                        "regions": [],
+                        "output_path": str(output_file),
+                        **delivery_info,
+                        "message": "Không phát hiện text hoặc watermark cố định (overlay) nào cần xóa trong video. Đã giữ nguyên video gốc.",
+                    }
 
-            rx = int(target_region["x"])
-            ry = int(target_region["y"])
-            rw = int(target_region["w"])
-            rh = int(target_region["h"])
+                mode_used = candidate_mode
+                target_regions = detected_regions
+            else:
+                if region is None:
+                    target_regions = [{"x": 50, "y": 145, "w": 475, "h": 125}]
+                elif isinstance(region, list):
+                    target_regions = region
+                else:
+                    target_regions = [region]
+
+            # Validate all target region coordinates
+            for reg in target_regions:
+                self._validate_region_dict(reg)
+
+            primary_region = target_regions[0] if target_regions else {"x": 0, "y": 0, "w": 0, "h": 0}
+            rx = int(primary_region["x"])
+            ry = int(primary_region["y"])
+            rw = int(primary_region["w"])
+            rh = int(primary_region["h"])
 
             if mode_used == "delogo":
-                rx = max(1, rx)
-                ry = max(1, ry)
-                rw = max(1, rw)
-                rh = max(1, rh)
-                delogo_vf = f"delogo=x={rx}:y={ry}:w={rw}:h={rh}:show=0"
+                delogo_filters = []
+                for reg in target_regions:
+                    drx = max(1, int(reg["x"]))
+                    dry = max(1, int(reg["y"]))
+                    drw = max(1, int(reg["w"]))
+                    drh = max(1, int(reg["h"]))
+                    delogo_filters.append(f"delogo=x={drx}:y={dry}:w={drw}:h={drh}:show=0")
+                delogo_vf = ",".join(delogo_filters)
+
                 cmd = [
                     "ffmpeg", "-y",
                     "-i", str(input_file),
@@ -364,29 +406,39 @@ class VideoEditorService:
 
             elif mode_used == "inpaint":
                 try:
-                    import cv2
+                    import cv2  # noqa: F401
                 except (ImportError, ModuleNotFoundError):
                     raise RuntimeError("opencv-python-headless chưa được cài đặt. Vui lòng dùng mode='delogo'.")
 
                 async with self._inpaint_semaphore:
-                    await asyncio.to_thread(
-                        self._inpaint_video_sync,
-                        input_file,
-                        output_file,
-                        rx, ry, rw, rh,
-                    )
+                    if len(target_regions) == 1:
+                        await asyncio.to_thread(
+                            self._inpaint_video_sync,
+                            input_file,
+                            output_file,
+                            rx, ry, rw, rh,
+                        )
+                    else:
+                        await asyncio.to_thread(
+                            self._inpaint_video_sync,
+                            input_file,
+                            output_file,
+                            target_regions,
+                        )
 
             delivery_info = self._publish_or_direct(output_file, title="Video đã xóa text")
+            region_summaries = ", ".join(f"({r['x']},{r['y']},{r['w']}x{r['h']})" for r in target_regions[:3])
             success = True
             return {
                 "status": "ok",
                 "tool": "remove_text_from_video",
                 "mode_requested": clean_mode,
                 "mode_used": mode_used,
-                "region": {"x": rx, "y": ry, "w": rw, "h": rh},
+                "region": primary_region,
+                "regions": target_regions,
                 "output_path": str(output_file),
                 **delivery_info,
-                "message": f"Đã xóa text/watermark thành công bằng mode '{mode_used}' tại tọa độ ({rx},{ry},{rw}x{rh}).",
+                "message": f"Đã xóa text/watermark thành công bằng mode '{mode_used}' tại {len(target_regions)} vùng ({region_summaries}).",
             }
 
         finally:
@@ -408,12 +460,66 @@ class VideoEditorService:
         if int(region["w"]) <= 0 or int(region["h"]) <= 0:
             raise ValueError("Kích thước chiều rộng (w) và chiều cao (h) phải lớn hơn 0.")
 
-    async def _auto_detect_text_region(self, input_file: Path) -> Dict[str, int]:
+    @staticmethod
+    def _compute_iou(b1: Tuple[int, int, int, int], b2: Tuple[int, int, int, int]) -> float:
+        """Computes Intersection-over-Union (IoU) between two bounding boxes (x, y, w, h)."""
+        x1 = max(b1[0], b2[0])
+        y1 = max(b1[1], b2[1])
+        x2 = min(b1[0] + b1[2], b2[0] + b2[2])
+        y2 = min(b1[1] + b1[3], b2[1] + b2[3])
+        inter_w = max(0, x2 - x1)
+        inter_h = max(0, y2 - y1)
+        inter_area = inter_w * inter_h
+        if inter_area <= 0:
+            return 0.0
+        union_area = (b1[2] * b1[3]) + (b2[2] * b2[3]) - inter_area
+        if union_area <= 0:
+            return 0.0
+        return float(inter_area) / float(union_area)
+
+    @staticmethod
+    def _merge_adjacent_words(boxes: List[Tuple[int, int, int, int]], frame_w: int, frame_h: int) -> List[Tuple[int, int, int, int]]:
+        """Merges horizontally adjacent word boxes on the same line into coherent text clusters."""
+        if not boxes:
+            return []
+        merged = list(boxes)
+        changed = True
+        while changed:
+            changed = False
+            new_merged = []
+            skip_indices = set()
+            for i in range(len(merged)):
+                if i in skip_indices:
+                    continue
+                combined = merged[i]
+                for j in range(i + 1, len(merged)):
+                    if j in skip_indices:
+                        continue
+                    b2 = merged[j]
+                    overlap_y = max(0, min(combined[1] + combined[3], b2[1] + b2[3]) - max(combined[1], b2[1]))
+                    min_h = min(combined[3], b2[3])
+                    if min_h > 0 and (overlap_y / min_h) >= 0.5:
+                        gap_x = max(0, max(combined[0], b2[0]) - min(combined[0] + combined[2], b2[0] + b2[2]))
+                        max_allowed_gap = max(25, int(min_h * 1.5))
+                        if gap_x <= max_allowed_gap:
+                            nx = min(combined[0], b2[0])
+                            ny = min(combined[1], b2[1])
+                            nw = max(combined[0] + combined[2], b2[0] + b2[2]) - nx
+                            nh = max(combined[1] + combined[3], b2[1] + b2[3]) - ny
+                            combined = (nx, ny, nw, nh)
+                            skip_indices.add(j)
+                            changed = True
+                new_merged.append(combined)
+            merged = new_merged
+        return merged
+
+    async def _auto_detect_text_region(self, input_file: Path) -> List[Dict[str, int]]:
         """
-        Samples 5 keyframes and runs pytesseract to identify text bounding boxes.
-        Falls back to default coordinates if pytesseract is unavailable or no text is detected.
+        Samples keyframes and runs pytesseract to identify static overlay text / watermark boxes.
+        Distinguishes persistent overlay text (IoU >= 0.7 in >= 3/5 frames) from transient scene text.
+        Applies a sanity ceiling: any box exceeding 25% of frame area is discarded.
+        Returns a list of individual detected text bounding boxes, or empty list if none detected.
         """
-        default_fallback = {"x": 0, "y": 0, "w": 200, "h": 50}
         token = secrets.token_hex(4)
         sample_dir = self._temp_dir / f"samples_{token}"
         sample_dir.mkdir(parents=True, exist_ok=True)
@@ -429,24 +535,23 @@ class VideoEditorService:
             ]
             code, _, _ = await self._run_command(cmd, timeout=30)
             if code != 0:
-                return default_fallback
+                return []
 
             try:
                 import pytesseract
                 from PIL import Image
             except (ImportError, ModuleNotFoundError):
-                return default_fallback
+                return []
 
             frames = sorted(list(sample_dir.glob("sample_*.jpg")))
             if not frames:
-                return default_fallback
-
-            min_x, min_y = 99999, 99999
-            max_x, max_y = 0, 0
-            found_text = False
+                return []
 
             frame_w, frame_h = 0, 0
+            raw_frame_boxes: List[List[Tuple[int, int, int, int]]] = []
+
             for frame_path in frames:
+                boxes_in_frame: List[Tuple[int, int, int, int]] = []
                 try:
                     with Image.open(frame_path) as img:
                         if hasattr(img, "width") and isinstance(img.width, int):
@@ -458,30 +563,84 @@ class VideoEditorService:
                             conf = int(data["conf"][i]) if str(data["conf"][i]).isdigit() else -1
                             text = str(data["text"][i]).strip()
                             if conf > 30 and len(text) > 0:
-                                found_text = True
                                 x = int(data["left"][i])
                                 y = int(data["top"][i])
                                 w = int(data["width"][i])
                                 h = int(data["height"][i])
-                                min_x = min(min_x, x)
-                                min_y = min(min_y, y)
-                                max_x = max(max_x, x + w)
-                                max_y = max(max_y, y + h)
+                                if w > 0 and h > 0:
+                                    boxes_in_frame.append((x, y, w, h))
                 except Exception:
                     pass
+                raw_frame_boxes.append(boxes_in_frame)
 
-            if found_text and max_x > min_x and max_y > min_y:
-                # Add a 10px margin around detected text clamped within frame borders
-                pad = 10
-                fx = max(1, min_x - pad) if frame_w > 2 else max(0, min_x - pad)
-                fy = max(1, min_y - pad) if frame_h > 2 else max(0, min_y - pad)
-                max_x_clamped = min(frame_w - 2, max_x + pad) if frame_w > 2 else max_x + pad
-                max_y_clamped = min(frame_h - 2, max_y + pad) if frame_h > 2 else max_y + pad
-                fw = max(1, max_x_clamped - fx)
-                fh = max(1, max_y_clamped - fy)
-                return {"x": fx, "y": fy, "w": fw, "h": fh}
+            frame_area = frame_w * frame_h
+            n_frames = len(raw_frame_boxes)
+            min_matches = 3 if n_frames >= 5 else min(3, n_frames)
 
-            return default_fallback
+            # 1. Per-frame merge and sanity check (< 25% area)
+            processed_frames: List[List[Tuple[int, int, int, int]]] = []
+            for f_boxes in raw_frame_boxes:
+                valid_raw = [b for b in f_boxes if not (frame_area > 0 and (b[2] * b[3]) > 0.25 * frame_area)]
+                merged = self._merge_adjacent_words(valid_raw, frame_w, frame_h)
+                valid_merged = [b for b in merged if not (frame_area > 0 and (b[2] * b[3]) > 0.25 * frame_area)]
+                processed_frames.append(valid_merged)
+
+            # 2. Match boxes across frames with IoU >= 0.7
+            accepted_overlay_boxes: List[Tuple[int, int, int, int]] = []
+            for f_idx, boxes in enumerate(processed_frames):
+                for cand in boxes:
+                    matched_frame_indices = {f_idx}
+                    cluster_boxes = [cand]
+
+                    for other_idx, other_boxes in enumerate(processed_frames):
+                        if other_idx == f_idx:
+                            continue
+                        best_iou = 0.0
+                        best_box = None
+                        for ob in other_boxes:
+                            iou = self._compute_iou(cand, ob)
+                            if iou > best_iou:
+                                best_iou = iou
+                                best_box = ob
+                        if best_iou >= 0.7 and best_box is not None:
+                            matched_frame_indices.add(other_idx)
+                            cluster_boxes.append(best_box)
+
+                    if len(matched_frame_indices) >= min_matches:
+                        avg_x = int(round(sum(b[0] for b in cluster_boxes) / len(cluster_boxes)))
+                        avg_y = int(round(sum(b[1] for b in cluster_boxes) / len(cluster_boxes)))
+                        avg_w = int(round(sum(b[2] for b in cluster_boxes) / len(cluster_boxes)))
+                        avg_h = int(round(sum(b[3] for b in cluster_boxes) / len(cluster_boxes)))
+                        rep_box = (avg_x, avg_y, avg_w, avg_h)
+
+                        is_duplicate = False
+                        for existing in accepted_overlay_boxes:
+                            if self._compute_iou(rep_box, existing) >= 0.7:
+                                is_duplicate = True
+                                break
+                        if not is_duplicate:
+                            accepted_overlay_boxes.append(rep_box)
+
+            # 3. Add padding & clamp within frame boundaries
+            results: List[Dict[str, int]] = []
+            pad = 10
+            for b in accepted_overlay_boxes:
+                fx = max(0, b[0] - pad)
+                fy = max(0, b[1] - pad)
+                fw = b[2] + 2 * pad
+                fh = b[3] + 2 * pad
+                if frame_w > 0:
+                    fx = min(frame_w - 1, fx)
+                    fw = min(frame_w - fx, fw)
+                if frame_h > 0:
+                    fy = min(frame_h - 1, fy)
+                    fh = min(frame_h - fy, fh)
+
+                if frame_area > 0 and (fw * fh) > 0.25 * frame_area:
+                    continue
+                results.append({"x": fx, "y": fy, "w": fw, "h": fh})
+
+            return results
 
         finally:
             shutil.rmtree(sample_dir, ignore_errors=True)
@@ -490,14 +649,15 @@ class VideoEditorService:
         self,
         input_file: Path,
         output_file: Path,
-        rx: int,
-        ry: int,
-        rw: int,
-        rh: int,
+        rx_or_regions: Union[int, List[Dict[str, int]]],
+        ry: Optional[int] = None,
+        rw: Optional[int] = None,
+        rh: Optional[int] = None,
     ) -> None:
         """
         Synchronous worker for OpenCV Telea video frame inpainting.
         Re-assembles the video with original audio via FFmpeg stream copy.
+        Supports either a single bounding box (rx, ry, rw, rh) or a list of region dicts.
         """
         import cv2
         import numpy as np
@@ -510,15 +670,23 @@ class VideoEditorService:
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-        # Clamp bounding box to frame boundaries
-        rx = max(0, min(rx, width - 1))
-        ry = max(0, min(ry, height - 1))
-        rw = max(1, min(rw, width - rx))
-        rh = max(1, min(rh, height - ry))
+        # Parse regions list
+        regions_list: List[Dict[str, int]] = []
+        if isinstance(rx_or_regions, list):
+            regions_list = rx_or_regions
+        elif isinstance(rx_or_regions, (int, float)) and ry is not None and rw is not None and rh is not None:
+            regions_list = [{"x": int(rx_or_regions), "y": int(ry), "w": int(rw), "h": int(rh)}]
+        else:
+            raise ValueError("Tham số tọa độ không hợp lệ cho inpaint.")
 
-        # Create binary inpainting mask
+        # Create binary inpainting mask with tight regions
         mask = np.zeros((height, width), dtype=np.uint8)
-        mask[ry : ry + rh, rx : rx + rw] = 255
+        for reg in regions_list:
+            rx = max(0, min(int(reg["x"]), width - 1))
+            ry = max(0, min(int(reg["y"]), height - 1))
+            rw = max(1, min(int(reg["w"]), width - rx))
+            rh = max(1, min(int(reg["h"]), height - ry))
+            mask[ry : ry + rh, rx : rx + rw] = 255
 
         token = secrets.token_hex(4)
         raw_video_path = self._temp_dir / f"inp_raw_{token}.mp4"
@@ -531,7 +699,7 @@ class VideoEditorService:
                     ret, frame = cap.read()
                     if not ret:
                         break
-                    inpainted = cv2.inpaint(frame, mask, 7, cv2.INPAINT_TELEA)
+                    inpainted = cv2.inpaint(frame, mask, 3, cv2.INPAINT_TELEA)
                     out.write(inpainted)
             finally:
                 cap.release()

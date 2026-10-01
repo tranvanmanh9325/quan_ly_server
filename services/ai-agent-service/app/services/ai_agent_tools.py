@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 VN_TZ = timezone(timedelta(hours=7))
 
 DIRECT_RETURN_TOOLS = frozenset({
+    # Existing tools
     "facebook_send_reply",
     "facebook_capture_screenshot",
     "facebook_view_profile",
@@ -33,6 +34,31 @@ DIRECT_RETURN_TOOLS = frozenset({
     "download_media_video",
     "download_media_audio",
     "create_file_transfer_portal",
+    # M7 Video Editor Studio (9 tools)
+    "remove_text_from_video",
+    "add_subtitle_to_video",
+    "apply_color_grade",
+    "stabilize_video",
+    "concatenate_videos",
+    "extract_frames",
+    "remove_watermark_region",
+    "enhance_video_quality",
+    "generate_video_thumbnail",
+    # M6 Multimedia Studio (14 tools)
+    "edit_video_clip",
+    "compress_video",
+    "convert_video_format",
+    "convert_audio_format",
+    "trim_audio_clip",
+    "normalize_audio_volume",
+    "convert_and_resize_image",
+    "generate_custom_qr",
+    "inspect_media_metadata",
+    "merge_pdf_documents",
+    "split_pdf_document",
+    "extract_document_text",
+    "translate_text",
+    "download_direct_file",
 })
 
 SCREENSHOT_TOOLS = frozenset({
@@ -698,7 +724,12 @@ class AgentToolExecutor:
         r"resize\s+ảnh|resize\s+anh|nén\s+ảnh|nen\s+anh|đổi\s+kích\s+thước\s+ảnh|doi\s+kich\s+thuoc\s+anh|webp\s+sang|png\s+sang|jpg\s+sang|chuyển\s+ảnh\s+sang|chuyen\s+anh\s+sang|"
         r"tạo(?:\s+mã)?\s+qr|tao(?:\s+ma)?\s+qr|sinh\s+qr|mã\s+qr|ma\s+qr|qr\s+code|qr\s+wifi|qr\s+ngân\s+hàng|quet\s+qr|quét\s+qr|"
         r"metadata|thông\s+tin\s+video|thong\s+tin\s+video|thông\s+tin\s+audio|thong\s+tin\s+audio|ffprobe|exif|độ\s+phân\s+giải\s+video|do\s+phan\s+giai\s+video|codec\s+video|"
-        r"xóa\s+(?:text|chữ|chu|watermark|logo)|xoa\s+(?:text|chữ|chu|watermark|logo)|remove\s+text|delogo|"
+        r"xóa\s+(?:sạch\s+)?(?:text|chữ|chu|watermark|logo|phụ\s+đề|phu\s+de|sub|caption)|xoa\s+(?:sach\s+)?(?:text|chữ|chu|watermark|logo|phu\s+de|sub|caption)|"
+        r"loại\s+bỏ\s+(?:chữ|chu|text|watermark|logo)|loai\s+bo\s+(?:chu|text|watermark|logo)|"
+        r"bỏ\s+(?:chữ|chu|text)|bo\s+(?:chu|text)|"
+        r"xóa\s+bỏ\s+(?:chữ|chu|text)|xoa\s+bo\s+(?:chu|text)|"
+        r"làm\s+sạch\s+video|lam\s+sach\s+video|clean\s+text|erase\s+text|wipe\s+text|clear\s+text|"
+        r"remove\s+watermark|watermark\s+removal|text\s+removal|remove\s+caption|"
         r"thêm\s+phụ\s+đề|them\s+phu\s+de|gắn\s+phụ\s+đề|gan\s+phu\s+de|chèn\s+phụ\s+đề|chen\s+phu\s+de|add\s+subtitle|subtitles|vietsub|"
         r"chỉnh\s+màu|chinh\s+mau|đổi\s+màu\s+video|doi\s+mau\s+video|color\s+grade|bộ\s+lọc\s+màu|bo\s+loc\s+mau|"
         r"chống\s+rung|chong\s+rung|ổn\s+định\s+video|on\s+dinh\s+video|stabilize\s+video|vidstab|rung\s+lắc|rung\s+lac|"
@@ -999,7 +1030,50 @@ class AgentToolExecutor:
             "security report", "báo cáo an ninh", "lịch sử tấn công", "lich su tan cong"
         ))
 
-        is_media_studio = bool(self._SHORT_MEDIA_STUDIO_RE.search(q))
+        is_media_studio = bool(self._SHORT_MEDIA_STUDIO_RE.search(q)) or any(k in q for k in (
+            # 1. remove_text_from_video
+            "xóa text", "xoa text", "xóa chữ", "xoa chu", "xóa watermark", "xoa watermark", "xóa logo", "xoa logo",
+            "remove text", "delogo", "xóa sạch", "xoa sach", "loại bỏ chữ", "loai bo chu", "loại bỏ text", "loai bo text",
+            "loại bỏ watermark", "loai bo watermark", "loại bỏ logo", "loai bo logo", "bỏ chữ", "bo chu", "bỏ text", "bo text",
+            "xóa bỏ chữ", "xoa bo chu", "xóa bỏ text", "xoa bo text", "xóa phụ đề", "xoa phu de", "xóa sub", "xoa sub",
+            "làm sạch video", "lam sach video", "clean text", "erase text", "wipe text", "clear text",
+            "remove watermark", "watermark removal", "text removal", "xóa chữ trong video", "xoa chu trong video",
+            "xóa text trong video", "xoa text trong video", "xóa sạch text", "xoa sach text", "xóa sạch chữ", "xoa sach chu",
+            "xóa caption", "xoa caption", "remove caption", "xóa chữ khỏi", "xoa chu khoi", "xóa text khỏi", "xoa text khoi",
+            # 2. add_subtitle_to_video
+            "thêm sub", "them sub", "gắn sub", "gan sub", "chèn sub", "chen sub", "add sub", "làm sub", "lam sub",
+            "hardsub", "softsub", "lồng phụ đề", "long phu de", "ghép phụ đề", "ghep phu de", "phụ đề", "phu de", "subtitle", "subtitles", "vietsub",
+            "chèn text", "chen text", "chèn chữ", "chen chu", "thêm text", "them text", "thêm chữ", "them chu", "caption",
+            # 3. apply_color_grade
+            "chỉnh màu", "chinh mau", "đổi màu video", "doi mau video", "color grade", "color grading", "grade màu", "grade mau",
+            "vivid", "vintage", "cinematic", "bộ lọc màu", "bo loc mau", "lọc màu", "loc mau", "filter màu", "filter mau", "filter video",
+            "ấm áp", "am ap", "lạnh", "lanh", "retro", "đen trắng", "den trang", "black and white", "tông màu", "tong mau",
+            # 4. stabilize_video
+            "chống rung", "chong rung", "ổn định video", "on dinh video", "stabilize video", "vidstab", "rung lắc", "rung lac",
+            "khử rung", "khu rung", "giảm rung", "giam rung", "bớt rung", "bot rung", "làm mượt video", "lam muot video",
+            "ổn định hình ảnh", "on dinh hinh anh", "deshake", "stabilizer",
+            # 5. concatenate_videos
+            "ghép video", "ghep video", "nối video", "noi video", "concatenate video", "gộp video", "gop video",
+            "ghép clip", "ghep clip", "nối clip", "noi clip", "gộp clip", "gop clip", "merge video", "join video", "combine video", "concat video",
+            "nối 2 video", "noi 2 video", "ghép 2 video", "ghep 2 video", "ghép các video", "nối các video", "gộp các video",
+            # 6. extract_frames
+            "trích frame", "trich frame", "cắt frame", "cat frame", "trích xuất frame", "trich xuat frame", "extract frames",
+            "lấy frame", "lay frame", "tách frame", "tach frame", "xuất frame", "xuat frame", "chụp frame", "chup frame",
+            "frame ảnh", "frame anh", "trích khung hình", "trich khung hinh", "lấy khung hình", "lay khung hinh", "cắt khung hình",
+            # 7. remove_watermark_region
+            "xóa nhiều logo", "xoa nhieu logo", "loại bỏ nhiều watermark", "loai bo nhieu watermark", "xóa nhiều watermark", "xoa nhieu watermark",
+            "xóa vùng watermark", "xoa vung watermark", "xóa watermark theo vùng", "vùng watermark", "vung watermark",
+            "xóa nhiều vùng logo", "xoa nhieu vung logo", "xóa vùng logo", "xoa vung logo", "nhiều vùng logo", "nhieu vung logo",
+            "xóa logo góc", "xoa logo goc", "xóa watermark góc", "remove watermark region", "multi watermark",
+            # 8. enhance_video_quality
+            "tăng chất lượng", "tang chat luong", "nâng cao chất lượng", "nang cao chat luong", "nâng chất lượng", "nang chat luong",
+            "làm nét video", "lam net video", "làm nét", "lam net", "khử nhiễu video", "khu nhieu video", "khử nhiễu", "khu nhieu",
+            "upscale video", "upscale", "enhance video", "sharpen video", "denoise video", "tăng độ nét", "làm rõ video",
+            # 9. generate_video_thumbnail
+            "tạo thumbnail", "tao thumbnail", "làm thumbnail", "lam thumbnail", "thumbnail video", "generate thumbnail",
+            "ảnh đại diện video", "anh dai dien video", "tạo ảnh bìa", "tao anh bia", "ảnh bìa video", "anh bia video", "làm bìa video",
+            "tạo cover", "tao cover", "cover video", "cắt thumbnail", "cat thumbnail", "lấy thumbnail", "lay thumbnail", "video poster"
+        ))
         is_docs = bool(self._SHORT_DOCS_RE.search(q))
         is_web_extract = bool(self._SHORT_WEB_DOWNLOAD_ARTICLE_RE.search(q))
         is_system_root = bool(self._SHORT_SYSTEM_ROOT_RE.search(q))
@@ -1129,15 +1203,112 @@ class AgentToolExecutor:
             is_sys_opt  = any(k in q for k in ("tối ưu hệ thống", "toi uu he thong", "dọn dẹp hệ thống", "giải phóng ram", "giai phong ram", "drop_caches", "tối ưu máy chủ", "tối ưu server", "dọn ram", "don ram", "dọn dẹp ram", "don dep ram"))
 
             # Milestone 2 Video Editor intent flags
-            is_rm_txt   = any(k in q for k in ("xóa text", "xoa text", "xóa chữ", "xoa chu", "xóa watermark", "xoa watermark", "remove text", "delogo", "xóa logo", "xoa logo"))
-            is_add_sub  = any(k in q for k in ("thêm phụ đề", "them phu de", "gắn phụ đề", "gan phu de", "chèn phụ đề", "chen phu de", "add subtitle", "subtitles", "vietsub", "làm sub", "lam sub"))
-            is_clr_grd  = any(k in q for k in ("chỉnh màu", "chinh mau", "đổi màu video", "doi mau video", "color grade", "vivid", "vintage", "cinematic", "bộ lọc màu", "bo loc mau"))
-            is_stab_vid = any(k in q for k in ("chống rung", "chong rung", "ổn định video", "on dinh video", "stabilize video", "vidstab", "rung lắc", "rung lac"))
-            is_concat   = any(k in q for k in ("ghép video", "ghep video", "nối video", "noi video", "concatenate video", "gộp video", "gop video"))
-            is_ext_frm  = any(k in q for k in ("trích frame", "trich frame", "cắt frame", "cat frame", "trích xuất frame", "trich xuat frame", "extract frames", "lấy ảnh từ video", "lay anh tu video"))
-            is_rm_wm    = any(k in q for k in ("xóa nhiều watermark", "xoa nhieu watermark", "xóa vùng watermark", "xoa vung watermark", "xóa logo góc", "xoa logo goc"))
-            is_enh_vid  = any(k in q for k in ("tăng chất lượng", "tang chat luong", "nâng cao chất lượng", "nang cao chat luong", "làm nét video", "lam net video", "khử nhiễu video", "khu nhieu video", "upscale video", "enhance video", "sharpen video", "denoise video"))
-            is_gen_thm  = any(k in q for k in ("tạo thumbnail", "tao thumbnail", "ảnh đại diện video", "anh dai dien video", "thumbnail video", "generate thumbnail", "bìa video", "bia video"))
+            is_rm_txt   = any(k in q for k in (
+                "xóa text", "xoa text", "xóa chữ", "xoa chu",
+                "xóa watermark", "xoa watermark", "xóa logo", "xoa logo",
+                "remove text", "delogo",
+                "xóa sạch", "xoa sach",
+                "loại bỏ chữ", "loai bo chu", "loại bỏ text", "loai bo text",
+                "loại bỏ watermark", "loai bo watermark", "loại bỏ logo", "loai bo logo",
+                "bỏ chữ", "bo chu", "bỏ text", "bo text",
+                "xóa bỏ chữ", "xoa bo chu", "xóa bỏ text", "xoa bo text",
+                "xóa phụ đề", "xoa phu de", "xóa sub", "xoa sub",
+                "làm sạch video", "lam sach video",
+                "clean text", "erase text", "wipe text", "clear text",
+                "remove watermark", "watermark removal", "text removal",
+                "xóa chữ trong video", "xoa chu trong video",
+                "xóa text trong video", "xoa text trong video",
+                "xóa sạch text", "xoa sach text", "xóa sạch chữ", "xoa sach chu",
+                "xóa caption", "xoa caption", "remove caption",
+                "xóa chữ khỏi", "xoa chu khoi", "xóa text khỏi", "xoa text khoi",
+            ))
+            is_add_sub  = any(k in q for k in (
+                "thêm phụ đề", "them phu de", "gắn phụ đề", "gan phu de",
+                "chèn phụ đề", "chen phu de", "add subtitle", "subtitles",
+                "vietsub", "làm sub", "lam sub",
+                "thêm sub", "them sub", "gắn sub", "gan sub",
+                "chèn sub", "chen sub", "add sub",
+                "thêm caption", "them caption", "chèn caption", "chen caption", "add caption",
+                "thêm chữ vào video", "them chu vao video", "chèn chữ vào video", "chen chu vao video",
+                "thêm text vào video", "them text vao video", "chèn text vào video", "chen text vao video",
+                "lồng phụ đề", "long phu de", "ghép phụ đề", "ghep phu de",
+                "hardsub", "softsub", "burn sub", "burn subtitle",
+                "phụ đề tiếng việt", "phu de tieng viet",
+            ))
+            is_clr_grd  = any(k in q for k in (
+                "chỉnh màu", "chinh mau", "đổi màu video", "doi mau video",
+                "color grade", "vivid", "vintage", "cinematic",
+                "bộ lọc màu", "bo loc mau",
+                "lọc màu", "loc mau", "color grading", "grade màu", "grade mau",
+                "chỉnh màu video", "chinh mau video", "làm màu video", "lam mau video",
+                "warm", "ấm áp", "am ap", "cool", "lạnh", "lanh",
+                "retro", "đen trắng", "den trang", "black and white",
+                "filter video", "filter màu", "filter mau", "bộ lọc video", "bo loc video",
+                "đổi tông màu", "doi tong mau", "tông màu", "tong mau",
+            ))
+            is_stab_vid = any(k in q for k in (
+                "chống rung", "chong rung", "ổn định video", "on dinh video",
+                "stabilize video", "vidstab", "rung lắc", "rung lac",
+                "khử rung", "khu rung", "giảm rung", "giam rung", "bớt rung", "bot rung",
+                "chống rung video", "chong rung video", "khử rung video", "khu rung video",
+                "làm mượt video", "lam muot video", "video bị rung", "video bi rung",
+                "ổn định hình ảnh", "on dinh hinh anh", "video stabilization", "stabilizer",
+                "deshake", "smooth video",
+            ))
+            is_concat   = any(k in q for k in (
+                "ghép video", "ghep video", "nối video", "noi video",
+                "concatenate video", "gộp video", "gop video",
+                "ghép clip", "ghep clip", "nối clip", "noi clip", "gộp clip", "gop clip",
+                "ghép các video", "ghep cac video", "nối các video", "noi cac video", "gộp các video", "gop cac video",
+                "ghép nhiều video", "ghep nhieu video", "nối nhiều video", "noi nhieu video",
+                "merge video", "join video", "combine video", "concat video", "stitch video",
+                "nối 2 video", "noi 2 video", "ghép 2 video", "ghep 2 video",
+            ))
+            is_ext_frm  = any(k in q for k in (
+                "trích frame", "trich frame", "cắt frame", "cat frame",
+                "trích xuất frame", "trich xuat frame", "extract frames",
+                "lấy ảnh từ video", "lay anh tu video",
+                "tách frame", "tach frame", "lấy frame", "lay frame", "xuất frame", "xuat frame",
+                "trích khung hình", "trich khung hinh", "lấy khung hình", "lay khung hinh", "cắt khung hình", "cat khung hinh",
+                "chụp frame", "chup frame", "lấy từng frame", "lay tung frame",
+                "rút frame", "rut frame", "capture frames", "frame extraction", "video to frames",
+                "frame ảnh", "frame anh",
+            ))
+            is_rm_wm    = any(k in q for k in (
+                "xóa nhiều watermark", "xoa nhieu watermark",
+                "xóa vùng watermark", "xoa vung watermark",
+                "xóa logo góc", "xoa logo goc",
+                "xóa watermark theo vùng", "xoa watermark theo vung",
+                "xóa watermark vùng", "xoa watermark vung",
+                "xóa nhiều logo", "xoa nhieu logo",
+                "xóa nhiều vùng logo", "xoa nhieu vung logo",
+                "xóa vùng logo", "xoa vung logo",
+                "nhiều vùng logo", "nhieu vung logo",
+                "loại bỏ nhiều watermark", "loai bo nhieu watermark",
+                "xóa watermark góc", "xoa watermark goc",
+                "xóa logo ở góc", "xoa logo o goc",
+                "remove watermark region", "remove multiple watermarks",
+                "multi watermark", "watermark regions",
+            ))
+            is_enh_vid  = any(k in q for k in (
+                "tăng chất lượng", "tang chat luong", "nâng cao chất lượng", "nang cao chat luong",
+                "làm nét video", "lam net video", "khử nhiễu video", "khu nhieu video",
+                "upscale video", "enhance video", "sharpen video", "denoise video",
+                "nâng chất lượng video", "nang chat luong video",
+                "tăng độ nét", "tang do net", "nâng độ nét", "nang do net", "làm rõ video", "lam ro video",
+                "làm nét", "lam net", "khử nhiễu", "khu nhieu",
+                "video bị mờ", "video bi mo", "video mờ", "video mo", "khử mờ", "khu mo",
+                "video bị nhiễu", "video bi nhieu",
+                "upscale", "super resolution", "video enhance", "improve video quality",
+            ))
+            is_gen_thm  = any(k in q for k in (
+                "tạo thumbnail", "tao thumbnail", "ảnh đại diện video", "anh dai dien video",
+                "thumbnail video", "generate thumbnail", "bìa video", "bia video",
+                "làm thumbnail", "lam thumbnail", "tạo ảnh bìa", "tao anh bia",
+                "ảnh bìa video", "anh bia video", "làm bìa video", "lam bia video",
+                "tạo cover", "tao cover", "cover video", "cắt thumbnail", "cat thumbnail",
+                "lấy thumbnail", "lay thumbnail", "video thumbnail", "video poster",
+            ))
 
             priority_order: List[str] = [
                 # 1. Specialized Intent Boosters (Mỗi intent đưa các công cụ cốt lõi nhất lên đỉnh)
@@ -3227,23 +3398,70 @@ class AgentToolExecutor:
                 protected_tools.add("optimize_system_resources")
             if any(k in q_lower for k in ("cân bằng âm lượng", "can bang am luong")):
                 protected_tools.add("normalize_audio_volume")
-            if any(k in q_lower for k in ("xóa text", "xoa text", "xóa chữ", "xoa chu", "xóa watermark", "xoa watermark", "remove text", "delogo", "xóa logo", "xoa logo")):
+            if any(k in q_lower for k in (
+                "xóa text", "xoa text", "xóa chữ", "xoa chu", "xóa watermark", "xoa watermark", "xóa logo", "xoa logo", "remove text", "delogo",
+                "xóa sạch", "xoa sach", "loại bỏ chữ", "loai bo chu", "loại bỏ text", "loai bo text", "loại bỏ watermark", "loai bo watermark", "loại bỏ logo", "loai bo logo",
+                "bỏ chữ", "bo chu", "bỏ text", "bo text", "xóa bỏ chữ", "xoa bo chu", "xóa bỏ text", "xoa bo text", "xóa phụ đề", "xoa phu de", "xóa sub", "xoa sub",
+                "làm sạch video", "lam sach video", "clean text", "erase text", "wipe text", "clear text", "remove watermark", "watermark removal", "text removal",
+                "xóa chữ trong video", "xoa chu trong video", "xóa text trong video", "xoa text trong video", "xóa sạch text", "xoa sach text", "xóa sạch chữ", "xoa sach chu",
+                "xóa caption", "xoa caption", "remove caption", "xóa chữ khỏi", "xoa chu khoi", "xóa text khỏi", "xoa text khoi"
+            )):
                 protected_tools.add("remove_text_from_video")
-            if any(k in q_lower for k in ("thêm phụ đề", "them phu de", "gắn phụ đề", "gan phu de", "chèn phụ đề", "chen phu de", "add subtitle", "subtitles", "vietsub", "làm sub", "lam sub")):
+            if any(k in q_lower for k in (
+                "thêm phụ đề", "them phu de", "gắn phụ đề", "gan phu de", "chèn phụ đề", "chen phu de", "add subtitle", "subtitles", "vietsub", "làm sub", "lam sub",
+                "thêm sub", "them sub", "gắn sub", "gan sub", "chèn sub", "chen sub", "add sub", "thêm caption", "them caption", "chèn caption", "chen caption", "add caption",
+                "thêm chữ vào video", "them chu vao video", "chèn chữ vào video", "chen chu vao video", "thêm text vào video", "them text vao video", "chèn text vào video", "chen text vao video",
+                "lồng phụ đề", "long phu de", "ghép phụ đề", "ghep phu de", "hardsub", "softsub", "burn sub", "burn subtitle", "phụ đề tiếng việt", "phu de tieng viet"
+            )):
                 protected_tools.add("add_subtitle_to_video")
-            if any(k in q_lower for k in ("chỉnh màu", "chinh mau", "đổi màu video", "doi mau video", "color grade", "vivid", "vintage", "cinematic", "bộ lọc màu", "bo loc mau")):
+            if any(k in q_lower for k in (
+                "chỉnh màu", "chinh mau", "đổi màu video", "doi mau video", "color grade", "vivid", "vintage", "cinematic", "bộ lọc màu", "bo loc mau",
+                "lọc màu", "loc mau", "color grading", "grade màu", "grade mau", "chỉnh màu video", "chinh mau video", "làm màu video", "lam mau video",
+                "warm", "ấm áp", "am ap", "cool", "lạnh", "lanh", "retro", "đen trắng", "den trang", "black and white",
+                "filter video", "filter màu", "filter mau", "bộ lọc video", "bo loc video", "đổi tông màu", "doi tong mau", "tông màu", "tong mau"
+            )):
                 protected_tools.add("apply_color_grade")
-            if any(k in q_lower for k in ("chống rung", "chong rung", "ổn định video", "on dinh video", "stabilize video", "vidstab", "rung lắc", "rung lac")):
+            if any(k in q_lower for k in (
+                "chống rung", "chong rung", "ổn định video", "on dinh video", "stabilize video", "vidstab", "rung lắc", "rung lac",
+                "khử rung", "khu rung", "giảm rung", "giam rung", "bớt rung", "bot rung", "chống rung video", "chong rung video", "khử rung video", "khu rung video",
+                "làm mượt video", "lam muot video", "video bị rung", "video bi rung", "ổn định hình ảnh", "on dinh hinh anh", "video stabilization", "stabilizer", "deshake", "smooth video"
+            )):
                 protected_tools.add("stabilize_video")
-            if any(k in q_lower for k in ("ghép video", "ghep video", "nối video", "noi video", "concatenate video", "gộp video", "gop video")):
+            if any(k in q_lower for k in (
+                "ghép video", "ghep video", "nối video", "noi video", "concatenate video", "gộp video", "gop video",
+                "ghép clip", "ghep clip", "nối clip", "noi clip", "gộp clip", "gop clip", "ghép các video", "ghep cac video", "nối các video", "noi cac video",
+                "gộp các video", "gop cac video", "ghép nhiều video", "ghep nhieu video", "nối nhiều video", "noi nhieu video",
+                "merge video", "join video", "combine video", "concat video", "stitch video", "nối 2 video", "noi 2 video", "ghép 2 video", "ghep 2 video"
+            )):
                 protected_tools.add("concatenate_videos")
-            if any(k in q_lower for k in ("trích frame", "trich frame", "cắt frame", "cat frame", "trích xuất frame", "trich xuat frame", "extract frames", "lấy ảnh từ video", "lay anh tu video")):
+            if any(k in q_lower for k in (
+                "trích frame", "trich frame", "cắt frame", "cat frame", "trích xuất frame", "trich xuat frame", "extract frames", "lấy ảnh từ video", "lay anh tu video",
+                "tách frame", "tach frame", "lấy frame", "lay frame", "xuất frame", "xuat frame", "trích khung hình", "trich khung hinh", "lấy khung hình", "lay khung hinh",
+                "cắt khung hình", "cat khung hinh", "chụp frame", "chup frame", "lấy từng frame", "lay tung frame", "rút frame", "rut frame", "capture frames", "frame extraction", "video to frames",
+                "frame ảnh", "frame anh"
+            )):
                 protected_tools.add("extract_frames")
-            if any(k in q_lower for k in ("xóa nhiều watermark", "xoa nhieu watermark", "xóa vùng watermark", "xoa vung watermark", "xóa logo góc", "xoa logo goc")):
+            if any(k in q_lower for k in (
+                "xóa nhiều watermark", "xoa nhieu watermark", "xóa vùng watermark", "xoa vung watermark", "xóa logo góc", "xoa logo goc",
+                "xóa watermark theo vùng", "xoa watermark theo vung", "xóa watermark vùng", "xoa watermark vung", "xóa nhiều logo", "xoa nhieu logo",
+                "xóa nhiều vùng logo", "xoa nhieu vung logo", "xóa vùng logo", "xoa vung logo", "nhiều vùng logo", "nhieu vung logo",
+                "loại bỏ nhiều watermark", "loai bo nhieu watermark", "xóa watermark góc", "xoa watermark goc", "xóa logo ở góc", "xoa logo o goc",
+                "remove watermark region", "remove multiple watermarks", "multi watermark", "watermark regions"
+            )):
                 protected_tools.add("remove_watermark_region")
-            if any(k in q_lower for k in ("tăng chất lượng", "tang chat luong", "nâng cao chất lượng", "nang cao chat luong", "làm nét video", "lam net video", "khử nhiễu video", "khu nhieu video", "upscale video", "enhance video", "sharpen video", "denoise video")):
+            if any(k in q_lower for k in (
+                "tăng chất lượng", "tang chat luong", "nâng cao chất lượng", "nang cao chat luong", "làm nét video", "lam net video", "khử nhiễu video", "khu nhieu video",
+                "upscale video", "enhance video", "sharpen video", "denoise video", "nâng chất lượng video", "nang chat luong video",
+                "tăng độ nét", "tang do net", "nâng độ nét", "nang do net", "làm rõ video", "lam ro video", "làm nét", "lam net", "khử nhiễu", "khu nhieu",
+                "video bị mờ", "video bi mo", "video mờ", "video mo", "khử mờ", "khu mo", "video bị nhiễu", "video bi nhieu",
+                "upscale", "super resolution", "video enhance", "improve video quality"
+            )):
                 protected_tools.add("enhance_video_quality")
-            if any(k in q_lower for k in ("tạo thumbnail", "tao thumbnail", "ảnh đại diện video", "anh dai dien video", "thumbnail video", "generate thumbnail", "bìa video", "bia video")):
+            if any(k in q_lower for k in (
+                "tạo thumbnail", "tao thumbnail", "ảnh đại diện video", "anh dai dien video", "thumbnail video", "generate thumbnail", "bìa video", "bia video",
+                "làm thumbnail", "lam thumbnail", "tạo ảnh bìa", "tao anh bia", "ảnh bìa video", "anh bia video", "làm bìa video", "lam bia video",
+                "tạo cover", "tao cover", "cover video", "cắt thumbnail", "cat thumbnail", "lấy thumbnail", "lay thumbnail", "video thumbnail", "video poster"
+            )):
                 protected_tools.add("generate_video_thumbnail")
 
             unprotected_drop_priority = [

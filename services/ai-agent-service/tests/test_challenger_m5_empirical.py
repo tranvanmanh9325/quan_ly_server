@@ -574,11 +574,10 @@ class TestChallengerM5EmpiricalSuite(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(called_metrics.get("ram_usage"), 89.0)
             self.assertEqual(called_metrics.get("cpu_usage"), 0.0)
 
-            # Assert Telegram message sent with RAM alert
-            tg_mock.send_message.assert_awaited_once()
-            sent_msg = tg_mock.send_message.call_args[0][1]
-            self.assertIn("RAM đang cao", sent_msg)
-            self.assertIn("89%", sent_msg)
+            # Assert Telegram message sent with RAM alert (allowing both auto-remediation report and scan alert)
+            self.assertGreaterEqual(tg_mock.send_message.await_count, 1)
+            sent_msgs = [call[0][1] for call in tg_mock.send_message.call_args_list]
+            self.assertTrue(any("RAM đang cao" in m and "89%" in m for m in sent_msgs))
 
         # Case 2: Healthy RAM (e.g. 60%) -> ram_pct is 0.0, no exceptions, no alerts sent
         tg_mock.send_message.reset_mock()

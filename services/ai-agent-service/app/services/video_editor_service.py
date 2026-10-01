@@ -271,7 +271,7 @@ class VideoEditorService:
                     filename=file_path.name,
                     title=title or file_path.name,
                     duration=duration,
-                    ttl=4 * 3600,
+                    ttl_seconds=4 * 3600,
                 )
                 return {
                     "delivery": "portal",

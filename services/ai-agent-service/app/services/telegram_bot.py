@@ -153,8 +153,20 @@ class TelegramBot:
             on_debounce_timeout=self._on_video_debounce_timeout,
             on_process_pipeline=self._on_video_process_pipeline,
         )
+        self._video_editor_svc: Optional[Any] = None
         if hasattr(self.ai_agent, "set_telegram_bot"):
             self.ai_agent.set_telegram_bot(self)
+
+    @property
+    def _video_editor_service(self) -> Any:
+        """
+        Lazy-loaded property for VideoEditorService.
+        Initializes on first access to conserve RAM on constrained VPS.
+        """
+        if not hasattr(self, "_video_editor_svc") or self._video_editor_svc is None:
+            from app.services.video_editor_service import VideoEditorService
+            self._video_editor_svc = VideoEditorService()
+        return self._video_editor_svc
 
     _MEDIA_URL_REGEX = re.compile(
         r"https?://(?:www\.|web\.|vt\.|vm\.|v\.|m\.|mobile\.|on\.|music\.|clips\.|player\.|l\.)?(?:"
@@ -814,6 +826,96 @@ class TelegramBot:
         except Exception as e:
             logger.error("[TelegramBot] Failed sending video: %s", e, exc_info=True)
         return False
+
+    async def send_video_file(
+        self,
+        chat_id: str,
+        video_path: str,
+        caption: Optional[str] = None,
+        duration: int = 0,
+        width: int = 0,
+        height: int = 0,
+        title: Optional[str] = None,
+        supports_streaming: bool = True,
+        cleanup_after_send: bool = True,
+    ) -> bool:
+        """
+        Smart Video Delivery:
+        - Files <= 50MB: Sent directly via Telegram sendVideo API (fallback send_document_file).
+        - Files > 50MB: Published to media_storage_manager and delivers direct Ngrok WAN + LAN URLs.
+        - Guarantees Zero-Disk-Leak: removes transient output file after transmission if requested.
+        """
+        if not video_path:
+            return False
+
+        p = Path(video_path)
+        if not p.exists():
+            logger.error("[TelegramBot] send_video_file: Target file not found: %s", video_path)
+            return False
+
+        file_size = p.stat().st_size
+        total_mb = file_size / (1024 * 1024)
+
+        # ── Phân nhánh 1: File <= 50MB -> Gửi trực tiếp qua Telegram ──
+        if file_size <= 50 * 1024 * 1024:
+            sent = await self.send_video(
+                chat_id=chat_id,
+                video_path=str(p),
+                caption=caption,
+                duration=duration,
+                width=width,
+                height=height,
+                supports_streaming=supports_streaming,
+            )
+            if not sent:
+                logger.warning("[TelegramBot] send_video failed, attempting send_document_file fallback for %s", video_path)
+                sent = await self.send_document_file(
+                    chat_id=chat_id,
+                    file_path=str(p),
+                    filename=p.name,
+                    caption=caption,
+                )
+
+            # Cleanup transient file if requested
+            if cleanup_after_send:
+                try:
+                    p.unlink(missing_ok=True)
+                except Exception as ex:
+                    logger.warning("[TelegramBot] Error cleaning up transient video %s: %s", video_path, ex)
+
+            return sent
+
+        # ── Phân nhánh 2: File > 50MB -> Dual-Delivery qua Portal Storage ──
+        try:
+            clean_filename = p.name
+            raw_title = title or clean_filename
+            record = media_storage_manager.publish_download_item(
+                file_path=str(p),
+                filename=clean_filename,
+                title=raw_title,
+                duration=duration,
+                ttl_seconds=4 * 3600,
+            )
+
+            portal_msg = (
+                f"📦 <b>Video kết quả có dung lượng lớn ({total_mb:.1f} MB)!</b>\n"
+                f"Do Telegram Bot API chỉ hỗ trợ gửi tệp tối đa <b>50MB</b>, Tiểu Bảo Bảo đã lưu video lên hệ thống phân phối tệp tốc độ cao:\n\n"
+                f"🌐 <b>Link Internet (Ngrok):</b> {record.internet_url}\n"
+                f"🏠 <b>Link Nội Bộ (LAN):</b> {record.lan_url}\n\n"
+                f"⏱ <i>(Đường link tải trực tiếp có hiệu lực trong vòng 4 giờ)</i>"
+            )
+            if caption:
+                portal_msg = f"{caption}\n\n" + portal_msg
+
+            await self.send_message(chat_id, portal_msg)
+            return True
+        except Exception as exc:
+            logger.error("[TelegramBot] Failed publishing large video to portal: %s", exc, exc_info=True)
+            await self.send_message(
+                chat_id,
+                f"⚠️ Video kết quả quá lớn ({total_mb:.1f} MB) vượt quá giới hạn 50MB của Telegram, và gặp sự cố khi tạo liên kết tải về: {exc}"
+            )
+            return False
 
     async def send_audio(
         self,
@@ -1624,10 +1726,132 @@ class TelegramBot:
         self, chat_id: str, session: PendingVideoSession, instruction: str
     ) -> None:
         """
-        Executes the Lightweight Video Pipeline and feeds multimodal context to AI Agent.
+        Executes the Lightweight Video Pipeline or Direct Video Editing Pipeline.
+        Bypasses LLM for deterministic video edit operations (text removal, color grading, stabilization)
+        to prevent LLM confirmation friction and deliver video directly back to chat.
         """
         try:
             is_edit = self._is_video_edit_intent(instruction)
+            instruction_clean = instruction.strip()
+            q = instruction_clean.lower()
+
+            # ── Fast-path Direct Video Editing (Bypass LLM) ──
+            if is_edit:
+                # Kiểm tra các thao tác phức tạp cần fallback sang LLM trước
+                is_complex_fallback = any(k in q for k in (
+                    "ghép video", "ghep video", "nối video", "noi video", "merge video", "concatenate",
+                    "thêm phụ đề", "them phu de", "thêm subtitle", "them subtitle", "thêm sub", "them sub",
+                    "chèn chữ", "chen chu", "chèn text", "chen text", "burn sub", "burn subtitle", "add subtitle",
+                ))
+
+                if not is_complex_fallback:
+                    # 1. Xóa text / Watermark / Logo / Subtitle
+                    is_remove_text = any(k in q for k in (
+                        "xóa text", "xoa text", "xóa chữ", "xoa chu",
+                        "xóa watermark", "xoa watermark", "xóa logo", "xoa logo",
+                        "remove text", "delogo", "xóa sạch", "xoa sach",
+                        "loại bỏ chữ", "loai bo chu", "loại bỏ text", "loai bo text",
+                        "bỏ chữ", "bo chu", "bỏ text", "bo text",
+                        "xóa phụ đề", "xoa phu de", "xóa sub", "xoa sub",
+                        "làm sạch video", "lam sach video", "clean text",
+                        "remove watermark", "watermark removal", "text removal",
+                    ))
+
+                    # 2. Chỉnh màu (Color Grade)
+                    is_color_grade = any(k in q for k in (
+                        "chỉnh màu", "chinh mau", "filter màu", "filter mau",
+                        "color grade", "cinematic", "vintage", "vivid", "lọc màu", "loc mau",
+                    ))
+
+                    # 3. Chống rung (Stabilization)
+                    is_stabilize = any(k in q for k in (
+                        "chống rung", "chong rung", "ổn định video", "on dinh video",
+                        "khử rung", "khu rung", "stabilize",
+                    ))
+
+                    if is_remove_text or is_color_grade or is_stabilize:
+                        try:
+                            res: Optional[Dict[str, Any]] = None
+                            if is_remove_text:
+                                mode = "delogo" if "delogo" in q else ("inpaint" if "inpaint" in q else "auto")
+                                await self.send_message(
+                                    chat_id,
+                                    "⚡ <i>Đang tự động xóa text/watermark khỏi video của anh Mạnh...</i>\n"
+                                    "<i>(Tiểu Bảo Bảo đang phân tích khung hình và làm sạch video)</i>",
+                                )
+                                res = await self._video_editor_service.remove_text_from_video(
+                                    input_path_or_url=session.video_path,
+                                    mode=mode,
+                                )
+                            elif is_color_grade:
+                                if "vintage" in q:
+                                    preset = "vintage"
+                                elif "cinematic" in q:
+                                    preset = "cinematic"
+                                elif "cool" in q or "tông lạnh" in q:
+                                    preset = "cool"
+                                elif "warm" in q or "tông ấm" in q:
+                                    preset = "warm"
+                                elif "bw" in q or "đen trắng" in q or "den trang" in q:
+                                    preset = "bw"
+                                else:
+                                    preset = "vivid"
+
+                                await self.send_message(
+                                    chat_id,
+                                    f"🎨 <i>Đang áp dụng bộ lọc màu '{preset}' cho video...</i>",
+                                )
+                                res = await self._video_editor_service.apply_color_grade(
+                                    input_path_or_url=session.video_path,
+                                    preset=preset,
+                                )
+                            elif is_stabilize:
+                                await self.send_message(
+                                    chat_id,
+                                    "🛡️ <i>Đang chạy thuật toán chống rung 2-pass cho video...</i>",
+                                )
+                                res = await self._video_editor_service.stabilize_video(
+                                    input_path_or_url=session.video_path,
+                                    smoothing=15,
+                                )
+
+                            if res:
+                                if res.get("status") == "ok":
+                                    delivery = res.get("delivery")
+                                    caption = f"🎬 {res.get('message', 'Biên tập video hoàn tất!')}"
+                                    if delivery == "portal":
+                                        url = res.get("internet_url") or res.get("lan_url") or ""
+                                        size_fmt = res.get("file_size_formatted", "")
+                                        portal_msg = (
+                                            f"{caption}\n\n"
+                                            f"📦 <b>Video kết quả có dung lượng lớn ({size_fmt})!</b>\n"
+                                            f"Do Telegram Bot API chỉ hỗ trợ gửi tệp tối đa <b>50MB</b>, Tiểu Bảo Bảo đã lưu video lên hệ thống phân phối tệp tốc độ cao:\n\n"
+                                            f"🌐 <b>Link Internet (Ngrok):</b> {res.get('internet_url')}\n"
+                                            f"🏠 <b>Link Nội Bộ (LAN):</b> {res.get('lan_url')}\n\n"
+                                            f"⏱ <i>(Đường link tải trực tiếp có hiệu lực trong vòng 4 giờ)</i>"
+                                        )
+                                        await self.send_message(chat_id, portal_msg)
+                                    else:
+                                        output_path = res.get("output_path")
+                                        if output_path:
+                                            sent = await self.send_video_file(chat_id, output_path, caption=caption)
+                                            if not sent:
+                                                await self.send_message(chat_id, f"❌ Không thể gửi video qua Telegram. Đường dẫn tệp: `{output_path}`")
+                                        else:
+                                            await self.send_message(chat_id, "❌ Không tìm thấy tệp video kết quả sau khi biên tập.")
+                                    return
+                                elif res.get("status") == "error":
+                                    err_msg = res.get("message", "Đã xảy ra lỗi khi biên tập video.")
+                                    await self.send_message(chat_id, f"❌ Không thể hoàn thành biên tập video: {err_msg}")
+                                    return
+                        except Exception as edit_err:
+                            logger.error("[TelegramBot] Direct video edit execution error: %s", edit_err, exc_info=True)
+                            await self.send_message(
+                                chat_id, f"❌ Có lỗi trong quá trình biên tập video: {edit_err}"
+                            )
+                            return
+
+            # ── Fallback về luồng LLM cũ (cho các yêu cầu phức tạp hoặc phân tích video) ──
             if is_edit:
                 await self.send_message(
                     chat_id,

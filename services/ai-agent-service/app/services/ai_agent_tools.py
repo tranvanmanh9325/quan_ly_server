@@ -190,6 +190,9 @@ def classify_command_risk(command: str) -> str:
     return ACTION_TIER_2_REVERSIBLE
 
 
+_GOAL_WORKER_UNSET = object()
+
+
 def classify_action_risk(tool_name: str, tool_args: Optional[Dict[str, Any]] = None) -> str:
     """
     Phân loại rủi ro của một Tool Call theo Action Risk Tri-Tier:
@@ -242,6 +245,8 @@ def classify_action_risk(tool_name: str, tool_args: Optional[Dict[str, Any]] = N
         "list_blocked_ips",
         "get_honeypot_log",
         "get_attack_history",
+        # ── R4 Conversational Goal Management Tier 1 Safe Read-Only Tools ──
+        "list_autonomous_goals",
         # ── M6 Omni Super-Agent Tier 1 Safe Multimedia & Document Tools ──
         "edit_video_clip",
         "compress_video",
@@ -315,6 +320,9 @@ def classify_action_risk(tool_name: str, tool_args: Optional[Dict[str, Any]] = N
         # ── M6 Omni Super-Agent Tier 2 System Mastery Tools ──
         "manage_docker_containers",
         "optimize_system_resources",
+        # ── R4 Conversational Goal Management Tier 2 Reversible Tools ──
+        "create_autonomous_goal",
+        "cancel_autonomous_goal",
     }
     if tool_name in tier2_tools:
         return ACTION_TIER_2_REVERSIBLE
@@ -410,6 +418,7 @@ class AgentToolExecutor:
         web_article_extractor: Any = None,
         system_mastery_service: Any = None,
         video_editor_service: Any = None,
+        autonomous_goal_worker: Any = None,
     ):
         self.ssh_client = ssh_client
         self.message_cache = message_cache
@@ -428,6 +437,7 @@ class AgentToolExecutor:
         self._web_article_extractor = web_article_extractor
         self._system_mastery_service = system_mastery_service
         self._video_editor_service = video_editor_service
+        self._autonomous_goal_worker = autonomous_goal_worker if autonomous_goal_worker is not None else _GOAL_WORKER_UNSET
 
         # DB Connection Pool
         from app.core.db import db_manager
@@ -533,6 +543,19 @@ class AgentToolExecutor:
             from app.services.system_mastery_service import SystemMasteryService
             self._system_mastery_service = SystemMasteryService(ssh_client=self.ssh_client)
         return self._system_mastery_service
+
+    def set_autonomous_goal_worker(self, worker: Any) -> None:
+        self._autonomous_goal_worker = worker
+
+    @property
+    def autonomous_goal_worker(self) -> Any:
+        if getattr(self, "_autonomous_goal_worker", _GOAL_WORKER_UNSET) is _GOAL_WORKER_UNSET:
+            try:
+                from app.services.autonomous_goal_worker import AutonomousGoalWorker
+                self._autonomous_goal_worker = AutonomousGoalWorker(tool_executor=self)
+            except Exception:
+                self._autonomous_goal_worker = None
+        return self._autonomous_goal_worker
 
     # Expose Action Risk Tri-Tier on class
     ACTION_TIER_1_SAFE = ACTION_TIER_1_SAFE
@@ -694,6 +717,14 @@ class AgentToolExecutor:
         "get_attack_history",
         "block_ip",
         "unblock_ip",
+        "run_command",
+    }
+    # ── R4 Conversational Goal Management Cluster ──
+    _TOOL_CLUSTER_GOALS = {
+        "create_autonomous_goal",
+        "list_autonomous_goals",
+        "cancel_autonomous_goal",
+        "get_system_health_report",
         "run_command",
     }
 
@@ -954,6 +985,16 @@ class AgentToolExecutor:
         r")\b",
         re.IGNORECASE,
     )
+    _SHORT_GOAL_RE = re.compile(
+        r"\b("
+        r"mục tiêu|muc tieu|goal|goals|autonomous|tự hành|tu hanh|"
+        r"lập kế hoạch|lap ke hoach|kế hoạch tự động|ke hoach tu dong|"
+        r"theo dõi và|theo doi va|bám sát|tự động theo dõi|tu dong theo doi|"
+        r"task tự động|task tu dong|tác vụ tự động|tac vu tu dong|"
+        r"đang theo dõi gì|đang theo dõi những gì|dang theo doi gi|dang theo doi nhung gi"
+        r")\b",
+        re.IGNORECASE,
+    )
 
     def _resolve_scoped_tool_names(
         self,
@@ -1169,6 +1210,19 @@ class AgentToolExecutor:
         is_docs = bool(self._SHORT_DOCS_RE.search(q))
         is_web_extract = bool(self._SHORT_WEB_DOWNLOAD_ARTICLE_RE.search(q))
         is_system_root = bool(self._SHORT_SYSTEM_ROOT_RE.search(q))
+        is_goal = bool(self._SHORT_GOAL_RE.search(q)) or any(k in q for k in (
+            "mục tiêu", "muc tieu", "goal", "goals", "autonomous", "tự hành", "tu hanh",
+            "lập kế hoạch", "lap ke hoach", "tiến trình tự động", "tien trinh tu dong",
+            "theo dõi tự động", "theo doi tu dong", "kế hoạch tự động", "ke hoach tu dong",
+            "danh sách mục tiêu", "danh sach muc tieu", "hủy mục tiêu", "huy muc tieu",
+            "xóa mục tiêu", "xoa muc tieu", "tạo mục tiêu", "tao muc tieu",
+            "đặt mục tiêu", "dat muc tieu", "cancel goal", "list goals", "create goal",
+            "autonomous goal", "bám sát", "bam sat", "theo dõi và",
+            "task tự động", "task tu dong", "các task tự động", "cac task tu dong",
+            "hủy task tự động", "huy task tu dong", "xóa task tự động", "xoa task tu dong",
+            "dừng task tự động", "dung task tu dong", "đang theo dõi những gì", "dang theo doi nhung gi",
+            "đang theo dõi gì", "dang theo doi gi"
+        ))
 
         if is_media_studio:
             selected.update(self._TOOL_CLUSTER_MEDIA)
@@ -1236,6 +1290,9 @@ class AgentToolExecutor:
 
         if is_task:
             selected.update(self._TOOL_CLUSTER_TASKS)
+
+        if is_goal:
+            selected.update(self._TOOL_CLUSTER_GOALS)
 
         if not selected:
             selected.update(self._TOOL_CLUSTER_CORE)
@@ -1305,8 +1362,27 @@ class AgentToolExecutor:
             is_enh_vid  = any(k in q for k in self._KW_ENHANCE_VIDEO)
             is_gen_thm  = any(k in q for k in self._KW_GENERATE_THUMBNAIL)
 
+            # R4 Conversational Goals intent flags
+            is_goal_list = any(k in q for k in (
+                "danh sách mục tiêu", "danh sach muc tieu", "list goals", "danh sách goal", "danh sach goal",
+                "xem mục tiêu", "xem muc tieu", "các mục tiêu", "cac muc tieu", "mục tiêu đang chạy", "muc tieu dang chay",
+                "tiến trình goal", "tien trinh goal", "các task tự động", "cac task tu dong",
+                "danh sách task", "danh sach task", "đang theo dõi những gì", "dang theo doi nhung gi",
+                "đang theo dõi gì", "dang theo doi gi"
+            ))
+            is_goal_cancel = any(k in q for k in (
+                "hủy mục tiêu", "huy muc tieu", "xóa mục tiêu", "xoa muc tieu", "cancel goal",
+                "dừng mục tiêu", "dung muc tieu", "hủy goal", "huy goal", "dừng goal", "dung goal",
+                "xóa goal", "xoa goal", "hủy task tự động", "huy task tu dong", "hủy task", "huy task",
+                "xóa task tự động", "xoa task tu dong", "xóa task", "xoa task",
+                "dừng task tự động", "dung task tu dong", "dừng task", "dung task"
+            ))
+
             priority_order: List[str] = [
                 # 1. Specialized Intent Boosters (Mỗi intent đưa các công cụ cốt lõi nhất lên đỉnh)
+                *(["list_autonomous_goals"] if (is_goal and is_goal_list) else []),
+                *(["cancel_autonomous_goal"] if (is_goal and is_goal_cancel) else []),
+                *(["create_autonomous_goal", "list_autonomous_goals", "cancel_autonomous_goal"] if is_goal else []),
                 *(["remove_text_from_video"] if is_rm_txt else []),
                 *(["add_subtitle_to_video"] if is_add_sub else []),
                 *(["apply_color_grade"] if is_clr_grd else []),
@@ -3321,6 +3397,62 @@ class AgentToolExecutor:
                     }
                 }
             },
+            # ── R4: Autonomous Goal Management ──
+            {
+                "type": "function",
+                "function": {
+                    "name": "create_autonomous_goal",
+                    "description": "Tạo một mục tiêu tự hành dài hạn (Autonomous Goal) hoặc tác vụ tự động có điều kiện kích hoạt. Hệ thống Autonomous Goal Worker sẽ tự động lập kế hoạch đa bước và thực thi ngầm trên máy chủ mà không làm phiền người dùng.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "goal": {
+                                "type": "string",
+                                "description": "Mô tả chi tiết mục tiêu cần đạt được (ví dụ: 'Theo dõi RAM mỗi 10 phút, nếu > 90% thì restart container dashboard_metrics_service và gửi báo cáo Telegram', 'Kiểm tra dung lượng đĩa hàng giờ và dọn dẹp nếu > 85%').",
+                            },
+                            "trigger_condition": {
+                                "type": "string",
+                                "description": "Điều kiện kích hoạt định kỳ hoặc theo ngưỡng số liệu (ví dụ: 'every 10m', 'ram > 90%', 'disk > 85%', 'immediate'). Bỏ trống nếu muốn chạy kế hoạch ngay lập tức.",
+                            },
+                        },
+                        "required": ["goal"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "list_autonomous_goals",
+                    "description": "Liệt kê danh sách tất cả các mục tiêu tự hành (Autonomous Goals) đang hoạt động, đang chờ kích hoạt hoặc mới hoàn thành trên máy chủ.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "status_filter": {
+                                "type": "string",
+                                "enum": ["all", "active", "completed", "failed"],
+                                "description": "Bộ lọc trạng thái mục tiêu (mặc định: 'active' để xem các task đang theo dõi).",
+                            },
+                        },
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "cancel_autonomous_goal",
+                    "description": "Hủy bỏ một mục tiêu tự hành đang theo dõi trên máy chủ theo ID mục tiêu.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "goal_id": {
+                                "type": "string",
+                                "description": "Mã định danh (Task ID hoặc Goal ID) của mục tiêu cần hủy.",
+                            },
+                        },
+                        "required": ["goal_id"],
+                    },
+                },
+            },
         ]
         filtered_tools: List[Dict[str, Any]] = []
         for t in tools:
@@ -3341,6 +3473,8 @@ class AgentToolExecutor:
 
             # Detect actively boosted tools from user query to protect them from being dropped
             protected_tools = set()
+            if any(k in q_lower for k in ("mục tiêu", "muc tieu", "goal", "goals", "tự hành", "tu hanh", "lập kế hoạch", "lap ke hoach", "hủy mục tiêu", "danh sách mục tiêu", "task tự động", "task tu dong", "theo dõi")):
+                protected_tools.update({"create_autonomous_goal", "list_autonomous_goals", "cancel_autonomous_goal"})
             if any(k in q_lower for k in ("tải mp3", "tai mp3", "nhạc", "nhac", "audio", "mp3", "bài hát", "bai hat")):
                 protected_tools.add("download_media_audio")
             if any(k in q_lower for k in ("tải video", "tai video", "video", "clip", "mp4", "down video", "tiktok", "youtube")):
@@ -3422,6 +3556,7 @@ class AgentToolExecutor:
                 "unblock_ip", "block_ip", "get_security_report", "get_weather",
                 "calculate", "convert_units", "query_database", "create_file_transfer_portal",
                 "list_files", "read_file_content", "write_file_content", "move_or_rename_file", "get_disk_usage",
+                "create_cron_job", "list_cron_jobs", "delete_cron_job",
                 "download_media_audio", "download_media_video", "get_system_health_report", "check_service_status",
                 "generate_video_thumbnail", "extract_frames", "remove_watermark_region", "enhance_video_quality",
                 "apply_color_grade", "stabilize_video", "concatenate_videos", "add_subtitle_to_video",
@@ -3443,7 +3578,11 @@ class AgentToolExecutor:
                         dropped = True
                         break
                 if not dropped:
-                    filtered_tools.pop()
+                    unprotected_cand = next((t for t in reversed(filtered_tools) if t.get("function", {}).get("name") not in protected_tools), None)
+                    if unprotected_cand is not None:
+                        filtered_tools.remove(unprotected_cand)
+                    else:
+                        filtered_tools.pop()
 
         return filtered_tools
 
@@ -5525,7 +5664,86 @@ class AgentToolExecutor:
                     )
                 return f"❌ Lỗi khi tối ưu hóa tài nguyên: {res.get('message', 'Không rõ nguyên nhân')}"
 
+            # ── R4: Autonomous Goal Management ──
+            if tool_name == "create_autonomous_goal":
+                goal_desc = str(tool_args.get("goal", "")).strip()
+                trigger = tool_args.get("trigger_condition")
+                worker = self.autonomous_goal_worker
+                if worker and hasattr(worker, "create_goal"):
+                    try:
+                        res = await worker.create_goal(goal=goal_desc, trigger_condition=trigger, chat_id=chat_id)
+                        if isinstance(res, dict):
+                            task_id = res.get("id") or res.get("task_id") or "N/A"
+                        elif isinstance(res, str):
+                            task_id = res
+                        else:
+                            task_id = str(res)
+                        return (
+                            f"🎯 **ĐÃ THIẾT LẬP MỤC TIÊU TỰ HÀNH**: `#{task_id}`\n"
+                            f"• **Mục tiêu**: {goal_desc}\n"
+                            f"• **Điều kiện kích hoạt**: {trigger or 'Thực thi ngay'}\n"
+                            f"• **Trạng thái**: Đã lập kế hoạch và chuyển giao cho Autonomous Goal Worker theo dõi ngầm."
+                        )
+                    except Exception as e:
+                        logger.warning("[AiAgent] worker.create_goal error: %s", e)
+                        return f"❌ Lỗi khi thiết lập mục tiêu tự hành: {e}"
 
+                import uuid as _uuid
+                task_id = f"goal_{_uuid.uuid4().hex[:8]}"
+                return (
+                    f"🎯 **ĐÃ THIẾT LẬP MỤC TIÊU TỰ HÀNH**: `#{task_id}`\n"
+                    f"• **Mục tiêu**: {goal_desc}\n"
+                    f"• **Điều kiện kích hoạt**: {trigger or 'Thực thi ngay'}\n"
+                    f"• **Trạng thái**: Đã lập kế hoạch và chuyển giao cho Autonomous Goal Worker theo dõi ngầm."
+                )
+
+            if tool_name == "list_autonomous_goals":
+                s_filter = tool_args.get("status_filter", "active")
+                worker = self.autonomous_goal_worker
+                if worker and hasattr(worker, "list_goals"):
+                    try:
+                        query_status = None if s_filter in ("active", "all", None) else s_filter
+                        goals = await worker.list_goals(status=query_status)
+                        if isinstance(goals, list):
+                            if s_filter == "active":
+                                goals = [g for g in goals if g.get("status") in ("pending", "running", "waiting_approval")]
+                            if not goals:
+                                return "📋 Hiện không có mục tiêu tự hành nào đang chạy ngầm trên máy chủ."
+                            lines = [f"📋 **DANH SÁCH MỤC TIÊU TỰ HÀNH ({len(goals)} mục tiêu)**:"]
+                            for g in goals:
+                                gid = g.get("id", "N/A")
+                                gdesc = g.get("goal", "")
+                                gst = g.get("status", "unknown")
+                                gstep = g.get("current_step", 0)
+                                total_steps = len(g.get("steps", []))
+                                gtrig = g.get("trigger_condition") or "immediate"
+                                lines.append(f"• `#{gid}` [{gst.upper()} - Bước {gstep}/{total_steps}]: \"{gdesc}\" (Kích hoạt: {gtrig})")
+                            return "\n".join(lines)
+                        elif isinstance(goals, dict):
+                            return json.dumps(goals, ensure_ascii=False, indent=2)
+                        return str(goals)
+                    except Exception as e:
+                        logger.warning("[AiAgent] worker.list_goals error: %s", e)
+                        return f"❌ Lỗi khi lấy danh sách mục tiêu: {e}"
+                return "📋 Hiện không có mục tiêu tự hành nào đang chạy ngầm trên máy chủ."
+
+            if tool_name == "cancel_autonomous_goal":
+                g_id = str(tool_args.get("goal_id", "")).strip()
+                worker = self.autonomous_goal_worker
+                if worker and hasattr(worker, "cancel_goal"):
+                    try:
+                        ok = await worker.cancel_goal(goal_id=g_id)
+                        if isinstance(ok, bool):
+                            if ok:
+                                return f"✅ Đã hủy bỏ mục tiêu tự hành `#{g_id}` thành công."
+                            return f"⚠️ Không thể hủy mục tiêu `#{g_id}` (Mục tiêu không tồn tại hoặc đã ở trạng thái kết thúc)."
+                        elif isinstance(ok, dict):
+                            return json.dumps(ok, ensure_ascii=False)
+                        return str(ok)
+                    except Exception as e:
+                        logger.warning("[AiAgent] worker.cancel_goal error: %s", e)
+                        return f"❌ Lỗi khi hủy mục tiêu `{g_id}`: {e}"
+                return f"⚠️ Autonomous Goal Worker chưa sẵn sàng. Không thể hủy mục tiêu `#{g_id}`."
 
             return f"Unknown tool: {tool_name}"
 

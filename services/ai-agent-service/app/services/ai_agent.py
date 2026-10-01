@@ -62,6 +62,8 @@ def _sanitize_for_log(data: Any) -> Any:
 
 # How many ReAct loop iterations the agent may take before giving up
 MAX_AGENT_ITERATIONS = 8
+# R2: Self-Evaluation & Reflection Loop max cycles
+MAX_REFLECTION_CYCLES = 2
 # How many messages to keep in the sliding conversation window
 MAX_HISTORY_MESSAGES = 10
 
@@ -283,6 +285,12 @@ class AiAgentService:
     def set_dream_engine(self, dream_engine: Any) -> None:
         """Inject the SubconsciousDreamEngine for overnight SWS & REM sleep consolidation."""
         self.dream_engine = dream_engine
+
+    def set_autonomous_goal_worker(self, worker: Any) -> None:
+        """Inject AutonomousGoalWorker for conversational goal management."""
+        self.autonomous_goal_worker = worker
+        if hasattr(self, 'tools'):
+            self.tools.set_autonomous_goal_worker(worker)
 
     def is_configured(self) -> bool:
         return self.llm_router.has_active_providers
@@ -611,8 +619,10 @@ Bạn là "Tiểu Bảo Bảo" — Trợ lý AI Tự Hành cấp cao, Vệ Binh 
         • Ghi chú & Lịch hẹn: list_notes, search_notes, list_scheduled_reminders, list_cron_jobs
         • Mạng & Tiện ích: get_ngrok_status, get_network_info, get_weather, get_server_location, get_server_active_sessions, server_capture_screenshot, remember_for_later...
         • An ninh & Phòng thủ tự hành: get_security_report, list_blocked_ips, get_honeypot_log, get_attack_history
+        • Quản lý mục tiêu tự hành: list_autonomous_goals
       - Tier 2 (Reversible Changes / Low-to-Moderate Risk Operational): Thao tác có thể khôi phục hoặc thay đổi trạng thái dịch vụ có kiểm soát:
         • Quản trị hệ thống toàn quyền: manage_docker_containers, optimize_system_resources, execute_system_script (nếu script an toàn hoặc có confirm="CONFIRM_DANGEROUS_ACTION")
+        • Quản trị mục tiêu tự hành: create_autonomous_goal, cancel_autonomous_goal
         • Quản lý dịch vụ & mạng: restart_service (yêu cầu confirm="RESTART_CONFIRMED" với prod containers), restart_ngrok_tunnel (confirm="RESTART_CONFIRMED")
         • Quản lý tác vụ & thông báo: schedule_reminder, cancel_reminder, create_note, delete_note, create_cron_job, delete_cron_job (confirm="DELETE_CONFIRMED"), send_email, generate_report
         • Quản lý file: write_file_content (chỉ trong /home/kirito/, /tmp/), move_or_rename_file
@@ -913,7 +923,20 @@ Khi anh Mạnh đưa ra nhận định sai, ngụy biện logic, hoặc đề xu
     • Yêu cầu trích xuất frame → GỌI `extract_frames` NGAY
   ⚠️ Xử lý ngữ cảnh đường dẫn video: Khi đã có đường dẫn tệp trong prompt hoặc lịch sử, dùng ngay đường dẫn đó để gọi tool. Nếu chưa có đường dẫn video: Hỏi ngay "Anh gửi đường dẫn file video hoặc link cho em nhé?" — CẤM tự ý từ chối thực hiện hay giải thích lý do không làm được.
 
-
+━━━ 2u. GIAO THỨC QUẢN LÝ MỤC TIÊU TỰ HÀNH & KẾ HOẠCH DÀI HẠN (AUTONOMOUS GOAL MANAGEMENT PROTOCOL) ━━━
+⚡ ĐẶC QUYỀN ĐIỀU HÀNH MỤC TIÊU ĐA BƯỚC KHÔNG CẦN GIÁM SÁT:
+• Em không chỉ là một trợ lý phản ứng từng lượt, mà là một True Autonomous AI Agent có khả năng tự nhận mục tiêu, tự lập kế hoạch đa bước và tự động theo dõi thực thi ngầm trên máy chủ kirito-server.
+• 🎯 PHẢN XẠ THỰC THI (TOOL-FIRST IMPERATIVE):
+  - Khi anh Mạnh giao một mục tiêu dài hạn, một nhiệm vụ đa bước hoặc tác vụ có điều kiện kích hoạt (ví dụ: "Em theo dõi server mỗi 10 phút, nếu RAM > 90% thì tự restart container và báo anh", "Tự động kiểm tra dung lượng đĩa và dọn dẹp nếu đầy", "Lập kế hoạch tối ưu server giúp anh", "Đặt mục tiêu..."):
+    👉 BẮT BUỘC gọi ngay công cụ `create_autonomous_goal(goal=..., trigger_condition=...)` ở ngay lượt đầu tiên (Turn 1)!
+    ⛔ TUYỆT ĐỐI CẤM trả lời văn bản hứa hẹn suông ("dạ em sẽ nhớ", "em sẽ để ý") mà không gọi tool.
+  - Khi anh Mạnh muốn xem các mục tiêu hoặc tiến trình tự động đang chạy ngầm ("danh sách mục tiêu", "các task tự động đang chạy", "xem tiến trình goal", "đang theo dõi những gì"):
+    👉 BẮT BUỘC gọi ngay `list_autonomous_goals(status_filter="active")`.
+  - Khi anh Mạnh yêu cầu dừng hoặc hủy bỏ một mục tiêu tự hành ("hủy mục tiêu...", "dừng theo dõi goal...", "xóa task tự động #goal_..."):
+    👉 BẮT BUỘC gọi ngay `cancel_autonomous_goal(goal_id=...)`.
+• 💬 PHONG THÁI PHẢN HỒI (BLUF):
+  - Luôn xác nhận dứt khoát mã mục tiêu (Goal ID), tóm tắt các bước kế hoạch tự hành và điều kiện kích hoạt rõ ràng.
+  - Nhắc nhở anh Mạnh rằng em sẽ chủ động báo cáo tiến độ qua Telegram khi mục tiêu hoàn tất hoặc khi có biến cố xảy ra mà không làm phiền anh Mạnh ở các bước trung gian.
 
 ━━━ 3. QUY TẮC ĐỊNH DẠNG & KHIÊM TỐN NHẬN THỨC (EPISTEMIC HUMILITY) ━━━
 • Xưng "em", gọi "anh Mạnh". 100% Tiếng Việt tự nhiên, đĩnh đạc, không lộ chuỗi suy nghĩ nội bộ.
@@ -1082,12 +1105,95 @@ Khi anh Mạnh đưa ra nhận định sai, ngụy biện logic, hoặc đề xu
     async def _flush_pending_photos(self, pending_photos: list, chat_id: Optional[str]) -> None:
         await self.tools.flush_pending_photos(pending_photos, chat_id)
 
+    async def _evaluate_tool_step(
+        self,
+        goal: str,
+        tool_name: str,
+        tool_args: dict,
+        tool_result: str,
+        step_instruction: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        R2: Fast LLM Semantic Evaluation via Groq pool (llama-3.1-8b-instant, ~50ms).
+        Evaluates whether the tool output (Observation) achieved or advanced the Goal.
+        Zero Latency Gating: returns SUCCESS immediately if not goal or System 1 simple query.
+        """
+        if not goal or not tool_name:
+            return {"achieved": True, "status": "SUCCESS", "reflection": ""}
+
+        # Zero latency gating: if System 1 simple query, bypass evaluation
+        if getattr(self, "_current_complexity", "complex") == "simple":
+            return {"achieved": True, "status": "SUCCESS", "reflection": ""}
+
+        clean_args = _sanitize_for_log(tool_args) if tool_args else {}
+        obs_snippet = tool_result[:600] if tool_result else "Không có kết quả trả về."
+
+        eval_messages = [
+            {
+                "role": "system",
+                "content": (
+                    "Bạn là Bộ Đánh Giá Phản Tự Thân (Self-Evaluation Reflex Engine) của AI Agent.\n"
+                    "Nhiệm vụ: Phân tích nhanh xem kết quả của công cụ (Observation) đã hoàn thành Mục Tiêu (Goal) chưa.\n"
+                    "Quy tắc:\n"
+                    "1. Trả về DUY NHẤT một chuỗi JSON hợp lệ, không có markdown, không có thẻ code block, không có giải thích mở đầu.\n"
+                    "2. Cấu trúc JSON bắt buộc:\n"
+                    "{\n"
+                    '  "achieved": true | false,\n'
+                    '  "status": "SUCCESS" | "CONTINUE" | "FATAL_ERROR",\n'
+                    '  "reflection": "<Nhận xét ngắn gọn dưới 30 từ: Đã có gì, còn thiếu gì hoặc đề xuất hành động tiếp theo>"\n'
+                    "}"
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"Mục tiêu (Goal): {goal}\n"
+                    + (f"Chỉ dẫn bước: {step_instruction}\n" if step_instruction else "")
+                    + f"Công cụ (Action): {tool_name}({json.dumps(clean_args, ensure_ascii=False)})\n"
+                    f"Kết quả (Observation): {obs_snippet}"
+                ),
+            },
+        ]
+
+        try:
+            eval_resp = await self.llm_router.complete(
+                messages=eval_messages,
+                temperature=0.0,
+                max_tokens=80,
+                requested_model="llama-3.1-8b-instant",
+            )
+            if not eval_resp or "choices" not in eval_resp or not eval_resp["choices"]:
+                return {"achieved": True, "status": "SUCCESS", "reflection": ""}
+
+            content = eval_resp["choices"][0].get("message", {}).get("content", "").strip()
+            # Strip markdown code fence if wrapped
+            content = re.sub(r"^```(?:json)?\s*|\s*```$", "", content, flags=re.MULTILINE).strip()
+
+            # Parse JSON safely
+            json_match = re.search(r"\{.*\}", content, flags=re.DOTALL)
+            if json_match:
+                parsed = json.loads(json_match.group(0))
+            else:
+                parsed = json.loads(content)
+
+            return {
+                "achieved": bool(parsed.get("achieved", True)),
+                "status": str(parsed.get("status", "SUCCESS")),
+                "reflection": str(parsed.get("reflection", "")).strip(),
+            }
+        except Exception as e:
+            logger.warning("[AiAgent] Fast evaluation bypass due to parse/network error: %s", e)
+            return {"achieved": True, "status": "SUCCESS", "reflection": ""}
 
     # ──────────────────────────────────────────────────────────────────────────
     # Main Chat Loop (ReAct)
     # ──────────────────────────────────────────────────────────────────────────
 
-    async def chat(self, chat_id: str, user_message: str) -> str:
+    async def process_message(self, chat_id: str, user_message: str, **kwargs: Any) -> str:
+        """Alias for chat() to support conversational and worker pipeline interfaces."""
+        return await self.chat(chat_id, user_message, **kwargs)
+
+    async def chat(self, chat_id: str, user_message: str, **kwargs: Any) -> str:
         if not self.is_configured():
             return "AI chưa được cấu hình. Vui lòng thêm ít nhất 1 GROQ_API_KEY hoặc OPENROUTER_API_KEY vào file .env."
 
@@ -1287,6 +1393,15 @@ Khi anh Mạnh đưa ra nhận định sai, ngụy biện logic, hoặc đề xu
         _consecutive_tool_failures: int = 0
         _reflexion_triggered: bool = False  # Prevent spamming lesson extraction per turn
 
+        # ── R2: Self-Evaluation & Reflection Loop variables ───────────────────
+        _reflection_cycles: int = 0
+        _goal = (
+            kwargs.get("goal")
+            or kwargs.get("autonomous_goal")
+            or (kwargs.get("context", {}).get("goal") if isinstance(kwargs.get("context"), dict) else None)
+        )
+        _all_executed_actions: list = []
+
         # ── v3.0: Neuroscience Variables ─────────────────────────────────────
         # P3 (Dopamine RPE): collect all tool outputs to compute prediction error later
         _all_tool_results: list = []
@@ -1311,6 +1426,15 @@ Khi anh Mạnh đưa ra nhận định sai, ngụy biện logic, hoặc đề xu
             "[AiAgent] 🧠 Complexity: %s | Intent: %s | query_len: %d",
             _complexity, _intent, len(user_message) if user_message else 0
         )
+
+        # R2: Detect explicit multi-step goal intent if not provided in kwargs
+        if not _goal and _complexity == "complex":
+            _EXPLICIT_GOAL_PATTERN = re.compile(
+                r'\b(hãy theo dõi|theo dõi liên tục|kiểm tra và sửa|tự động làm|tự động khắc phục|mục tiêu|kế hoạch đa bước)\b',
+                re.IGNORECASE | re.UNICODE
+            )
+            if _EXPLICIT_GOAL_PATTERN.search(user_message):
+                _goal = user_message
 
         # Critical gate: dangerous commands require explicit confirmation
         if _complexity == "critical":
@@ -1356,6 +1480,7 @@ Khi anh Mạnh đưa ra nhận định sai, ngụy biện logic, hoặc đề xu
                 _is_attachment
                 or iteration >= _force_synth_threshold
                 or len(executed_commands) >= _max_tools_threshold
+                or _reflection_cycles >= MAX_REFLECTION_CYCLES
             )
 
             messages = self._build_compact_messages_for_llm(
@@ -1539,6 +1664,7 @@ Khi anh Mạnh đưa ra nhận định sai, ngụy biện logic, hoặc đề xu
                     return {
                         "call_id": call_id,
                         "fn_name": fn_name,
+                        "args": fn_args,
                         "tool_result": tool_result,
                         "is_failure": _is_tool_failure,
                     }
@@ -1612,6 +1738,52 @@ Khi anh Mạnh đưa ra nhận định sai, ngụy biện logic, hoặc đề xu
                     if force_synthesis:
                         # Only inject when entering synthesis — avoid mid-loop noise
                         history.append({"role": "user", "content": _conflict_warning})
+
+                # ── R2: Self-Evaluation & Reflection Loop Integration ────────
+                if _goal and not force_synthesis and executed_items:
+                    _all_executed_actions.extend([
+                        {"tool": it["fn_name"], "result": it["tool_result"][:300]}
+                        for it in executed_items
+                    ])
+                    last_item = executed_items[-1]
+                    eval_result = await self._evaluate_tool_step(
+                        goal=_goal,
+                        tool_name=last_item["fn_name"],
+                        tool_args=last_item.get("args") or {},
+                        tool_result=last_item["tool_result"],
+                    )
+
+                    if not eval_result.get("achieved", True):
+                        _reflection_cycles += 1
+                        reflection_text = eval_result.get("reflection", "Mục tiêu chưa đạt.").strip()
+                        logger.info(
+                            "[AiAgent][iter=%d] 🔄 R2 Reflection Cycle #%d triggered: %s",
+                            iteration, _reflection_cycles, reflection_text,
+                        )
+
+                        # Inject Bounded Reflection into prompt for next iteration
+                        reflection_prompt = (
+                            f"\n\n[Reflection: {reflection_text}]\n"
+                            f"[TỰ ĐÁNH GIÁ - PHẢN BIỆN (Chu kỳ {_reflection_cycles}/{MAX_REFLECTION_CYCLES})]:\n"
+                            f"- Nhận định: {reflection_text}\n"
+                            f"- Yêu cầu: Bước tiếp theo cần điều chỉnh phương án hoặc tham số để hoàn thành mục tiêu: {_goal}."
+                        )
+                        history.append({"role": "user", "content": reflection_prompt})
+
+                        if _reflection_cycles >= MAX_REFLECTION_CYCLES:
+                            logger.warning(
+                                "[AiAgent][iter=%d] 🛑 Max reflection cycles (%d) reached. Forcing synthesis & saving lesson.",
+                                iteration, MAX_REFLECTION_CYCLES,
+                            )
+                            force_synthesis = True
+                            if self.memory_service:
+                                asyncio.create_task(
+                                    self.memory_service.record_reflection_failure(
+                                        goal=_goal,
+                                        action_history=list(_all_executed_actions),
+                                        reflection_summary=reflection_text,
+                                    )
+                                )
 
                 continue  # Feed observation back into the next LLM call
 
@@ -2087,3 +2259,8 @@ Khi anh Mạnh đưa ra nhận định sai, ngụy biện logic, hoặc đề xu
                 )
             repaired[key] = best_candidate
         return repaired
+
+
+# Alias for backward-compatibility and clean imports
+AIAgent = AiAgentService
+

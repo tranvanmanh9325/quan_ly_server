@@ -353,6 +353,21 @@ async def lifespan(app: FastAPI):
     telegram_bot.set_memory_service(memory_service)
     logger.info("[MemoryService] Self-learning memory engine initialized ✓")
 
+    # Initialize AutonomousGoalWorker (Milestone 1 - R1)
+    from app.services.autonomous_goal_worker import AutonomousGoalWorker
+    autonomous_goal_worker = AutonomousGoalWorker(
+        tool_executor=getattr(ai_agent, "tools", None),
+        telegram_bot=telegram_bot,
+        llm_router=llm_router,
+        memory_service=memory_service,
+        pool=getattr(db_manager, "_pool", None),
+        poll_interval_seconds=getattr(settings, "AUTONOMOUS_GOAL_POLL_INTERVAL_SECONDS", 30),
+    )
+    await autonomous_goal_worker.ensure_tables()
+    if hasattr(ai_agent, "set_goal_worker"):
+        ai_agent.set_goal_worker(autonomous_goal_worker)
+    logger.info("[AutonomousGoalWorker] Autonomous Goal Engine initialized ✓")
+
     # Initialize Phase 5B: Proactive Intelligence (Curiosity-Driven Health Scanner)
     proactive_service = ProactiveIntelligenceService(
         ssh_client=ssh_client,
@@ -385,6 +400,8 @@ async def lifespan(app: FastAPI):
     app.state.security_alert_engine = alert_engine
     app.state.security_monitor = sec_monitor
     app.state.honeypot_service = honeypot_service
+    app.state.autonomous_goal_worker = autonomous_goal_worker
+    app.state.goal_worker = autonomous_goal_worker
 
     # 5. Start background workers
     telegram_task        = asyncio.create_task(telegram_bot.start_polling())
@@ -399,12 +416,19 @@ async def lifespan(app: FastAPI):
     heartbeat_task       = asyncio.create_task(cognitive_heartbeat_loop(ai_agent, interval_sec=30))
     media_sweeper_task   = asyncio.create_task(media_ttl_sweeper_loop(interval_sec=600))
     transfer_sweeper_task = asyncio.create_task(transfer_ttl_sweeper_loop(interval_sec=600))
+    autonomous_task      = asyncio.create_task(autonomous_goal_worker.start())
 
     yield
 
     logger.info("Shutting down AI Agent & 9Router Service...")
     telegram_bot.stop()
     proactive_service.stop()
+
+    try:
+        await autonomous_goal_worker.stop()
+        logger.info("[AutonomousGoalWorker] Stopped cleanly on lifespan teardown ✓")
+    except Exception as e:
+        logger.error("[AutonomousGoalWorker] Error stopping during shutdown: %s", e)
 
     # Gracefully stop Security Services (drains pending alerts, closes sockets, cancels tasks)
     try:
@@ -437,11 +461,13 @@ async def lifespan(app: FastAPI):
     heartbeat_task.cancel()
     media_sweeper_task.cancel()
     transfer_sweeper_task.cancel()
+    autonomous_task.cancel()
     try:
         await asyncio.gather(
             telegram_task, fb_scan_task, tiktok_scan_task, reminder_task,
             rtk_persist_task, proactive_task, consolidation_task, schema_task,
             dream_task, heartbeat_task, media_sweeper_task, transfer_sweeper_task,
+            autonomous_task,
             return_exceptions=True,
         )
     except Exception:

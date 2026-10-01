@@ -50,6 +50,9 @@ _CORE_CONTAINERS = [
     "dashboard_db",
 ]
 
+# R3 Auto-Remediation Cooldown (30 minutes per action)
+_REMEDIATION_COOLDOWN_SECONDS = 1800
+
 
 class ProactiveIntelligenceService:
     """
@@ -69,6 +72,8 @@ class ProactiveIntelligenceService:
         self._tg  = telegram_bot
         self._interval = scan_interval
         self._running = False
+        self._remediation_cooldowns: dict[str, datetime] = {}
+        self._remediation_cooldown_seconds: int = _REMEDIATION_COOLDOWN_SECONDS
 
     async def start(self) -> None:
         """Start the background proactive scan loop."""
@@ -138,6 +143,16 @@ class ProactiveIntelligenceService:
         if not alerts:
             logger.info("[Proactive] ✅ All checks passed. No anomalies detected.")
             return
+
+        # ── R3: Tier 1 Safe Auto-Remediation Execution ───────────────────────
+        for alert in alerts:
+            try:
+                remediation = self._decide_remediation(alert)
+                if remediation and remediation.get("auto_execute") is True:
+                    logger.info("[Proactive] 🛠️ Initiating auto-remediation for: %s", str(alert)[:60])
+                    await self._execute_remediation(remediation, alert)
+            except Exception as rem_err:
+                logger.error("[Proactive] Error executing auto-remediation: %s", rem_err)
 
         # Compose and send Telegram alert
         msg = (
@@ -447,6 +462,252 @@ class ProactiveIntelligenceService:
         except Exception as e:
             logger.debug("[Proactive] _check_core_containers error: %s", e)
             return ""
+
+    # ── R3: Auto-Remediation & Self-Healing Engine ───────────────────────────
+
+    def _decide_remediation(self, alert: Any) -> Optional[dict[str, Any]]:
+        """
+        Decide remediation action based on alert contents using Tri-Tier Risk Classification.
+
+        Tier 1 SAFE Actions (auto_execute=True):
+          - docker_prune: docker system prune -f (disk full / root partition > threshold)
+          - cleanup_logs: journalctl --vacuum-time=3d (log buildup / journalctl issues)
+          - drop_caches: sync && echo 3 > /proc/sys/vm/drop_caches (RAM / Swap high)
+
+        Tier 2+ Actions (auto_execute=False, requires human approval):
+          - restart_container: docker restart <target> (container crash / flapping)
+          - renew_ssl: certbot renew (SSL cert expiring)
+        """
+        if isinstance(alert, dict):
+            alert_str = str(alert.get("message") or alert.get("text") or alert.get("alert") or alert).lower()
+        else:
+            alert_str = str(alert).lower()
+
+        if not alert_str.strip():
+            return None
+
+        # Tier 1: Log cleanup
+        if any(k in alert_str for k in ("log tích tụ", "dọn log", "cleanup_logs", "vacuum-time", "nhật ký hệ thống")):
+            return {
+                "action_key": "cleanup_logs",
+                "tier": 1,
+                "command": "journalctl --vacuum-time=3d",
+                "metric_type": "disk",
+                "auto_execute": True,
+                "description": "Tự động dọn dẹp log hệ thống",
+            }
+
+        # Tier 1: High RAM / Swap (checked before disk because swap alerts may mention Disk Thrashing)
+        if any(k in alert_str for k in ("ram", "swap", "bộ nhớ", "drop_caches")):
+            return {
+                "action_key": "drop_caches",
+                "tier": 1,
+                "command": "sync && echo 3 > /proc/sys/vm/drop_caches",
+                "metric_type": "ram",
+                "auto_execute": True,
+                "description": "Giải phóng bộ nhớ đệm RAM",
+            }
+
+        # Tier 1: Disk full / root partition
+        if any(k in alert_str for k in ("đĩa", "disk", "root (/)", "phân vùng root")):
+            return {
+                "action_key": "docker_prune",
+                "tier": 1,
+                "command": "docker system prune -f",
+                "metric_type": "disk",
+                "auto_execute": True,
+                "description": "Tự động dọn rác Docker (dangling images/containers)",
+            }
+
+        # Tier 2: Container restarts or core container failures
+        if any(k in alert_str for k in ("container", "restart", "core container", "crash")):
+            return {
+                "action_key": "restart_container",
+                "tier": 2,
+                "command": "docker restart container",
+                "metric_type": "container",
+                "auto_execute": False,
+                "description": "Khởi động lại container",
+            }
+
+        # Tier 2: SSL certificate expiry
+        if any(k in alert_str for k in ("ssl", "cert", "chứng chỉ")):
+            return {
+                "action_key": "renew_ssl",
+                "tier": 2,
+                "command": "certbot renew",
+                "metric_type": "ssl",
+                "auto_execute": False,
+                "description": "Gia hạn chứng chỉ SSL",
+            }
+
+        return None
+
+    async def _get_metric_snapshot(self, metric_type: str) -> dict[str, Any]:
+        """Capture current system metric snapshot before/after remediation."""
+        snapshot: dict[str, Any] = {
+            "metric_type": metric_type,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "used_pct": 0.0,
+            "free_gb": 0.0,
+        }
+        try:
+            if not self._ssh:
+                return snapshot
+
+            if metric_type == "disk":
+                out = await self._ssh.run_command("df -h / | awk 'NR==2 {print $5, $4, $3}'")
+                if out and out.strip():
+                    parts = out.strip().split()
+                    pct_str = parts[0].replace("%", "").strip() if len(parts) > 0 else "0"
+                    avail_str = parts[1].strip() if len(parts) > 1 else ""
+                    used_str = parts[2].strip() if len(parts) > 2 else ""
+
+                    try:
+                        snapshot["used_pct"] = float(pct_str)
+                    except ValueError:
+                        pass
+                    snapshot["available"] = avail_str
+                    snapshot["used"] = used_str
+
+                    if avail_str:
+                        num_match = re.search(r"([\d\.]+)\s*([GMK]?)", avail_str, re.IGNORECASE)
+                        if num_match:
+                            val = float(num_match.group(1))
+                            unit = num_match.group(2).upper()
+                            if unit == "G":
+                                snapshot["free_gb"] = val
+                            elif unit == "M":
+                                snapshot["free_gb"] = round(val / 1024.0, 2)
+                            elif unit == "K":
+                                snapshot["free_gb"] = round(val / (1024.0 * 1024.0), 2)
+                            else:
+                                snapshot["free_gb"] = val
+
+            elif metric_type == "ram":
+                out = await self._ssh.run_command("free -m | awk 'NR==2 {print $3, $7, $2}'")
+                if out and out.strip():
+                    parts = out.strip().split()
+                    if len(parts) >= 3:
+                        used_mb = float(parts[0]) if parts[0].isdigit() else 0.0
+                        avail_mb = float(parts[1]) if parts[1].isdigit() else 0.0
+                        total_mb = float(parts[2]) if parts[2].isdigit() else 1.0
+                        snapshot["used_mb"] = used_mb
+                        snapshot["available_mb"] = avail_mb
+                        snapshot["total_mb"] = total_mb
+                        snapshot["used_pct"] = round((used_mb * 100.0) / max(total_mb, 1.0), 1)
+                        snapshot["free_gb"] = round(avail_mb / 1024.0, 2)
+        except Exception as exc:
+            logger.debug("[Proactive] Error capturing metric snapshot (%s): %s", metric_type, exc)
+
+        return snapshot
+
+    async def _execute_remediation(self, remediation: dict[str, Any], alert: Any) -> bool:
+        """
+        Execute safe auto-remediation (Tier 1 Safe only) with cooldown, before/after metrics,
+        and proactive Telegram reporting.
+        """
+        try:
+            action_key = remediation.get("action_key", "unknown")
+            now = datetime.now(timezone.utc)
+
+            # 1. Cooldown Check (30 minutes)
+            last_run = self._remediation_cooldowns.get(action_key)
+            if last_run and (now - last_run).total_seconds() < self._remediation_cooldown_seconds:
+                remaining = int(self._remediation_cooldown_seconds - (now - last_run).total_seconds())
+                logger.info(
+                    "[Proactive] ⏳ Hành động '%s' đang trong cooldown (%ds còn lại). Bỏ qua tự động thực thi.",
+                    action_key,
+                    remaining,
+                )
+                return False
+
+            # 2. Risk Tri-Tier Policy Check
+            if not remediation.get("auto_execute", False) or remediation.get("tier", 2) > 1:
+                logger.warning(
+                    "[Proactive] ⚠️ Hành động '%s' thuộc Tier %s (auto_execute=False). Yêu cầu phê duyệt từ người dùng.",
+                    action_key,
+                    remediation.get("tier", 2),
+                )
+                return False
+
+            cmd = remediation.get("command")
+            if not cmd:
+                return False
+
+            metric_type = remediation.get("metric_type", "disk")
+
+            # 3. Before Metric Snapshot
+            before_metric = await self._get_metric_snapshot(metric_type)
+
+            # 4. Command Execution via SSH
+            logger.info("[Proactive] 🛠️ Bắt đầu tự động thực thi '%s': %s", action_key, cmd)
+            if self._ssh:
+                await self._ssh.run_command(cmd)
+
+            # 5. After Metric Snapshot
+            after_metric = await self._get_metric_snapshot(metric_type)
+
+            # 6. Efficiency Calculation
+            before_pct = before_metric.get("used_pct", 0.0)
+            after_pct = after_metric.get("used_pct", 0.0)
+            before_free = before_metric.get("free_gb", 0.0)
+            after_free = after_metric.get("free_gb", 0.0)
+            freed_gb = round(after_free - before_free, 2)
+            pct_diff = round(before_pct - after_pct, 1)
+
+            if freed_gb > 0:
+                efficiency = f"Đã giải phóng thành công <b>{freed_gb:.1f}GB</b> dung lượng!"
+            elif pct_diff > 0:
+                efficiency = f"Đã giảm <b>{pct_diff}%</b> mức sử dụng!"
+            else:
+                efficiency = "Lệnh đã thực thi thành công, hệ thống đã ổn định."
+
+            # 7. Update Cooldown Timestamp
+            self._remediation_cooldowns[action_key] = now
+
+            # 8. Dispatch Telegram Report
+            desc = remediation.get("description", action_key)
+            tier = remediation.get("tier", 1)
+
+            report_lines = [
+                "🛠️ <b>Tiểu Bảo Bảo — Tự động khắc phục sự cố (Auto-Remediation)</b>",
+                "<i>Em phát hiện bất thường và đã tự động thực thi biện pháp khắc phục an toàn:</i>",
+                "",
+                f"• <b>Hành động</b>: {desc} (<code>{cmd}</code>)",
+            ]
+            if before_pct or before_free:
+                report_lines.append(f"• <b>Trước khi xử lý</b>: {before_pct:.0f}% dung lượng (còn trống {before_free:.1f}GB)")
+            if after_pct or after_free:
+                report_lines.append(f"• <b>Sau khi xử lý</b>: {after_pct:.0f}% dung lượng (còn trống {after_free:.1f}GB)")
+            report_lines.append(f"• <b>Hiệu quả</b>: {efficiency}")
+            report_lines.append(f"• <b>Trạng thái</b>: ✅ Hoàn tất an toàn (Tier {tier} Safe Action)")
+
+            report = "\n".join(report_lines)
+
+            if self._tg and hasattr(self._tg, "send_message"):
+                chat_id = getattr(self._tg, "chat_id", "")
+                if chat_id:
+                    await self._tg.send_message(chat_id, report)
+                    logger.info("[Proactive] 📢 Sent remediation report to Telegram.")
+
+            # 9. Record Memory Episode
+            if self._mem and hasattr(self._mem, "record_episode"):
+                summary = f"Auto-remediation executed: {action_key} ({cmd}) — {efficiency}"
+                asyncio.create_task(
+                    self._mem.record_episode(
+                        event_summary=summary,
+                        event_type="action",
+                        severity="medium",
+                        salience_score=0.8,
+                        tags=["proactive_remediation", "auto_healed", action_key],
+                    )
+                )
+
+            return True
+        except Exception as exc:
+            logger.error("[Proactive] Error during _execute_remediation for %s: %s", remediation.get("action_key"), exc)
+            return False
 
     async def run_patrol_scan(self) -> dict[str, Any]:
         """

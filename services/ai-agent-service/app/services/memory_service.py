@@ -289,6 +289,58 @@ class AgentMemoryService:
                 )
             )
 
+    async def record_reflection_failure(
+        self,
+        goal: str,
+        action_history: List[Dict[str, Any]],
+        reflection_summary: str,
+        root_cause: str = RootCauseCategory.TOOL_FAILURE,
+    ) -> Optional[int]:
+        """
+        R2: Bounded Reflection Lesson Recording.
+        Lưu vết thất bại sau khi chạm trần reflection cycles và tự động trích xuất bài học.
+        Không phụ thuộc cứng vào DB: nếu không có DB connection, ghi log warning và trả về None.
+        """
+        try:
+            context_snapshot = json.dumps({
+                "goal": goal,
+                "action_history": action_history,
+                "reflection_summary": reflection_summary,
+            }, ensure_ascii=False)
+
+            memory_id = await self._insert_memory(
+                event_type="reflection_failure",
+                user_input=goal,
+                original_response=reflection_summary,
+                corrected_response=None,
+                context_snapshot=context_snapshot,
+                root_cause_category=root_cause,
+            )
+
+            tools_used = [str(a.get("tool") or a.get("fn_name")) for a in action_history[-2:]] if action_history else []
+            tools_str = f"các công cụ {tools_used}" if tools_used else "công cụ"
+            lesson_text = (
+                f"Khi thực hiện mục tiêu '{goal[:80]}', thao tác với {tools_str} "
+                f"thất bại do: {reflection_summary[:120]}. "
+                "Cần kiểm tra kỹ tham số hoặc áp dụng phương án thay thế."
+            )
+            lesson_id = await self._insert_lesson(
+                trigger_pattern=goal[:60],
+                lesson_text=lesson_text,
+                event_type="reflection_lesson",
+                confidence=0.75,
+                is_search_grounded=False,
+                search_query=None,
+            )
+            if memory_id and lesson_id:
+                await self._link_memory_to_lesson(memory_id, lesson_id)
+            if lesson_id:
+                self._cache_dirty = True
+            return memory_id
+        except Exception as e:
+            logger.warning("[MemoryService] record_reflection_failure error: %s", e)
+            return None
+
     # ──────────────────────────────────────────────────────────────────────────
     # Public API: Lesson Management
     # ──────────────────────────────────────────────────────────────────────────

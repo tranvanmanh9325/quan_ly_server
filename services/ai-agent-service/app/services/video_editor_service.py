@@ -16,6 +16,7 @@ import secrets
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 import urllib.parse
 import zipfile
@@ -443,6 +444,8 @@ class VideoEditorService:
                     }
 
                 delogo_vf = ",".join(delogo_filters)
+                if (vid_w > 0 and vid_w % 2 != 0) or (vid_h > 0 and vid_h % 2 != 0):
+                    delogo_vf += ",pad=ceil(iw/2)*2:ceil(ih/2)*2"
 
                 cmd = [
                     "ffmpeg", "-y",
@@ -469,20 +472,28 @@ class VideoEditorService:
                     raise RuntimeError("opencv-python-headless chưa được cài đặt. Vui lòng dùng mode='delogo'.")
 
                 async with self._inpaint_semaphore:
-                    if len(target_regions) == 1 and "frame_start" not in target_regions[0]:
-                        await asyncio.to_thread(
-                            self._inpaint_video_sync,
-                            input_file,
-                            output_file,
-                            rx, ry, rw, rh,
-                        )
-                    else:
-                        await asyncio.to_thread(
-                            self._inpaint_video_sync,
-                            input_file,
-                            output_file,
-                            target_regions,
-                        )
+                    cancel_event = threading.Event()
+                    self._current_inpaint_cancel_event = cancel_event
+                    try:
+                        if len(target_regions) == 1 and "frame_start" not in target_regions[0]:
+                            await asyncio.to_thread(
+                                self._inpaint_video_sync,
+                                input_file,
+                                output_file,
+                                rx, ry, rw, rh,
+                            )
+                        else:
+                            await asyncio.to_thread(
+                                self._inpaint_video_sync,
+                                input_file,
+                                output_file,
+                                target_regions,
+                            )
+                    except (asyncio.CancelledError, GeneratorExit):
+                        cancel_event.set()
+                        raise
+                    finally:
+                        self._current_inpaint_cancel_event = None
 
             delivery_info = self._publish_or_direct(output_file, title="Video đã xóa text")
             region_summaries = ", ".join(f"({r['x']},{r['y']},{r['w']}x{r['h']})" for r in target_regions[:3])
@@ -501,9 +512,15 @@ class VideoEditorService:
 
         finally:
             if not success and output_file.exists():
-                output_file.unlink(missing_ok=True)
+                try:
+                    output_file.unlink(missing_ok=True)
+                except Exception:
+                    pass
             if is_transient and input_file.exists():
-                input_file.unlink(missing_ok=True)
+                try:
+                    input_file.unlink(missing_ok=True)
+                except Exception:
+                    pass
 
     def _validate_region_dict(self, region: Dict[str, Any]) -> None:
         """Validate bounding box region coordinates."""
@@ -1021,6 +1038,9 @@ class VideoEditorService:
         if roi is None or not isinstance(roi, np.ndarray) or getattr(roi, "size", 0) == 0:
             return np.zeros((0, 0), dtype=np.uint8)
 
+        if len(roi.shape) == 3 and roi.shape[2] == 4:
+            roi = cv2.cvtColor(roi, cv2.COLOR_BGRA2BGR)
+
         h, w = roi.shape[:2]
         if h < 4 or w < 4:
             return np.zeros((h, w), dtype=np.uint8)
@@ -1121,8 +1141,10 @@ class VideoEditorService:
         # Validate core by proximity to dark outline or local morphological gradient
         if not is_bright_bg and has_dark_stroke:
             dark_dilated = cv2.dilate(dark_pixels, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)))
-            text_core = cv2.bitwise_and(core_opened, dark_dilated)
-            if np.count_nonzero(text_core) == 0:
+            if np.count_nonzero(cv2.bitwise_and(core_opened, dark_dilated)) > 0:
+                valid_stroke = cv2.bitwise_or(dark_dilated, grad_dilated)
+                text_core = cv2.bitwise_and(core_opened, valid_stroke)
+            else:
                 text_core = cv2.bitwise_and(core_opened, grad_dilated)
         else:
             text_core = cv2.bitwise_and(core_opened, grad_dilated)
@@ -1165,7 +1187,8 @@ class VideoEditorService:
 
         # Encompass dark stroke outline and semi-transparent drop shadow adjoining text core
         if not is_bright_bg and has_dark_stroke:
-            shadow_zone = cv2.dilate(clean_core, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9)))
+            shadow_ksize = (15, 15) if bg_lum >= 75 else (9, 9)
+            shadow_zone = cv2.dilate(clean_core, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, shadow_ksize))
             adj_dark = cv2.bitwise_and(dark_pixels, shadow_zone)
             stroke_mask = cv2.bitwise_or(stroke_mask, adj_dark)
 
@@ -1189,15 +1212,33 @@ class VideoEditorService:
                 )
                 stroke_mask = cv2.bitwise_or(stroke_mask, prev_adjacent)
 
-        # 6. Safety ceiling: ensure mask does not exceed 30% of ROI area with strict fallback clamping
+        # 6. Safety ceiling: ensure mask does not exceed 30% of ROI area with progressive boundary pruning
         roi_area = h * w
         cov = np.count_nonzero(stroke_mask > 0) / roi_area if roi_area > 0 else 0.0
         if cov > 0.30:
-            stroke_mask = cv2.dilate(clean_core, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)))
-            if np.count_nonzero(stroke_mask > 0) / roi_area > 0.30:
-                stroke_mask = clean_core
+            # Progressive boundary pruning: peel outermost faint glow/shadow pixels inwards
+            # while strictly protecting the character core and immediate 3x3 stroke outline
+            min_protect = cv2.dilate(clean_core, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)))
+            k_peel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+            pruned = stroke_mask.copy()
+            for _ in range(6):
+                if (np.count_nonzero(pruned > 0) / roi_area) <= 0.30:
+                    break
+                eroded = cv2.erode(pruned, k_peel)
+                candidate = cv2.bitwise_or(eroded, min_protect)
+                if np.count_nonzero(candidate > 0) >= np.count_nonzero(pruned > 0):
+                    break
+                pruned = candidate
+            stroke_mask = pruned
+
+            # Final fallbacks if exceptionally large/dense text still exceeds 30%
+            cov = np.count_nonzero(stroke_mask > 0) / roi_area if roi_area > 0 else 0.0
+            if cov > 0.30:
+                stroke_mask = cv2.dilate(clean_core, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)))
                 if np.count_nonzero(stroke_mask > 0) / roi_area > 0.30:
-                    stroke_mask = cv2.erode(clean_core, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)))
+                    stroke_mask = clean_core
+                    if np.count_nonzero(stroke_mask > 0) / roi_area > 0.30:
+                        stroke_mask = cv2.erode(clean_core, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)))
 
         return stroke_mask
 
@@ -1217,13 +1258,22 @@ class VideoEditorService:
         telea_flag = getattr(cv2, "INPAINT_TELEA", 0)
         ns_flag = getattr(cv2, "INPAINT_NS", 1)
         radius = 2 if np.count_nonzero(mask) < 0.15 * mask.size else 3
+
+        is_bgra = (isinstance(roi, np.ndarray) and len(roi.shape) == 3 and roi.shape[2] == 4)
+        target_roi = cv2.cvtColor(roi, cv2.COLOR_BGRA2BGR) if is_bgra else roi
+
         try:
-            return cv2.inpaint(roi, mask, radius, telea_flag)
+            res = cv2.inpaint(target_roi, mask, radius, telea_flag)
         except Exception:
             try:
-                return cv2.inpaint(roi, mask, radius, ns_flag)
+                res = cv2.inpaint(target_roi, mask, radius, ns_flag)
             except Exception:
-                return roi
+                res = target_roi
+
+        if is_bgra:
+            res = cv2.cvtColor(res, cv2.COLOR_BGR2BGRA)
+            res[:, :, 3] = roi[:, :, 3]
+        return res
 
     def _inpaint_video_sync(
         self,
@@ -1233,6 +1283,7 @@ class VideoEditorService:
         ry: Optional[int] = None,
         rw: Optional[int] = None,
         rh: Optional[int] = None,
+        cancel_event: Optional[Any] = None,
     ) -> None:
         """
         Synchronous worker for OpenCV Telea video frame inpainting with temporal extent support (R2).
@@ -1242,6 +1293,9 @@ class VideoEditorService:
         import math
         import cv2
         import numpy as np
+
+        if cancel_event is None:
+            cancel_event = getattr(self, "_current_inpaint_cancel_event", None)
 
         cap = cv2.VideoCapture(str(input_file))
         if not cap.isOpened():
@@ -1288,7 +1342,10 @@ class VideoEditorService:
         out = cv2.VideoWriter(str(raw_video_path), fourcc, fps, (width, height))
         if not out.isOpened():
             cap.release()
-            raw_video_path.unlink(missing_ok=True)
+            try:
+                raw_video_path.unlink(missing_ok=True)
+            except Exception:
+                pass
             raise RuntimeError(f"Không thể khởi tạo OpenCV VideoWriter để ghi video tại {raw_video_path.name}")
 
         try:
@@ -1299,6 +1356,9 @@ class VideoEditorService:
             prev_masks: Dict[Tuple[int, int, int, int], np.ndarray] = {}
             try:
                 while cap.isOpened():
+                    if cancel_event is not None and getattr(cancel_event, "is_set", lambda: False)():
+                        logger.info("[VideoEditorService] Inpaint task was cancelled. Aborting frame loop.")
+                        return
                     if frame_idx % 30 == 0 and (time.time() - start_inpaint_time) > max_inpaint_sec:
                         logger.warning(
                             "[VideoEditorService] Inpaint frame loop exceeded %ds timeout", max_inpaint_sec
@@ -1374,6 +1434,9 @@ class VideoEditorService:
                 cap.release()
                 out.release()
 
+            if cancel_event is not None and getattr(cancel_event, "is_set", lambda: False)():
+                return
+
             if frames_written == 0:
                 raise RuntimeError(f"Không thể đọc bất kỳ frame nào từ video đầu vào: {input_file}")
 
@@ -1415,6 +1478,7 @@ class VideoEditorService:
                 "-map", "0:v:0",
                 "-map", "1:a?",
                 "-map_metadata", "1",
+                "-metadata:s:v:0", "rotate=0",
                 "-shortest",
                 "-movflags", "+faststart",
                 str(output_file),
@@ -1426,8 +1490,19 @@ class VideoEditorService:
                     raise RuntimeError(f"FFmpeg ghép âm thanh sau khi inpaint thất bại: {err[-200:]}")
             except subprocess.TimeoutExpired:
                 raise RuntimeError("FFmpeg ghép âm thanh sau khi inpaint bị timeout quá 300 giây.")
+            except FileNotFoundError:
+                logger.warning("[VideoEditorService] Không tìm thấy executable ffmpeg. Sử dụng video inpaint trực tiếp.")
+                shutil.copy2(raw_video_path, output_file)
+                return
         finally:
-            raw_video_path.unlink(missing_ok=True)
+            try:
+                raw_video_path.unlink(missing_ok=True)
+            except Exception:
+                time.sleep(0.05)
+                try:
+                    raw_video_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
 
     # ─── 2. ADD SUBTITLE TO VIDEO ────────────────────────────────────────────
 

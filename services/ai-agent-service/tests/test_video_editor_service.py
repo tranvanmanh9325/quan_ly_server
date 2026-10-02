@@ -2314,6 +2314,123 @@ class TestVideoEditorService(unittest.IsolatedAsyncioTestCase):
         self.assertLess(expansion, 150, "Unbounded temporal mask expansion on dynamic watermark")
 
 
+    def test_generate_text_stroke_mask_with_wide_drop_shadow_radius_over_8px(self):
+        """R1 & R2: Progressive boundary pruning handles wide drop shadow (>8px) without hard cliff collapse."""
+        import cv2
+        import numpy as np
+
+        h, w = 60, 200
+        roi = np.full((h, w, 3), 140, dtype=np.uint8)
+        shadow_layer = np.zeros((h, w), dtype=np.uint8)
+        cv2.putText(shadow_layer, "SUBTITLE", (28, 48), cv2.FONT_HERSHEY_SIMPLEX, 1.1, 255, 6, cv2.LINE_AA)
+        shadow_blurred = cv2.GaussianBlur(shadow_layer, (21, 21), 0)
+        shadow_mask = shadow_blurred > 25
+        roi[shadow_mask] = np.clip(
+            roi[shadow_mask].astype(int) - (shadow_blurred[shadow_mask, None].astype(int) * 70 // 255),
+            0,
+            255,
+        ).astype(np.uint8)
+        cv2.putText(roi, "SUBTITLE", (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 1.1, (255, 255, 255), 4, cv2.LINE_AA)
+
+        mask = VideoEditorService._generate_text_stroke_mask(roi)
+        cov = np.count_nonzero(mask) / (h * w)
+        self.assertLessEqual(cov, 0.30, "Mask coverage must not exceed 30% ceiling")
+        self.assertGreater(cov, 0.18, "Progressive pruning should not cliff-collapse coverage below 18%")
+        # Verify text core is 100% preserved in mask
+        core_pixels = (cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY) >= 200)
+        self.assertTrue(np.all(mask[core_pixels] == 255), "Core text pixels must be completely covered")
+
+    def test_generate_text_stroke_mask_and_inpaint_with_bgra_4_channel_roi(self):
+        """Edge Case: 4-channel BGRA ROIs are processed safely without OpenCV color conversion errors."""
+        import cv2
+        import numpy as np
+
+        h, w = 40, 100
+        roi_bgra = np.full((h, w, 4), [120, 120, 120, 255], dtype=np.uint8)
+        cv2.putText(roi_bgra, "OK", (15, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255, 255), 2)
+
+        mask = VideoEditorService._generate_text_stroke_mask(roi_bgra)
+        self.assertEqual(len(mask.shape), 2)
+        self.assertGreater(np.count_nonzero(mask), 0)
+
+        inpainted = VideoEditorService._inpaint_edge_aware(roi_bgra, mask)
+        self.assertEqual(inpainted.shape, (h, w, 4), "Output shape must retain 4 channels including alpha")
+        self.assertEqual(inpainted[0, 0, 3], 255, "Alpha channel must be preserved")
+
+    def test_inpaint_video_sync_cancellation_cooperative_abort(self):
+        """Concurrency: Cooperative cancel_event immediately aborts frame loop in _inpaint_video_sync."""
+        import threading
+        mock_cv2 = MagicMock()
+        mock_cap = MagicMock()
+        mock_cap.isOpened.return_value = True
+        dummy_frame = MagicMock()
+        mock_cap.read.return_value = (True, dummy_frame)
+        mock_cap.get.side_effect = lambda prop: 30.0 if prop == mock_cv2.CAP_PROP_FPS else (640 if prop == mock_cv2.CAP_PROP_FRAME_WIDTH else 480)
+        mock_cv2.VideoCapture.return_value = mock_cap
+        mock_writer = MagicMock()
+        mock_cv2.VideoWriter.return_value = mock_writer
+
+        cancel_event = threading.Event()
+        cancel_event.set()  # Already cancelled before start
+
+        out_path = self.service._temp_dir / "cancel_test_out.mp4"
+        with patch.dict("sys.modules", {"cv2": mock_cv2}):
+            with patch("subprocess.run") as mock_sub:
+                self.service._inpaint_video_sync(
+                    input_file=self.dummy_video,
+                    output_file=out_path,
+                    rx_or_regions=[{"x": 10, "y": 10, "w": 50, "h": 20}],
+                    cancel_event=cancel_event,
+                )
+                mock_sub.assert_not_called()
+                mock_cap.release.assert_called()
+                mock_writer.release.assert_called()
+
+    async def test_delogo_mode_pads_odd_dimensions_to_even(self):
+        """Edge Case: delogo mode adds padding filter when probed video dimensions are odd."""
+        async def fake_run(cmd, timeout=300):
+            if "ffprobe" in cmd[0]:
+                return 0, b"321x241\n", b""
+            out_file = Path(cmd[-1])
+            out_file.write_bytes(b"delogo_padded_video")
+            return 0, b"", b""
+
+        with patch.object(self.service, "_run_command", side_effect=fake_run) as mock_run:
+            res = await self.service.remove_text_from_video(
+                input_path_or_url=str(self.dummy_video),
+                region={"x": 10, "y": 10, "w": 40, "h": 20},
+                mode="delogo",
+            )
+            self.assertEqual(res["status"], "ok")
+            ffmpeg_cmd = mock_run.call_args[0][0]
+            vf_idx = ffmpeg_cmd.index("-vf")
+            vf_str = ffmpeg_cmd[vf_idx + 1]
+            self.assertIn("pad=ceil(iw/2)*2:ceil(ih/2)*2", vf_str)
+
+    def test_inpaint_video_sync_missing_ffmpeg_binary_gracefully_copies_output(self):
+        """Robustness: If ffmpeg is absent in environment, inpaint worker copies raw video without crashing."""
+        mock_cv2 = MagicMock()
+        mock_cap = MagicMock()
+        mock_cap.isOpened.side_effect = [True, True, False]
+        mock_cap.get.side_effect = lambda prop: 30.0 if prop == mock_cv2.CAP_PROP_FPS else (640 if prop == mock_cv2.CAP_PROP_FRAME_WIDTH else 480)
+        dummy_frame = MagicMock()
+        mock_cap.read.side_effect = [(True, dummy_frame), (False, None)]
+        mock_cv2.VideoCapture.return_value = mock_cap
+        mock_writer = MagicMock()
+        mock_cv2.VideoWriter.return_value = mock_writer
+
+        out_path = self.service._temp_dir / "missing_ffmpeg_out.mp4"
+        with patch.dict("sys.modules", {"cv2": mock_cv2}):
+            with patch("subprocess.run", side_effect=FileNotFoundError("ffmpeg not found")):
+                with patch("shutil.copy2") as mock_copy:
+                    self.service._inpaint_video_sync(
+                        input_file=self.dummy_video,
+                        output_file=out_path,
+                        rx_or_regions=[{"x": 10, "y": 10, "w": 50, "h": 20}],
+                    )
+                    mock_copy.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()
 

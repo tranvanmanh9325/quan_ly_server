@@ -2082,6 +2082,131 @@ class TestVideoEditorService(unittest.IsolatedAsyncioTestCase):
         empty_mask = np.zeros((h, w), dtype=np.uint8)
         self.assertTrue(np.array_equal(VideoEditorService._inpaint_edge_aware(roi, empty_mask), roi))
 
+    def test_generate_text_stroke_mask_with_inverted_black_text_on_white_background(self):
+        """R1: Character stroke mask identifies black text on bright background and inpaints cleanly."""
+        import cv2
+        import numpy as np
+
+        h, w = 120, 480
+        roi = np.full((h, w, 3), 245, dtype=np.uint8)
+        glyph = np.zeros((h, w), dtype=np.uint8)
+        cv2.putText(glyph, "BLACK INVERTED SUBTITLE", (30, 75), cv2.FONT_HERSHEY_SIMPLEX, 1.2, 255, 2)
+        roi[glyph > 0] = (15, 15, 15)
+
+        mask = VideoEditorService._generate_text_stroke_mask(roi)
+        self.assertIsInstance(mask, np.ndarray)
+        mask_pixels = np.count_nonzero(mask > 0)
+        coverage = (mask_pixels / (h * w)) * 100
+        self.assertGreater(mask_pixels, 100)
+        self.assertLess(coverage, 25.0)
+
+        # Inpainting should completely eliminate the black text
+        inpainted = VideoEditorService._inpaint_edge_aware(roi, mask)
+        rem_black = np.count_nonzero(inpainted[glyph > 0, 0] < 50)
+        self.assertEqual(rem_black, 0)
+
+    def test_generate_text_stroke_mask_with_meme_black_text_white_outline(self):
+        """R1: Character stroke mask handles meme subtitles (black core with white outline)."""
+        import cv2
+        import numpy as np
+
+        h, w = 120, 480
+        roi = np.full((h, w, 3), 110, dtype=np.uint8)
+        glyph = np.zeros((h, w), dtype=np.uint8)
+        cv2.putText(glyph, "MEME SUBTITLE STYLE", (30, 75), cv2.FONT_HERSHEY_SIMPLEX, 1.2, 255, 2)
+        outline = cv2.dilate(glyph, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)))
+        roi[outline > 0] = (250, 250, 250)
+        roi[glyph > 0] = (10, 10, 10)
+
+        mask = VideoEditorService._generate_text_stroke_mask(roi)
+        self.assertIsInstance(mask, np.ndarray)
+        mask_pixels = np.count_nonzero(mask > 0)
+        coverage = (mask_pixels / (h * w)) * 100
+        self.assertGreater(mask_pixels, 100)
+        self.assertLess(coverage, 25.0)
+
+        inpainted = VideoEditorService._inpaint_edge_aware(roi, mask)
+        rem_black = np.count_nonzero(inpainted[glyph > 0, 0] < 50)
+        rem_white = np.count_nonzero(inpainted[outline > 0, 0] > 200)
+        self.assertEqual(rem_black, 0)
+        self.assertEqual(rem_white, 0)
+
+    def test_generate_text_stroke_mask_with_vibrant_colored_subtitles_red_cyan_green(self):
+        """R1: Character stroke mask detects vivid colored subtitles across diverse hues."""
+        import cv2
+        import numpy as np
+
+        h, w = 120, 480
+        for color_name, bgr in [("Red", (0, 0, 255)), ("Cyan", (255, 255, 0)), ("Green", (0, 255, 0))]:
+            roi = np.full((h, w, 3), 120, dtype=np.uint8)
+            glyph = np.zeros((h, w), dtype=np.uint8)
+            cv2.putText(glyph, f"COLOR {color_name}", (30, 75), cv2.FONT_HERSHEY_SIMPLEX, 1.2, 255, 2)
+            outline = cv2.dilate(glyph, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)))
+            roi[outline > 0] = (10, 10, 10)
+            roi[glyph > 0] = bgr
+
+            mask = VideoEditorService._generate_text_stroke_mask(roi)
+            mask_pixels = np.count_nonzero(mask > 0)
+            coverage = (mask_pixels / (h * w)) * 100
+            self.assertGreater(mask_pixels, 100, f"Failed detecting {color_name} subtitle")
+            self.assertLess(coverage, 25.0)
+
+            inpainted = VideoEditorService._inpaint_edge_aware(roi, mask)
+            rem_fg = np.count_nonzero(np.all(np.abs(inpainted[glyph > 0].astype(int) - bgr) < 25, axis=-1))
+            self.assertEqual(rem_fg, 0, f"Remaining foreground artifacts for {color_name}")
+
+    def test_generate_text_stroke_mask_with_multicolor_rainbow_gradient_watermark(self):
+        """R1: Character stroke mask removes multi-color rainbow gradient watermarks."""
+        import cv2
+        import numpy as np
+
+        h, w = 120, 480
+        roi = np.full((h, w, 3), 120, dtype=np.uint8)
+        glyph = np.zeros((h, w), dtype=np.uint8)
+        cv2.putText(glyph, "RAINBOW WATERMARK", (30, 75), cv2.FONT_HERSHEY_SIMPLEX, 1.2, 255, 2)
+        outline = cv2.dilate(glyph, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)))
+        roi[outline > 0] = (10, 10, 10)
+
+        for x in range(w):
+            hue = int((x / w) * 180)
+            bgr_col = cv2.cvtColor(np.uint8([[[hue, 255, 240]]]), cv2.COLOR_HSV2BGR)[0, 0]
+            roi[glyph[:, x] > 0, x] = bgr_col
+
+        mask = VideoEditorService._generate_text_stroke_mask(roi)
+        mask_pixels = np.count_nonzero(mask > 0)
+        coverage = (mask_pixels / (h * w)) * 100
+        self.assertGreater(mask_pixels, 100)
+        self.assertLess(coverage, 25.0)
+
+    def test_generate_text_stroke_mask_temporal_stability_avoids_ghost_leak_on_subtitle_change(self):
+        """R1 & R2: Temporal stability prevents leaking ghost masks when subtitle text changes."""
+        import cv2
+        import numpy as np
+
+        h, w = 120, 480
+        # Frame A: Subtitle on left
+        roi1 = np.full((h, w, 3), 120, dtype=np.uint8)
+        g1 = np.zeros((h, w), dtype=np.uint8)
+        cv2.putText(g1, "LEFT SUBTITLE", (20, 75), cv2.FONT_HERSHEY_SIMPLEX, 1.2, 255, 2)
+        roi1[cv2.dilate(g1, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))) > 0] = (10, 10, 10)
+        roi1[g1 > 0] = (255, 255, 255)
+        mask1 = VideoEditorService._generate_text_stroke_mask(roi1)
+
+        # Frame B: Different subtitle on right
+        roi2 = np.full((h, w, 3), 120, dtype=np.uint8)
+        g2 = np.zeros((h, w), dtype=np.uint8)
+        cv2.putText(g2, "RIGHT TEXT", (280, 75), cv2.FONT_HERSHEY_SIMPLEX, 1.2, 255, 2)
+        roi2[cv2.dilate(g2, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))) > 0] = (10, 10, 10)
+        roi2[g2 > 0] = (255, 255, 255)
+
+        mask2_fresh = VideoEditorService._generate_text_stroke_mask(roi2)
+        mask2_with_prev = VideoEditorService._generate_text_stroke_mask(roi2, prev_mask=mask1)
+
+        # Because subtitles differ (IoU < 0.70), prev_mask must not be merged
+        self.assertTrue(np.array_equal(mask2_with_prev, mask2_fresh))
+        left_leak = np.count_nonzero(mask2_with_prev[g1 > 0] > 0)
+        self.assertEqual(left_leak, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

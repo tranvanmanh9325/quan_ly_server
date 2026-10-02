@@ -981,19 +981,38 @@ class VideoEditorService:
             shutil.rmtree(sample_dir, ignore_errors=True)
 
     @staticmethod
+    def _fill_holes(mask: Any) -> Any:
+        """Helper to fill enclosed cavities within character glyphs."""
+        import cv2
+        import numpy as np
+
+        if mask is None or not isinstance(mask, np.ndarray) or mask.size == 0:
+            return mask
+        h, w = mask.shape[:2]
+        flood = mask.copy()
+        mask_pad = np.zeros((h + 2, w + 2), dtype=np.uint8)
+        cv2.floodFill(flood, mask_pad, (0, 0), 255)
+        flood_inv = cv2.bitwise_not(flood)
+        return cv2.bitwise_or(mask, flood_inv)
+
+    @staticmethod
     def _generate_text_stroke_mask(roi: Any, prev_mask: Optional[Any] = None) -> Any:
         """
         R1. Pixel-Level Character Stroke Mask Generation:
         Extracts high-precision text character stroke masks within the ROI, completely avoiding
         solid bounding box inpainting smudges.
         - Analyzes multi-channel color features (Grayscale + HSV Value/Saturation):
-          * Detects bright subtitle text core (White: V >= 185, S <= 65; Yellow: H in [12, 48], S >= 70, V >= 165).
-          * Detects dark stroke outline / drop shadow (V <= 70).
+          * Detects bright subtitle text core (White: V >= 185, S <= 75; Yellow/Vivid colors: S >= 60, V >= 100).
+          * Detects inverted contrast text (Black/dark text on bright background when bg_lum >= 170).
+          * Detects meme text styles (interlocking dark text core with bright outline).
+          * Detects multi-color & rainbow gradient text via dual V/S morphological gradients.
+          * Detects dark stroke outline / drop shadow (V <= 75).
           * Applies morphological opening to filter fine metallic mesh/specular reflections.
           * Filters connected components to preserve character strokes (aspect ratio, minimum area).
           * Expands using an ellipse structuring element (5x5 - 7x7) to encompass dark stroke outlines.
-          * Applies temporal stability smoothing across frames if previous mask is provided.
-          * Strictly caps mask coverage < 30% of ROI area.
+          * Applies temporal stability smoothing across frames only when consecutive masks represent
+            the same persistent subtitle (IoU >= 0.70).
+          * Strictly caps mask coverage < 30% of ROI area with fallback clamping.
         Returns a single-channel uint8 binary mask (255 for text stroke pixels, 0 elsewhere).
         """
         import cv2
@@ -1018,26 +1037,65 @@ class VideoEditorService:
             s_chan = np.zeros_like(gray)
             h_chan = np.zeros_like(gray)
 
-        # 1. Multi-channel text core detection (White or Yellow / Bright subtitles)
-        white_core = (v_chan >= 185) & (s_chan <= 65)
-        yellow_core = (h_chan >= 12) & (h_chan <= 48) & (s_chan >= 70) & (v_chan >= 165)
-        core_candidates = (white_core | yellow_core).astype(np.uint8) * 255
+        # 1. Background luminance estimation from ROI perimeter
+        pad = max(1, min(3, h // 4, w // 4))
+        border_mask = np.zeros((h, w), dtype=bool)
+        border_mask[:pad, :] = True
+        border_mask[-pad:, :] = True
+        border_mask[:, :pad] = True
+        border_mask[:, -pad:] = True
+        border_pixels = v_chan[border_mask]
+        bg_lum = float(np.median(border_pixels)) if border_pixels.size > 0 else float(np.median(v_chan))
 
-        # 2. Dark stroke outline detection (stroke outline / drop shadow)
-        dark_stroke = (v_chan <= 70).astype(np.uint8) * 255
-        dark_dilated = cv2.dilate(dark_stroke, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)))
+        # Detect if background is bright (inverted text style: black on light background)
+        is_bright_bg = (bg_lum >= 170.0) and (
+            border_pixels.size > 0 and np.count_nonzero(border_pixels >= 160) > 0.5 * border_pixels.size
+        )
+
+        dark_pixels = (v_chan <= 75).astype(np.uint8) * 255
+        bright_pixels = ((v_chan >= 180) & (s_chan <= 75)).astype(np.uint8) * 255
+        vivid_colored = ((s_chan >= 60) & (v_chan >= 100)).astype(np.uint8) * 255
+
+        has_dark_stroke = np.count_nonzero(dark_pixels) > 20
+        has_bright_pixels = np.count_nonzero(bright_pixels) > 20
+
+        is_meme_text = False
+        if is_bright_bg:
+            # Inverted contrast: Black or dark text on light background
+            core_candidates = dark_pixels.copy()
+            vivid_dark = ((s_chan >= 60) & (v_chan <= max(60, int(bg_lum - 40)))).astype(np.uint8) * 255
+            core_candidates = cv2.bitwise_or(core_candidates, vivid_dark)
+            has_dark_stroke = False
+        else:
+            # Check for meme text (dark core interlocking with white outline on non-bright background)
+            if has_dark_stroke and has_bright_pixels:
+                dark_dil = cv2.dilate(dark_pixels, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)))
+                overlap = cv2.bitwise_and(bright_pixels, dark_dil)
+                if np.count_nonzero(overlap) > 30 and (np.count_nonzero(dark_pixels) / (h * w)) < 0.25:
+                    is_meme_text = True
+
+            # Standard bright (white/yellow) or vibrant colored text
+            core_candidates = cv2.bitwise_or(bright_pixels, vivid_colored)
+            if is_meme_text:
+                core_candidates = cv2.bitwise_or(core_candidates, dark_pixels)
 
         # Remove isolated grain / texture specks from core candidates
         kernel_open = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
         core_opened = cv2.morphologyEx(core_candidates, cv2.MORPH_OPEN, kernel_open)
 
+        # Multi-channel gradient for edge-aware stroke validation
+        grad_v = cv2.morphologyEx(v_chan, cv2.MORPH_GRADIENT, kernel_open)
+        grad_s = cv2.morphologyEx(s_chan, cv2.MORPH_GRADIENT, kernel_open)
+        grad_max = np.maximum(grad_v, grad_s)
+        grad_dilated = cv2.dilate(
+            (grad_max >= 25).astype(np.uint8) * 255, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        )
+
         # Validate core by proximity to dark outline or local morphological gradient
-        has_dark_stroke = np.count_nonzero(dark_stroke) > 20
-        if has_dark_stroke:
+        if not is_bright_bg and has_dark_stroke and not is_meme_text:
+            dark_dilated = cv2.dilate(dark_pixels, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)))
             text_core = cv2.bitwise_and(core_opened, dark_dilated)
         else:
-            grad = cv2.morphologyEx(gray, cv2.MORPH_GRADIENT, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))
-            grad_dilated = cv2.dilate((grad >= 30).astype(np.uint8) * 255, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)))
             text_core = cv2.bitwise_and(core_opened, grad_dilated)
 
         # 3. Connected components filtering: isolate character strokes from mesh / reflection noise
@@ -1059,28 +1117,51 @@ class VideoEditorService:
                 if 30 <= area <= int(0.20 * h * w) and 8 <= ch <= int(0.85 * h) and cw >= 6:
                     clean_core[labels_c == i] = 255
 
+        # Tertiary fallback: High-contrast edge detection if color gating found nothing
+        if np.count_nonzero(clean_core) == 0 and not is_bright_bg:
+            edges = (grad_max >= 45).astype(np.uint8) * 255
+            edges_opened = cv2.morphologyEx(edges, cv2.MORPH_OPEN, kernel_open)
+            num_e, labels_e, stats_e, _ = cv2.connectedComponentsWithStats(edges_opened, connectivity=8)
+            for i in range(1, num_e):
+                area = stats_e[i, cv2.CC_STAT_AREA]
+                cw = stats_e[i, cv2.CC_STAT_WIDTH]
+                ch = stats_e[i, cv2.CC_STAT_HEIGHT]
+                if 40 <= area <= int(0.18 * h * w) and 10 <= ch <= int(0.80 * h) and cw >= 8:
+                    clean_core[labels_e == i] = 255
+
         if np.count_nonzero(clean_core) == 0:
             return np.zeros((h, w), dtype=np.uint8)
+
+        # Fill character interior holes (e.g. loops in 'o', 'e', meme text)
+        if is_meme_text or is_bright_bg:
+            clean_core = VideoEditorService._fill_holes(clean_core)
 
         # 4. Dilate to encompass stroke outline and anti-aliasing boundary
         kernel_dilate = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
         stroke_mask = cv2.dilate(clean_core, kernel_dilate)
-        if has_dark_stroke:
-            adj_dark = cv2.bitwise_and(dark_stroke, cv2.dilate(clean_core, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))))
+        if not is_bright_bg and has_dark_stroke:
+            adj_dark = cv2.bitwise_and(
+                dark_pixels, cv2.dilate(clean_core, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)))
+            )
             stroke_mask = cv2.bitwise_or(stroke_mask, adj_dark)
 
-        # 5. Temporal stability: propagate persistent text mask from previous frame if same subtitle
+        # 5. Temporal stability: propagate persistent text mask from previous frame only if same subtitle (IoU >= 0.70)
         if prev_mask is not None and prev_mask.shape == stroke_mask.shape:
             inter = np.count_nonzero((stroke_mask > 0) & (prev_mask > 0))
             union = np.count_nonzero((stroke_mask > 0) | (prev_mask > 0))
-            if union > 0 and (inter / union) >= 0.40:
+            if union > 0 and (inter / union) >= 0.70:
                 stroke_mask = cv2.bitwise_or(stroke_mask, prev_mask)
 
-        # 6. Safety ceiling: ensure mask does not exceed 30% of ROI area
+        # 6. Safety ceiling: ensure mask does not exceed 30% of ROI area with strict fallback clamping
         roi_area = h * w
         cov = np.count_nonzero(stroke_mask > 0) / roi_area if roi_area > 0 else 0.0
         if cov > 0.30:
             stroke_mask = cv2.dilate(clean_core, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)))
+            if np.count_nonzero(stroke_mask > 0) / roi_area > 0.30:
+                stroke_mask = clean_core
+                if np.count_nonzero(stroke_mask > 0) / roi_area > 0.30:
+                    stroke_mask = cv2.erode(clean_core, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)))
+
         return stroke_mask
 
     @staticmethod

@@ -161,5 +161,98 @@ class TestVideoUploadStuck99Fix(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(friendly_msg_sent, "Bot must send friendly timeout message on 5-min timeout!")
 
 
+
+    async def test_subprocess_killed_on_task_cancellation(self):
+        """Edge case: When _run_command task is cancelled, child process must be terminated and reaped."""
+        service = VideoEditorService(storage_manager=MagicMock())
+
+        mock_proc = MagicMock()
+        mock_proc.returncode = None
+        mock_proc.kill = MagicMock()
+        mock_proc.wait = AsyncMock(return_value=0)
+
+        async def fake_communicate():
+            await asyncio.sleep(999)
+            return b"", b""
+
+        mock_proc.communicate = fake_communicate
+
+        with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)):
+            task = asyncio.create_task(service._run_command(["ffmpeg", "-i", "input.mp4"]))
+            await asyncio.sleep(0.02)
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+
+            mock_proc.kill.assert_called_once()
+            mock_proc.wait.assert_awaited_once()
+
+    async def test_concurrent_sessions_do_not_wipe_active_processing(self):
+        """Race condition: Registering a newer video while an older one is processing must not delete active files."""
+        from app.services.video_pipeline import VideoDebounceManager
+
+        temp_dir1 = tempfile.mkdtemp(prefix="test_sess1_")
+        temp_dir2 = tempfile.mkdtemp(prefix="test_sess2_")
+        try:
+            video1 = os.path.join(temp_dir1, "v1.mp4")
+            video2 = os.path.join(temp_dir2, "v2.mp4")
+            with open(video1, "wb") as f:
+                f.write(b"video1")
+            with open(video2, "wb") as f:
+                f.write(b"video2")
+
+            pipeline_running = asyncio.Event()
+            finish_pipeline = asyncio.Event()
+
+            async def fake_pipeline(chat_id, session, text):
+                pipeline_running.set()
+                await finish_pipeline.wait()
+
+            manager = VideoDebounceManager(
+                on_debounce_timeout=AsyncMock(),
+                on_process_pipeline=fake_pipeline,
+            )
+
+            # Start video 1 with caption
+            task1 = asyncio.create_task(
+                manager.register_video(
+                    chat_id="chat_concur",
+                    file_id="f1",
+                    temp_dir=temp_dir1,
+                    video_path=video1,
+                    metadata=VideoMetadata(filename="v1.mp4"),
+                    caption="xóa text",
+                )
+            )
+            await pipeline_running.wait()
+
+            # Video 1 is actively processing. Now user uploads Video 2.
+            await manager.register_video(
+                chat_id="chat_concur",
+                file_id="f2",
+                temp_dir=temp_dir2,
+                video_path=video2,
+                metadata=VideoMetadata(filename="v2.mp4"),
+                caption="",
+            )
+
+            # Video 1's temp_dir must NOT be deleted yet!
+            self.assertTrue(os.path.exists(temp_dir1), "Video 1 temp dir must not be deleted while still processing!")
+            self.assertTrue(os.path.exists(temp_dir2), "Video 2 temp dir must exist!")
+
+            # Now let video 1 finish
+            finish_pipeline.set()
+            await task1
+
+            # Video 1 must now be cleaned up, but Video 2 must REMAIN intact!
+            self.assertFalse(os.path.exists(temp_dir1), "Video 1 temp dir must be cleaned up after finishing!")
+            self.assertTrue(os.path.exists(temp_dir2), "Video 2 temp dir must NOT be cleaned up when Video 1 completes!")
+            self.assertIsNotNone(manager.get_session("chat_concur"))
+        finally:
+            shutil.rmtree(temp_dir1, ignore_errors=True)
+            shutil.rmtree(temp_dir2, ignore_errors=True)
+
+
 if __name__ == "__main__":
     unittest.main()
+

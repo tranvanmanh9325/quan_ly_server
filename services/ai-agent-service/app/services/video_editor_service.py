@@ -184,12 +184,14 @@ class VideoEditorService:
                 return proc.returncode or 0, stdout, stderr
             except asyncio.TimeoutError:
                 logger.error("[VideoEditorService] Subprocess timed out after %ds: %s", timeout, cmd[0])
-                try:
-                    proc.kill()
-                    await proc.wait()
-                except Exception:
-                    pass
                 raise TimeoutError(f"Tác vụ xử lý video vượt quá thời gian tối đa ({timeout}s).")
+            finally:
+                if proc.returncode is None:
+                    try:
+                        proc.kill()
+                        await proc.wait()
+                    except Exception:
+                        pass
 
     async def _resolve_input(self, input_path_or_url: str) -> Tuple[Path, bool]:
         """

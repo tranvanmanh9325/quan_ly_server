@@ -99,7 +99,8 @@ class VideoDebounceManager:
                     existing.debounce_task.cancel()
                 if existing.cleanup_task and not existing.cleanup_task.done():
                     existing.cleanup_task.cancel()
-                existing.cleanup()
+                if not existing.is_processing:
+                    existing.cleanup()
 
             session = PendingVideoSession(
                 chat_id=chat_id,
@@ -115,8 +116,10 @@ class VideoDebounceManager:
         if caption.strip():
             logger.info("[VideoDebounce] Video has caption '%s'. Dispatching pipeline immediately.", caption[:30])
             session.is_processing = True
-            await self._on_process_pipeline(chat_id, session, caption.strip())
-            await self.remove_session(chat_id)
+            try:
+                await self._on_process_pipeline(chat_id, session, caption.strip())
+            finally:
+                await self.remove_session(chat_id, session=session)
             return
 
         # Case 2: Video without caption -> start 5-second follow-up timer
@@ -154,7 +157,7 @@ class VideoDebounceManager:
         try:
             await self._on_process_pipeline(chat_id, session, text)
         finally:
-            await self.remove_session(chat_id)
+            await self.remove_session(chat_id, session=session)
 
         return True
 
@@ -184,7 +187,7 @@ class VideoDebounceManager:
         try:
             await self._on_process_pipeline(chat_id, session, instruction)
         finally:
-            await self.remove_session(chat_id)
+            await self.remove_session(chat_id, session=session)
 
         return True
 
@@ -219,16 +222,23 @@ class VideoDebounceManager:
                 session.cleanup()
                 self._sessions.pop(chat_id, None)
 
-    async def remove_session(self, chat_id: str) -> None:
-        """Removes session and purges disk files."""
+    async def remove_session(self, chat_id: str, session: Optional[PendingVideoSession] = None) -> None:
+        """Removes session and purges disk files safely without stepping on concurrent sessions."""
         async with self._global_lock:
-            session = self._sessions.pop(chat_id, None)
-            if session:
-                if session.debounce_task and not session.debounce_task.done():
-                    session.debounce_task.cancel()
-                if session.cleanup_task and not session.cleanup_task.done():
-                    session.cleanup_task.cancel()
+            current = self._sessions.get(chat_id)
+            if session is not None and current is not session:
+                # The session being removed was already replaced by a newer session;
+                # clean up only this session's disk resources without purging the newer session.
                 session.cleanup()
+                return
+
+            popped = self._sessions.pop(chat_id, None)
+            if popped:
+                if popped.debounce_task and not popped.debounce_task.done():
+                    popped.debounce_task.cancel()
+                if popped.cleanup_task and not popped.cleanup_task.done():
+                    popped.cleanup_task.cancel()
+                popped.cleanup()
 
 
 class LightweightVideoPipeline:

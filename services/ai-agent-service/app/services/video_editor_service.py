@@ -7,6 +7,7 @@ and Zero-Disk Leak guarantees.
 
 import asyncio
 import difflib
+import functools
 import logging
 import os
 import posixpath
@@ -805,9 +806,20 @@ class VideoEditorService:
                             frame_w = max(frame_w, img.width)
                             frame_h = max(frame_h, img.height)
                         try:
-                            data = pytesseract.image_to_data(img, output_type=pytesseract.Output.DICT, config="--psm 11")
+                            loop = asyncio.get_running_loop()
+                        except RuntimeError:
+                            loop = asyncio.get_event_loop()
+
+                        try:
+                            data = await loop.run_in_executor(
+                                None,
+                                functools.partial(pytesseract.image_to_data, img, output_type=pytesseract.Output.DICT, config="--psm 11"),
+                            )
                         except Exception:
-                            data = pytesseract.image_to_data(img, output_type=pytesseract.Output.DICT)
+                            data = await loop.run_in_executor(
+                                None,
+                                functools.partial(pytesseract.image_to_data, img, output_type=pytesseract.Output.DICT),
+                            )
                         texts = data.get("text", [])
                         confs = data.get("conf", [])
                         lefts = data.get("left", [])

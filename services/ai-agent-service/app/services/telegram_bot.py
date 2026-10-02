@@ -140,6 +140,7 @@ class TelegramBot:
         self.dream_engine: Optional[Any] = None    # SubconsciousDreamEngine — injected post-construction
         self.teamwork_engine: Optional[Any] = None # TeamworkEngine — injected post-construction
         self._last_teamwork_task: Optional[asyncio.Task] = None
+        self._last_video_task: Optional[asyncio.Task] = None
         self.token = settings.TELEGRAM_BOT_TOKEN
         self.chat_id = settings.TELEGRAM_CHAT_ID
         self.polling_enabled = settings.TELEGRAM_POLLING_ENABLED
@@ -1901,10 +1902,13 @@ class TelegramBot:
                                     "⚡ <i>Đang tự động xóa text/watermark khỏi video của anh Mạnh...</i>\n"
                                     "<i>(Tiểu Bảo Bảo đang phân tích khung hình và làm sạch video)</i>",
                                 )
-                                res = await self._video_editor_service.remove_text_from_video(
+                                edit_coro = self._video_editor_service.remove_text_from_video(
                                     input_path_or_url=session.video_path,
                                     mode=mode,
                                 )
+                                edit_task = asyncio.create_task(edit_coro)
+                                self._last_video_task = edit_task
+                                res = await asyncio.wait_for(edit_task, timeout=300.0)
                             elif is_color_grade:
                                 if "vintage" in q:
                                     preset = "vintage"
@@ -1923,19 +1927,25 @@ class TelegramBot:
                                     chat_id,
                                     f"🎨 <i>Đang áp dụng bộ lọc màu '{preset}' cho video...</i>",
                                 )
-                                res = await self._video_editor_service.apply_color_grade(
+                                edit_coro = self._video_editor_service.apply_color_grade(
                                     input_path_or_url=session.video_path,
                                     preset=preset,
                                 )
+                                edit_task = asyncio.create_task(edit_coro)
+                                self._last_video_task = edit_task
+                                res = await asyncio.wait_for(edit_task, timeout=300.0)
                             elif is_stabilize:
                                 await self.send_message(
                                     chat_id,
                                     "🛡️ <i>Đang chạy thuật toán chống rung 2-pass cho video...</i>",
                                 )
-                                res = await self._video_editor_service.stabilize_video(
+                                edit_coro = self._video_editor_service.stabilize_video(
                                     input_path_or_url=session.video_path,
                                     smoothing=15,
                                 )
+                                edit_task = asyncio.create_task(edit_coro)
+                                self._last_video_task = edit_task
+                                res = await asyncio.wait_for(edit_task, timeout=300.0)
 
                             if res:
                                 if res.get("status") == "ok":
@@ -1966,6 +1976,19 @@ class TelegramBot:
                                     err_msg = res.get("message", "Đã xảy ra lỗi khi biên tập video.")
                                     await self.send_message(chat_id, f"❌ Không thể hoàn thành biên tập video: {err_msg}")
                                     return
+                        except asyncio.TimeoutError as t_err:
+                            if str(t_err):
+                                logger.error("[TelegramBot] Direct video edit execution error: %s", t_err, exc_info=True)
+                                await self.send_message(
+                                    chat_id, f"❌ Có lỗi trong quá trình biên tập video: {t_err}"
+                                )
+                            else:
+                                logger.error("[TelegramBot] Direct video edit timed out after 300s for chat %s", chat_id)
+                                await self.send_message(
+                                    chat_id,
+                                    "❌ Video quá phức tạp, vui lòng thử lại với video ngắn hơn.",
+                                )
+                            return
                         except Exception as edit_err:
                             logger.error("[TelegramBot] Direct video edit execution error: %s", edit_err, exc_info=True)
                             await self.send_message(

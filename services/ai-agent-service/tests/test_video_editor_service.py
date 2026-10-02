@@ -2430,6 +2430,71 @@ class TestVideoEditorService(unittest.IsolatedAsyncioTestCase):
                     )
                     mock_copy.assert_called_once()
 
+    def test_fill_holes_with_corner_and_border_touching_foreground(self):
+        """Edge Case: _fill_holes pads 1px border so corner/edge-touching components do not invert background."""
+        import cv2
+        import numpy as np
+
+        mask = np.zeros((60, 60), dtype=np.uint8)
+        # Component touching corner (0, 0)
+        mask[:10, :10] = 255
+        # Circular loop glyph in center with interior cavity
+        cv2.circle(mask, (35, 35), 15, 255, -1)
+        cv2.circle(mask, (35, 35), 6, 0, -1)
+        self.assertEqual(mask[35, 35], 0)
+
+        filled = VideoEditorService._fill_holes(mask)
+        # Enclosed hole must be filled
+        self.assertEqual(filled[35, 35], 255)
+        # Corner component must be preserved
+        self.assertEqual(filled[0, 0], 255)
+        # Background must NOT explode into 100% foreground
+        cov = np.count_nonzero(filled > 0) / filled.size
+        self.assertLess(cov, 0.35, "Mask coverage must not blow up when corner touches (0, 0)")
+        self.assertEqual(filled[50, 50], 0, "Outer background pixel must remain 0")
+
+    def test_generate_text_stroke_mask_safety_ceiling_stress_test(self):
+        """Robustness: Safety Ceiling strictly caps mask coverage strictly under 30% even on solid/dense input."""
+        import cv2
+        import numpy as np
+
+        # Create a dense white rectangle covering 70% of ROI
+        h, w = 100, 200
+        roi = np.zeros((h, w, 3), dtype=np.uint8)
+        roi[10:80, 10:190] = (255, 255, 255)
+
+        mask = VideoEditorService._generate_text_stroke_mask(roi)
+        cov = np.count_nonzero(mask > 0) / (h * w)
+        self.assertLess(cov, 0.30, f"Coverage {cov*100:.2f}% must strictly satisfy < 30% ceiling")
+
+    def test_generate_text_stroke_mask_empirical_frames_tmpy8evxmno(self):
+        """Empirical: Test tmpy8evxmno.mp4 frames 300, 700, 900, 902 all strictly satisfy mask coverage < 30%."""
+        import cv2
+        import numpy as np
+        from pathlib import Path
+
+        video_path = Path("test/tmpy8evxmno.mp4")
+        if not video_path.exists():
+            self.skipTest(f"Video {video_path} not found in workspace")
+
+        cap = cv2.VideoCapture(str(video_path))
+        self.assertTrue(cap.isOpened(), "Cannot open test video")
+        try:
+            for f_idx in [300, 700, 900, 902]:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, f_idx)
+                ret, frame = cap.read()
+                self.assertTrue(ret, f"Cannot read frame {f_idx}")
+                roi = frame[177:177+137, 39:39+479]
+                mask = VideoEditorService._generate_text_stroke_mask(roi)
+                cov = np.count_nonzero(mask > 0) / mask.size
+                self.assertLess(
+                    cov,
+                    0.30,
+                    f"Frame {f_idx} coverage {cov*100:.2f}% exceeds strict 30% ceiling",
+                )
+        finally:
+            cap.release()
+
 
 if __name__ == "__main__":
     unittest.main()

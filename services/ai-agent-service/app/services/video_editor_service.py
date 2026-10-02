@@ -1006,11 +1006,17 @@ class VideoEditorService:
         if mask is None or not isinstance(mask, np.ndarray) or mask.size == 0:
             return mask
         h, w = mask.shape[:2]
-        flood = mask.copy()
-        mask_pad = np.zeros((h + 2, w + 2), dtype=np.uint8)
+        # Pad with 1px border of zeros so that (0, 0) is guaranteed background
+        # and connects around all outer edges, preventing edge-touching components
+        # from blocking floodFill and inverting unreached background into foreground.
+        padded = cv2.copyMakeBorder(mask, 1, 1, 1, 1, cv2.BORDER_CONSTANT, value=0)
+        ph, pw = padded.shape[:2]
+        flood = padded.copy()
+        mask_pad = np.zeros((ph + 2, pw + 2), dtype=np.uint8)
         cv2.floodFill(flood, mask_pad, (0, 0), 255)
         flood_inv = cv2.bitwise_not(flood)
-        return cv2.bitwise_or(mask, flood_inv)
+        filled_padded = cv2.bitwise_or(padded, flood_inv)
+        return filled_padded[1:-1, 1:-1]
 
     @staticmethod
     def _generate_text_stroke_mask(roi: Any, prev_mask: Optional[Any] = None) -> Any:
@@ -1072,9 +1078,18 @@ class VideoEditorService:
             else np.median(roi, axis=(0, 1))
         )
 
+        # Check border luminance across individual edges to avoid false positives on natural gradient backgrounds (e.g. road/sky)
+        top_med = float(np.median(v_chan[:pad, :])) if h > 0 else 0.0
+        bot_med = float(np.median(v_chan[-pad:, :])) if h > 0 else 0.0
+        left_med = float(np.median(v_chan[:, :pad])) if w > 0 else 0.0
+        right_med = float(np.median(v_chan[:, -pad:])) if w > 0 else 0.0
+        min_edge_med = min(top_med, bot_med, left_med, right_med)
+
         # Detect if background is bright (inverted text style: black on light background)
-        is_bright_bg = (bg_lum >= 170.0) and (
-            border_pixels.size > 0 and np.count_nonzero(border_pixels >= 160) > 0.5 * border_pixels.size
+        is_bright_bg = (
+            (bg_lum >= 170.0)
+            and (min_edge_med >= 100.0)
+            and (border_pixels.size > 0 and np.count_nonzero(border_pixels >= 150) > 0.70 * border_pixels.size)
         )
 
         # Adaptive shadow threshold relative to background luminance
@@ -1212,17 +1227,20 @@ class VideoEditorService:
                 )
                 stroke_mask = cv2.bitwise_or(stroke_mask, prev_adjacent)
 
-        # 6. Safety ceiling: ensure mask does not exceed 30% of ROI area with progressive boundary pruning
+        # 6. Safety ceiling: ensure mask strictly does not exceed 30% of ROI area with multi-stage clamping
         roi_area = h * w
         cov = np.count_nonzero(stroke_mask > 0) / roi_area if roi_area > 0 else 0.0
-        if cov > 0.30:
+        if cov >= 0.30:
             # Progressive boundary pruning: peel outermost faint glow/shadow pixels inwards
-            # while strictly protecting the character core and immediate 3x3 stroke outline
+            # while protecting the character core
             min_protect = cv2.dilate(clean_core, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)))
+            if (np.count_nonzero(min_protect > 0) / roi_area) > 0.28:
+                min_protect = clean_core.copy()
+
             k_peel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
             pruned = stroke_mask.copy()
-            for _ in range(6):
-                if (np.count_nonzero(pruned > 0) / roi_area) <= 0.30:
+            for _ in range(15):
+                if (np.count_nonzero(pruned > 0) / roi_area) < 0.30:
                     break
                 eroded = cv2.erode(pruned, k_peel)
                 candidate = cv2.bitwise_or(eroded, min_protect)
@@ -1231,14 +1249,45 @@ class VideoEditorService:
                 pruned = candidate
             stroke_mask = pruned
 
-            # Final fallbacks if exceptionally large/dense text still exceeds 30%
             cov = np.count_nonzero(stroke_mask > 0) / roi_area if roi_area > 0 else 0.0
-            if cov > 0.30:
+            if cov >= 0.30:
                 stroke_mask = cv2.dilate(clean_core, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)))
-                if np.count_nonzero(stroke_mask > 0) / roi_area > 0.30:
-                    stroke_mask = clean_core
-                    if np.count_nonzero(stroke_mask > 0) / roi_area > 0.30:
-                        stroke_mask = cv2.erode(clean_core, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)))
+                cov = np.count_nonzero(stroke_mask > 0) / roi_area if roi_area > 0 else 0.0
+
+            if cov >= 0.30:
+                stroke_mask = clean_core.copy()
+                cov = np.count_nonzero(stroke_mask > 0) / roi_area if roi_area > 0 else 0.0
+
+            # Iterative erosion clamp to strictly guarantee cov < 0.30
+            k_erode = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+            while cov >= 0.30 and np.count_nonzero(stroke_mask > 0) > 0:
+                eroded = cv2.erode(stroke_mask, k_erode)
+                if np.count_nonzero(eroded > 0) == np.count_nonzero(stroke_mask > 0):
+                    num_l, lbls, stts, _ = cv2.connectedComponentsWithStats(stroke_mask, connectivity=8)
+                    if num_l > 1:
+                        areas = [(stts[i, cv2.CC_STAT_AREA], i) for i in range(1, num_l)]
+                        areas.sort()
+                        stroke_mask[lbls == areas[0][1]] = 0
+                    else:
+                        break
+                else:
+                    stroke_mask = eroded
+                cov = np.count_nonzero(stroke_mask > 0) / roi_area if roi_area > 0 else 0.0
+
+            # Final fail-safe: keep only top connected components capped strictly at 28% ROI area
+            if cov >= 0.30 and np.count_nonzero(stroke_mask > 0) > 0:
+                num_l, lbls, stts, _ = cv2.connectedComponentsWithStats(stroke_mask, connectivity=8)
+                comp_indices = list(range(1, num_l))
+                comp_indices.sort(key=lambda idx: stts[idx, cv2.CC_STAT_AREA], reverse=True)
+                clamped = np.zeros_like(stroke_mask)
+                accum = 0
+                max_pixels = int(0.28 * roi_area)
+                for idx in comp_indices:
+                    comp_area = stts[idx, cv2.CC_STAT_AREA]
+                    if accum + comp_area <= max_pixels:
+                        clamped[lbls == idx] = 255
+                        accum += comp_area
+                stroke_mask = clamped
 
         return stroke_mask
 

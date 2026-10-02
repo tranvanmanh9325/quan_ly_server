@@ -16,6 +16,7 @@ import secrets
 import shutil
 import subprocess
 import tempfile
+import time
 import urllib.parse
 import zipfile
 from pathlib import Path
@@ -1048,8 +1049,15 @@ class VideoEditorService:
         try:
             frames_written = 0
             frame_idx = 0
+            start_inpaint_time = time.time()
+            max_inpaint_sec = 270.0
             try:
                 while cap.isOpened():
+                    if frame_idx % 30 == 0 and (time.time() - start_inpaint_time) > max_inpaint_sec:
+                        logger.warning(
+                            "[VideoEditorService] Inpaint frame loop exceeded %ds timeout", max_inpaint_sec
+                        )
+                        raise TimeoutError(f"Thời gian inpaint video vượt quá {int(max_inpaint_sec)}s.")
                     ret, frame = cap.read()
                     if not ret:
                         break

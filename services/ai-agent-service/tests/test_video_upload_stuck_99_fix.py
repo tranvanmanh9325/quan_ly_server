@@ -160,7 +160,72 @@ class TestVideoUploadStuck99Fix(unittest.IsolatedAsyncioTestCase):
         )
         self.assertTrue(friendly_msg_sent, "Bot must send friendly timeout message on 5-min timeout!")
 
+    async def test_r3_timeout_with_explicit_message_sends_friendly_notification(self):
+        """R3: When remove_text_from_video raises TimeoutError with inner message, bot must still send friendly message."""
+        self.mock_editor.remove_text_from_video = AsyncMock(
+            side_effect=TimeoutError("Tác vụ xử lý video vượt quá thời gian tối đa (300s).")
+        )
 
+        await self.bot._on_video_process_pipeline(
+            chat_id="chat_123",
+            session=self.session,
+            instruction="xóa text trong video",
+        )
+
+        friendly_msg_sent = any(
+            "Video quá phức tạp, vui lòng thử lại với video ngắn hơn" in (c[0][1] if len(c[0]) > 1 else "")
+            for c in self.bot.send_message.call_args_list
+        )
+        self.assertTrue(friendly_msg_sent, "Bot must send friendly timeout message even if TimeoutError has a message!")
+
+    def test_inpaint_merge_subprocess_timeout_raises_timeouterror(self):
+        """Inpaint merge subprocess timeout must raise TimeoutError, not raw RuntimeError or SubprocessError."""
+        import subprocess
+        service = VideoEditorService(storage_manager=MagicMock())
+
+        # Mock cv2 and VideoCapture
+        import numpy as np
+        mock_cv2 = MagicMock()
+        mock_cap = MagicMock()
+        mock_cap.isOpened.side_effect = [True, True, False]
+        mock_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        mock_cap.read.side_effect = [(True, mock_frame), (False, None)]
+        mock_cap.get.side_effect = lambda prop: 30.0 if prop == mock_cv2.CAP_PROP_FPS else (640 if prop == mock_cv2.CAP_PROP_FRAME_WIDTH else 480)
+        mock_cv2.VideoCapture.return_value = mock_cap
+        mock_cv2.CAP_PROP_FPS = 1
+        mock_cv2.CAP_PROP_FRAME_WIDTH = 2
+        mock_cv2.CAP_PROP_FRAME_HEIGHT = 3
+
+        mock_writer = MagicMock()
+        mock_cv2.VideoWriter.return_value = mock_writer
+
+        with patch.dict("sys.modules", {"cv2": mock_cv2}):
+            with patch("subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="ffmpeg", timeout=300)):
+                with self.assertRaises(RuntimeError) as ctx:
+                    service._inpaint_video_sync(
+                        input_file=Path(self.dummy_video),
+                        output_file=Path(self.temp_dir) / "out.mp4",
+                        rx_or_regions=[{"x": 10, "y": 10, "w": 50, "h": 20}],
+                    )
+                self.assertIn("timeout", str(ctx.exception).lower())
+
+    async def test_r3_inpaint_timeout_runtimeerror_sends_friendly_notification(self):
+        """R3: When inpainting merge times out, bot must catch the timeout RuntimeError and send friendly message."""
+        self.mock_editor.remove_text_from_video = AsyncMock(
+            side_effect=RuntimeError("FFmpeg ghép âm thanh sau khi inpaint bị timeout quá 300 giây.")
+        )
+
+        await self.bot._on_video_process_pipeline(
+            chat_id="chat_123",
+            session=self.session,
+            instruction="xóa text trong video",
+        )
+
+        friendly_msg_sent = any(
+            "Video quá phức tạp, vui lòng thử lại với video ngắn hơn" in (c[0][1] if len(c[0]) > 1 else "")
+            for c in self.bot.send_message.call_args_list
+        )
+        self.assertTrue(friendly_msg_sent, "Bot must send friendly timeout message on inpaint timeout!")
 
     async def test_subprocess_killed_on_task_cancellation(self):
         """Edge case: When _run_command task is cancelled, child process must be terminated and reaped."""

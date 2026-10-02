@@ -1977,19 +1977,26 @@ class TelegramBot:
                                     await self.send_message(chat_id, f"❌ Không thể hoàn thành biên tập video: {err_msg}")
                                     return
                         except asyncio.TimeoutError as t_err:
-                            if str(t_err):
-                                logger.error("[TelegramBot] Direct video edit execution error: %s", t_err, exc_info=True)
-                                await self.send_message(
-                                    chat_id, f"❌ Có lỗi trong quá trình biên tập video: {t_err}"
-                                )
-                            else:
+                            if is_remove_text or not str(t_err):
                                 logger.error("[TelegramBot] Direct video edit timed out after 300s for chat %s", chat_id)
                                 await self.send_message(
                                     chat_id,
                                     "❌ Video quá phức tạp, vui lòng thử lại với video ngắn hơn.",
                                 )
+                            else:
+                                logger.error("[TelegramBot] Direct video edit execution error: %s", t_err, exc_info=True)
+                                await self.send_message(
+                                    chat_id, f"❌ Có lỗi trong quá trình biên tập video: {t_err}"
+                                )
                             return
                         except Exception as edit_err:
+                            if "timeout" in str(edit_err).lower() and is_remove_text:
+                                logger.error("[TelegramBot] Direct video edit timed out for chat %s: %s", chat_id, edit_err)
+                                await self.send_message(
+                                    chat_id,
+                                    "❌ Video quá phức tạp, vui lòng thử lại với video ngắn hơn.",
+                                )
+                                return
                             logger.error("[TelegramBot] Direct video edit execution error: %s", edit_err, exc_info=True)
                             await self.send_message(
                                 chat_id, f"❌ Có lỗi trong quá trình biên tập video: {edit_err}"

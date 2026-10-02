@@ -25,9 +25,20 @@ if pytest is not None:
         ArtificialBrain.reset_instance()
 
     @pytest.fixture(autouse=True)
-    async def cleanup_shared_http_clients():
+    def cleanup_shared_http_clients() -> Generator[None, None, None]:
         """Guarantees that shared HttpClientManager is closed cleanly between tests."""
         yield
+        import asyncio
         from app.core.http_client import http_client_manager
-        await http_client_manager.close()
+        try:
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = asyncio.get_event_loop()
+            if loop and loop.is_running():
+                loop.create_task(http_client_manager.close())
+            elif loop and not loop.is_closed():
+                loop.run_until_complete(http_client_manager.close())
+        except Exception:
+            pass
 

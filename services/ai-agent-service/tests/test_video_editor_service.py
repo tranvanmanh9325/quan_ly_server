@@ -2207,6 +2207,112 @@ class TestVideoEditorService(unittest.IsolatedAsyncioTestCase):
         left_leak = np.count_nonzero(mask2_with_prev[g1 > 0] > 0)
         self.assertEqual(left_leak, 0)
 
+    def test_generate_text_stroke_mask_with_semi_transparent_drop_shadow(self):
+        """R1: Character stroke mask encompasses semi-transparent drop shadow on medium backgrounds."""
+        import cv2
+        import numpy as np
+
+        h, w = 60, 200
+        roi = np.full((h, w, 3), 130, dtype=np.uint8)
+        # Drop shadow at dx=3, dy=3 with V=85
+        cv2.putText(roi, "DROP SHADOW", (13, 38), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (85, 85, 85), 2)
+        # Bright text core at (10, 35)
+        cv2.putText(roi, "DROP SHADOW", (10, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+
+        mask = VideoEditorService._generate_text_stroke_mask(roi)
+        self.assertIsInstance(mask, np.ndarray)
+        mask_cov = (np.count_nonzero(mask > 0) / (h * w)) * 100
+        self.assertLess(mask_cov, 30.0)
+        self.assertGreater(mask_cov, 10.0)
+
+        # Inpaint and verify all drop shadow artifacts are cleanly removed
+        inpainted = VideoEditorService._inpaint_edge_aware(roi, mask)
+        rem_shadow = np.count_nonzero((inpainted[:, :, 0] <= 95) & (inpainted[:, :, 0] >= 75))
+        self.assertEqual(rem_shadow, 0, "Lingering drop shadow smudges remaining after inpaint")
+
+    def test_generate_text_stroke_mask_with_soft_neon_glow_subtitles(self):
+        """R1: Character stroke mask covers fuzzy soft glow halo without leaving colored aura ghosts."""
+        import cv2
+        import numpy as np
+
+        h, w = 60, 200
+        roi = np.full((h, w, 3), 50, dtype=np.uint8)
+        glow_layer = np.zeros((h, w, 3), dtype=np.uint8)
+        cv2.putText(glow_layer, "SOFT GLOW", (10, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 5)
+        glow_layer = cv2.GaussianBlur(glow_layer, (9, 9), 0)
+        roi = cv2.add(roi, glow_layer)
+        cv2.putText(roi, "SOFT GLOW", (10, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+
+        mask = VideoEditorService._generate_text_stroke_mask(roi)
+        self.assertIsInstance(mask, np.ndarray)
+        mask_cov = (np.count_nonzero(mask > 0) / (h * w)) * 100
+        self.assertLess(mask_cov, 30.0)
+        self.assertGreater(mask_cov, 12.0)
+
+        inpainted = VideoEditorService._inpaint_edge_aware(roi, mask)
+        hsv_inp = cv2.cvtColor(inpainted, cv2.COLOR_BGR2HSV)
+        # Yellow glow lingering in HSV
+        rem_glow = np.count_nonzero(
+            (hsv_inp[:, :, 0] >= 15) & (hsv_inp[:, :, 0] <= 45) & (hsv_inp[:, :, 1] >= 40) & (hsv_inp[:, :, 2] >= 60)
+        )
+        self.assertEqual(rem_glow, 0, "Soft glow colored halo ghost remaining after inpaint")
+
+    def test_generate_text_stroke_mask_rejects_high_frequency_textured_background_false_positives(self):
+        """R1: Stroke mask rejects textured brick wall / mortar line background false positives."""
+        import cv2
+        import numpy as np
+
+        h, w = 100, 200
+        brick = np.full((h, w, 3), 160, dtype=np.uint8)
+        for y in range(0, h, 20):
+            brick[y:y + 3, :] = 50
+        for row, y in enumerate(range(0, h, 20)):
+            offset = 20 if row % 2 == 1 else 0
+            for x in range(offset, w, 40):
+                brick[y:y + 20, x:x + 3] = 50
+        np.random.seed(42)
+        noise = np.random.normal(0, 15, (h, w, 3)).astype(np.int16)
+        brick = np.clip(brick.astype(np.int16) + noise, 0, 255).astype(np.uint8)
+
+        mask = VideoEditorService._generate_text_stroke_mask(brick)
+        self.assertEqual(np.count_nonzero(mask), 0, "Textured wall falsely detected as subtitle text")
+
+    def test_generate_text_stroke_mask_with_small_and_skewed_aspect_ratio_rois(self):
+        """R1: Character stroke mask preserves fine character strokes in tiny and wide thin ROIs."""
+        import cv2
+        import numpy as np
+
+        # Tiny ROI: 12x12
+        roi_small = np.full((12, 12, 3), 40, dtype=np.uint8)
+        cv2.putText(roi_small, "A", (1, 10), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (255, 255, 255), 1)
+        mask_small = VideoEditorService._generate_text_stroke_mask(roi_small)
+        self.assertGreater(np.count_nonzero(mask_small), 10, "Tiny 12x12 glyph improperly erased by opening")
+
+        # Wide single-line ticker ROI: 14x200
+        roi_wide = np.full((14, 200, 3), 40, dtype=np.uint8)
+        cv2.putText(roi_wide, "HELLO WORLD", (5, 11), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (255, 255, 255), 1)
+        mask_wide = VideoEditorService._generate_text_stroke_mask(roi_wide)
+        self.assertGreater(np.count_nonzero(mask_wide), 100, "Thin 14x200 banner text improperly erased")
+
+    def test_generate_text_stroke_mask_temporal_stability_bounds_dynamic_shadow_growth(self):
+        """R1 & R2: Temporal stability bounds mask expansion on moving watermarks and deformed shadows."""
+        import cv2
+        import numpy as np
+
+        prev_m = None
+        counts = []
+        for t in range(20):
+            roi = np.full((50, 150, 3), 40, dtype=np.uint8)
+            dx = int(2 * np.sin(t * 0.5))
+            cv2.putText(roi, "3D LOGO", (20 + dx, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+            m = VideoEditorService._generate_text_stroke_mask(roi, prev_m)
+            prev_m = m
+            counts.append(np.count_nonzero(m))
+
+        # Check mask growth is bounded and does not accumulate unboundedly
+        expansion = counts[-1] - counts[0]
+        self.assertLess(expansion, 150, "Unbounded temporal mask expansion on dynamic watermark")
+
 
 if __name__ == "__main__":
     unittest.main()

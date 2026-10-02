@@ -1037,7 +1037,7 @@ class VideoEditorService:
             s_chan = np.zeros_like(gray)
             h_chan = np.zeros_like(gray)
 
-        # 1. Background luminance estimation from ROI perimeter
+        # 1. Background luminance and BGR estimation from ROI perimeter
         pad = max(1, min(3, h // 4, w // 4))
         border_mask = np.zeros((h, w), dtype=bool)
         border_mask[:pad, :] = True
@@ -1046,20 +1046,28 @@ class VideoEditorService:
         border_mask[:, -pad:] = True
         border_pixels = v_chan[border_mask]
         bg_lum = float(np.median(border_pixels)) if border_pixels.size > 0 else float(np.median(v_chan))
+        bg_bgr = (
+            np.median(roi[border_mask], axis=0)
+            if (len(roi.shape) == 3 and np.count_nonzero(border_mask) > 0)
+            else np.median(roi, axis=(0, 1))
+        )
 
         # Detect if background is bright (inverted text style: black on light background)
         is_bright_bg = (bg_lum >= 170.0) and (
             border_pixels.size > 0 and np.count_nonzero(border_pixels >= 160) > 0.5 * border_pixels.size
         )
 
-        dark_pixels = (v_chan <= 75).astype(np.uint8) * 255
+        # Adaptive shadow threshold relative to background luminance
+        shadow_thresh = max(75, int(bg_lum - 25)) if (not is_bright_bg and bg_lum >= 75) else 75
+        dark_pixels = (v_chan <= shadow_thresh).astype(np.uint8) * 255
         bright_pixels = ((v_chan >= 180) & (s_chan <= 75)).astype(np.uint8) * 255
         vivid_colored = ((s_chan >= 60) & (v_chan >= 100)).astype(np.uint8) * 255
 
-        has_dark_stroke = np.count_nonzero(dark_pixels) > 20
-        has_bright_pixels = np.count_nonzero(bright_pixels) > 20
+        has_dark_stroke = np.count_nonzero(dark_pixels) > 15
+        has_bright_pixels = np.count_nonzero(bright_pixels) > 15
 
         is_meme_text = False
+        valid_meme_dark = np.zeros_like(dark_pixels)
         if is_bright_bg:
             # Inverted contrast: Black or dark text on light background
             core_candidates = dark_pixels.copy()
@@ -1067,21 +1075,40 @@ class VideoEditorService:
             core_candidates = cv2.bitwise_or(core_candidates, vivid_dark)
             has_dark_stroke = False
         else:
-            # Check for meme text (dark core interlocking with white outline on non-bright background)
+            # Check for genuine meme text: dark glyphs tightly enclosed by bright outline
             if has_dark_stroke and has_bright_pixels:
-                dark_dil = cv2.dilate(dark_pixels, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)))
-                overlap = cv2.bitwise_and(bright_pixels, dark_dil)
-                if np.count_nonzero(overlap) > 30 and (np.count_nonzero(dark_pixels) / (h * w)) < 0.25:
-                    is_meme_text = True
+                num_d, labels_d, stats_d, _ = cv2.connectedComponentsWithStats(dark_pixels, connectivity=8)
+                bright_dil = cv2.dilate(bright_pixels, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)))
+                for i in range(1, num_d):
+                    area_d = stats_d[i, cv2.CC_STAT_AREA]
+                    cw_d = stats_d[i, cv2.CC_STAT_WIDTH]
+                    ch_d = stats_d[i, cv2.CC_STAT_HEIGHT]
+                    if area_d < 8 or cw_d > 0.85 * w or ch_d > 0.85 * h:
+                        continue
+                    comp_d = (labels_d == i)
+                    # Reject structural background lines touching borders (e.g. wall mortar lines)
+                    border_touch = np.count_nonzero(comp_d & border_mask)
+                    if border_touch > 4 or (border_touch / area_d) > 0.08:
+                        continue
+                    # Check envelope adjacency with bright outline
+                    comp_dil = cv2.dilate(
+                        comp_d.astype(np.uint8) * 255, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+                    )
+                    overlap_d = np.count_nonzero(cv2.bitwise_and(comp_dil, bright_pixels))
+                    if overlap_d >= 0.20 * area_d:
+                        valid_meme_dark[comp_d] = 255
+                        is_meme_text = True
 
-            # Standard bright (white/yellow) or vibrant colored text
             core_candidates = cv2.bitwise_or(bright_pixels, vivid_colored)
             if is_meme_text:
-                core_candidates = cv2.bitwise_or(core_candidates, dark_pixels)
+                core_candidates = cv2.bitwise_or(core_candidates, valid_meme_dark)
 
-        # Remove isolated grain / texture specks from core candidates
+        # Remove isolated grain / texture specks while preserving fine character strokes on thin ROIs
         kernel_open = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-        core_opened = cv2.morphologyEx(core_candidates, cv2.MORPH_OPEN, kernel_open)
+        if min(h, w) <= 20:
+            core_opened = core_candidates
+        else:
+            core_opened = cv2.morphologyEx(core_candidates, cv2.MORPH_OPEN, kernel_open)
 
         # Multi-channel gradient for edge-aware stroke validation
         grad_v = cv2.morphologyEx(v_chan, cv2.MORPH_GRADIENT, kernel_open)
@@ -1092,42 +1119,38 @@ class VideoEditorService:
         )
 
         # Validate core by proximity to dark outline or local morphological gradient
-        if not is_bright_bg and has_dark_stroke and not is_meme_text:
+        if not is_bright_bg and has_dark_stroke:
             dark_dilated = cv2.dilate(dark_pixels, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)))
             text_core = cv2.bitwise_and(core_opened, dark_dilated)
+            if np.count_nonzero(text_core) == 0:
+                text_core = cv2.bitwise_and(core_opened, grad_dilated)
         else:
             text_core = cv2.bitwise_and(core_opened, grad_dilated)
 
         # 3. Connected components filtering: isolate character strokes from mesh / reflection noise
+        min_char_h = max(2, int(h * 0.20)) if h <= 20 else 5
+        max_char_h = int(h * 0.98) if h <= 24 else int(h * 0.88)
+        min_char_w = 2 if w <= 20 else 3
+        min_area = max(3, int(0.005 * h * w)) if (h <= 24 or w <= 24) else 10
+
         num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(text_core, connectivity=8)
         clean_core = np.zeros_like(text_core)
         for i in range(1, num_labels):
             area = stats[i, cv2.CC_STAT_AREA]
             cw = stats[i, cv2.CC_STAT_WIDTH]
             ch = stats[i, cv2.CC_STAT_HEIGHT]
-            if area >= 12 and 6 <= ch <= int(h * 0.85) and cw >= 4:
+            if area >= min_area and min_char_h <= ch <= max_char_h and cw >= min_char_w:
                 clean_core[labels == i] = 255
 
         if np.count_nonzero(clean_core) == 0:
             num_c, labels_c, stats_c, _ = cv2.connectedComponentsWithStats(core_opened, connectivity=8)
+            min_fb_area = max(4, int(0.02 * h * w)) if (h <= 24 or w <= 24) else 25
             for i in range(1, num_c):
                 area = stats_c[i, cv2.CC_STAT_AREA]
                 cw = stats_c[i, cv2.CC_STAT_WIDTH]
                 ch = stats_c[i, cv2.CC_STAT_HEIGHT]
-                if 30 <= area <= int(0.20 * h * w) and 8 <= ch <= int(0.85 * h) and cw >= 6:
+                if min_fb_area <= area <= int(0.25 * h * w) and min_char_h <= ch <= max_char_h and cw >= min_char_w:
                     clean_core[labels_c == i] = 255
-
-        # Tertiary fallback: High-contrast edge detection if color gating found nothing
-        if np.count_nonzero(clean_core) == 0 and not is_bright_bg:
-            edges = (grad_max >= 45).astype(np.uint8) * 255
-            edges_opened = cv2.morphologyEx(edges, cv2.MORPH_OPEN, kernel_open)
-            num_e, labels_e, stats_e, _ = cv2.connectedComponentsWithStats(edges_opened, connectivity=8)
-            for i in range(1, num_e):
-                area = stats_e[i, cv2.CC_STAT_AREA]
-                cw = stats_e[i, cv2.CC_STAT_WIDTH]
-                ch = stats_e[i, cv2.CC_STAT_HEIGHT]
-                if 40 <= area <= int(0.18 * h * w) and 10 <= ch <= int(0.80 * h) and cw >= 8:
-                    clean_core[labels_e == i] = 255
 
         if np.count_nonzero(clean_core) == 0:
             return np.zeros((h, w), dtype=np.uint8)
@@ -1139,18 +1162,32 @@ class VideoEditorService:
         # 4. Dilate to encompass stroke outline and anti-aliasing boundary
         kernel_dilate = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
         stroke_mask = cv2.dilate(clean_core, kernel_dilate)
+
+        # Encompass dark stroke outline and semi-transparent drop shadow adjoining text core
         if not is_bright_bg and has_dark_stroke:
-            adj_dark = cv2.bitwise_and(
-                dark_pixels, cv2.dilate(clean_core, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)))
-            )
+            shadow_zone = cv2.dilate(clean_core, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9)))
+            adj_dark = cv2.bitwise_and(dark_pixels, shadow_zone)
             stroke_mask = cv2.bitwise_or(stroke_mask, adj_dark)
 
+        # Encompass soft outer glow (neon / karaoke subtitles) adjoining text core
+        if len(roi.shape) == 3 and not is_bright_bg:
+            glow_vicinity = cv2.dilate(clean_core, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11)))
+            color_diff = np.sqrt(np.sum((roi.astype(np.float32) - bg_bgr.astype(np.float32)) ** 2, axis=2))
+            glow_pixels = ((color_diff > 12.0) & (glow_vicinity > 0)).astype(np.uint8) * 255
+            if np.count_nonzero(glow_pixels) > 0:
+                glow_dilated = cv2.dilate(glow_pixels, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)))
+                stroke_mask = cv2.bitwise_or(stroke_mask, glow_dilated)
+
         # 5. Temporal stability: propagate persistent text mask from previous frame only if same subtitle (IoU >= 0.70)
+        # Prevents unbounded mask inflation on dynamic / shifting shadows
         if prev_mask is not None and prev_mask.shape == stroke_mask.shape:
             inter = np.count_nonzero((stroke_mask > 0) & (prev_mask > 0))
             union = np.count_nonzero((stroke_mask > 0) | (prev_mask > 0))
             if union > 0 and (inter / union) >= 0.70:
-                stroke_mask = cv2.bitwise_or(stroke_mask, prev_mask)
+                prev_adjacent = cv2.bitwise_and(
+                    prev_mask, cv2.dilate(stroke_mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)))
+                )
+                stroke_mask = cv2.bitwise_or(stroke_mask, prev_adjacent)
 
         # 6. Safety ceiling: ensure mask does not exceed 30% of ROI area with strict fallback clamping
         roi_area = h * w

@@ -2022,6 +2022,66 @@ class TestVideoEditorService(unittest.IsolatedAsyncioTestCase):
                 # Both TiếngViệt and 你好 should be detected; '---' must be discarded
                 self.assertGreater(len(detected), 0)
 
+    def test_generate_text_stroke_mask_with_character_stroke_subtitles(self):
+        """R1: Character stroke mask generation isolates text strokes with coverage < 25-30%."""
+        import cv2
+        import numpy as np
+        h, w = 120, 480
+        bg = np.tile(np.linspace(100, 150, w, dtype=np.uint8), (h, 1))
+        roi = cv2.cvtColor(bg, cv2.COLOR_GRAY2BGR)
+
+        text = "TEST SUBTITLE REMOVAL"
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 1.2
+        thickness = 3
+        cv2.putText(roi, text, (30, 75), font, font_scale, (0, 0, 0), thickness + 4, cv2.LINE_AA)
+        cv2.putText(roi, text, (30, 75), font, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
+
+        mask = VideoEditorService._generate_text_stroke_mask(roi)
+        self.assertIsInstance(mask, np.ndarray)
+        self.assertEqual(mask.shape, (h, w))
+
+        mask_pixels = np.count_nonzero(mask > 0)
+        coverage = (mask_pixels / (h * w)) * 100
+        self.assertGreater(mask_pixels, 100)
+        self.assertLess(coverage, 30.0)
+
+    def test_generate_text_stroke_mask_empty_on_plain_background(self):
+        """R1: Character stroke mask returns empty mask on plain background without text."""
+        import numpy as np
+        roi = np.random.randint(110, 140, (100, 300, 3), dtype=np.uint8)
+        mask = VideoEditorService._generate_text_stroke_mask(roi)
+        self.assertEqual(np.count_nonzero(mask), 0)
+
+    def test_generate_text_stroke_mask_handles_edge_cases(self):
+        """R1: Mask generation handles empty, tiny, and invalid inputs gracefully."""
+        import numpy as np
+        m1 = VideoEditorService._generate_text_stroke_mask(None)
+        self.assertEqual(m1.size, 0)
+        m2 = VideoEditorService._generate_text_stroke_mask(np.zeros((0, 0, 3), dtype=np.uint8))
+        self.assertEqual(m2.size, 0)
+        m3 = VideoEditorService._generate_text_stroke_mask(np.ones((2, 2, 3), dtype=np.uint8))
+        self.assertEqual(m3.shape, (2, 2))
+        self.assertEqual(np.count_nonzero(m3), 0)
+
+    def test_inpaint_edge_aware_dual_pass(self):
+        """R2: Dual-pass edge-aware inpainting restores background texture without rectangular smear."""
+        import cv2
+        import numpy as np
+        h, w = 100, 200
+        grid = np.zeros((h, w), dtype=np.uint8)
+        grid[::4, :] = 180
+        grid[:, ::4] = 180
+        roi = cv2.cvtColor(grid, cv2.COLOR_GRAY2BGR)
+
+        mask = np.zeros((h, w), dtype=np.uint8)
+        cv2.line(mask, (20, 50), (180, 50), 255, 3)
+
+        inpainted = VideoEditorService._inpaint_edge_aware(roi, mask)
+        self.assertEqual(inpainted.shape, roi.shape)
+        empty_mask = np.zeros((h, w), dtype=np.uint8)
+        self.assertTrue(np.array_equal(VideoEditorService._inpaint_edge_aware(roi, empty_mask), roi))
+
 
 if __name__ == "__main__":
     unittest.main()

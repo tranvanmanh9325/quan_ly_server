@@ -115,7 +115,7 @@ class TestVideoEditorService(unittest.IsolatedAsyncioTestCase):
         """Test remove_text_from_video mode='auto' successfully detects text via OCR sampling -> delogo."""
         async def fake_run(cmd, timeout=300):
             # Check if this is the sample frame extraction command
-            if "-vsync" in cmd and "select=eq(n" in cmd[cmd.index("-vf") + 1]:
+            if "-vsync" in cmd:
                 sample_pattern = cmd[-1]
                 sample_dir = Path(sample_pattern).parent
                 # Write sample jpg files
@@ -1855,6 +1855,172 @@ class TestVideoEditorService(unittest.IsolatedAsyncioTestCase):
                     rx_or_regions=regions,
                 )
                 self.assertEqual(mock_cv2.inpaint.call_count, 2)
+
+    async def test_auto_detect_unknown_duration_falls_back_to_dense_sampling(self):
+        """Adversarial R3: Unknown video duration (0.0s) defaults to 2.0s dense sampling instead of dropping to 1 frame."""
+        captured_commands = []
+        async def fake_run(cmd, timeout=30):
+            captured_commands.append(cmd)
+            if "-vsync" in cmd:
+                sample_dir = Path(cmd[-1]).parent
+                for i in range(4):
+                    (sample_dir / f"sample_0{i}.jpg").write_bytes(b"frame")
+                return 0, b"", b""
+            return 0, b"", b""
+
+        def fake_ocr(img, output_type=None):
+            return {
+                "text": ["PERSISTENT_LOGO"],
+                "conf": [92],
+                "left": [30],
+                "top": [40],
+                "width": [60],
+                "height": [25],
+            }
+
+        mock_tess = MagicMock()
+        mock_tess.Output.DICT = "dict"
+        mock_tess.image_to_data.side_effect = fake_ocr
+
+        mock_pil = MagicMock()
+        mock_img = MagicMock()
+        mock_img.width = 640
+        mock_img.height = 360
+        mock_pil.Image.open.return_value.__enter__.return_value = mock_img
+
+        with patch.object(self.service, "_run_command", side_effect=fake_run):
+            with patch.dict("sys.modules", {"pytesseract": mock_tess, "PIL": mock_pil}):
+                detected = await self.service._auto_detect_text_region(self.dummy_video)
+                # Ensure ffmpeg sample command used fps=1/2.0000 instead of select=eq(n,0)
+                sample_cmd = next(c for c in captured_commands if "-vsync" in c)
+                vf_arg = sample_cmd[sample_cmd.index("-vf") + 1]
+                self.assertIn("fps=1/2.0000", vf_arg)
+                self.assertEqual(len(detected), 1)
+                self.assertEqual(detected[0]["x"], 20)
+                self.assertEqual(detected[0]["y"], 30)
+
+    async def test_auto_detect_short_video_dense_sampling(self):
+        """Adversarial R3: Sub-second video (duration=0.8s) extracts multiple samples and detects text."""
+        captured_commands = []
+        async def fake_run(cmd, timeout=30):
+            captured_commands.append(cmd)
+            # Duration probe returns 0.8s
+            if "format=duration:stream=duration" in " ".join(cmd):
+                return 0, b"0.800000\n", b""
+            if "-vsync" in cmd:
+                sample_dir = Path(cmd[-1]).parent
+                for i in range(3):
+                    (sample_dir / f"sample_0{i}.jpg").write_bytes(b"frame")
+                return 0, b"", b""
+            return 0, b"", b""
+
+        def fake_ocr(img, output_type=None):
+            return {
+                "text": ["SHORT_TAG"],
+                "conf": [88],
+                "left": [50],
+                "top": [50],
+                "width": [70],
+                "height": [30],
+            }
+
+        mock_tess = MagicMock()
+        mock_tess.Output.DICT = "dict"
+        mock_tess.image_to_data.side_effect = fake_ocr
+
+        mock_pil = MagicMock()
+        mock_img = MagicMock()
+        mock_img.width = 640
+        mock_img.height = 360
+        mock_pil.Image.open.return_value.__enter__.return_value = mock_img
+
+        with patch.object(self.service, "_run_command", side_effect=fake_run):
+            with patch.dict("sys.modules", {"pytesseract": mock_tess, "PIL": mock_pil}):
+                detected = await self.service._auto_detect_text_region(self.dummy_video)
+                self.assertEqual(len(detected), 1)
+                sample_cmd = next(c for c in captured_commands if "-vsync" in c)
+                vf_arg = sample_cmd[sample_cmd.index("-vf") + 1]
+                self.assertIn("fps=", vf_arg)
+
+    def test_inpaint_odd_dimension_adds_padding_filter(self):
+        """Adversarial R3: Video with odd dimensions (575x1023) adds pad=ceil(iw/2)*2 filter for libx264."""
+        import numpy as np
+
+        mock_cv2 = MagicMock()
+        mock_cap = MagicMock()
+        mock_cap.isOpened.return_value = True
+        mock_cap.get.side_effect = lambda prop: {
+            mock_cv2.CAP_PROP_FPS: 30.0,
+            mock_cv2.CAP_PROP_FRAME_WIDTH: 575,
+            mock_cv2.CAP_PROP_FRAME_HEIGHT: 1023,
+        }.get(prop, 0)
+
+        dummy_frame = np.zeros((1023, 575, 3), dtype=np.uint8)
+        mock_cap.read.side_effect = [
+            (True, dummy_frame),
+            (False, None),
+        ]
+        mock_cv2.VideoCapture.return_value = mock_cap
+
+        mock_writer = MagicMock()
+        mock_writer.isOpened.return_value = True
+        mock_cv2.VideoWriter.return_value = mock_writer
+        mock_cv2.inpaint.return_value = dummy_frame
+
+        output_file = self.service._temp_dir / "test_odd_out.mp4"
+        regions = [{"x": 10, "y": 10, "w": 40, "h": 20}]
+
+        captured_merge_cmd = []
+        def fake_subprocess_run(cmd, **kwargs):
+            captured_merge_cmd.extend(cmd)
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        with patch.dict("sys.modules", {"cv2": mock_cv2}):
+            with patch("subprocess.run", side_effect=fake_subprocess_run):
+                self.service._inpaint_video_sync(
+                    input_file=self.dummy_video,
+                    output_file=output_file,
+                    rx_or_regions=regions,
+                )
+                self.assertIn("-vf", captured_merge_cmd)
+                vf_val = captured_merge_cmd[captured_merge_cmd.index("-vf") + 1]
+                self.assertIn("pad=ceil(iw/2)*2:ceil(ih/2)*2", vf_val)
+
+    async def test_auto_detect_unicode_multilingual_text(self):
+        """Adversarial R3: Multilingual and Vietnamese text (Tiếng Việt, CJK) is recognized and not rejected as noise."""
+        async def fake_run(cmd, timeout=30):
+            if "-vsync" in cmd:
+                sample_dir = Path(cmd[-1]).parent
+                for i in range(2):
+                    (sample_dir / f"sample_0{i}.jpg").write_bytes(b"frame")
+                return 0, b"", b""
+            return 0, b"", b""
+
+        def fake_ocr(img, output_type=None):
+            return {
+                "text": ["TiếngViệt", "你好", "---"],
+                "conf": [90, 85, 90],
+                "left": [20, 100, 200],
+                "top": [50, 50, 50],
+                "width": [60, 40, 20],
+                "height": [25, 25, 20],
+            }
+
+        mock_tess = MagicMock()
+        mock_tess.Output.DICT = "dict"
+        mock_tess.image_to_data.side_effect = fake_ocr
+
+        mock_pil = MagicMock()
+        mock_img = MagicMock()
+        mock_img.width = 600
+        mock_img.height = 400
+        mock_pil.Image.open.return_value.__enter__.return_value = mock_img
+
+        with patch.object(self.service, "_run_command", side_effect=fake_run):
+            with patch.dict("sys.modules", {"pytesseract": mock_tess, "PIL": mock_pil}):
+                detected = await self.service._auto_detect_text_region(self.dummy_video)
+                # Both TiếngViệt and 你好 should be detected; '---' must be discarded
+                self.assertGreater(len(detected), 0)
 
 
 if __name__ == "__main__":

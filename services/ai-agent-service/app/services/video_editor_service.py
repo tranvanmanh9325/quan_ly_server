@@ -746,13 +746,13 @@ class VideoEditorService:
                 step_sec = duration / 60.0
             elif duration >= 1.0:
                 step_sec = 1.0
+            elif duration > 0.0:
+                step_sec = max(0.2, duration / 3.0)
             else:
-                step_sec = 0.5
+                # Default to 2.0s per requirement R1 when duration probe cannot determine length
+                step_sec = 2.0
 
-            if duration >= 1.0:
-                vf_expr = f"fps=1/{step_sec:.4f}"
-            else:
-                vf_expr = "select=eq(n\\,0)"
+            vf_expr = f"fps=1/{step_sec:.4f}"
 
             # Extract sample frames across the video
             cmd = [
@@ -821,7 +821,7 @@ class VideoEditorService:
                             except (ValueError, TypeError):
                                 conf = -1.0
                             text = str(texts[i]).strip()
-                            has_alpha = bool(re.search(r'[a-zA-Z0-9\u00C0-\u024F\u1EA0-\u1EF9]', text))
+                            has_alpha = bool(re.search(r'[^\W_]', text))
                             if conf > 30.0 and len(text) > 0 and has_alpha:
                                 x = int(lefts[i])
                                 y = int(tops[i])
@@ -1111,8 +1111,13 @@ class VideoEditorService:
                 "-i", str(raw_video_path),
                 "-i", str(input_file),
             ]
+            filters = []
             if sar_filter:
-                merge_cmd.extend(["-vf", sar_filter])
+                filters.append(sar_filter)
+            if width % 2 != 0 or height % 2 != 0:
+                filters.append("pad=ceil(iw/2)*2:ceil(ih/2)*2")
+            if filters:
+                merge_cmd.extend(["-vf", ",".join(filters)])
             merge_cmd.extend([
                 "-c:v", "libx264", "-preset", "fast", "-crf", "18",
                 "-pix_fmt", "yuv420p",

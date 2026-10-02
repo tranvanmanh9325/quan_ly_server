@@ -157,10 +157,11 @@ class TestVideoEditorService(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(res["region"]["w"], 190)
                 self.assertEqual(res["region"]["h"], 50)
 
-                # Verify final delogo command uses the detected region
+                # Verify final delogo command uses the detected region and temporal enable
                 final_cmd = mock_run.call_args[0][0]
                 vf_val = final_cmd[final_cmd.index("-vf") + 1]
-                self.assertIn("delogo=x=90:y=40:w=190:h=50:show=0", vf_val)
+                self.assertIn("delogo=x=90:y=40:w=190:h=50", vf_val)
+                self.assertIn("show=0", vf_val)
 
     async def test_remove_text_inpaint_mode_fallback_when_no_opencv(self):
         """Test remove_text_from_video mode='inpaint' raises RuntimeError when cv2 is missing."""
@@ -1667,6 +1668,58 @@ class TestVideoEditorService(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(mock_cv2.inpaint.call_count, 2)
                 # mock_writer.write should be called for all 4 frames
                 self.assertEqual(mock_writer.write.call_count, 4)
+
+    async def test_auto_detect_rejects_non_alphanumeric_noise(self):
+        """Noise Rejection: Pytesseract false positives with non-alphanumeric noise (|, ---, ,,) are rejected."""
+        async def fake_run(cmd, timeout=30):
+            if "-vsync" in cmd:
+                sample_dir = Path(cmd[-1]).parent
+                for i in range(5):
+                    (sample_dir / f"sample_0{i}.jpg").write_bytes(b"frame")
+                return 0, b"", b""
+            return 0, b"", b""
+
+        mock_tesseract = MagicMock()
+        mock_tesseract.Output.DICT = "dict"
+        mock_tesseract.image_to_data.return_value = {
+            "text": ["|", "---", ",,", "..."],
+            "conf": [90, 90, 90, 90],
+            "left": [10, 50, 100, 150],
+            "top": [10, 10, 10, 10],
+            "width": [20, 20, 20, 20],
+            "height": [20, 20, 20, 20],
+        }
+
+        mock_pil = MagicMock()
+        mock_img = MagicMock()
+        mock_img.width = 1000
+        mock_img.height = 600
+        mock_pil.Image.open.return_value.__enter__.return_value = mock_img
+
+        with patch.object(self.service, "_run_command", side_effect=fake_run):
+            with patch.dict("sys.modules", {"pytesseract": mock_tesseract, "PIL": mock_pil}):
+                detected = await self.service._auto_detect_text_region(self.dummy_video)
+                self.assertEqual(detected, [])
+
+    async def test_delogo_with_temporal_enable(self):
+        """Temporal Delogo: delogo filter includes between(n, start, end) enable option when temporal frames are set."""
+        async def fake_run(cmd, timeout=300):
+            if "stream=width,height" in " ".join(cmd):
+                return 0, b"640x360\n", b""
+            if cmd and str(cmd[-1]).endswith(".mp4"):
+                Path(cmd[-1]).write_bytes(b"delogo_temporal_out")
+            return 0, b"", b""
+
+        with patch.object(self.service, "_run_command", side_effect=fake_run) as mock_run:
+            res = await self.service.remove_text_from_video(
+                input_path_or_url=str(self.dummy_video),
+                region={"x": 50, "y": 60, "w": 120, "h": 40, "frame_start": 30, "frame_end": 90},
+                mode="delogo",
+            )
+            self.assertEqual(res["status"], "ok")
+            delogo_cmd = mock_run.call_args[0][0]
+            vf_flag = delogo_cmd[delogo_cmd.index("-vf") + 1]
+            self.assertIn("delogo=x=50:y=60:w=120:h=40:enable='between(n\\,30\\,90)':show=0", vf_flag)
 
 
 if __name__ == "__main__":

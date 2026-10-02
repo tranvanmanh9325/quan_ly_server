@@ -403,19 +403,24 @@ class VideoEditorService:
 
                 delogo_filters = []
                 for reg in target_regions:
+                    enable_opt = ""
+                    if "frame_start" in reg and "frame_end" in reg:
+                        fs = int(reg["frame_start"])
+                        fe = int(reg["frame_end"])
+                        enable_opt = f":enable='between(n\\,{fs}\\,{fe})'"
                     if vid_w > 0 and vid_h > 0:
                         x1 = max(1, int(reg["x"]))
                         y1 = max(1, int(reg["y"]))
                         x2 = min(vid_w - 1, int(reg["x"]) + int(reg["w"]))
                         y2 = min(vid_h - 1, int(reg["y"]) + int(reg["h"]))
                         if x2 > x1 and y2 > y1:
-                            delogo_filters.append(f"delogo=x={x1}:y={y1}:w={x2 - x1}:h={y2 - y1}:show=0")
+                            delogo_filters.append(f"delogo=x={x1}:y={y1}:w={x2 - x1}:h={y2 - y1}{enable_opt}:show=0")
                     else:
                         drx = max(1, int(reg["x"]))
                         dry = max(1, int(reg["y"]))
                         drw = max(1, int(reg["w"]))
                         drh = max(1, int(reg["h"]))
-                        delogo_filters.append(f"delogo=x={drx}:y={dry}:w={drw}:h={drh}:show=0")
+                        delogo_filters.append(f"delogo=x={drx}:y={dry}:w={drw}:h={drh}{enable_opt}:show=0")
 
                 if not delogo_filters:
                     shutil.copy2(input_file, output_file)
@@ -639,20 +644,31 @@ class VideoEditorService:
                         y1 = max(combined["y"], s2["y"])
                         x2 = min(combined["x"] + combined["w"], s2["x"] + s2["w"])
                         y2 = min(combined["y"] + combined["h"], s2["y"] + s2["h"])
-                        if x2 > x1 and y2 > y1:
-                            nx = min(combined["x"], s2["x"])
-                            ny = min(combined["y"], s2["y"])
-                            nw = max(combined["x"] + combined["w"], s2["x"] + s2["w"]) - nx
-                            nh = max(combined["y"] + combined["h"], s2["y"] + s2["h"]) - ny
-                            if frame_area <= 0 or (nw * nh) <= 0.30 * frame_area:
-                                combined["x"] = nx
-                                combined["y"] = ny
-                                combined["w"] = nw
-                                combined["h"] = nh
-                                combined["frame_start"] = min(combined.get("frame_start", 0), s2.get("frame_start", 0))
-                                combined["frame_end"] = max(combined.get("frame_end", 999999999), s2.get("frame_end", 999999999))
-                                skip_indices.add(j)
-                                changed = True
+                        inter_w = max(0, x2 - x1)
+                        inter_h = max(0, y2 - y1)
+                        inter_area = inter_w * inter_h
+                        if inter_area > 0:
+                            a1 = combined["w"] * combined["h"]
+                            a2 = s2["w"] * s2["h"]
+                            min_a = min(a1, a2)
+                            containment = (inter_area / min_a) if min_a > 0 else 0.0
+                            union_a = a1 + a2 - inter_area
+                            iou = (inter_area / union_a) if union_a > 0 else 0.0
+
+                            if iou >= 0.10 or containment >= 0.20:
+                                nx = min(combined["x"], s2["x"])
+                                ny = min(combined["y"], s2["y"])
+                                nw = max(combined["x"] + combined["w"], s2["x"] + s2["w"]) - nx
+                                nh = max(combined["y"] + combined["h"], s2["y"] + s2["h"]) - ny
+                                if frame_area <= 0 or (nw * nh) <= 0.30 * frame_area:
+                                    combined["x"] = nx
+                                    combined["y"] = ny
+                                    combined["w"] = nw
+                                    combined["h"] = nh
+                                    combined["frame_start"] = min(combined.get("frame_start", 0), s2.get("frame_start", 0))
+                                    combined["frame_end"] = max(combined.get("frame_end", 999999999), s2.get("frame_end", 999999999))
+                                    skip_indices.add(j)
+                                    changed = True
                 new_merged.append(combined)
             merged = new_merged
         return merged
@@ -719,13 +735,13 @@ class VideoEditorService:
             if not fps or fps <= 0:
                 fps = 30.0
 
-            # Dense Temporal Scan: 1 frame every 2s, capped at 60 frames max
+            # Dense Temporal Scan: 1 frame every 1-2s, capped at 60 frames max
             if duration > 60.0:
                 step_sec = duration / 60.0
-            elif duration >= 2.0:
-                step_sec = 2.0
-            else:
+            elif duration >= 1.0:
                 step_sec = 1.0
+            else:
+                step_sec = 0.5
 
             if duration >= 1.0:
                 vf_expr = f"fps=1/{step_sec:.4f}"
@@ -775,7 +791,10 @@ class VideoEditorService:
                         if hasattr(img, "width") and isinstance(img.width, int):
                             frame_w = max(frame_w, img.width)
                             frame_h = max(frame_h, img.height)
-                        data = pytesseract.image_to_data(img, output_type=pytesseract.Output.DICT)
+                        try:
+                            data = pytesseract.image_to_data(img, output_type=pytesseract.Output.DICT, config="--psm 11")
+                        except Exception:
+                            data = pytesseract.image_to_data(img, output_type=pytesseract.Output.DICT)
                         n_boxes = len(data.get("text", []))
                         for i in range(n_boxes):
                             try:
@@ -783,7 +802,8 @@ class VideoEditorService:
                             except (ValueError, TypeError):
                                 conf = -1.0
                             text = str(data["text"][i]).strip()
-                            if conf > 30.0 and len(text) > 0:
+                            has_alpha = bool(re.search(r'[a-zA-Z0-9\u00C0-\u024F\u1EA0-\u1EF9]', text))
+                            if conf > 30.0 and len(text) > 0 and has_alpha:
                                 x = int(data["left"][i])
                                 y = int(data["top"][i])
                                 w = int(data["width"][i])
@@ -831,8 +851,14 @@ class VideoEditorService:
                             vert_overlap = (overlap_y / min_h) if min_h > 0 else 0.0
                             text_sim = self._compute_text_similarity(btext, seg.get("text", ""))
 
-                            # Segment match condition: spatial proximity or significant vertical line overlap
-                            if iou >= 0.2 or vert_overlap >= 0.6:
+                            # Segment match condition: spatial proximity or vertical alignment with text similarity
+                            is_match = False
+                            if iou >= 0.35:
+                                is_match = True
+                            elif vert_overlap >= 0.6 and (text_sim >= 0.20 or iou >= 0.15):
+                                is_match = True
+
+                            if is_match:
                                 score = iou + vert_overlap + text_sim
                                 if score > best_score:
                                     best_score = score
@@ -995,19 +1021,35 @@ class VideoEditorService:
                     ]
 
                     if active_regions:
-                        mask = np.zeros((height, width), dtype=np.uint8)
-                        for reg in active_regions:
-                            x1 = max(0, int(reg["x"]))
-                            y1 = max(0, int(reg["y"]))
-                            x2 = min(width, int(reg["x"]) + int(reg["w"]))
-                            y2 = min(height, int(reg["y"]) + int(reg["h"]))
-                            if x2 > x1 and y2 > y1:
-                                mask[y1:y2, x1:x2] = 255
-                        if np.count_nonzero(mask) > 0:
-                            inpainted = cv2.inpaint(frame, mask, 3, cv2.INPAINT_TELEA)
-                            out.write(inpainted)
-                        else:
-                            out.write(frame)
+                        # Extract ROI bounding box around active regions with small padding for 10x faster inpainting
+                        roi_margin = 4
+                        rx1 = max(0, min(int(r["x"]) for r in active_regions) - roi_margin)
+                        ry1 = max(0, min(int(r["y"]) for r in active_regions) - roi_margin)
+                        rx2 = min(width, max(int(r["x"]) + int(r["w"]) for r in active_regions) + roi_margin)
+                        ry2 = min(height, max(int(r["y"]) + int(r["h"]) for r in active_regions) + roi_margin)
+                        roi_w = rx2 - rx1
+                        roi_h = ry2 - ry1
+
+                        if roi_w > 0 and roi_h > 0:
+                            roi_mask = np.zeros((roi_h, roi_w), dtype=np.uint8)
+                            for reg in active_regions:
+                                bx1 = max(0, int(reg["x"]) - rx1)
+                                by1 = max(0, int(reg["y"]) - ry1)
+                                bx2 = min(roi_w, int(reg["x"]) + int(reg["w"]) - rx1)
+                                by2 = min(roi_h, int(reg["y"]) + int(reg["h"]) - ry1)
+                                if bx2 > bx1 and by2 > by1:
+                                    roi_mask[by1:by2, bx1:bx2] = 255
+
+                            if np.count_nonzero(roi_mask) > 0:
+                                try:
+                                    roi = frame[ry1:ry2, rx1:rx2]
+                                    telea_flag = getattr(cv2, "INPAINT_TELEA", 0)
+                                    inpainted_roi = cv2.inpaint(roi, roi_mask, 3, telea_flag)
+                                    frame[ry1:ry2, rx1:rx2] = inpainted_roi
+                                except Exception as inpaint_err:
+                                    logger.debug("[VideoEditorService] ROI inpaint exception: %s", inpaint_err)
+
+                        out.write(frame)
                     else:
                         out.write(frame)
 
@@ -1047,7 +1089,7 @@ class VideoEditorService:
             if sar_filter:
                 merge_cmd.extend(["-vf", sar_filter])
             merge_cmd.extend([
-                "-c:v", "libx264", "-preset", "fast", "-crf", "22",
+                "-c:v", "libx264", "-preset", "fast", "-crf", "18",
                 "-pix_fmt", "yuv420p",
                 "-c:a", "copy",
                 "-map", "0:v:0",

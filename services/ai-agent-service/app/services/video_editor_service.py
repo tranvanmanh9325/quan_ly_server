@@ -655,7 +655,7 @@ class VideoEditorService:
                             union_a = a1 + a2 - inter_area
                             iou = (inter_area / union_a) if union_a > 0 else 0.0
 
-                            if iou >= 0.10 or containment >= 0.20:
+                            if iou >= 0.25 or containment >= 0.60:
                                 nx = min(combined["x"], s2["x"])
                                 ny = min(combined["y"], s2["y"])
                                 nw = max(combined["x"] + combined["w"], s2["x"] + s2["w"]) - nx
@@ -694,17 +694,23 @@ class VideoEditorService:
             # Probe duration
             probe_cmd = [
                 "ffprobe", "-v", "error",
-                "-show_entries", "format=duration",
+                "-show_entries", "format=duration:stream=duration",
                 "-of", "default=noprint_wrappers=1:nokey=1",
                 str(input_file),
             ]
             try:
                 p_code, p_stdout, _ = await self._run_command(probe_cmd, timeout=10)
                 if p_code == 0:
-                    try:
-                        duration = float(p_stdout.decode(errors="ignore").strip())
-                    except Exception:
-                        duration = 0.0
+                    for line in p_stdout.decode(errors="ignore").splitlines():
+                        line_str = line.strip()
+                        if line_str and line_str != "N/A":
+                            try:
+                                d_val = float(line_str)
+                                if d_val > 0:
+                                    duration = d_val
+                                    break
+                            except Exception:
+                                continue
             except Exception as p_exc:
                 logger.debug("[VideoEditorService] Probe duration failed: %s", p_exc)
                 duration = 0.0
@@ -781,8 +787,15 @@ class VideoEditorService:
             for idx, frame_path in enumerate(frames):
                 t_sec = idx * step_sec
                 f_start = max(0, int(round((t_sec - step_sec / 2.0) * fps)))
+                if idx == 0:
+                    f_start = 0
                 f_end = int(round((t_sec + step_sec / 2.0) * fps))
-                if duration > 0 and f_end > int(round(duration * fps)):
+                if idx == len(frames) - 1:
+                    if duration > 0:
+                        f_end = max(f_end, int(round(duration * fps)))
+                    else:
+                        f_end = max(f_end, f_end + int(round(step_sec * fps)))
+                elif duration > 0 and f_end > int(round(duration * fps)):
                     f_end = int(round(duration * fps))
 
                 boxes_in_frame: List[Tuple[int, int, int, int, str]] = []
@@ -795,19 +808,25 @@ class VideoEditorService:
                             data = pytesseract.image_to_data(img, output_type=pytesseract.Output.DICT, config="--psm 11")
                         except Exception:
                             data = pytesseract.image_to_data(img, output_type=pytesseract.Output.DICT)
-                        n_boxes = len(data.get("text", []))
+                        texts = data.get("text", [])
+                        confs = data.get("conf", [])
+                        lefts = data.get("left", [])
+                        tops = data.get("top", [])
+                        widths = data.get("width", [])
+                        heights = data.get("height", [])
+                        n_boxes = min(len(texts), len(confs), len(lefts), len(tops), len(widths), len(heights))
                         for i in range(n_boxes):
                             try:
-                                conf = float(data["conf"][i])
+                                conf = float(confs[i])
                             except (ValueError, TypeError):
                                 conf = -1.0
-                            text = str(data["text"][i]).strip()
+                            text = str(texts[i]).strip()
                             has_alpha = bool(re.search(r'[a-zA-Z0-9\u00C0-\u024F\u1EA0-\u1EF9]', text))
                             if conf > 30.0 and len(text) > 0 and has_alpha:
-                                x = int(data["left"][i])
-                                y = int(data["top"][i])
-                                w = int(data["width"][i])
-                                h = int(data["height"][i])
+                                x = int(lefts[i])
+                                y = int(tops[i])
+                                w = int(widths[i])
+                                h = int(heights[i])
                                 if w > 0 and h > 0:
                                     boxes_in_frame.append((x, y, w, h, text))
                 except Exception:
@@ -849,17 +868,24 @@ class VideoEditorService:
                             overlap_y = max(0, min(by + bh, seg["y"] + seg["h"]) - max(by, seg["y"]))
                             min_h = min(bh, seg["h"])
                             vert_overlap = (overlap_y / min_h) if min_h > 0 else 0.0
+
+                            # Horizontal overlap and gap to prevent disparate bounding box merges
+                            overlap_x = max(0, min(bx + bw, seg["x"] + seg["w"]) - max(bx, seg["x"]))
+                            min_w = min(bw, seg["w"])
+                            horiz_overlap = (overlap_x / min_w) if min_w > 0 else 0.0
+                            gap_x = max(0, max(bx, seg["x"]) - min(bx + bw, seg["x"] + seg["w"]))
+
                             text_sim = self._compute_text_similarity(btext, seg.get("text", ""))
 
-                            # Segment match condition: spatial proximity or vertical alignment with text similarity
+                            # Segment match condition: spatial proximity or vertical alignment with horizontal proximity and text similarity
                             is_match = False
                             if iou >= 0.35:
                                 is_match = True
-                            elif vert_overlap >= 0.6 and (text_sim >= 0.20 or iou >= 0.15):
+                            elif vert_overlap >= 0.6 and (horiz_overlap >= 0.3 or gap_x <= max(35, int(min_h * 1.5))) and (text_sim >= 0.25 or iou >= 0.20):
                                 is_match = True
 
                             if is_match:
-                                score = iou + vert_overlap + text_sim
+                                score = iou + vert_overlap + horiz_overlap + text_sim
                                 if score > best_score:
                                     best_score = score
                                     matched_segment = seg
@@ -1021,33 +1047,32 @@ class VideoEditorService:
                     ]
 
                     if active_regions:
-                        # Extract ROI bounding box around active regions with small padding for 10x faster inpainting
-                        roi_margin = 4
-                        rx1 = max(0, min(int(r["x"]) for r in active_regions) - roi_margin)
-                        ry1 = max(0, min(int(r["y"]) for r in active_regions) - roi_margin)
-                        rx2 = min(width, max(int(r["x"]) + int(r["w"]) for r in active_regions) + roi_margin)
-                        ry2 = min(height, max(int(r["y"]) + int(r["h"]) for r in active_regions) + roi_margin)
-                        roi_w = rx2 - rx1
-                        roi_h = ry2 - ry1
+                        # Extract ROI bounding box around each active region for fast, isolated inpainting
+                        roi_margin = 6
+                        for reg in active_regions:
+                            rx1 = max(0, int(reg["x"]) - roi_margin)
+                            ry1 = max(0, int(reg["y"]) - roi_margin)
+                            rx2 = min(width, int(reg["x"]) + int(reg["w"]) + roi_margin)
+                            ry2 = min(height, int(reg["y"]) + int(reg["h"]) + roi_margin)
+                            roi_w = rx2 - rx1
+                            roi_h = ry2 - ry1
 
-                        if roi_w > 0 and roi_h > 0:
-                            roi_mask = np.zeros((roi_h, roi_w), dtype=np.uint8)
-                            for reg in active_regions:
+                            if roi_w > 0 and roi_h > 0:
                                 bx1 = max(0, int(reg["x"]) - rx1)
                                 by1 = max(0, int(reg["y"]) - ry1)
                                 bx2 = min(roi_w, int(reg["x"]) + int(reg["w"]) - rx1)
                                 by2 = min(roi_h, int(reg["y"]) + int(reg["h"]) - ry1)
-                                if bx2 > bx1 and by2 > by1:
-                                    roi_mask[by1:by2, bx1:bx2] = 255
 
-                            if np.count_nonzero(roi_mask) > 0:
-                                try:
-                                    roi = frame[ry1:ry2, rx1:rx2]
-                                    telea_flag = getattr(cv2, "INPAINT_TELEA", 0)
-                                    inpainted_roi = cv2.inpaint(roi, roi_mask, 3, telea_flag)
-                                    frame[ry1:ry2, rx1:rx2] = inpainted_roi
-                                except Exception as inpaint_err:
-                                    logger.debug("[VideoEditorService] ROI inpaint exception: %s", inpaint_err)
+                                if bx2 > bx1 and by2 > by1:
+                                    roi_mask = np.zeros((roi_h, roi_w), dtype=np.uint8)
+                                    roi_mask[by1:by2, bx1:bx2] = 255
+                                    if np.count_nonzero(roi_mask) > 0:
+                                        try:
+                                            roi = frame[ry1:ry2, rx1:rx2]
+                                            telea_flag = getattr(cv2, "INPAINT_TELEA", 0)
+                                            frame[ry1:ry2, rx1:rx2] = cv2.inpaint(roi, roi_mask, 3, telea_flag)
+                                        except Exception as inpaint_err:
+                                            logger.debug("[VideoEditorService] ROI inpaint exception: %s", inpaint_err)
 
                         out.write(frame)
                     else:

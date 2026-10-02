@@ -1721,6 +1721,141 @@ class TestVideoEditorService(unittest.IsolatedAsyncioTestCase):
             vf_flag = delogo_cmd[delogo_cmd.index("-vf") + 1]
             self.assertIn("delogo=x=50:y=60:w=120:h=40:enable='between(n\\,30\\,90)':show=0", vf_flag)
 
+    async def test_auto_detect_step2_horizontal_proximity_prevents_fullscreen_merge(self):
+        """Hardening: Far-apart boxes on the same line are not merged into screen-wide banners."""
+        async def fake_run(cmd, timeout=30):
+            if "-vsync" in cmd:
+                sample_dir = Path(cmd[-1]).parent
+                for i in range(3):
+                    (sample_dir / f"sample_0{i}.jpg").write_bytes(b"frame")
+                return 0, b"", b""
+            return 0, b"", b""
+
+        call_idx = 0
+        def fake_ocr(img, output_type=None):
+            nonlocal call_idx
+            idx = call_idx
+            call_idx += 1
+            if idx == 0:
+                return {
+                    "text": ["LEFT_TAG"],
+                    "conf": [90],
+                    "left": [20],
+                    "top": [100],
+                    "width": [50],
+                    "height": [30],
+                }
+            elif idx == 1:
+                return {
+                    "text": ["RIGHT_TAG"],
+                    "conf": [90],
+                    "left": [400],
+                    "top": [100],
+                    "width": [80],
+                    "height": [30],
+                }
+            return {"text": [], "conf": [], "left": [], "top": [], "width": [], "height": []}
+
+        mock_tess = MagicMock()
+        mock_tess.Output.DICT = "dict"
+        mock_tess.image_to_data.side_effect = fake_ocr
+
+        mock_pil = MagicMock()
+        mock_img = MagicMock()
+        mock_img.width = 600
+        mock_img.height = 400
+        mock_pil.Image.open.return_value.__enter__.return_value = mock_img
+
+        with patch.object(self.service, "_run_command", side_effect=fake_run):
+            with patch.dict("sys.modules", {"pytesseract": mock_tess, "PIL": mock_pil}):
+                detected = await self.service._auto_detect_text_region(self.dummy_video)
+                for seg in detected:
+                    self.assertLess(seg["w"], 350)
+
+    def test_merge_temporal_segments_tight_overlap_prevents_chaining(self):
+        """Hardening: Step 4 tight overlap requires containment >= 0.60 or IoU >= 0.25 to prevent transitive chaining."""
+        s1 = {"x": 0, "y": 0, "w": 100, "h": 100, "frame_start": 0, "frame_end": 100}
+        s2 = {"x": 85, "y": 85, "w": 30, "h": 30, "frame_start": 10, "frame_end": 90}
+        merged = self.service._merge_overlapping_temporal_segments([s1, s2], 500, 500, 250000)
+        self.assertEqual(len(merged), 2, "Weakly touching boxes must NOT be chained into a single large segment")
+
+    async def test_last_sample_frame_temporal_extent_covers_video_tail(self):
+        """Hardening: The final sampled frame's temporal extent extends to cover trailing frames."""
+        async def fake_run(cmd, timeout=30):
+            if "-vsync" in cmd:
+                sample_dir = Path(cmd[-1]).parent
+                for i in range(3):
+                    (sample_dir / f"sample_0{i}.jpg").write_bytes(b"frame")
+                return 0, b"", b""
+            return 0, b"", b""
+
+        def fake_ocr(img, output_type=None):
+            return {
+                "text": ["WATERMARK"],
+                "conf": [95],
+                "left": [50],
+                "top": [50],
+                "width": [60],
+                "height": [25],
+            }
+
+        mock_tess = MagicMock()
+        mock_tess.Output.DICT = "dict"
+        mock_tess.image_to_data.side_effect = fake_ocr
+
+        mock_pil = MagicMock()
+        mock_img = MagicMock()
+        mock_img.width = 600
+        mock_img.height = 400
+        mock_pil.Image.open.return_value.__enter__.return_value = mock_img
+
+        with patch.object(self.service, "_run_command", side_effect=fake_run):
+            with patch.dict("sys.modules", {"pytesseract": mock_tess, "PIL": mock_pil}):
+                detected = await self.service._auto_detect_text_region(self.dummy_video)
+                self.assertGreater(len(detected), 0)
+                self.assertGreater(detected[0]["frame_end"], 0)
+
+    def test_inpaint_video_multiple_disjoint_regions_per_region_roi(self):
+        """Hardening: Inpainting handles multiple disjoint regions per-region without throwing."""
+        import numpy as np
+
+        mock_cv2 = MagicMock()
+        mock_cap = MagicMock()
+        mock_cap.isOpened.return_value = True
+        mock_cap.get.side_effect = lambda prop: {
+            mock_cv2.CAP_PROP_FPS: 30.0,
+            mock_cv2.CAP_PROP_FRAME_WIDTH: 600,
+            mock_cv2.CAP_PROP_FRAME_HEIGHT: 800,
+        }.get(prop, 0)
+
+        dummy_frame = np.zeros((800, 600, 3), dtype=np.uint8)
+        mock_cap.read.side_effect = [
+            (True, dummy_frame),
+            (False, None),
+        ]
+        mock_cv2.VideoCapture.return_value = mock_cap
+
+        mock_writer = MagicMock()
+        mock_writer.isOpened.return_value = True
+        mock_cv2.VideoWriter.return_value = mock_writer
+        mock_cv2.inpaint.return_value = dummy_frame
+
+        output_file = self.service._temp_dir / "test_multi_disjoint_out.mp4"
+        regions = [
+            {"x": 20, "y": 30, "w": 100, "h": 40, "frame_start": 0, "frame_end": 5},
+            {"x": 30, "y": 700, "w": 120, "h": 50, "frame_start": 0, "frame_end": 5},
+        ]
+
+        with patch.dict("sys.modules", {"cv2": mock_cv2}):
+            with patch("subprocess.run") as mock_sub:
+                mock_sub.return_value = MagicMock(returncode=0, stdout="", stderr="")
+                self.service._inpaint_video_sync(
+                    input_file=self.dummy_video,
+                    output_file=output_file,
+                    rx_or_regions=regions,
+                )
+                self.assertEqual(mock_cv2.inpaint.call_count, 2)
+
 
 if __name__ == "__main__":
     unittest.main()

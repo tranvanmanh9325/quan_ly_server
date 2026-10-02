@@ -1574,7 +1574,102 @@ class TestVideoEditorService(unittest.IsolatedAsyncioTestCase):
                 detected = await self.service._auto_detect_text_region(self.dummy_video)
                 self.assertEqual(detected, [])
 
+    async def test_auto_detect_dense_temporal_scan_captures_temporal_extents(self):
+        """R1: Dense temporal scan clusters text regions into segments with accurate [frame_start, frame_end]."""
+        async def fake_run(cmd, timeout=30):
+            if "-vsync" in cmd:
+                sample_dir = Path(cmd[-1]).parent
+                for i in range(4):
+                    (sample_dir / f"sample_0{i}.jpg").write_bytes(b"frame")
+                return 0, b"", b""
+            return 0, b"", b""
+
+        call_idx = 0
+        def fake_ocr(img, output_type=None):
+            nonlocal call_idx
+            idx = call_idx
+            call_idx += 1
+            if idx in (1, 2):
+                return {
+                    "text": ["CAPTION_A"],
+                    "conf": [92],
+                    "left": [100],
+                    "top": [200],
+                    "width": [150],
+                    "height": [30],
+                }
+            return {"text": [], "conf": [], "left": [], "top": [], "width": [], "height": []}
+
+        mock_tess = MagicMock()
+        mock_tess.Output.DICT = "dict"
+        mock_tess.image_to_data.side_effect = fake_ocr
+
+        mock_pil = MagicMock()
+        mock_img = MagicMock()
+        mock_img.width = 1000
+        mock_img.height = 600
+        mock_pil.Image.open.return_value.__enter__.return_value = mock_img
+
+        with patch.object(self.service, "_run_command", side_effect=fake_run):
+            with patch.dict("sys.modules", {"pytesseract": mock_tess, "PIL": mock_pil}):
+                detected = await self.service._auto_detect_text_region(self.dummy_video)
+                self.assertEqual(len(detected), 1)
+                seg = detected[0]
+                self.assertEqual(seg["x"], 90)
+                self.assertEqual(seg["y"], 190)
+                self.assertEqual(seg["w"], 170)
+                self.assertEqual(seg["h"], 50)
+                self.assertIn("frame_start", seg)
+                self.assertIn("frame_end", seg)
+                self.assertLess(seg["frame_start"], seg["frame_end"])
+
+    def test_inpaint_temporal_extents_only_modifies_active_frames(self):
+        """R2: Frame-by-frame inpainting only calls cv2.inpaint during active temporal extents."""
+        import numpy as np
+
+        mock_cv2 = MagicMock()
+        mock_cap = MagicMock()
+        mock_cap.isOpened.return_value = True
+        mock_cap.get.side_effect = lambda prop: {
+            mock_cv2.CAP_PROP_FPS: 30.0,
+            mock_cv2.CAP_PROP_FRAME_WIDTH: 200,
+            mock_cv2.CAP_PROP_FRAME_HEIGHT: 100,
+        }.get(prop, 0)
+
+        # 4 frames: frame 0, 1, 2, 3
+        dummy_frame = np.zeros((100, 200, 3), dtype=np.uint8)
+        mock_cap.read.side_effect = [
+            (True, dummy_frame),
+            (True, dummy_frame),
+            (True, dummy_frame),
+            (True, dummy_frame),
+            (False, None),
+        ]
+        mock_cv2.VideoCapture.return_value = mock_cap
+
+        mock_writer = MagicMock()
+        mock_writer.isOpened.return_value = True
+        mock_cv2.VideoWriter.return_value = mock_writer
+        mock_cv2.inpaint.return_value = dummy_frame
+
+        output_file = self.service._temp_dir / "test_temporal_out.mp4"
+        regions = [{"x": 10, "y": 10, "w": 30, "h": 20, "frame_start": 1, "frame_end": 2}]
+
+        with patch.dict("sys.modules", {"cv2": mock_cv2}):
+            with patch("subprocess.run") as mock_sub:
+                mock_sub.return_value = MagicMock(returncode=0, stdout="", stderr="")
+                self.service._inpaint_video_sync(
+                    input_file=self.dummy_video,
+                    output_file=output_file,
+                    rx_or_regions=regions,
+                )
+                # cv2.inpaint should ONLY be called for frames 1 and 2 (exactly 2 calls out of 4 frames)
+                self.assertEqual(mock_cv2.inpaint.call_count, 2)
+                # mock_writer.write should be called for all 4 frames
+                self.assertEqual(mock_writer.write.call_count, 4)
+
 
 if __name__ == "__main__":
     unittest.main()
+
 

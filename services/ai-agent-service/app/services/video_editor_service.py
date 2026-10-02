@@ -6,6 +6,7 @@ and Zero-Disk Leak guarantees.
 """
 
 import asyncio
+import difflib
 import logging
 import os
 import posixpath
@@ -459,7 +460,7 @@ class VideoEditorService:
                     raise RuntimeError("opencv-python-headless chưa được cài đặt. Vui lòng dùng mode='delogo'.")
 
                 async with self._inpaint_semaphore:
-                    if len(target_regions) == 1:
+                    if len(target_regions) == 1 and "frame_start" not in target_regions[0]:
                         await asyncio.to_thread(
                             self._inpaint_video_sync,
                             input_file,
@@ -596,20 +597,85 @@ class VideoEditorService:
             merged = new_merged
         return merged
 
-    async def _auto_detect_text_region(self, input_file: Path) -> List[Dict[str, int]]:
+    @staticmethod
+    def _compute_text_similarity(s1: str, s2: str) -> float:
+        """Computes string similarity between two OCR texts to cluster changing captions."""
+        if not s1 or not s2:
+            return 0.0
+        return float(difflib.SequenceMatcher(None, s1.lower().strip(), s2.lower().strip()).ratio())
+
+    @staticmethod
+    def _merge_overlapping_temporal_segments(
+        segments: List[Dict[str, Any]],
+        frame_w: int,
+        frame_h: int,
+        frame_area: int,
+    ) -> List[Dict[str, Any]]:
         """
-        Samples keyframes and runs pytesseract to identify static overlay text / watermark boxes.
-        Distinguishes persistent overlay text (IoU >= 0.7 in >= 3/5 frames) from transient scene text.
-        Applies a sanity ceiling: any box exceeding 25% of frame area is discarded.
-        Returns a list of individual detected text bounding boxes, or empty list if none detected.
+        Merges text segments that overlap in BOTH spatial bounding box and temporal duration.
+        Ensures disjoint inpainting masks per frame.
+        """
+        if not segments:
+            return []
+        merged = [dict(s) for s in segments]
+        changed = True
+        while changed:
+            changed = False
+            new_merged = []
+            skip_indices = set()
+            for i in range(len(merged)):
+                if i in skip_indices:
+                    continue
+                combined = dict(merged[i])
+                for j in range(i + 1, len(merged)):
+                    if j in skip_indices:
+                        continue
+                    s2 = merged[j]
+                    # Check temporal overlap
+                    has_time_overlap = max(combined.get("frame_start", 0), s2.get("frame_start", 0)) <= min(combined.get("frame_end", 999999999), s2.get("frame_end", 999999999))
+                    if has_time_overlap:
+                        # Check spatial overlap
+                        x1 = max(combined["x"], s2["x"])
+                        y1 = max(combined["y"], s2["y"])
+                        x2 = min(combined["x"] + combined["w"], s2["x"] + s2["w"])
+                        y2 = min(combined["y"] + combined["h"], s2["y"] + s2["h"])
+                        if x2 > x1 and y2 > y1:
+                            nx = min(combined["x"], s2["x"])
+                            ny = min(combined["y"], s2["y"])
+                            nw = max(combined["x"] + combined["w"], s2["x"] + s2["w"]) - nx
+                            nh = max(combined["y"] + combined["h"], s2["y"] + s2["h"]) - ny
+                            if frame_area <= 0 or (nw * nh) <= 0.30 * frame_area:
+                                combined["x"] = nx
+                                combined["y"] = ny
+                                combined["w"] = nw
+                                combined["h"] = nh
+                                combined["frame_start"] = min(combined.get("frame_start", 0), s2.get("frame_start", 0))
+                                combined["frame_end"] = max(combined.get("frame_end", 999999999), s2.get("frame_end", 999999999))
+                                skip_indices.add(j)
+                                changed = True
+                new_merged.append(combined)
+            merged = new_merged
+        return merged
+
+    async def _auto_detect_text_region(self, input_file: Path) -> List[Dict[str, Any]]:
+        """
+        R1. Dense Temporal Scan text detection:
+          - Samples 1 frame every 2 seconds across video (max 60 frames for >=120s video).
+          - Detects text in each sampled frame using pytesseract OCR.
+          - Clusters text regions into temporal text segments (similar text at proximate coordinates = same caption),
+            each with a temporal extent [frame_start, frame_end].
+          - Sanity check: bounding boxes exceeding 30% of frame area are discarded as false positives.
+        Returns a list of text segments with coordinates and temporal extents, or empty list if no text is detected.
         """
         token = secrets.token_hex(4)
         sample_dir = self._temp_dir / f"samples_{token}"
         sample_dir.mkdir(parents=True, exist_ok=True)
 
         try:
-            # Check duration via ffprobe to evenly sample 5 frames across the video
             duration = 0.0
+            fps = 30.0
+
+            # Probe duration
             probe_cmd = [
                 "ffprobe", "-v", "error",
                 "-show_entries", "format=duration",
@@ -627,19 +693,53 @@ class VideoEditorService:
                 logger.debug("[VideoEditorService] Probe duration failed: %s", p_exc)
                 duration = 0.0
 
-            if duration >= 0.5:
-                vf_expr = f"fps=5/{duration:.4f}"
-            else:
-                vf_expr = "select=eq(n\\,0)+eq(n\\,50)+eq(n\\,100)+eq(n\\,200)+eq(n\\,400)"
+            # Probe FPS
+            probe_fps_cmd = [
+                "ffprobe", "-v", "error",
+                "-select_streams", "v:0",
+                "-show_entries", "stream=r_frame_rate",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                str(input_file),
+            ]
+            try:
+                p_code, p_stdout, _ = await self._run_command(probe_fps_cmd, timeout=10)
+                if p_code == 0:
+                    try:
+                        fps_str = p_stdout.decode(errors="ignore").strip()
+                        if "/" in fps_str:
+                            num, den = fps_str.split("/", 1)
+                            fps = float(num) / max(1.0, float(den))
+                        elif fps_str:
+                            fps = float(fps_str)
+                    except Exception:
+                        fps = 30.0
+            except Exception:
+                fps = 30.0
 
-            # Extract 5 sample frames spread across the video
+            if not fps or fps <= 0:
+                fps = 30.0
+
+            # Dense Temporal Scan: 1 frame every 2s, capped at 60 frames max
+            if duration > 60.0:
+                step_sec = duration / 60.0
+            elif duration >= 2.0:
+                step_sec = 2.0
+            else:
+                step_sec = 1.0
+
+            if duration >= 1.0:
+                vf_expr = f"fps=1/{step_sec:.4f}"
+            else:
+                vf_expr = "select=eq(n\\,0)"
+
+            # Extract sample frames across the video
             cmd = [
                 "ffmpeg", "-y",
                 "-i", str(input_file),
                 "-vf", vf_expr,
-                "-vframes", "5",
+                "-vframes", "60",
                 "-vsync", "0",
-                str(sample_dir / "sample_%02d.jpg"),
+                str(sample_dir / "sample_%04d.jpg"),
             ]
             try:
                 code, _, _ = await self._run_command(cmd, timeout=30)
@@ -656,14 +756,20 @@ class VideoEditorService:
                 return []
 
             frames = sorted(list(sample_dir.glob("sample_*.jpg")))
-            if not frames:
+            if not frames or len(frames) < 2:
                 return []
 
             frame_w, frame_h = 0, 0
-            raw_frame_boxes: List[List[Tuple[int, int, int, int]]] = []
+            raw_frame_detections: List[Tuple[int, float, int, int, List[Tuple[int, int, int, int, str]]]] = []
 
-            for frame_path in frames:
-                boxes_in_frame: List[Tuple[int, int, int, int]] = []
+            for idx, frame_path in enumerate(frames):
+                t_sec = idx * step_sec
+                f_start = max(0, int(round((t_sec - step_sec / 2.0) * fps)))
+                f_end = int(round((t_sec + step_sec / 2.0) * fps))
+                if duration > 0 and f_end > int(round(duration * fps)):
+                    f_end = int(round(duration * fps))
+
+                boxes_in_frame: List[Tuple[int, int, int, int, str]] = []
                 try:
                     with Image.open(frame_path) as img:
                         if hasattr(img, "width") and isinstance(img.width, int):
@@ -683,84 +789,124 @@ class VideoEditorService:
                                 w = int(data["width"][i])
                                 h = int(data["height"][i])
                                 if w > 0 and h > 0:
-                                    boxes_in_frame.append((x, y, w, h))
+                                    boxes_in_frame.append((x, y, w, h, text))
                 except Exception:
                     pass
-                raw_frame_boxes.append(boxes_in_frame)
+                raw_frame_detections.append((idx, t_sec, f_start, f_end, boxes_in_frame))
 
             frame_area = frame_w * frame_h
-            n_frames = len(raw_frame_boxes)
-            # R2: To reliably distinguish overlay from scene text, we require multi-frame comparison.
-            # If fewer than 2 frames are available, overlay persistence across frames cannot be verified.
-            if n_frames < 2:
-                return []
-            min_matches = 3 if n_frames >= 5 else max(2, min(3, n_frames))
 
-            # 1. Per-frame merge and sanity check (< 25% area)
-            processed_frames: List[List[Tuple[int, int, int, int]]] = []
-            for f_boxes in raw_frame_boxes:
-                valid_raw = [b for b in f_boxes if not (frame_area > 0 and (b[2] * b[3]) > 0.25 * frame_area)]
-                merged = self._merge_adjacent_words(valid_raw, frame_w, frame_h)
-                valid_merged = [b for b in merged if not (frame_area > 0 and (b[2] * b[3]) > 0.25 * frame_area)]
-                processed_frames.append(valid_merged)
+            # 1. Per-frame merge and sanity check (box <= 30% frame area)
+            processed_frame_detections = []
+            for idx, t_sec, f_start, f_end, raw_boxes in raw_frame_detections:
+                valid_raw = [b for b in raw_boxes if not (frame_area > 0 and (b[2] * b[3]) > 0.30 * frame_area)]
+                coord_boxes = [(b[0], b[1], b[2], b[3]) for b in valid_raw]
+                merged_coords = self._merge_adjacent_words(coord_boxes, frame_w, frame_h)
+                valid_merged_coords = [b for b in merged_coords if not (frame_area > 0 and (b[2] * b[3]) > 0.30 * frame_area)]
 
-            # 2. Match boxes across frames with IoU >= 0.7
-            accepted_overlay_boxes: List[Tuple[int, int, int, int]] = []
-            for f_idx, boxes in enumerate(processed_frames):
-                for cand in boxes:
-                    matched_frame_indices = {f_idx}
-                    cluster_boxes = [cand]
+                merged_with_text: List[Tuple[int, int, int, int, str]] = []
+                for mb in valid_merged_coords:
+                    mb_x, mb_y, mb_w, mb_h = mb
+                    words = [
+                        b[4] for b in valid_raw
+                        if self._compute_iou((mb_x, mb_y, mb_w, mb_h), (b[0], b[1], b[2], b[3])) > 0 or (
+                            b[0] >= mb_x - 5 and b[0] + b[2] <= mb_x + mb_w + 5 and b[1] >= mb_y - 5 and b[1] + b[3] <= mb_y + mb_h + 5
+                        )
+                    ]
+                    merged_with_text.append((mb_x, mb_y, mb_w, mb_h, " ".join(words).strip()))
+                processed_frame_detections.append((idx, t_sec, f_start, f_end, merged_with_text))
 
-                    for other_idx, other_boxes in enumerate(processed_frames):
-                        if other_idx == f_idx:
-                            continue
-                        best_iou = 0.0
-                        best_box = None
-                        for ob in other_boxes:
-                            iou = self._compute_iou(cand, ob)
-                            if iou > best_iou:
-                                best_iou = iou
-                                best_box = ob
-                        if best_iou >= 0.7 and best_box is not None:
-                            matched_frame_indices.add(other_idx)
-                            cluster_boxes.append(best_box)
+            # 2. Temporal clustering into segments (similar text at proximate coordinates = same caption)
+            segments: List[Dict[str, Any]] = []
+            for sample_idx, t_sec, f_start, f_end, boxes in processed_frame_detections:
+                for bx, by, bw, bh, btext in boxes:
+                    matched_segment = None
+                    best_score = 0.0
 
-                    if len(matched_frame_indices) >= min_matches:
-                        avg_x = int(round(sum(b[0] for b in cluster_boxes) / len(cluster_boxes)))
-                        avg_y = int(round(sum(b[1] for b in cluster_boxes) / len(cluster_boxes)))
-                        avg_w = int(round(sum(b[2] for b in cluster_boxes) / len(cluster_boxes)))
-                        avg_h = int(round(sum(b[3] for b in cluster_boxes) / len(cluster_boxes)))
-                        rep_box = (avg_x, avg_y, avg_w, avg_h)
+                    for seg in segments:
+                        if sample_idx - seg["last_sample_idx"] <= 2:
+                            iou = self._compute_iou((bx, by, bw, bh), (seg["x"], seg["y"], seg["w"], seg["h"]))
+                            overlap_y = max(0, min(by + bh, seg["y"] + seg["h"]) - max(by, seg["y"]))
+                            min_h = min(bh, seg["h"])
+                            vert_overlap = (overlap_y / min_h) if min_h > 0 else 0.0
+                            text_sim = self._compute_text_similarity(btext, seg.get("text", ""))
 
-                        is_duplicate = False
-                        for existing in accepted_overlay_boxes:
-                            if self._compute_iou(rep_box, existing) >= 0.7:
-                                is_duplicate = True
-                                break
-                        if not is_duplicate:
-                            accepted_overlay_boxes.append(rep_box)
+                            # Segment match condition: spatial proximity or significant vertical line overlap
+                            if iou >= 0.2 or vert_overlap >= 0.6:
+                                score = iou + vert_overlap + text_sim
+                                if score > best_score:
+                                    best_score = score
+                                    matched_segment = seg
 
-            # 3. Add padding & clamp within frame boundaries, then merge any overlapping boxes
-            padded_boxes: List[Tuple[int, int, int, int]] = []
+                    if matched_segment is not None:
+                        nx1 = min(matched_segment["x"], bx)
+                        ny1 = min(matched_segment["y"], by)
+                        nx2 = max(matched_segment["x"] + matched_segment["w"], bx + bw)
+                        ny2 = max(matched_segment["y"] + matched_segment["h"], by + bh)
+                        matched_segment["x"] = nx1
+                        matched_segment["y"] = ny1
+                        matched_segment["w"] = nx2 - nx1
+                        matched_segment["h"] = ny2 - ny1
+                        matched_segment["frame_end"] = max(matched_segment["frame_end"], f_end)
+                        matched_segment["last_sample_idx"] = sample_idx
+                        matched_segment["hits"] = matched_segment.get("hits", 1) + 1
+                        if btext:
+                            matched_segment["text"] = f"{matched_segment['text']} {btext}".strip()
+                    else:
+                        segments.append({
+                            "x": bx,
+                            "y": by,
+                            "w": bw,
+                            "h": bh,
+                            "frame_start": f_start,
+                            "frame_end": f_end,
+                            "last_sample_idx": sample_idx,
+                            "text": btext,
+                            "hits": 1,
+                        })
+
+            # Filter persistent overlay text / captions (hits >= 2 across sampled frames)
+            persistent_segments = [s for s in segments if s.get("hits", 1) >= 2]
+
+            # 3. Add padding & clamp within frame boundaries, checking area ceiling
             pad = 10
-            for b in accepted_overlay_boxes:
-                x1 = max(0, b[0] - pad)
-                y1 = max(0, b[1] - pad)
-                x2 = min(frame_w, b[0] + b[2] + pad) if frame_w > 0 else (b[0] + b[2] + pad)
-                y2 = min(frame_h, b[1] + b[3] + pad) if frame_h > 0 else (b[1] + b[3] + pad)
+            padded_segments: List[Dict[str, Any]] = []
+            for seg in persistent_segments:
+                x1 = max(0, seg["x"] - pad)
+                y1 = max(0, seg["y"] - pad)
+                x2 = min(frame_w, seg["x"] + seg["w"] + pad) if frame_w > 0 else (seg["x"] + seg["w"] + pad)
+                y2 = min(frame_h, seg["y"] + seg["h"] + pad) if frame_h > 0 else (seg["y"] + seg["h"] + pad)
                 fw = max(1, x2 - x1)
                 fh = max(1, y2 - y1)
 
-                if frame_area > 0 and (fw * fh) > 0.25 * frame_area:
+                if frame_area > 0 and (fw * fh) > 0.30 * frame_area:
                     continue
-                padded_boxes.append((x1, y1, fw, fh))
+                padded_segments.append({
+                    "x": x1,
+                    "y": y1,
+                    "w": fw,
+                    "h": fh,
+                    "frame_start": seg["frame_start"],
+                    "frame_end": seg["frame_end"],
+                })
 
-            merged_padded = self._merge_overlapping_boxes(padded_boxes)
-            results: List[Dict[str, int]] = []
-            for b in merged_padded:
-                if frame_area > 0 and (b[2] * b[3]) > 0.25 * frame_area:
+            # 4. Merge overlapping segments in space and time
+            final_segments = self._merge_overlapping_temporal_segments(
+                padded_segments, frame_w, frame_h, frame_area
+            )
+
+            results: List[Dict[str, Any]] = []
+            for s in final_segments:
+                if frame_area > 0 and (s["w"] * s["h"]) > 0.30 * frame_area:
                     continue
-                results.append({"x": b[0], "y": b[1], "w": b[2], "h": b[3]})
+                results.append({
+                    "x": s["x"],
+                    "y": s["y"],
+                    "w": s["w"],
+                    "h": s["h"],
+                    "frame_start": s.get("frame_start", 0),
+                    "frame_end": s.get("frame_end", 0),
+                })
 
             return results
 
@@ -771,15 +917,15 @@ class VideoEditorService:
         self,
         input_file: Path,
         output_file: Path,
-        rx_or_regions: Union[int, List[Dict[str, int]]],
+        rx_or_regions: Union[int, List[Dict[str, Any]]],
         ry: Optional[int] = None,
         rw: Optional[int] = None,
         rh: Optional[int] = None,
     ) -> None:
         """
-        Synchronous worker for OpenCV Telea video frame inpainting.
+        Synchronous worker for OpenCV Telea video frame inpainting with temporal extent support (R2).
+        Only inpaints frames during the active temporal extent of each detected segment.
         Re-assembles the video with original audio via FFmpeg stream copy.
-        Supports either a single bounding box (rx, ry, rw, rh) or a list of region dicts.
         """
         import math
         import cv2
@@ -799,7 +945,7 @@ class VideoEditorService:
             raise RuntimeError(f"Kích thước video không hợp lệ ({width}x{height}) khi mở bằng OpenCV: {input_file}")
 
         # Parse regions list
-        regions_list: List[Dict[str, int]] = []
+        regions_list: List[Dict[str, Any]] = []
         if isinstance(rx_or_regions, list):
             regions_list = rx_or_regions
         elif isinstance(rx_or_regions, (int, float)) and ry is not None and rw is not None and rh is not None:
@@ -808,18 +954,18 @@ class VideoEditorService:
             cap.release()
             raise ValueError("Tham số tọa độ không hợp lệ cho inpaint.")
 
-        # Create binary inpainting mask with tight regions via rectangular intersection
-        mask = np.zeros((height, width), dtype=np.uint8)
+        # Check if all regions lie completely outside the frame
+        all_outside = True
         for reg in regions_list:
             x1 = max(0, int(reg["x"]))
             y1 = max(0, int(reg["y"]))
             x2 = min(width, int(reg["x"]) + int(reg["w"]))
             y2 = min(height, int(reg["y"]) + int(reg["h"]))
             if x2 > x1 and y2 > y1:
-                mask[y1:y2, x1:x2] = 255
+                all_outside = False
+                break
 
-        # If all specified regions lie completely outside the frame, preserve original video intact
-        if np.count_nonzero(mask) == 0:
+        if all_outside or not regions_list:
             cap.release()
             shutil.copy2(input_file, output_file)
             return
@@ -835,14 +981,38 @@ class VideoEditorService:
 
         try:
             frames_written = 0
+            frame_idx = 0
             try:
                 while cap.isOpened():
                     ret, frame = cap.read()
                     if not ret:
                         break
-                    inpainted = cv2.inpaint(frame, mask, 3, cv2.INPAINT_TELEA)
-                    out.write(inpainted)
+
+                    # R2: Frame-by-frame inpainting within segment temporal extents
+                    active_regions = [
+                        r for r in regions_list
+                        if r.get("frame_start", 0) <= frame_idx <= r.get("frame_end", 999999999)
+                    ]
+
+                    if active_regions:
+                        mask = np.zeros((height, width), dtype=np.uint8)
+                        for reg in active_regions:
+                            x1 = max(0, int(reg["x"]))
+                            y1 = max(0, int(reg["y"]))
+                            x2 = min(width, int(reg["x"]) + int(reg["w"]))
+                            y2 = min(height, int(reg["y"]) + int(reg["h"]))
+                            if x2 > x1 and y2 > y1:
+                                mask[y1:y2, x1:x2] = 255
+                        if np.count_nonzero(mask) > 0:
+                            inpainted = cv2.inpaint(frame, mask, 3, cv2.INPAINT_TELEA)
+                            out.write(inpainted)
+                        else:
+                            out.write(frame)
+                    else:
+                        out.write(frame)
+
                     frames_written += 1
+                    frame_idx += 1
             finally:
                 cap.release()
                 out.release()

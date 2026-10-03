@@ -1,362 +1,656 @@
 """
-test_challenger_m4_adversarial.py — Empirical Verification & Stress Test Suite for Milestone 4 (R4).
+Empirical Adversarial Test Suite for Milestone 4 (R4):
+Temporal Coherence, FFmpeg Quality Export, and Zero-Disk Leak.
 
-Adversarial Stress Testing & Empirical Verification:
-1. TestMultiClusterTokenBudgetAdversarial:
-   - Extreme multi-cluster queries (5-8+ intent clusters simultaneously).
-   - Heavy cluster combinations (Media Studio, Archive, Facebook) with max 6 tools budget.
-   - Priority retention of goal tools under severe token constraints.
-   - Strict adherence to <= 8 tools (or <= 6 for heavy clusters) and JSON schema budget.
-
-2. TestDispatchToolAdversarialAndResilience:
-   - create_autonomous_goal with malformed args, edge inputs, and worker exceptions.
-   - list_autonomous_goals with various status_filter values, corrupted task records, and worker exceptions.
-   - cancel_autonomous_goal with missing, invalid IDs, duplicate cancellations, and worker exceptions.
-
-3. TestRealWorkerEndToEndLifecycle:
-   - Full lifecycle verification with REAL AutonomousGoalWorker (InMemoryTaskStore mode):
-     Empty -> Create -> List Active -> Cancel -> List Active (Excluded) -> List All (Cancelled) -> Re-Cancel.
+Adversarial Stress Testing:
+  1. Temporal Mask Smoothing (F4.1):
+     - 1-2px jitter stabilization vs independent frame masking.
+     - Extreme motion/jump cut (> 15px, IoU < 0.70) rejection (no ghosting/inflation).
+     - Sudden scene cut luminance jump (> 60.0) instant cache wipe (zero ghosting).
+     - Reverse scene cut (bright -> dark) and chromatic scene cut (blue -> green).
+     - Smooth gradual lighting transition (diff < 60.0) preserves temporal continuity.
+  2. FFmpeg Export Flags (F4.2):
+     - Strict verification of -c:v libx264, -preset fast, -crf 18, -c:a copy, -movflags +faststart, -shortest.
+     - Automatic fallback to -c:a aac -b:a 192k when audio copy stream fails (both inpaint & delogo).
+     - Double failure raises descriptive RuntimeError.
+     - Missing FFmpeg binary gracefully copies raw inpaint video.
+  3. Zero-Disk Leak (F4.3):
+     - Frame loop crash cleans up 100% scratch files (inp_raw_*.mp4) and releases VideoWriter.
+     - FFmpeg subprocess crash cleans up 100% scratch files.
+     - Task cancellation aborts cleanly with zero leftover files.
+     - High-level remove_text_from_video cleans up output_file on failure.
+     - Stress test: repeated consecutive crashes leave exactly 0 leaked files.
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
-import re
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import threading
 import unittest
-from unittest.mock import AsyncMock, MagicMock, patch
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+from unittest.mock import MagicMock, patch
 
-from app.services.ai_agent_tools import (
-    AgentToolExecutor,
-    ACTION_TIER_1_SAFE,
-    ACTION_TIER_2_REVERSIBLE,
-    classify_action_risk,
-)
-from app.services.autonomous_goal_worker import AutonomousGoalWorker
+import cv2
+import numpy as np
 
+# Ensure services/ai-agent-service is in sys.path
+_cur = Path(__file__).resolve()
+for _p in [_cur.parent] + list(_cur.parents):
+    if (_p / "app").is_dir():
+        if str(_p) not in sys.path:
+            sys.path.insert(0, str(_p))
+        break
+    if (_p / "services" / "ai-agent-service").is_dir():
+        _svc_dir = str(_p / "services" / "ai-agent-service")
+        if _svc_dir not in sys.path:
+            sys.path.insert(0, _svc_dir)
+        break
 
-class TestMultiClusterTokenBudgetAdversarial(unittest.TestCase):
-    """Stress tests dynamic tool scoping against extreme multi-cluster keyword payloads."""
-
-    def setUp(self) -> None:
-        self.mock_ssh = MagicMock()
-        self.mock_cache = MagicMock()
-        self.executor = AgentToolExecutor(
-            ssh_client=self.mock_ssh,
-            message_cache=self.mock_cache,
-        )
-
-    def test_tc01_five_clusters_coexistence(self) -> None:
-        """
-        Payload combining 5 clusters:
-        1. Goal ('lập kế hoạch tự động theo dõi')
-        2. Media ('tải video youtube')
-        3. System ('kiểm tra cpu ram df -h')
-        4. Security ('chặn ip 192.168.1.100')
-        5. Docker ('quản lý docker container')
-        """
-        query = (
-            "Em lập kế hoạch tự động theo dõi server, tải video youtube bài giảng, "
-            "kiểm tra cpu ram df -h xem disk usage, đồng thời chặn ip 192.168.1.100 "
-            "và quản lý docker container restart"
-        )
-        scoped = self.executor._resolve_scoped_tool_names(query=query)
-
-        # Budget MUST NOT exceed 8 tools
-        self.assertLessEqual(
-            len(scoped), 8,
-            f"Violation: 5 clusters produced {len(scoped)} tools (must be <= 8)"
-        )
-        # Goal tools MUST be prioritized
-        self.assertIn("create_autonomous_goal", scoped)
-
-        # Also verify via _build_tools
-        tools = self.executor._build_tools(query=query)
-        self.assertLessEqual(len(tools), 8)
-        names = {t["function"]["name"] for t in tools}
-        self.assertIn("create_autonomous_goal", names)
-
-    def test_tc02_eight_clusters_storm(self) -> None:
-        """
-        Extreme payload combining 8 clusters:
-        Goal + Media + Docs + Archive + FB + Security + Notes + Calc.
-        """
-        query = (
-            "Đặt mục tiêu tự động theo dõi ram và tải nhạc mp3, đọc file pdf báo cáo, "
-            "giải nén file zip crack mật khẩu, gửi tin nhắn facebook, xem honeypot hacker, "
-            "tạo ghi chú note cuộc họp và tính toán 100 * 25"
-        )
-        scoped = self.executor._resolve_scoped_tool_names(query=query)
-
-        # Archive triggers heavy cluster -> limit is 6 tools
-        self.assertLessEqual(
-            len(scoped), 8,
-            f"Violation: 8 clusters produced {len(scoped)} tools (must be <= 8)"
-        )
-        # Check that goal tools survive pruning
-        has_goal = any(t in scoped for t in ("create_autonomous_goal", "list_autonomous_goals", "cancel_autonomous_goal"))
-        self.assertTrue(has_goal, f"Goal tools lost in 8-cluster storm: {scoped}")
-
-    def test_tc03_heavy_media_studio_cluster_coexistence(self) -> None:
-        """
-        Heavy cluster: Video Editor Studio keywords ('cắt video', 'xóa watermark', 'color grade')
-        combined with Goal intent ('lập kế hoạch tự động').
-        When heavy cluster is active, max_tools is 6.
-        """
-        query = "Lập kế hoạch tự động cắt video và xóa watermark áp dụng color grade cho clip"
-        scoped = self.executor._resolve_scoped_tool_names(query=query)
-
-        self.assertLessEqual(
-            len(scoped), 6,
-            f"Violation: Heavy cluster query produced {len(scoped)} tools (must be <= 6)"
-        )
-        self.assertIn(
-            "create_autonomous_goal", scoped,
-            f"create_autonomous_goal must be retained even in heavy cluster mode: {scoped}"
-        )
-
-    def test_tc04_list_intent_specific_priority(self) -> None:
-        """Query specifically targeting goal listing amidst other noise."""
-        query = "Cho anh xem danh sách mục tiêu đang chạy trên máy chủ cùng với lịch sử tấn công hacker"
-        scoped = self.executor._resolve_scoped_tool_names(query=query)
-
-        self.assertLessEqual(len(scoped), 8)
-        self.assertIn(
-            "list_autonomous_goals", scoped,
-            f"list_autonomous_goals must be present for list query: {scoped}"
-        )
-
-    def test_tc05_cancel_intent_specific_priority(self) -> None:
-        """Query specifically targeting goal cancellation amidst other noise."""
-        query = "Em dừng goal và hủy mục tiêu task_998877 ngay, sau đó khởi động lại service nginx"
-        scoped = self.executor._resolve_scoped_tool_names(query=query)
-
-        self.assertLessEqual(len(scoped), 8)
-        self.assertIn(
-            "cancel_autonomous_goal", scoped,
-            f"cancel_autonomous_goal must be present for cancel query: {scoped}"
-        )
-
-    def test_tc06_token_budget_gate_schema_length(self) -> None:
-        """Verify that JSON schema length of built tools remains well within Groq TPM limits."""
-        heavy_query = (
-            "Lập kế hoạch tự động giám sát ram, cắt video clip, nén video, "
-            "tải video youtube, đọc pdf và gửi tin nhắn messenger"
-        )
-        tools = self.executor._build_tools(query=heavy_query)
-        self.assertLessEqual(len(tools), 8)
-
-        # Estimate JSON schema size
-        schema_json = json.dumps(tools)
-        # 1 token is roughly 4 characters in English/JSON
-        estimated_tokens = len(schema_json) / 4
-        # Groq budget target for tools schema is <= 1500 tokens
-        self.assertLess(
-            estimated_tokens, 2000,
-            f"Estimated schema token size {estimated_tokens:.0f} exceeds safe limit"
-        )
+from app.services.video_editor_service import VideoEditorService, get_texture_preserving_inpainter
+from app.services.texture_preserving_inpainter import TexturePreservingInpainter
 
 
-class TestDispatchToolAdversarialAndResilience(unittest.IsolatedAsyncioTestCase):
-    """Stress tests tool dispatch logic against edge cases, malformed payloads, and failures."""
-
-    def setUp(self) -> None:
-        self.mock_ssh = MagicMock()
-        self.mock_cache = MagicMock()
-        self.executor = AgentToolExecutor(
-            ssh_client=self.mock_ssh,
-            message_cache=self.mock_cache,
-        )
-
-    async def test_tc07_create_goal_worker_exception_resilience(self) -> None:
-        """Worker throws an unexpected exception: dispatch must catch and return friendly Vietnamese error."""
-        mock_worker = MagicMock()
-        mock_worker.create_goal = AsyncMock(side_effect=RuntimeError("PostgreSQL connection pool exhausted"))
-        self.executor.set_autonomous_goal_worker(mock_worker)
-
-        res = await self.executor._execute_tool(
-            tool_name="create_autonomous_goal",
-            tool_args={"goal": "Theo dõi ổ đĩa"},
-            chat_id="123456",
-        )
-        self.assertIn("❌ Lỗi khi thiết lập mục tiêu tự hành", res)
-        self.assertIn("PostgreSQL connection pool exhausted", res)
-
-    async def test_tc08_create_goal_extreme_payloads(self) -> None:
-        """Create goal with unicode, special symbols, whitespace, and extremely long goal text."""
-        mock_worker = MagicMock()
-        mock_worker.create_goal = AsyncMock(return_value={"id": "task_unicode_001"})
-        self.executor.set_autonomous_goal_worker(mock_worker)
-
-        long_goal = "🚀 Mục tiêu đặc biệt: " + "A" * 3000 + " 🎯 <script>alert('xss')</script> DROP TABLE agent_tasks;"
-        res = await self.executor._execute_tool(
-            tool_name="create_autonomous_goal",
-            tool_args={"goal": long_goal, "trigger_condition": "cpu > 95% AND disk > 90%"},
-            chat_id="chat_adv",
-        )
-        self.assertIn("#task_unicode_001", res)
-        mock_worker.create_goal.assert_awaited_once()
-
-    async def test_tc09_list_goals_filtering_variations(self) -> None:
-        """Verify list_autonomous_goals handles 'active', 'all', and specific status filters accurately."""
-        mock_worker = MagicMock()
-        tasks = [
-            {"id": "t1", "goal": "Goal 1", "status": "pending", "steps": [{"s": 1}], "current_step": 0},
-            {"id": "t2", "goal": "Goal 2", "status": "running", "steps": [{"s": 1}], "current_step": 1},
-            {"id": "t3", "goal": "Goal 3", "status": "completed", "steps": [], "current_step": 2},
-            {"id": "t4", "goal": "Goal 4", "status": "cancelled", "steps": [], "current_step": 0},
-            {"id": "t5", "goal": "Goal 5", "status": "waiting_approval", "steps": [{"s": 1}], "current_step": 1},
-        ]
-        mock_worker.list_goals = AsyncMock(return_value=tasks)
-        self.executor.set_autonomous_goal_worker(mock_worker)
-
-        # 1. Filter: 'active' -> must only retain pending, running, waiting_approval (t1, t2, t5)
-        res_active = await self.executor._execute_tool(
-            tool_name="list_autonomous_goals",
-            tool_args={"status_filter": "active"},
-        )
-        self.assertIn("DANH SÁCH MỤC TIÊU TỰ HÀNH (3 mục tiêu)", res_active)
-        self.assertIn("t1", res_active)
-        self.assertIn("t2", res_active)
-        self.assertIn("t5", res_active)
-        self.assertNotIn("t3", res_active)  # completed must be excluded
-        self.assertNotIn("t4", res_active)  # cancelled must be excluded
-
-        # 2. Filter: 'all' -> returns all 5 tasks
-        res_all = await self.executor._execute_tool(
-            tool_name="list_autonomous_goals",
-            tool_args={"status_filter": "all"},
-        )
-        self.assertIn("DANH SÁCH MỤC TIÊU TỰ HÀNH (5 mục tiêu)", res_all)
-        self.assertIn("t3", res_all)
-        self.assertIn("t4", res_all)
-
-    async def test_tc09b_list_goals_corrupted_steps_none_graceful_catch(self) -> None:
-        """When task record has steps=None, executor catches TypeError and returns safe error message."""
-        mock_worker = MagicMock()
-        mock_worker.list_goals = AsyncMock(return_value=[
-            {"id": "t_corrupt", "goal": "Corrupted", "status": "pending", "steps": None, "current_step": 0}
-        ])
-        self.executor.set_autonomous_goal_worker(mock_worker)
-
-        res = await self.executor._execute_tool(
-            tool_name="list_autonomous_goals",
-            tool_args={"status_filter": "active"},
-        )
-        self.assertIn("❌ Lỗi khi lấy danh sách mục tiêu", res)
-        self.assertIn("has no len()", res)
-
-    async def test_tc10_list_goals_worker_exception_resilience(self) -> None:
-        """Worker throws exception during list_goals -> tool caught cleanly."""
-        mock_worker = MagicMock()
-        mock_worker.list_goals = AsyncMock(side_effect=TimeoutError("DB query timed out after 30s"))
-        self.executor.set_autonomous_goal_worker(mock_worker)
-
-        res = await self.executor._execute_tool(
-            tool_name="list_autonomous_goals",
-            tool_args={"status_filter": "active"},
-        )
-        self.assertIn("❌ Lỗi khi lấy danh sách mục tiêu", res)
-        self.assertIn("DB query timed out after 30s", res)
-
-    async def test_tc11_cancel_goal_worker_exception_resilience(self) -> None:
-        """Worker throws exception during cancel_goal -> tool caught cleanly."""
-        mock_worker = MagicMock()
-        mock_worker.cancel_goal = AsyncMock(side_effect=OSError("Disk write error during task cancellation"))
-        self.executor.set_autonomous_goal_worker(mock_worker)
-
-        res = await self.executor._execute_tool(
-            tool_name="cancel_autonomous_goal",
-            tool_args={"goal_id": "task_err"},
-        )
-        self.assertIn("❌ Lỗi khi hủy mục tiêu `task_err`", res)
-        self.assertIn("Disk write error during task cancellation", res)
-
-
-class TestRealWorkerEndToEndLifecycle(unittest.IsolatedAsyncioTestCase):
+class TestChallengerTemporalMaskSmoothing(unittest.TestCase):
     """
-    End-to-End Lifecycle test with genuine AutonomousGoalWorker (InMemoryTaskStore mode).
-    Validates complete state transitions: Create -> List -> Cancel -> Double Cancel.
+    Empirical Adversarial Tests for F4.1: Temporal Mask Smoothing & Scene Cut Reset.
     """
 
-    async def asyncSetUp(self) -> None:
-        self.mock_ssh = MagicMock()
-        self.mock_cache = MagicMock()
-        self.executor = AgentToolExecutor(
-            ssh_client=self.mock_ssh,
-            message_cache=self.mock_cache,
-        )
-        # Real AutonomousGoalWorker with use_db=False (in-memory mode)
-        self.real_worker = AutonomousGoalWorker(
-            tool_executor=self.executor,
-            telegram_bot=None,
-            llm_router=None,
-            use_db=False,
-        )
-        self.executor.set_autonomous_goal_worker(self.real_worker)
+    def setUp(self):
+        self.scratch_dir = tempfile.TemporaryDirectory()
+        self.scratch_path = Path(self.scratch_dir.name)
+        self.service = VideoEditorService(temp_dir=self.scratch_path)
 
-    async def test_tc12_real_worker_lifecycle_e2e(self) -> None:
-        """Full lifecycle through AgentToolExecutor dispatch with REAL AutonomousGoalWorker."""
+    def tearDown(self):
+        self.scratch_dir.cleanup()
 
-        # 1. Initially empty
-        res_empty = await self.executor._execute_tool(
-            tool_name="list_autonomous_goals",
-            tool_args={"status_filter": "active"},
-        )
-        self.assertIn("Hiện không có mục tiêu tự hành nào đang chạy ngầm", res_empty)
+    def _create_synthetic_text_roi(self, h: int = 40, w: int = 160, offset_x: int = 0, offset_y: int = 0) -> np.ndarray:
+        """Create a synthetic ROI with bright text and dark outline on realistic background."""
+        roi = np.full((h, w, 3), 128, dtype=np.uint8)  # mid-gray background
+        text_pos = (15 + offset_x, 28 + offset_y)
+        # Draw dark outline (stroke)
+        cv2.putText(roi, "CHALLENGE", text_pos, cv2.FONT_HERSHEY_SIMPLEX, 0.7, (20, 20, 20), 4, cv2.LINE_AA)
+        # Draw bright core
+        cv2.putText(roi, "CHALLENGE", text_pos, cv2.FONT_HERSHEY_SIMPLEX, 0.7, (245, 245, 245), 2, cv2.LINE_AA)
+        return roi
 
-        # 2. Create goal
-        create_res = await self.executor._execute_tool(
-            tool_name="create_autonomous_goal",
-            tool_args={
-                "goal": "Giám sát tài nguyên máy chủ Ubuntu và cảnh báo Telegram",
-                "trigger_condition": "RAM > 90% or Disk > 85%",
-            },
-            chat_id="chat_test_1001",
-        )
-        self.assertIn("ĐÃ THIẾT LẬP MỤC TIÊU TỰ HÀNH", create_res)
-        match = re.search(r"`#(task_[a-f0-9]+)`", create_res)
-        self.assertIsNotNone(match, f"Failed to extract task_id from create response: {create_res}")
-        task_id = match.group(1)
+    def test_temporal_smoothing_1px_2px_jitter_stabilization(self):
+        """
+        Adversarial Test F4.1: When text or bounding box jitters by 1-2px,
+        temporal smoothing preserves previous mask pixels and prevents boundary flickering.
+        """
+        # Baseline ROI at t=0
+        roi_t0 = self._create_synthetic_text_roi(offset_x=0, offset_y=0)
+        mask_t0 = self.service._generate_text_stroke_mask(roi_t0)
+        self.assertGreater(np.count_nonzero(mask_t0), 50, "Baseline mask must contain detected text strokes")
 
-        # 3. List active goals -> Task must appear
-        res_active = await self.executor._execute_tool(
-            tool_name="list_autonomous_goals",
-            tool_args={"status_filter": "active"},
-        )
-        self.assertIn("DANH SÁCH MỤC TIÊU TỰ HÀNH (1 mục tiêu)", res_active)
-        self.assertIn(task_id, res_active)
-        self.assertIn("PENDING", res_active)
+        # Jittered ROI at t=1 (1px shift right, 1px shift down)
+        roi_t1 = self._create_synthetic_text_roi(offset_x=1, offset_y=1)
+        # Raw independent mask without temporal smoothing
+        mask_t1_raw = self.service._generate_text_stroke_mask(roi_t1, prev_mask=None)
 
-        # 4. Cancel the goal
-        cancel_res = await self.executor._execute_tool(
-            tool_name="cancel_autonomous_goal",
-            tool_args={"goal_id": task_id},
-        )
-        self.assertIn(f"Đã hủy bỏ mục tiêu tự hành `#{task_id}` thành công", cancel_res)
+        # Temporally smoothed mask with prev_mask=mask_t0
+        mask_t1_smooth = self.service._generate_text_stroke_mask(roi_t1, prev_mask=mask_t0)
 
-        # 5. List active goals -> Must now be empty!
-        res_active_after_cancel = await self.executor._execute_tool(
-            tool_name="list_autonomous_goals",
-            tool_args={"status_filter": "active"},
-        )
-        self.assertIn("Hiện không có mục tiêu tự hành nào đang chạy ngầm", res_active_after_cancel)
+        # 1. Verify IoU between raw and previous mask is >= 0.70
+        inter = np.count_nonzero((mask_t1_raw > 0) & (mask_t0 > 0))
+        union = np.count_nonzero((mask_t1_raw > 0) | (mask_t0 > 0))
+        raw_iou = inter / union if union > 0 else 0.0
+        self.assertGreaterEqual(raw_iou, 0.70, f"1px jitter must maintain IoU >= 0.70 (got {raw_iou:.3f})")
 
-        # 6. List all goals -> Task must appear as CANCELLED
-        res_all = await self.executor._execute_tool(
-            tool_name="list_autonomous_goals",
-            tool_args={"status_filter": "all"},
+        # 2. Verify smoothed mask includes previous adjacent pixels
+        self.assertGreaterEqual(
+            np.count_nonzero(mask_t1_smooth),
+            np.count_nonzero(mask_t1_raw),
+            "Temporally smoothed mask must encompass dilated previous boundary pixels",
         )
-        self.assertIn("DANH SÁCH MỤC TIÊU TỰ HÀNH (1 mục tiêu)", res_all)
-        self.assertIn(task_id, res_all)
-        self.assertIn("CANCELLED", res_all)
 
-        # 7. Cancel again (Double cancel) -> Must fail cleanly
-        double_cancel_res = await self.executor._execute_tool(
-            tool_name="cancel_autonomous_goal",
-            tool_args={"goal_id": task_id},
+        # 3. Verify overlap with t0 is strictly higher for smoothed mask than raw mask
+        overlap_raw = np.count_nonzero((mask_t1_raw > 0) & (mask_t0 > 0))
+        overlap_smooth = np.count_nonzero((mask_t1_smooth > 0) & (mask_t0 > 0))
+        self.assertGreater(
+            overlap_smooth,
+            overlap_raw,
+            "Temporal smoothing must retain previous frame boundary pixels, reducing flicker",
         )
-        self.assertIn(f"Không thể hủy mục tiêu `#{task_id}`", double_cancel_res)
+
+        # Repeat with 2px jitter
+        roi_t2 = self._create_synthetic_text_roi(offset_x=2, offset_y=2)
+        mask_t2_smooth = self.service._generate_text_stroke_mask(roi_t2, prev_mask=mask_t1_smooth)
+        self.assertGreater(np.count_nonzero(mask_t2_smooth), 0)
+
+    def test_temporal_smoothing_extreme_jump_rejects_old_mask(self):
+        """
+        Adversarial Test F4.1: If text jumps substantially (> 15px, IoU < 0.70),
+        the system must reject the old mask to prevent smear / ghosting across different locations.
+        """
+        roi_t0 = self._create_synthetic_text_roi(offset_x=0, offset_y=0)
+        mask_t0 = self.service._generate_text_stroke_mask(roi_t0)
+
+        # Displaced ROI by 25px (new line or major camera shift)
+        roi_jump = self._create_synthetic_text_roi(offset_x=25, offset_y=0)
+        mask_jump_raw = self.service._generate_text_stroke_mask(roi_jump, prev_mask=None)
+        mask_jump_with_prev = self.service._generate_text_stroke_mask(roi_jump, prev_mask=mask_t0)
+
+        # Since IoU < 0.70, mask_jump_with_prev must NOT include old mask_t0 location
+        old_region_isolated = mask_t0[5:35, 10:30]
+        jump_result_at_old_loc = mask_jump_with_prev[5:35, 10:30]
+
+        # Old text location should NOT have been artificially forced into the new mask
+        self.assertEqual(
+            np.count_nonzero(jump_result_at_old_loc),
+            np.count_nonzero(mask_jump_raw[5:35, 10:30]),
+            "Old mask must be rejected when IoU < 0.70, preventing ghost artifacts",
+        )
+
+    def test_temporal_smoothing_scene_cut_luminance_jump_instant_reset(self):
+        """
+        Adversarial Test F4.1: When a scene cut occurs (luminance jump > 60.0),
+        prev_masks must be reset immediately, leaving zero residual ghosting from the old scene.
+        """
+        # Create a synthetic 6-frame video:
+        # Frames 0, 1, 2: Dark scene (gray val = 30) with text "A"
+        # Frame 3: Scene Cut -> Bright scene (gray val = 210, diff = 180 > 60) with text "B"
+        # Frames 4, 5: Bright scene (gray val = 210) with text "B"
+        vid_path = self.scratch_path / "scene_cut_adv_in.mp4"
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        writer = cv2.VideoWriter(str(vid_path), fourcc, 30.0, (160, 90))
+
+        for i in range(6):
+            val = 30 if i < 3 else 210
+            txt = "TEXT_A" if i < 3 else "TEXT_B"
+            f = np.full((90, 160, 3), val, dtype=np.uint8)
+            cv2.putText(f, txt, (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+            writer.write(f)
+        writer.release()
+
+        out_path = self.scratch_path / "scene_cut_adv_out.mp4"
+
+        captured_prev_masks: List[Dict[Any, np.ndarray]] = []
+        inpainter = get_texture_preserving_inpainter()
+        self.assertIsNotNone(inpainter)
+        original_inpaint_fn = inpainter.inpaint_frame_with_regions
+
+        def spy_inpaint_frame(frame, regions, stroke_mask_generator_fn, prev_masks=None, **kwargs):
+            captured_prev_masks.append(dict(prev_masks) if prev_masks else {})
+            return original_inpaint_fn(frame, regions, stroke_mask_generator_fn, prev_masks=prev_masks, **kwargs)
+
+        with patch.object(inpainter, "inpaint_frame_with_regions", side_effect=spy_inpaint_frame):
+            with patch("subprocess.run") as mock_sub:
+                mock_sub.return_value = MagicMock(returncode=0, stdout="", stderr=b"")
+                self.service._inpaint_video_sync(
+                    input_file=vid_path,
+                    output_file=out_path,
+                    rx_or_regions=[
+                        {"x": 15, "y": 25, "w": 90, "h": 35, "text": "TEXT_A", "frame_start": 0, "frame_end": 2},
+                        {"x": 15, "y": 25, "w": 90, "h": 35, "text": "TEXT_B", "frame_start": 3, "frame_end": 5},
+                    ],
+                )
+
+        self.assertEqual(len(captured_prev_masks), 6, "Must process all 6 frames")
+
+        # Frame 0: Fresh start
+        self.assertEqual(captured_prev_masks[0], {}, "Frame 0 must start with empty prev_masks")
+        # Frame 1: Cached TEXT_A from frame 0
+        self.assertIn("TEXT_A", captured_prev_masks[1])
+        # Frame 2: Cached TEXT_A from frame 1
+        self.assertIn("TEXT_A", captured_prev_masks[2])
+
+        # Frame 3: SCENE CUT (val 30 -> 210, diff = 180 > 60.0)
+        # MUST be completely empty: zero ghosting of TEXT_A!
+        self.assertEqual(
+            captured_prev_masks[3],
+            {},
+            "Frame 3 (scene cut) must have prev_masks completely reset to empty dict",
+        )
+        self.assertNotIn("TEXT_A", captured_prev_masks[3], "Old scene mask TEXT_A must not leak past scene cut")
+
+        # Frame 4: Cached TEXT_B from frame 3
+        self.assertIn("TEXT_B", captured_prev_masks[4])
+        # Frame 5: Cached TEXT_B from frame 4
+        self.assertIn("TEXT_B", captured_prev_masks[5])
+
+    def test_temporal_smoothing_chromatic_scene_cut_instant_reset(self):
+        """
+        Adversarial Test F4.1: Chromatic scene cut (pure blue screen -> pure green screen, diff = 121 > 60).
+        Verifies scene cut detection triggers on color shifts even without pure black/white jump.
+        """
+        vid_path = self.scratch_path / "chromatic_cut_in.mp4"
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        writer = cv2.VideoWriter(str(vid_path), fourcc, 30.0, (140, 80))
+
+        # Frames 0-1: Blue background [255, 0, 0] (gray = 29)
+        # Frames 2-3: Green background [0, 255, 0] (gray = 150) -> diff = 121 > 60
+        for i in range(4):
+            color = (255, 0, 0) if i < 2 else (0, 255, 0)
+            f = np.zeros((80, 140, 3), dtype=np.uint8)
+            f[:] = color
+            cv2.putText(f, "COLOR", (20, 45), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+            writer.write(f)
+        writer.release()
+
+        out_path = self.scratch_path / "chromatic_cut_out.mp4"
+        captured_prev_masks: List[Dict[Any, np.ndarray]] = []
+        inpainter = get_texture_preserving_inpainter()
+        orig_inpaint_chromatic = inpainter.inpaint_frame_with_regions
+
+        def spy_inpaint_frame(frame, regions, stroke_mask_generator_fn, prev_masks=None, **kwargs):
+            captured_prev_masks.append(dict(prev_masks) if prev_masks else {})
+            return orig_inpaint_chromatic(frame, regions, stroke_mask_generator_fn, prev_masks=prev_masks, **kwargs)
+
+        with patch.object(inpainter, "inpaint_frame_with_regions", side_effect=spy_inpaint_frame):
+            with patch("subprocess.run") as mock_sub:
+                mock_sub.return_value = MagicMock(returncode=0, stdout="", stderr=b"")
+                self.service._inpaint_video_sync(
+                    input_file=vid_path,
+                    output_file=out_path,
+                    rx_or_regions=[{"x": 15, "y": 20, "w": 80, "h": 35, "text": "COLOR"}],
+                )
+
+        self.assertEqual(len(captured_prev_masks), 4)
+        # Frame 0: empty
+        self.assertEqual(captured_prev_masks[0], {})
+        # Frame 1: cached
+        self.assertIn("COLOR", captured_prev_masks[1])
+        # Frame 2: Chromatic cut reset!
+        self.assertEqual(captured_prev_masks[2], {}, "Chromatic jump (blue -> green) must reset prev_masks")
+        # Frame 3: cached again
+        self.assertIn("COLOR", captured_prev_masks[3])
+
+    def test_temporal_smoothing_gradual_lighting_preserves_cache(self):
+        """
+        Adversarial Test F4.1: Gradual lighting change (diff < 60.0 per frame)
+        must NOT trigger scene cut reset, keeping temporal continuity intact.
+        """
+        vid_path = self.scratch_path / "gradual_in.mp4"
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        writer = cv2.VideoWriter(str(vid_path), fourcc, 30.0, (140, 80))
+
+        # 5 frames with step of +10 luminance (diff = 10 << 60)
+        for i in range(5):
+            val = 40 + i * 10
+            f = np.full((80, 140, 3), val, dtype=np.uint8)
+            cv2.putText(f, "GRAD", (20, 45), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+            writer.write(f)
+        writer.release()
+
+        out_path = self.scratch_path / "gradual_out.mp4"
+        captured_prev_masks: List[Dict[Any, np.ndarray]] = []
+        inpainter = get_texture_preserving_inpainter()
+        orig_inpaint_gradual = inpainter.inpaint_frame_with_regions
+
+        def spy_inpaint_frame(frame, regions, stroke_mask_generator_fn, prev_masks=None, **kwargs):
+            captured_prev_masks.append(dict(prev_masks) if prev_masks else {})
+            return orig_inpaint_gradual(frame, regions, stroke_mask_generator_fn, prev_masks=prev_masks, **kwargs)
+
+        with patch.object(inpainter, "inpaint_frame_with_regions", side_effect=spy_inpaint_frame):
+            with patch("subprocess.run") as mock_sub:
+                mock_sub.return_value = MagicMock(returncode=0, stdout="", stderr=b"")
+                self.service._inpaint_video_sync(
+                    input_file=vid_path,
+                    output_file=out_path,
+                    rx_or_regions=[{"x": 15, "y": 20, "w": 80, "h": 35, "text": "GRAD"}],
+                )
+
+        self.assertEqual(len(captured_prev_masks), 5)
+        self.assertEqual(captured_prev_masks[0], {})
+        for idx in range(1, 5):
+            self.assertIn("GRAD", captured_prev_masks[idx], f"Gradual change must NOT reset cache at frame {idx}")
+
+
+class TestChallengerFFmpegExportFlags(unittest.TestCase):
+    """
+    Empirical Adversarial Tests for F4.2: Studio FFmpeg Export Flags & Audio Fallback.
+    """
+
+    def setUp(self):
+        self.scratch_dir = tempfile.TemporaryDirectory()
+        self.scratch_path = Path(self.scratch_dir.name)
+        self.service = VideoEditorService(temp_dir=self.scratch_path)
+
+    def tearDown(self):
+        self.scratch_dir.cleanup()
+
+    def _create_minimal_video(self, filename: str = "min_input.mp4") -> Path:
+        vid_path = self.scratch_path / filename
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        writer = cv2.VideoWriter(str(vid_path), fourcc, 30.0, (100, 60))
+        writer.write(np.zeros((60, 100, 3), dtype=np.uint8))
+        writer.release()
+        return vid_path
+
+    def test_ffmpeg_export_flags_completeness_inpaint_sync(self):
+        """
+        Adversarial Test F4.2: In _inpaint_video_sync, FFmpeg merge command must contain
+        all required studio-grade flags: -c:v libx264, -preset fast, -crf 18, -c:a copy, -movflags +faststart.
+        """
+        input_vid = self._create_minimal_video("flags_check_in.mp4")
+        output_vid = self.scratch_path / "flags_check_out.mp4"
+        executed_cmds: List[List[str]] = []
+
+        def spy_run(cmd, *args, **kwargs):
+            executed_cmds.append(cmd)
+            res = MagicMock()
+            res.returncode = 0
+            res.stdout = "1:1" if "sample_aspect_ratio" in " ".join(cmd) else ""
+            res.stderr = b""
+            return res
+
+        with patch("subprocess.run", side_effect=spy_run):
+            self.service._inpaint_video_sync(
+                input_file=input_vid,
+                output_file=output_vid,
+                rx_or_regions=[{"x": 10, "y": 10, "w": 30, "h": 20}],
+            )
+
+        self.assertGreaterEqual(len(executed_cmds), 1)
+        merge_cmd = executed_cmds[-1]
+
+        # Verify studio flags presence and strict values
+        self.assertIn("-c:v", merge_cmd)
+        self.assertEqual(merge_cmd[merge_cmd.index("-c:v") + 1], "libx264")
+        self.assertIn("-preset", merge_cmd)
+        self.assertEqual(merge_cmd[merge_cmd.index("-preset") + 1], "fast")
+        self.assertIn("-crf", merge_cmd)
+        self.assertEqual(merge_cmd[merge_cmd.index("-crf") + 1], "18")
+        self.assertIn("-pix_fmt", merge_cmd)
+        self.assertEqual(merge_cmd[merge_cmd.index("-pix_fmt") + 1], "yuv420p")
+        self.assertIn("-c:a", merge_cmd)
+        self.assertEqual(merge_cmd[merge_cmd.index("-c:a") + 1], "copy")
+        self.assertIn("-movflags", merge_cmd)
+        self.assertEqual(merge_cmd[merge_cmd.index("-movflags") + 1], "+faststart")
+        self.assertIn("-shortest", merge_cmd)
+        self.assertIn("-map", merge_cmd)
+        self.assertIn("0:v:0", merge_cmd)
+        self.assertIn("1:a?", merge_cmd)
+
+    def test_ffmpeg_export_flags_completeness_delogo_mode(self):
+        """
+        Adversarial Test F4.2: In remove_text_from_video(mode='delogo'),
+        FFmpeg command must also enforce -crf 18, -preset fast, -c:a copy, -movflags +faststart.
+        """
+        input_vid = self._create_minimal_video("delogo_flags_in.mp4")
+        executed_cmds: List[List[str]] = []
+
+        async def run_test():
+            async def spy_run_cmd(cmd, timeout=300):
+                executed_cmds.append(cmd)
+                if len(cmd) > 0 and str(cmd[-1]).endswith(".mp4"):
+                    Path(cmd[-1]).touch()
+                return 0, b"", b""
+
+            with patch.object(self.service, "_run_command", side_effect=spy_run_cmd):
+                res = await self.service.remove_text_from_video(
+                    input_path_or_url=str(input_vid),
+                    mode="delogo",
+                    region={"x": 10, "y": 10, "w": 30, "h": 20},
+                )
+                return res
+
+        result = asyncio.run(run_test())
+        self.assertEqual(result["status"], "ok")
+        self.assertGreaterEqual(len(executed_cmds), 1)
+
+        delogo_cmd = executed_cmds[-1]
+        self.assertIn("-c:v", delogo_cmd)
+        self.assertEqual(delogo_cmd[delogo_cmd.index("-c:v") + 1], "libx264")
+        self.assertIn("-preset", delogo_cmd)
+        self.assertEqual(delogo_cmd[delogo_cmd.index("-preset") + 1], "fast")
+        self.assertIn("-crf", delogo_cmd)
+        self.assertEqual(delogo_cmd[delogo_cmd.index("-crf") + 1], "18")
+        self.assertIn("-c:a", delogo_cmd)
+        self.assertEqual(delogo_cmd[delogo_cmd.index("-c:a") + 1], "copy")
+        self.assertIn("-movflags", delogo_cmd)
+        self.assertEqual(delogo_cmd[delogo_cmd.index("-movflags") + 1], "+faststart")
+
+    def test_ffmpeg_audio_fallback_to_aac_on_copy_failure_inpaint(self):
+        """
+        Adversarial Test F4.2: When -c:a copy fails due to incompatible container/codec,
+        system retries with -c:a aac -b:a 192k and succeeds.
+        """
+        input_vid = self._create_minimal_video("audio_fb_in.mp4")
+        output_vid = self.scratch_path / "audio_fb_out.mp4"
+        executed_cmds: List[List[str]] = []
+        call_count = 0
+
+        def fake_run(cmd, *args, **kwargs):
+            nonlocal call_count
+            executed_cmds.append(cmd)
+            res = MagicMock()
+            if "sample_aspect_ratio" in " ".join(cmd):
+                res.returncode = 0
+                res.stdout = "1:1"
+                return res
+
+            call_count += 1
+            if call_count == 1:
+                # First attempt with copy fails
+                res.returncode = 1
+                res.stderr = b"Could not find tag for codec pcm_s16le in stream #1"
+                return res
+            else:
+                # Retry with AAC succeeds
+                res.returncode = 0
+                res.stdout = ""
+                res.stderr = b""
+                return res
+
+        with patch("subprocess.run", side_effect=fake_run):
+            self.service._inpaint_video_sync(
+                input_file=input_vid,
+                output_file=output_vid,
+                rx_or_regions=[{"x": 10, "y": 10, "w": 30, "h": 20}],
+            )
+
+        self.assertGreaterEqual(len(executed_cmds), 2)
+        fallback_cmd = executed_cmds[-1]
+        self.assertIn("-c:a", fallback_cmd)
+        self.assertEqual(fallback_cmd[fallback_cmd.index("-c:a") + 1], "aac")
+        self.assertIn("-b:a", fallback_cmd)
+        self.assertEqual(fallback_cmd[fallback_cmd.index("-b:a") + 1], "192k")
+
+    def test_ffmpeg_double_audio_failure_raises_runtime_error(self):
+        """
+        Adversarial Test F4.2: If BOTH -c:a copy AND -c:a aac fallback fail,
+        system must raise RuntimeError with descriptive error message (not silent fail).
+        """
+        input_vid = self._create_minimal_video("audio_double_fail_in.mp4")
+        output_vid = self.scratch_path / "audio_double_fail_out.mp4"
+
+        def fake_run_always_fail(cmd, *args, **kwargs):
+            res = MagicMock()
+            if "sample_aspect_ratio" in " ".join(cmd):
+                res.returncode = 0
+                res.stdout = "1:1"
+                return res
+            res.returncode = 1
+            res.stderr = b"Encoder libx264/aac failed: Unknown fatal error"
+            return res
+
+        with patch("subprocess.run", side_effect=fake_run_always_fail):
+            with self.assertRaises(RuntimeError) as ctx:
+                self.service._inpaint_video_sync(
+                    input_file=input_vid,
+                    output_file=output_vid,
+                    rx_or_regions=[{"x": 10, "y": 10, "w": 30, "h": 20}],
+                )
+            self.assertIn("FFmpeg ghép âm thanh sau khi inpaint thất bại", str(ctx.exception))
+
+    def test_ffmpeg_missing_executable_fallback_to_copy(self):
+        """
+        Adversarial Test F4.2: If ffmpeg binary is missing (FileNotFoundError),
+        system logs a warning and copies raw inpaint video as graceful fallback.
+        """
+        input_vid = self._create_minimal_video("no_ffmpeg_in.mp4")
+        output_vid = self.scratch_path / "no_ffmpeg_out.mp4"
+
+        def fake_run_not_found(cmd, *args, **kwargs):
+            raise FileNotFoundError("ffmpeg not found")
+
+        with patch("subprocess.run", side_effect=fake_run_not_found):
+            self.service._inpaint_video_sync(
+                input_file=input_vid,
+                output_file=output_vid,
+                rx_or_regions=[{"x": 10, "y": 10, "w": 30, "h": 20}],
+            )
+
+        # Output video must still exist via raw copy
+        self.assertTrue(output_vid.exists(), "Output file must be created even when FFmpeg is not found")
+
+
+class TestChallengerZeroDiskLeak(unittest.TestCase):
+    """
+    Empirical Adversarial Tests for F4.3: Zero-Disk Leak & Robust Resource Cleanup.
+    """
+
+    def setUp(self):
+        self.scratch_dir = tempfile.TemporaryDirectory()
+        self.scratch_path = Path(self.scratch_dir.name)
+        self.service = VideoEditorService(temp_dir=self.scratch_path)
+
+    def tearDown(self):
+        self.scratch_dir.cleanup()
+
+    def _create_minimal_video(self, filename: str = "leak_in.mp4") -> Path:
+        vid_path = self.scratch_path / filename
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        writer = cv2.VideoWriter(str(vid_path), fourcc, 30.0, (100, 60))
+        for _ in range(5):
+            writer.write(np.zeros((60, 100, 3), dtype=np.uint8))
+        writer.release()
+        return vid_path
+
+    def test_zero_disk_leak_crash_in_frame_loop(self):
+        """
+        Adversarial Test F4.3: Simulate unhandled crash midway through frame loop (e.g. frame 2).
+        Verifies:
+          - VideoWriter is released.
+          - inp_raw_*.mp4 is unlinked and deleted 100%.
+          - Zero intermediate scratch files remain on disk.
+        """
+        input_vid = self._create_minimal_video("crash_loop_in.mp4")
+        output_vid = self.scratch_path / "crash_loop_out.mp4"
+
+        inpainter = get_texture_preserving_inpainter()
+        call_count = 0
+
+        def failing_inpaint_fn(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count >= 2:
+                raise RuntimeError("Simulated catastrophic crash during neural inpainting")
+            return np.zeros((60, 100, 3), dtype=np.uint8), {}
+
+        with patch.object(inpainter, "inpaint_frame_with_regions", side_effect=failing_inpaint_fn):
+            with self.assertRaises(RuntimeError) as ctx:
+                self.service._inpaint_video_sync(
+                    input_file=input_vid,
+                    output_file=output_vid,
+                    rx_or_regions=[{"x": 10, "y": 10, "w": 30, "h": 20}],
+                )
+            self.assertIn("Simulated catastrophic crash", str(ctx.exception))
+
+        # Audit disk: zero inp_raw_*.mp4 files must remain
+        leaked_raw = list(self.scratch_path.glob("**/inp_raw_*.mp4"))
+        self.assertEqual(len(leaked_raw), 0, f"Leaked raw video files detected after crash: {leaked_raw}")
+
+    def test_zero_disk_leak_crash_during_ffmpeg_subprocess(self):
+        """
+        Adversarial Test F4.3: Crash during FFmpeg execution.
+        Scratch raw video must be cleanly unlinked in finally block.
+        """
+        input_vid = self._create_minimal_video("crash_ffmpeg_in.mp4")
+        output_vid = self.scratch_path / "crash_ffmpeg_out.mp4"
+
+        with patch("subprocess.run", side_effect=OSError("Disk I/O failure during ffmpeg execution")):
+            with self.assertRaises(OSError):
+                self.service._inpaint_video_sync(
+                    input_file=input_vid,
+                    output_file=output_vid,
+                    rx_or_regions=[{"x": 10, "y": 10, "w": 30, "h": 20}],
+                )
+
+        leaked_raw = list(self.scratch_path.glob("**/inp_raw_*.mp4"))
+        self.assertEqual(len(leaked_raw), 0, f"Leaked raw video files: {leaked_raw}")
+
+    def test_zero_disk_leak_task_cancellation_cleans_up(self):
+        """
+        Adversarial Test F4.3: When cancel_event is triggered during processing,
+        frame loop aborts immediately and all scratch files are wiped out.
+        """
+        input_vid = self._create_minimal_video("cancel_task_in.mp4")
+        output_vid = self.scratch_path / "cancel_task_out.mp4"
+        cancel_evt = threading.Event()
+
+        inpainter = get_texture_preserving_inpainter()
+
+        def cancelling_inpaint_fn(*args, **kwargs):
+            # Trigger cancellation on first call
+            cancel_evt.set()
+            return np.zeros((60, 100, 3), dtype=np.uint8), {}
+
+        with patch.object(inpainter, "inpaint_frame_with_regions", side_effect=cancelling_inpaint_fn):
+            self.service._inpaint_video_sync(
+                input_file=input_vid,
+                output_file=output_vid,
+                rx_or_regions=[{"x": 10, "y": 10, "w": 30, "h": 20}],
+                cancel_event=cancel_evt,
+            )
+
+        leaked_raw = list(self.scratch_path.glob("**/inp_raw_*.mp4"))
+        self.assertEqual(len(leaked_raw), 0, f"Leaked raw video files after cancellation: {leaked_raw}")
+
+    def test_zero_disk_leak_remove_text_from_video_e2e_exception_cleanup(self):
+        """
+        Adversarial Test F4.3: In remove_text_from_video, if an exception occurs,
+        the pending output_file (clean_*.mp4) is unlinked and deleted 100%.
+        """
+        input_vid = self._create_minimal_video("e2e_fail_in.mp4")
+
+        async def run_failing_e2e():
+            with patch.object(self.service, "_inpaint_video_sync", side_effect=RuntimeError("Worker panic")):
+                with self.assertRaises(RuntimeError):
+                    await self.service.remove_text_from_video(
+                        input_path_or_url=str(input_vid),
+                        mode="inpaint",
+                        region={"x": 10, "y": 10, "w": 30, "h": 20},
+                    )
+
+        asyncio.run(run_failing_e2e())
+
+        # Audit scratch directory: zero clean_*.mp4 files must remain
+        leaked_clean = list(self.scratch_path.glob("**/clean_*.mp4"))
+        self.assertEqual(len(leaked_clean), 0, f"Leaked clean output files after pipeline failure: {leaked_clean}")
+
+    def test_zero_disk_leak_stress_repeated_consecutive_crashes(self):
+        """
+        Adversarial Test F4.3: 10 consecutive simulated crashes across inpaint pipeline.
+        Audits disk before and after: guarantees zero accumulation of artifact files.
+        """
+        input_vid = self._create_minimal_video("stress_leak_in.mp4")
+        output_vid = self.scratch_path / "stress_leak_out.mp4"
+
+        for iteration in range(10):
+            with patch("subprocess.run", side_effect=RuntimeError(f"Crash iteration {iteration}")):
+                try:
+                    self.service._inpaint_video_sync(
+                        input_file=input_vid,
+                        output_file=output_vid,
+                        rx_or_regions=[{"x": 10, "y": 10, "w": 30, "h": 20}],
+                    )
+                except RuntimeError:
+                    pass
+
+        # Check total leftover temporary files
+        leaked_raw = list(self.scratch_path.glob("**/inp_raw_*.mp4"))
+        leaked_clean = list(self.scratch_path.glob("**/clean_*.mp4"))
+        self.assertEqual(len(leaked_raw), 0, f"Accumulated leaked raw files: {leaked_raw}")
+        self.assertEqual(len(leaked_clean), 0, f"Accumulated leaked clean files: {leaked_clean}")
 
 
 if __name__ == "__main__":

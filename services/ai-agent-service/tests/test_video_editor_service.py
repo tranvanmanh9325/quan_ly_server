@@ -2495,8 +2495,668 @@ class TestVideoEditorService(unittest.IsolatedAsyncioTestCase):
         finally:
             cap.release()
 
+    # ═══════════════════════════════════════════════════════════════════════════
+    # NHÓM MILESTONE 1: TEXT DETECTION & SUBTITLE TIMELINE EXTRACTION (F1.1, F1.2, F1.3)
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    async def test_m1_f1_1_zero_dropout_short_subtitle_detection(self):
+        """F1.1: Short subtitle appearing in only 1 sampled frame (hits==1) is preserved with >= 1.5s extent."""
+        async def fake_run(cmd, timeout=30):
+            if "format=duration:stream=duration" in " ".join(cmd):
+                return 0, b"60.000000\n", b""
+            if "-vsync" in cmd:
+                sample_dir = Path(cmd[-1]).parent
+                for i in range(5):
+                    (sample_dir / f"sample_{i:04d}.jpg").write_bytes(b"frame")
+                return 0, b"", b""
+            return 0, b"", b""
+
+        call_idx = 0
+        def fake_ocr(img, output_type=None):
+            nonlocal call_idx
+            idx = call_idx
+            call_idx += 1
+            # Frame 1: Short subtitle "Soạn hợp đồng" at y=550 (spoken subtitle zone)
+            if idx == 1:
+                return {
+                    "text": ["Soạn", "hợp", "đồng"],
+                    "conf": [85, 90, 88],
+                    "left": [140, 200, 260],
+                    "top": [550, 550, 550],
+                    "width": [50, 50, 60],
+                    "height": [40, 40, 40],
+                }
+            return {"text": [], "conf": [], "left": [], "top": [], "width": [], "height": []}
+
+        mock_tess = MagicMock()
+        mock_tess.Output.DICT = "dict"
+        mock_tess.image_to_data.side_effect = fake_ocr
+
+        mock_pil = MagicMock()
+        mock_img = MagicMock()
+        mock_img.width = 576
+        mock_img.height = 1024
+        mock_pil.Image.open.return_value.__enter__.return_value = mock_img
+
+        with patch.object(self.service, "_run_command", side_effect=fake_run):
+            with patch.dict("sys.modules", {"pytesseract": mock_tess, "PIL": mock_pil}):
+                detected = await self.service._auto_detect_text_region(self.dummy_video)
+                self.assertEqual(len(detected), 1, "Short subtitle 'Soạn hợp đồng' must NOT be dropped")
+                seg = detected[0]
+                self.assertEqual(seg["type"], "subtitle")
+                self.assertFalse(seg["is_static"])
+                self.assertEqual(seg["hits"], 1)
+                self.assertIn("Soạn", seg["text"])
+                # Temporal extent >= 1.5s (~45 frames at 30fps)
+                duration_frames = seg["frame_end"] - seg["frame_start"]
+                self.assertGreaterEqual(duration_frames, 45, "Temporal extent must be >= 1.5s (45 frames)")
+
+    async def test_m1_f1_1_scene_text_noise_rejected(self):
+        """F1.1: Transient scene text at non-subtitle positions or with low confidence is discarded."""
+        async def fake_run(cmd, timeout=30):
+            if "-vsync" in cmd:
+                sample_dir = Path(cmd[-1]).parent
+                for i in range(3):
+                    (sample_dir / f"sample_{i:04d}.jpg").write_bytes(b"frame")
+                return 0, b"", b""
+            return 0, b"", b""
+
+        call_idx = 0
+        def fake_ocr(img, output_type=None):
+            nonlocal call_idx
+            idx = call_idx
+            call_idx += 1
+            # Low confidence or off-center / upper position transient box
+            if idx == 0:
+                return {
+                    "text": ["NOISE_BOX"],
+                    "conf": [20],  # conf < 35.0
+                    "left": [20],
+                    "top": [550],
+                    "width": [60],
+                    "height": [25],
+                }
+            elif idx == 1:
+                return {
+                    "text": ["OFF_POSITION"],
+                    "conf": [80],
+                    "left": [20],
+                    "top": [200],  # y < 450 (not in subtitle zone, and hits == 1)
+                    "width": [60],
+                    "height": [25],
+                }
+            return {"text": [], "conf": [], "left": [], "top": [], "width": [], "height": []}
+
+        mock_tess = MagicMock()
+        mock_tess.Output.DICT = "dict"
+        mock_tess.image_to_data.side_effect = fake_ocr
+
+        mock_pil = MagicMock()
+        mock_img = MagicMock()
+        mock_img.width = 576
+        mock_img.height = 1024
+        mock_pil.Image.open.return_value.__enter__.return_value = mock_img
+
+        with patch.object(self.service, "_run_command", side_effect=fake_run):
+            with patch.dict("sys.modules", {"pytesseract": mock_tess, "PIL": mock_pil}):
+                detected = await self.service._auto_detect_text_region(self.dummy_video)
+                self.assertEqual(len(detected), 0, "Noise and non-subtitle transient text must be discarded")
+
+    async def test_m1_f1_2_dual_tier_classification_title_vs_subtitle(self):
+        """F1.2: Persistent top text is classified as 'title' (is_static=True); spoken lower text is 'subtitle'."""
+        async def fake_run(cmd, timeout=30):
+            if "format=duration:stream=duration" in " ".join(cmd):
+                return 0, b"60.000000\n", b""
+            if "-vsync" in cmd:
+                sample_dir = Path(cmd[-1]).parent
+                for i in range(6):
+                    (sample_dir / f"sample_{i:04d}.jpg").write_bytes(b"frame")
+                return 0, b"", b""
+            return 0, b"", b""
+
+        call_idx = 0
+        def fake_ocr(img, output_type=None):
+            nonlocal call_idx
+            idx = call_idx
+            call_idx += 1
+            # Top title present across all 6 frames (hits == 6 >= 4, y < 350)
+            # Bottom subtitle only in frames 2, 3 (hits == 2, y >= 450)
+            texts = ["TITLE_PERSISTENT"]
+            confs = [95]
+            lefts = [100]
+            tops = [150]
+            widths = [200]
+            heights = [40]
+
+            if idx in (2, 3):
+                texts.append("SUBTITLE_DYNAMIC")
+                confs.append(90)
+                lefts.append(150)
+                tops.append(600)
+                widths.append(180)
+                heights.append(40)
+
+            return {
+                "text": texts,
+                "conf": confs,
+                "left": lefts,
+                "top": tops,
+                "width": widths,
+                "height": heights,
+            }
+
+        mock_tess = MagicMock()
+        mock_tess.Output.DICT = "dict"
+        mock_tess.image_to_data.side_effect = fake_ocr
+
+        mock_pil = MagicMock()
+        mock_img = MagicMock()
+        mock_img.width = 576
+        mock_img.height = 1024
+        mock_pil.Image.open.return_value.__enter__.return_value = mock_img
+
+        with patch.object(self.service, "_run_command", side_effect=fake_run):
+            with patch.dict("sys.modules", {"pytesseract": mock_tess, "PIL": mock_pil}):
+                detected = await self.service._auto_detect_text_region(self.dummy_video)
+                self.assertEqual(len(detected), 2)
+                title_seg = next(s for s in detected if s["type"] == "title")
+                sub_seg = next(s for s in detected if s["type"] == "subtitle")
+
+                # Verify Title properties
+                self.assertTrue(title_seg["is_static"])
+                self.assertEqual(title_seg["frame_start"], 0)
+                self.assertGreater(title_seg["frame_end"], 1000)
+                self.assertGreaterEqual(title_seg["hits"], 4)
+
+                # Verify Subtitle properties
+                self.assertFalse(sub_seg["is_static"])
+                self.assertGreater(sub_seg["frame_start"], 0)
+                self.assertLess(sub_seg["frame_end"], 1800)
+
+    async def test_m1_f1_3_line_level_decomposition_multi_line_title(self):
+        """F1.3: Multi-line title block decomposes into distinct lines with coordinates."""
+        async def fake_run(cmd, timeout=30):
+            if "-vsync" in cmd:
+                sample_dir = Path(cmd[-1]).parent
+                for i in range(4):
+                    (sample_dir / f"sample_{i:04d}.jpg").write_bytes(b"frame")
+                return 0, b"", b""
+            return 0, b"", b""
+
+        def fake_ocr(img, output_type=None):
+            # 3 distinct lines at y=180, y=220, y=260
+            return {
+                "text": ["2x tuổi.", "Tự vận hành công ty IT", "Website & App"],
+                "conf": [95, 92, 90],
+                "left": [200, 80, 100],
+                "top": [180, 220, 260],
+                "width": [100, 300, 250],
+                "height": [30, 30, 30],
+            }
+
+        mock_tess = MagicMock()
+        mock_tess.Output.DICT = "dict"
+        mock_tess.image_to_data.side_effect = fake_ocr
+
+        mock_pil = MagicMock()
+        mock_img = MagicMock()
+        mock_img.width = 576
+        mock_img.height = 1024
+        mock_pil.Image.open.return_value.__enter__.return_value = mock_img
+
+        with patch.object(self.service, "_run_command", side_effect=fake_run):
+            with patch.dict("sys.modules", {"pytesseract": mock_tess, "PIL": mock_pil}):
+                detected = await self.service._auto_detect_text_region(self.dummy_video)
+                self.assertEqual(len(detected), 1)
+                seg = detected[0]
+                self.assertIn("lines", seg)
+                self.assertEqual(len(seg["lines"]), 3, "All 3 distinct lines must be decomposed into seg['lines']")
+                lines = seg["lines"]
+                # Verify lines are sorted vertically
+                self.assertLess(lines[0]["y"], lines[1]["y"])
+                self.assertLess(lines[1]["y"], lines[2]["y"])
+                # Verify each line maintains its distinct tight bounding box
+                self.assertEqual(lines[0]["text"], "2x tuổi.")
+                self.assertEqual(lines[1]["text"], "Tự vận hành công ty IT")
+                self.assertEqual(lines[2]["text"], "Website & App")
+
+    def test_m1_helper_is_valid_short_subtitle_unit(self):
+        """F1.1 Unit: _is_valid_short_subtitle correctly evaluates various candidate subtitles."""
+        # Valid Vietnamese short subtitle in spoken subtitle zone
+        valid_sub = {
+            "text": "Soạn hợp đồng",
+            "confs": [85.0],
+            "w": 200,
+            "h": 40,
+            "x": 150,
+            "y": 550,
+        }
+        self.assertTrue(
+            VideoEditorService._is_valid_short_subtitle(valid_sub, 576, 1024),
+            "Valid Vietnamese short subtitle must be accepted",
+        )
+
+        # Invalid: low confidence
+        low_conf_sub = dict(valid_sub, confs=[25.0])
+        self.assertFalse(VideoEditorService._is_valid_short_subtitle(low_conf_sub, 576, 1024))
+
+        # Invalid: pure symbols/noise without valid words
+        symbol_sub = dict(valid_sub, text="---===***")
+        self.assertFalse(VideoEditorService._is_valid_short_subtitle(symbol_sub, 576, 1024))
+
+        # Invalid: too small
+        tiny_sub = dict(valid_sub, w=10, h=5)
+        self.assertFalse(VideoEditorService._is_valid_short_subtitle(tiny_sub, 576, 1024))
+
+        # Invalid: out of subtitle zone (e.g. y < 450 in a 1024h video)
+        top_sub = dict(valid_sub, y=200)
+        self.assertFalse(VideoEditorService._is_valid_short_subtitle(top_sub, 576, 1024))
+
+    def test_m1_helper_merge_line_clusters_unit(self):
+        """F1.3 Unit: _merge_line_clusters correctly merges words on the same line and preserves vertical stacks."""
+        lines = [
+            {"x": 100, "y": 200, "w": 50, "h": 25, "text": "Dòng 1A"},
+            {"x": 160, "y": 202, "w": 60, "h": 24, "text": "Dòng 1B"},
+            {"x": 110, "y": 250, "w": 120, "h": 25, "text": "Dòng 2"},
+        ]
+        merged = VideoEditorService._merge_line_clusters(lines)
+        self.assertEqual(len(merged), 2, "Words on same line must merge into 1 line, leaving 2 distinct vertical lines")
+        self.assertEqual(merged[0]["text"], "Dòng 1A Dòng 1B")
+        self.assertEqual(merged[0]["x"], 100)
+        self.assertEqual(merged[0]["w"], 120)  # 160 + 60 - 100
+        self.assertEqual(merged[1]["text"], "Dòng 2")
+
+    def test_m2_f2_1_line_level_spatial_confinement_protects_speaker_grill(self):
+        """F2.1 Unit: Line-level spatial confinement strictly zeroes out background outside line boxes (e.g. Porsche speaker grill)."""
+        import cv2
+        import numpy as np
+
+        # Simulate Frame 700 ROI (137h x 479w)
+        # Top-left has high-contrast metallic speaker grill texture (y < 45, x < 180)
+        h, w = 137, 479
+        roi = np.full((h, w, 3), 60, dtype=np.uint8)
+
+        # Metallic grill texture in top-left
+        roi[:45, :180] = np.random.randint(180, 255, (45, 180, 3), dtype=np.uint8)
+
+        # 3 Text lines
+        lines = [
+            {"x": 180, "y": 5, "w": 135, "h": 33, "text": "2x tuổi."},
+            {"x": 30, "y": 45, "w": 435, "h": 38, "text": "Tự vận hành công ty IT Outsource"},
+            {"x": 35, "y": 88, "w": 430, "h": 43, "text": "chuyên làm Website & Web App"},
+        ]
+        # Draw subtitles in line areas
+        for l in lines:
+            bx, by, bw, bh = l["x"], l["y"], l["w"], l["h"]
+            cv2.putText(roi, l["text"], (bx + 5, by + bh - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (10, 10, 10), 4)
+            cv2.putText(roi, l["text"], (bx + 5, by + bh - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+
+        # Without line confinement, metallic grill will be falsely masked
+        unconfined_mask = VideoEditorService._generate_text_stroke_mask(roi)
+        self.assertGreater(np.count_nonzero(unconfined_mask[:40, :160]), 0, "Grill is falsely picked up without confinement")
+
+        # With line confinement, all pixels outside lines (specifically the speaker grill at y < 45, x < 180) MUST be ZERO
+        confined_mask = VideoEditorService._generate_text_stroke_mask(roi, lines=lines)
+        self.assertEqual(
+            np.count_nonzero(confined_mask[:40, :160]),
+            0,
+            "Speaker grill at y < 40, x < 160 must have strictly 0 masked pixels with line confinement",
+        )
+        # Meanwhile text inside line boxes is properly captured
+        self.assertGreater(np.count_nonzero(confined_mask), 100, "Text within line envelopes must be captured")
+
+    def test_m2_f2_2_stroke_hull_separation_bright_text_dark_outline_on_bright_background(self):
+        """F2.2 Unit: Stroke Hull Separation extracts 100% white core + black outline on bright contract paper."""
+        import cv2
+        import numpy as np
+
+        # Simulate Frame 150 contract paper ROI (80h x 300w) with bright paper background (lum >= 230)
+        h, w = 80, 300
+        roi = np.full((h, w, 3), 235, dtype=np.uint8)
+
+        # Draw "Soạn hợp đồng" with dark outline and bright white core
+        glyph = np.zeros((h, w), dtype=np.uint8)
+        cv2.putText(glyph, "SOAN HOP DONG", (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.0, 255, 2)
+        outline = cv2.dilate(glyph, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)))
+        roi[outline > 0] = (15, 15, 15)  # Dark stroke outline
+        roi[glyph > 0] = (255, 255, 255)  # Bright white core
+
+        mask = VideoEditorService._generate_text_stroke_mask(roi)
+        self.assertIsInstance(mask, np.ndarray)
+
+        # Verify that white core inside the glyph is captured (not discarded as white paper)
+        white_core = glyph > 0
+        core_coverage = np.count_nonzero(mask[white_core]) / np.count_nonzero(white_core)
+        self.assertGreater(core_coverage, 0.85, "White core inside subtitle must be preserved >= 85%")
+
+    def test_m2_f2_3_full_glyph_and_vietnamese_diacritics_preservation(self):
+        """F2.3 Unit: Vietnamese diacritics (dots, accents, tone marks, hats) with area >= 2 are 100% preserved."""
+        import cv2
+        import numpy as np
+
+        h, w = 60, 250
+        roi = np.full((h, w, 3), 80, dtype=np.uint8)
+        # Main glyph
+        glyph = np.zeros((h, w), dtype=np.uint8)
+        cv2.putText(glyph, "Tieng Viet", (20, 45), cv2.FONT_HERSHEY_SIMPLEX, 1.0, 255, 2)
+        outline = cv2.dilate(glyph, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)))
+        roi[outline > 0] = (10, 10, 10)
+        roi[glyph > 0] = (255, 255, 255)
+
+        # Simulate small Vietnamese diacritics: dot (dau nang) 2x2, acute accent (dau sac) 2x3, circumflex hat 3x3
+        dot_y, dot_x = 52, 60
+        roi[dot_y:dot_y+2, dot_x:dot_x+2] = (255, 255, 255)  # 2x2 dot (area=4)
+        hat_y, hat_x = 18, 120
+        roi[hat_y:hat_y+3, hat_x:hat_x+3] = (255, 255, 255)  # 3x3 circumflex hat (area=9)
+
+        mask = VideoEditorService._generate_text_stroke_mask(roi)
+
+        # Verify the 2x2 dot is present in mask
+        self.assertGreater(np.count_nonzero(mask[dot_y:dot_y+2, dot_x:dot_x+2]), 0, "2x2 Vietnamese dot accent must be preserved")
+        # Verify the 3x3 hat is present in mask
+        self.assertGreater(np.count_nonzero(mask[hat_y:hat_y+3, hat_x:hat_x+3]), 0, "Vietnamese circumflex hat must be preserved")
+
+    def test_m2_f2_4_solid_glyph_filling_prevents_hollow_letters(self):
+        """F2.4 Unit: Solid glyph filling via _fill_holes prevents hollow cavities in letters (O, D, B, 0)."""
+        import cv2
+        import numpy as np
+
+        h, w = 80, 200
+        roi = np.full((h, w, 3), 70, dtype=np.uint8)
+        # Draw large hollow letter "O"
+        cv2.circle(roi, (100, 40), 25, (10, 10, 10), 8)
+        cv2.circle(roi, (100, 40), 25, (255, 255, 255), 4)
+
+        mask = VideoEditorService._generate_text_stroke_mask(roi)
+
+        # Center cavity of letter "O" at (100, 40) must be 100% solid filled
+        cavity_pixels = mask[38:42, 98:102]
+        self.assertTrue(np.all(cavity_pixels == 255), "Center cavity of letter O must be solidly filled by floodFill")
+
+    def test_m2_f2_5_dynamic_line_clamping_replaces_destructive_erosion(self):
+        """F2.5 Unit: Dynamic line clamping prevents destructive erosion of glyph cores while respecting coverage ceiling."""
+        import cv2
+        import numpy as np
+
+        h, w = 80, 300
+        roi = np.full((h, w, 3), 100, dtype=np.uint8)
+
+        lines = [
+            {"x": 20, "y": 10, "w": 260, "h": 25, "text": "LINE 1 TITLE"},
+            {"x": 20, "y": 45, "w": 260, "h": 25, "text": "LINE 2 SUBTITLE"},
+        ]
+        # Text with wide shadow
+        for l in lines:
+            cv2.putText(roi, l["text"], (l["x"], l["y"] + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (10, 10, 10), 10)
+            cv2.putText(roi, l["text"], (l["x"], l["y"] + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+
+        mask = VideoEditorService._generate_text_stroke_mask(roi, lines=lines)
+        cov = np.count_nonzero(mask > 0) / (h * w)
+
+        # Safe coverage satisfied
+        self.assertLess(cov, 0.30, "Coverage ceiling must be respected")
+        # Glyphs must not be shredded or destroyed
+        self.assertGreater(np.count_nonzero(mask > 0), 300, "Glyphs must not be destroyed by aggressive erosion")
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # NHÓM 5: MILESTONE 4 — TEMPORAL COHERENCE & QUALITY EXPORT PIPELINE (R4)
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    def test_m4_f4_1_factory_get_texture_preserving_inpainter(self):
+        """F4.1 Unit: Factory function get_texture_preserving_inpainter returns shared inpainter instance."""
+        from app.services.video_editor_service import get_texture_preserving_inpainter
+        inpainter = get_texture_preserving_inpainter()
+        self.assertIsNotNone(inpainter, "get_texture_preserving_inpainter must return a valid inpainter instance")
+        # Verify singleton consistency
+        second_inpainter = get_texture_preserving_inpainter()
+        self.assertIs(inpainter, second_inpainter, "Must return singleton instance across calls")
+
+    def test_m4_f4_1_temporal_coherence_prev_masks_propagation(self):
+        """F4.1 Unit: Frame loop maintains prev_masks across consecutive frames within segment temporal extent."""
+        import cv2
+        import numpy as np
+
+        # Create a real synthetic video file with 5 frames
+        vid_path = self.scratch_path / "temporal_test_input.mp4"
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        writer = cv2.VideoWriter(str(vid_path), fourcc, 30.0, (200, 100))
+        for i in range(5):
+            f = np.full((100, 200, 3), 120 + i, dtype=np.uint8)
+            # Add subtitle text box at (30, 30, 80, 30)
+            cv2.putText(f, "SUB", (40, 55), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+            writer.write(f)
+        writer.release()
+
+        out_path = self.scratch_path / "temporal_test_output.mp4"
+
+        # Intercept inpaint_frame_with_regions to record prev_masks passed on each call
+        captured_prev_masks = []
+        from app.services.video_editor_service import get_texture_preserving_inpainter
+        inpainter = get_texture_preserving_inpainter()
+        original_inpaint_fn = inpainter.inpaint_frame_with_regions
+
+        def spy_inpaint_frame(frame, regions, stroke_mask_generator_fn, prev_masks=None, **kwargs):
+            captured_prev_masks.append(dict(prev_masks) if prev_masks else {})
+            return original_inpaint_fn(frame, regions, stroke_mask_generator_fn, prev_masks=prev_masks, **kwargs)
+
+        with patch.object(inpainter, "inpaint_frame_with_regions", side_effect=spy_inpaint_frame):
+            with patch("subprocess.run") as mock_sub:
+                mock_sub.return_value = MagicMock(returncode=0, stdout="", stderr=b"")
+                self.service._inpaint_video_sync(
+                    input_file=vid_path,
+                    output_file=out_path,
+                    rx_or_regions=[{
+                        "x": 30, "y": 30, "w": 80, "h": 30, "text": "SUB",
+                        "frame_start": 0, "frame_end": 4
+                    }],
+                )
+
+        # 5 frames were processed: Frame 0 had empty prev_masks, Frame 1..4 received non-empty prev_masks
+        self.assertEqual(len(captured_prev_masks), 5)
+        self.assertEqual(captured_prev_masks[0], {}, "First frame must start with empty prev_masks")
+        for idx in range(1, 5):
+            self.assertIn("SUB", captured_prev_masks[idx], f"Frame {idx} must receive cached mask for 'SUB'")
+            self.assertIsInstance(captured_prev_masks[idx]["SUB"], np.ndarray)
+
+    def test_m4_f4_1_temporal_coherence_scene_cut_resets_cache(self):
+        """F4.1 Unit: Sudden luminance jump (> 60.0) triggers scene cut reset, wiping prev_masks."""
+        import cv2
+        import numpy as np
+
+        # Create video with 4 frames: frames 0-1 dark (val=30), frames 2-3 bright (val=220) -> scene cut at frame 2
+        vid_path = self.scratch_path / "scene_cut_input.mp4"
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        writer = cv2.VideoWriter(str(vid_path), fourcc, 30.0, (150, 80))
+        for i in range(4):
+            val = 30 if i < 2 else 220
+            f = np.full((80, 150, 3), val, dtype=np.uint8)
+            cv2.putText(f, "TXT", (25, 45), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+            writer.write(f)
+        writer.release()
+
+        out_path = self.scratch_path / "scene_cut_output.mp4"
+
+        captured_prev_masks = []
+        from app.services.video_editor_service import get_texture_preserving_inpainter
+        inpainter = get_texture_preserving_inpainter()
+        original_inpaint_fn = inpainter.inpaint_frame_with_regions
+
+        def spy_inpaint_frame(frame, regions, stroke_mask_generator_fn, prev_masks=None, **kwargs):
+            captured_prev_masks.append(dict(prev_masks) if prev_masks else {})
+            return original_inpaint_fn(frame, regions, stroke_mask_generator_fn, prev_masks=prev_masks, **kwargs)
+
+        with patch.object(inpainter, "inpaint_frame_with_regions", side_effect=spy_inpaint_frame):
+            with patch("subprocess.run") as mock_sub:
+                mock_sub.return_value = MagicMock(returncode=0, stdout="", stderr=b"")
+                self.service._inpaint_video_sync(
+                    input_file=vid_path,
+                    output_file=out_path,
+                    rx_or_regions=[{
+                        "x": 20, "y": 20, "w": 60, "h": 30, "text": "TXT",
+                        "frame_start": 0, "frame_end": 3
+                    }],
+                )
+
+        self.assertEqual(len(captured_prev_masks), 4)
+        # Frame 0: empty
+        self.assertEqual(captured_prev_masks[0], {})
+        # Frame 1: cached from frame 0
+        self.assertIn("TXT", captured_prev_masks[1])
+        # Frame 2: Scene cut (30 -> 220, diff=190 > 60) must reset cache to empty
+        self.assertEqual(captured_prev_masks[2], {}, "Scene cut must reset prev_masks to empty dict")
+        # Frame 3: cached from frame 2
+        self.assertIn("TXT", captured_prev_masks[3])
+
+    def test_m4_f4_2_ffmpeg_high_quality_export_flags(self):
+        """F4.2 Unit: FFmpeg re-encode parameters in _inpaint_video_sync strictly enforce studio-grade standards."""
+        import cv2
+        import numpy as np
+
+        vid_path = self.scratch_path / "hq_flags_input.mp4"
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        writer = cv2.VideoWriter(str(vid_path), fourcc, 30.0, (120, 80))
+        writer.write(np.zeros((80, 120, 3), dtype=np.uint8))
+        writer.release()
+
+        out_path = self.scratch_path / "hq_flags_output.mp4"
+        executed_cmds = []
+
+        def spy_run(cmd, *args, **kwargs):
+            executed_cmds.append(cmd)
+            res = MagicMock()
+            res.returncode = 0
+            res.stdout = ""
+            res.stderr = b""
+            return res
+
+        with patch("subprocess.run", side_effect=spy_run):
+            self.service._inpaint_video_sync(
+                input_file=vid_path,
+                output_file=out_path,
+                rx_or_regions=[{"x": 10, "y": 10, "w": 40, "h": 20}],
+            )
+
+        # Examine the final FFmpeg merge command
+        merge_cmd = executed_cmds[-1]
+        self.assertIn("-c:v", merge_cmd)
+        self.assertEqual(merge_cmd[merge_cmd.index("-c:v") + 1], "libx264")
+        self.assertIn("-crf", merge_cmd)
+        self.assertEqual(merge_cmd[merge_cmd.index("-crf") + 1], "18")
+        self.assertIn("-preset", merge_cmd)
+        self.assertEqual(merge_cmd[merge_cmd.index("-preset") + 1], "fast")
+        self.assertIn("-c:a", merge_cmd)
+        self.assertEqual(merge_cmd[merge_cmd.index("-c:a") + 1], "copy")
+        self.assertIn("-movflags", merge_cmd)
+        self.assertEqual(merge_cmd[merge_cmd.index("-movflags") + 1], "+faststart")
+        self.assertIn("-shortest", merge_cmd)
+
+    def test_m4_f4_2_ffmpeg_audio_fallback_to_aac_on_copy_failure(self):
+        """F4.2 Unit: When audio stream copy fails, FFmpeg pipeline automatically falls back to AAC 192k re-encode."""
+        import cv2
+        import numpy as np
+
+        vid_path = self.scratch_path / "audio_fallback_input.mp4"
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        writer = cv2.VideoWriter(str(vid_path), fourcc, 30.0, (120, 80))
+        writer.write(np.zeros((80, 120, 3), dtype=np.uint8))
+        writer.release()
+
+        out_path = self.scratch_path / "audio_fallback_output.mp4"
+        call_count = 0
+        executed_cmds = []
+
+        def fake_subprocess_run(cmd, *args, **kwargs):
+            nonlocal call_count
+            executed_cmds.append(cmd)
+            res = MagicMock()
+            # If SAR probe, return 0
+            if "sample_aspect_ratio" in " ".join(cmd):
+                res.returncode = 0
+                res.stdout = "1:1"
+                return res
+
+            call_count += 1
+            if call_count == 1:
+                # First merge call with -c:a copy fails (e.g. incompatible audio stream)
+                res.returncode = 1
+                res.stderr = b"Could not find tag for codec pcm_s16le in stream #1, codec not currently supported in container"
+                return res
+            else:
+                # Fallback call with -c:a aac succeeds
+                res.returncode = 0
+                res.stdout = ""
+                res.stderr = b""
+                return res
+
+        with patch("subprocess.run", side_effect=fake_subprocess_run):
+            self.service._inpaint_video_sync(
+                input_file=vid_path,
+                output_file=out_path,
+                rx_or_regions=[{"x": 10, "y": 10, "w": 40, "h": 20}],
+            )
+
+        # Must have attempted initial copy command then fallen back to aac
+        self.assertGreaterEqual(len(executed_cmds), 2)
+        fallback_cmd = executed_cmds[-1]
+        self.assertIn("-c:a", fallback_cmd)
+        self.assertEqual(fallback_cmd[fallback_cmd.index("-c:a") + 1], "aac")
+        self.assertIn("-b:a", fallback_cmd)
+        self.assertEqual(fallback_cmd[fallback_cmd.index("-b:a") + 1], "192k")
+
+    def test_m4_f4_3_zero_disk_leak_cleanup_on_success(self):
+        """F4.3 Unit: Scrubs 100% temporary scratch video files (inp_raw_*.mp4) upon successful completion."""
+        import cv2
+        import numpy as np
+
+        vid_path = self.scratch_path / "cleanup_success_input.mp4"
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        writer = cv2.VideoWriter(str(vid_path), fourcc, 30.0, (100, 60))
+        writer.write(np.zeros((60, 100, 3), dtype=np.uint8))
+        writer.release()
+
+        out_path = self.scratch_path / "cleanup_success_output.mp4"
+
+        with patch("subprocess.run") as mock_sub:
+            mock_sub.return_value = MagicMock(returncode=0, stdout="", stderr=b"")
+            self.service._inpaint_video_sync(
+                input_file=vid_path,
+                output_file=out_path,
+                rx_or_regions=[{"x": 10, "y": 10, "w": 30, "h": 20}],
+            )
+
+        # Inspect scratch dir: no inp_raw_*.mp4 intermediate files should exist
+        leftover_raw = list(self.scratch_path.glob("**/inp_raw_*.mp4"))
+        self.assertEqual(len(leftover_raw), 0, f"No leftover raw inpaint videos permitted: {leftover_raw}")
+
+    def test_m4_f4_3_zero_disk_leak_cleanup_on_exception(self):
+        """F4.3 Unit: Inpaint worker cleans up all temporary scratch files in finally block even on unhandled exception."""
+        import cv2
+        import numpy as np
+
+        vid_path = self.scratch_path / "cleanup_err_input.mp4"
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        writer = cv2.VideoWriter(str(vid_path), fourcc, 30.0, (100, 60))
+        writer.write(np.zeros((60, 100, 3), dtype=np.uint8))
+        writer.release()
+
+        out_path = self.scratch_path / "cleanup_err_output.mp4"
+
+        # Force exception during subprocess.run
+        with patch("subprocess.run", side_effect=RuntimeError("Simulated pipeline crash")):
+            with self.assertRaises(RuntimeError):
+                self.service._inpaint_video_sync(
+                    input_file=vid_path,
+                    output_file=out_path,
+                    rx_or_regions=[{"x": 10, "y": 10, "w": 30, "h": 20}],
+                )
+
+        # Scratch dir must be clean of inp_raw_*.mp4 files despite crash
+        leftover_raw = list(self.scratch_path.glob("**/inp_raw_*.mp4"))
+        self.assertEqual(len(leftover_raw), 0, f"Scratch files must be unlinked in finally block: {leftover_raw}")
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
 

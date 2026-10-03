@@ -56,3 +56,7 @@ local.properties
 .cxx/
 **/.cxx/
 android-app/model/
+
+# Deep Learning Models (ONNX)
+*.onnx
+services/ai-agent-service/app/models/*.onnx

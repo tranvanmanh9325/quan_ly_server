@@ -108,21 +108,7 @@ class TestF31ModelLoadingAndCache(unittest.TestCase):
             mock_client_ctx.__aexit__.return_value = None
             mock_client_cls.return_value = mock_client_ctx
 
-            orig_stat = Path.stat
-            def fake_stat(self_or_p=None, *args, **kwargs):
-                if self_or_p is not None and (".tmp" in str(self_or_p) or str(self_or_p).endswith(".onnx")):
-                    res = MagicMock()
-                    res.st_size = 208_044_816
-                    res.st_mode = 0o100644
-                    return res
-                if self_or_p is not None:
-                    return orig_stat(self_or_p, *args, **kwargs)
-                res = MagicMock()
-                res.st_size = 208_044_816
-                res.st_mode = 0o100644
-                return res
-
-            with patch.object(Path, "stat", side_effect=fake_stat):
+            with patch("os.path.getsize", return_value=208_044_816):
                 res = asyncio.run(self.inpainter.ensure_model_available())
 
             self.assertTrue(res)
@@ -174,21 +160,7 @@ class TestF31ModelLoadingAndCache(unittest.TestCase):
             mock_client_ctx.__exit__.return_value = None
             mock_client_cls.return_value = mock_client_ctx
 
-            orig_stat = Path.stat
-            def fake_stat(self_or_p=None, *args, **kwargs):
-                if self_or_p is not None and (".tmp" in str(self_or_p) or str(self_or_p).endswith(".onnx")):
-                    res = MagicMock()
-                    res.st_size = 208_044_816
-                    res.st_mode = 0o100644
-                    return res
-                if self_or_p is not None:
-                    return orig_stat(self_or_p, *args, **kwargs)
-                res = MagicMock()
-                res.st_size = 208_044_816
-                res.st_mode = 0o100644
-                return res
-
-            with patch.object(Path, "stat", side_effect=fake_stat):
+            with patch("os.path.getsize", return_value=208_044_816):
                 res = self.inpainter.ensure_model_available(sync=True)
 
             self.assertTrue(res)

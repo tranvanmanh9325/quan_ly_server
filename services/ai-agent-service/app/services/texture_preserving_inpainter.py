@@ -147,7 +147,7 @@ class TexturePreservingInpainter:
                                 f.write(chunk)
 
             # Atomic rename upon successful download
-            if tmp_path.exists() and tmp_path.stat().st_size >= self.MODEL_MIN_BYTES:
+            if tmp_path.exists() and os.path.getsize(tmp_path) >= self.MODEL_MIN_BYTES:
                 os.replace(tmp_path, self._model_path)
                 logger.info("[TexturePreservingInpainter] Model cached successfully: %s", self._model_path)
                 return True
@@ -184,7 +184,7 @@ class TexturePreservingInpainter:
                             if chunk:
                                 f.write(chunk)
 
-            if tmp_path.exists() and tmp_path.stat().st_size >= self.MODEL_MIN_BYTES:
+            if tmp_path.exists() and os.path.getsize(tmp_path) >= self.MODEL_MIN_BYTES:
                 os.replace(tmp_path, self._model_path)
                 logger.info("[TexturePreservingInpainter] Model cached successfully (sync): %s", self._model_path)
                 return True

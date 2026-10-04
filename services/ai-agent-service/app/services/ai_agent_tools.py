@@ -59,6 +59,23 @@ DIRECT_RETURN_TOOLS = frozenset({
     "extract_document_text",
     "translate_text",
     "download_direct_file",
+    # M2 Composable Specialist Editing Tools (8 tools + aliases)
+    "video_probe_tool",
+    "text_detection_tool",
+    "mask_generation_tool",
+    "image_inpaint_tool",
+    "video_inpaint_tool",
+    "ffmpeg_process_tool",
+    "quality_verify_tool",
+    "temporal_compare_tool",
+    "probe_media_metadata",
+    "detect_text_and_overlays",
+    "build_inpaint_mask",
+    "inpaint_image_hosted",
+    "inpaint_video_hosted",
+    "edit_video_ffmpeg",
+    "verify_media_cleanliness",
+    "generate_comparison_artifacts",
 })
 
 SCREENSHOT_TOOLS = frozenset({
@@ -1383,16 +1400,16 @@ class AgentToolExecutor:
                 *(["list_autonomous_goals"] if (is_goal and is_goal_list) else []),
                 *(["cancel_autonomous_goal"] if (is_goal and is_goal_cancel) else []),
                 *(["create_autonomous_goal", "list_autonomous_goals", "cancel_autonomous_goal"] if is_goal else []),
-                *(["remove_text_from_video"] if is_rm_txt else []),
+                *(["remove_text_from_video", "video_inpaint_tool", "image_inpaint_tool", "text_detection_tool", "mask_generation_tool", "quality_verify_tool", "temporal_compare_tool", "video_probe_tool", "ffmpeg_process_tool"] if is_rm_txt else []),
                 *(["add_subtitle_to_video"] if is_add_sub else []),
                 *(["apply_color_grade"] if is_clr_grd else []),
                 *(["stabilize_video"] if is_stab_vid else []),
                 *(["concatenate_videos"] if is_concat else []),
                 *(["extract_frames"] if is_ext_frm else []),
-                *(["remove_watermark_region"] if is_rm_wm else []),
+                *(["remove_watermark_region", "video_inpaint_tool", "image_inpaint_tool", "mask_generation_tool"] if is_rm_wm else []),
                 *(["enhance_video_quality"] if is_enh_vid else []),
                 *(["generate_video_thumbnail"] if is_gen_thm else []),
-                *(["edit_video_clip"] if is_edit_vid else []),
+                *(["edit_video_clip", "ffmpeg_process_tool", "video_probe_tool"] if is_edit_vid else []),
                 *(["compress_video"] if is_comp_vid else []),
                 *(["convert_video_format"] if is_conv_vid else []),
                 *(["convert_audio_format"] if is_conv_aud else []),
@@ -1469,6 +1486,15 @@ class AgentToolExecutor:
                 "manage_docker_containers",
                 "optimize_system_resources",
                 "execute_system_script",
+                # M2 Composable Editing Tools
+                "video_probe_tool",
+                "text_detection_tool",
+                "mask_generation_tool",
+                "image_inpaint_tool",
+                "video_inpaint_tool",
+                "ffmpeg_process_tool",
+                "quality_verify_tool",
+                "temporal_compare_tool",
 
                 # 5. Diagnostic & Passive Utilities
                 "block_ip",
@@ -3105,6 +3131,170 @@ class AgentToolExecutor:
                             }
                         },
                         "required": ["input_path_or_url"]
+                    }
+                }
+            },
+            # ── M2: Composable Specialist Video & Image Editing Tools (8 Tools) ──
+            {
+                "type": "function",
+                "function": {
+                    "name": "video_probe_tool",
+                    "description": "Trích xuất toàn diện siêu dữ liệu kỹ thuật của video/media (resolution, fps, duration, codecs, bitrate, file_size).",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "video_path": {"type": "string", "description": "Đường dẫn file video cục bộ hoặc URL cần kiểm tra thông số."}
+                        },
+                        "required": ["video_path"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "text_detection_tool",
+                    "description": "Phát hiện text/watermark/subtitles trên ảnh hoặc video, trả về danh sách bounding boxes, nội dung chữ và độ tin cậy.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "image_or_video_path": {"type": "string", "description": "Đường dẫn tệp hình ảnh hoặc video cần quét nhận diện chữ."},
+                            "sample_frames": {"type": "integer", "default": 5, "description": "Số lượng frame lấy mẫu nếu là video (mặc định: 5)."}
+                        },
+                        "required": ["image_or_video_path"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "mask_generation_tool",
+                    "description": "Sinh mặt nạ nhị phân (0/255 PNG) từ danh sách vùng regions [x, y, w, h] kèm mở rộng viền dilation bao trọn nét chữ.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "dimensions": {
+                                "description": "Kích thước khung hình [width, height] hoặc object {'width': w, 'height': h}.",
+                                "type": "array",
+                                "items": {"type": "integer"}
+                            },
+                            "regions": {
+                                "type": "array",
+                                "items": {"type": "object"},
+                                "description": "Danh sách các vùng cần mask, mỗi phần tử có dạng {'x': int, 'y': int, 'w': int, 'h': int}."
+                            },
+                            "dilation": {
+                                "type": "integer",
+                                "default": 5,
+                                "description": "Bán kính phình viền morphological dilation (pixels, mặc định 5)."
+                            },
+                            "output_path": {"type": "string", "description": "Đường dẫn lưu file ảnh mask PNG đầu ra (tùy chọn)."}
+                        },
+                        "required": ["dimensions", "regions"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "image_inpaint_tool",
+                    "description": "Xóa vật thể/chữ trên ảnh đơn bằng Hosted Inpainter Client (Hugging Face Spaces LaMa) với fallback Pure Guided Filter / OpenCV.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "image_path": {"type": "string", "description": "Đường dẫn ảnh gốc cần inpaint."},
+                            "mask_path": {"type": "string", "description": "Đường dẫn ảnh mặt nạ nhị phân (vùng trắng 255 là vùng cần xóa)."},
+                            "output_path": {"type": "string", "description": "Đường dẫn lưu ảnh thành phẩm (tùy chọn)."}
+                        },
+                        "required": ["image_path", "mask_path"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "video_inpaint_tool",
+                    "description": "Inpaint video chuyên nghiệp kết hợp Keyframe Hosted LaMa + OpenCV DIS Optical Flow lan truyền mượt mà.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "video_path": {"type": "string", "description": "Đường dẫn video cần inpaint."},
+                            "target_regions": {
+                                "type": "array",
+                                "items": {"type": "object"},
+                                "description": "Danh sách vùng {x, y, w, h} cần xóa. Nếu bỏ trống sẽ tự động dò tìm text."
+                            },
+                            "method": {
+                                "type": "string",
+                                "enum": ["auto", "inpaint", "delogo"],
+                                "default": "auto",
+                                "description": "Phương pháp inpaint ('auto', 'inpaint' hoặc 'delogo')."
+                            },
+                            "output_path": {"type": "string", "description": "Đường dẫn lưu video thành phẩm (tùy chọn)."}
+                        },
+                        "required": ["video_path"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "ffmpeg_process_tool",
+                    "description": "Thực hiện thao tác FFmpeg nguyên tử: cắt clip (cut_clip), tách audio (extract_audio), ghép audio/video (merge_audio_video), đổi tốc độ (change_speed), đổi kích thước (resize).",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "command_type": {
+                                "type": "string",
+                                "enum": ["cut_clip", "extract_audio", "merge_audio_video", "change_speed", "resize"],
+                                "description": "Loại thao tác FFmpeg cần thực thi."
+                            },
+                            "input_path": {"type": "string", "description": "Đường dẫn file media đầu vào."},
+                            "output_path": {"type": "string", "description": "Đường dẫn lưu file đầu ra (tùy chọn)."},
+                            "start_time": {"type": "string", "description": "Mốc bắt đầu cho cut_clip (HH:MM:SS hoặc SS)."},
+                            "duration": {"type": "string", "description": "Thời lượng cắt cho cut_clip."},
+                            "audio_path": {"type": "string", "description": "Đường dẫn audio cho merge_audio_video."},
+                            "speed": {"type": "number", "description": "Hệ số tốc độ cho change_speed (ví dụ: 1.5, 2.0)."},
+                            "width": {"type": "integer", "description": "Chiều rộng mới cho resize."},
+                            "height": {"type": "integer", "description": "Chiều cao mới cho resize (-2 để giữ tỷ lệ)."}
+                        },
+                        "required": ["command_type", "input_path"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "quality_verify_tool",
+                    "description": "Đo đạc kiểm tra chất lượng khách quan sau khi inpaint: tính PSNR, SSIM phông nền và đếm từ residual text qua OCR độc lập.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "original_path": {"type": "string", "description": "Đường dẫn file video hoặc ảnh gốc trước khi xóa."},
+                            "result_path": {"type": "string", "description": "Đường dẫn file video hoặc ảnh kết quả sau khi xóa."},
+                            "sample_frames": {"type": "integer", "default": 10, "description": "Số khung hình lấy mẫu đối chiếu (mặc định 10)."}
+                        },
+                        "required": ["original_path", "result_path"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "temporal_compare_tool",
+                    "description": "Đo độ ổn định thời gian (temporal consistency / flicker MAD) giữa các frame liên tiếp và xuất ảnh so sánh side-by-side trước/sau.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "video_path": {"type": "string", "description": "Đường dẫn video cần đánh giá độ ổn định."},
+                            "frame_indices": {
+                                "type": "array",
+                                "items": {"type": "integer"},
+                                "description": "Danh sách index các frame cần trích xuất đối chiếu (tùy chọn)."
+                            },
+                            "original_path": {"type": "string", "description": "Đường dẫn video gốc nếu muốn sinh ảnh side-by-side (tùy chọn)."},
+                            "output_dir": {"type": "string", "description": "Thư mục lưu trữ artifact ảnh đối chiếu (tùy chọn)."}
+                        },
+                        "required": ["video_path"]
                     }
                 }
             },
@@ -5744,6 +5934,164 @@ class AgentToolExecutor:
                         logger.warning("[AiAgent] worker.cancel_goal error: %s", e)
                         return f"❌ Lỗi khi hủy mục tiêu `{g_id}`: {e}"
                 return f"⚠️ Autonomous Goal Worker chưa sẵn sàng. Không thể hủy mục tiêu `#{g_id}`."
+
+            # ── M2: Composable Specialist Video & Image Editing Tools Dispatchers ──
+            if tool_name in ("video_probe_tool", "probe_media_metadata"):
+                v_path = str(tool_args.get("video_path") or tool_args.get("file_path", "")).strip()
+                res = await self.video_editor_service.probe_media_metadata(file_path=v_path)
+                if res.get("status") == "ok":
+                    return (
+                        f"📊 **THÔNG SỐ KỸ THUẬT VIDEO / MEDIA**:\n"
+                        f"• Tệp tin: `{res.get('file_path')}`\n"
+                        f"• Độ phân giải: **{res.get('width')}x{res.get('height')}** px\n"
+                        f"• Tốc độ khung hình (FPS): **{res.get('fps')}** fps (Tổng {res.get('total_frames')} frames)\n"
+                        f"• Thời lượng: **{res.get('duration_seconds')}** giây\n"
+                        f"• Codecs: Video `{res.get('video_codec')}` | Audio `{res.get('audio_codec')}`\n"
+                        f"• Dung lượng: **{res.get('file_size_formatted')}**"
+                    )
+                return f"❌ Lỗi khi đọc thông số video: {res.get('message', 'Không rõ nguyên nhân')}"
+
+            if tool_name in ("text_detection_tool", "detect_text_and_overlays"):
+                m_path = str(tool_args.get("image_or_video_path") or tool_args.get("video_path") or tool_args.get("media_path", "")).strip()
+                sf = int(tool_args.get("sample_frames", 5))
+                res = await self.video_editor_service.detect_text_and_overlays(media_path=m_path, sample_frames=sf)
+                if res.get("status") == "ok":
+                    regs = res.get("detected_regions", [])
+                    m_type = res.get("media_type", "media")
+                    lines = [f"🔍 **KẾT QUẢ QUÉT TEXT / OVERLAYS ({m_type.upper()})**: Đã phát hiện {len(regs)} vùng chữ."]
+                    for idx, r in enumerate(regs[:10], 1):
+                        txt = r.get("text", "")
+                        txt_str = f" — Nội dung: \"{txt}\"" if txt else ""
+                        lines.append(f"  • Vùng #{idx}: `x={r.get('x')}, y={r.get('y')}, w={r.get('w')}, h={r.get('h')}`{txt_str}")
+                    if len(regs) > 10:
+                        lines.append(f"  *(và {len(regs) - 10} vùng khác)*")
+                    return "\n".join(lines)
+                return f"❌ Lỗi khi quét văn bản: {res.get('message', 'Không rõ nguyên nhân')}"
+
+            if tool_name in ("mask_generation_tool", "build_inpaint_mask"):
+                dims = tool_args.get("dimensions") or tool_args.get("dims") or [100, 100]
+                regs = tool_args.get("regions") or tool_args.get("bboxes") or []
+                dil = int(tool_args.get("dilation", tool_args.get("dilate_px", 5)))
+                out_p = tool_args.get("output_path")
+                res = self.video_editor_service.build_inpaint_mask(dimensions=dims, regions=regs, dilation=dil, output_path=out_p)
+                if res.get("status") == "ok":
+                    return (
+                        f"🎭 **SINH MẶT NẠ INPAINT THÀNH CÔNG**:\n"
+                        f"• Kích thước: **{res.get('width')}x{res.get('height')}** px\n"
+                        f"• Số vùng mask: **{res.get('regions_count')}** (Độ bao phủ: {res.get('coverage_ratio') * 100:.2f}%)\n"
+                        f"• Bán kính dilation: **{res.get('dilation')}** px\n"
+                        f"• Đường dẫn lưu mask: `{res.get('mask_path')}`"
+                    )
+                return f"❌ Lỗi khi sinh mặt nạ inpaint: {res.get('message', 'Không rõ nguyên nhân')}"
+
+            if tool_name in ("image_inpaint_tool", "inpaint_image_hosted"):
+                img_p = str(tool_args.get("image_path", "")).strip()
+                msk_p = str(tool_args.get("mask_path", "")).strip()
+                out_p = tool_args.get("output_path")
+                timeout = float(tool_args.get("timeout", 15.0))
+                res = await self.video_editor_service.inpaint_image_hosted(image_path=img_p, mask_path=msk_p, output_path=out_p, timeout=timeout)
+                if res.get("status") == "ok":
+                    msg = (
+                        f"🎨 **INPAINT ẢNH THÀNH CÔNG** ({res.get('tier_used')}):\n"
+                        f"• Đường dẫn: `{res.get('output_path')}`\n"
+                        f"• Dung lượng: {res.get('file_size_formatted', 'N/A')}"
+                    )
+                    if res.get("delivery") == "direct":
+                        msg += "\n• Phương thức: Sẵn sàng gửi trực tiếp qua Telegram (<= 50MB)."
+                    elif res.get("internet_url"):
+                        msg += f"\n• Link tải trực tiếp: {res.get('internet_url')}"
+                    return msg
+                return f"❌ Lỗi khi inpaint ảnh: {res.get('message', 'Không rõ nguyên nhân')}"
+
+            if tool_name in ("video_inpaint_tool", "inpaint_video_hosted"):
+                v_path = str(tool_args.get("video_path", "")).strip()
+                regs = tool_args.get("target_regions") or tool_args.get("text_segments")
+                method = str(tool_args.get("method", "auto")).strip().lower()
+                out_p = tool_args.get("output_path")
+                res = await self.video_editor_service.inpaint_video_hosted(
+                    video_path=v_path,
+                    target_regions=regs,
+                    method=method,
+                    output_path=out_p,
+                )
+                if res.get("status") == "ok":
+                    msg = (
+                        f"🎬 **INPAINT VIDEO THÀNH CÔNG (Keyframe Hosted LaMa + DIS Flow)**:\n"
+                        f"• Phương pháp: `{res.get('mode_used', method)}`\n"
+                        f"• Đường dẫn: `{res.get('output_path')}`\n"
+                        f"• Dung lượng: {res.get('file_size_formatted', 'N/A')}"
+                    )
+                    if res.get("delivery") == "direct":
+                        msg += "\n• Phương thức: Sẵn sàng gửi trực tiếp qua Telegram (<= 50MB)."
+                    elif res.get("internet_url"):
+                        msg += f"\n• Link tải trực tiếp: {res.get('internet_url')}"
+                    return msg
+                return f"❌ Lỗi khi inpaint video: {res.get('message', 'Không rõ nguyên nhân')}"
+
+            if tool_name in ("ffmpeg_process_tool", "edit_video_ffmpeg"):
+                cmd_type = str(tool_args.get("command_type") or tool_args.get("operation", "")).strip().lower()
+                in_p = str(tool_args.get("input_path") or tool_args.get("video_path", "")).strip()
+                out_p = tool_args.get("output_path")
+                pass_params = {k: v for k, v in tool_args.items() if k not in ("command_type", "operation", "input_path", "video_path", "output_path")}
+                res = await self.video_editor_service.edit_video_ffmpeg(command_type=cmd_type, input_path=in_p, output_path=out_p, **pass_params)
+                if res.get("status") == "ok":
+                    msg = (
+                        f"⚡ **THAO TÁC FFMPEG THÀNH CÔNG** (`{cmd_type}`):\n"
+                        f"• Đường dẫn: `{res.get('output_path')}`\n"
+                        f"• Dung lượng: {res.get('file_size_formatted', 'N/A')}"
+                    )
+                    if res.get("delivery") == "direct":
+                        msg += "\n• Phương thức: Sẵn sàng gửi trực tiếp qua Telegram."
+                    elif res.get("internet_url"):
+                        msg += f"\n• Link tải trực tiếp: {res.get('internet_url')}"
+                    return msg
+                return f"❌ Lỗi khi thực hiện thao tác FFmpeg: {res.get('message', 'Không rõ nguyên nhân')}"
+
+            if tool_name in ("quality_verify_tool", "verify_media_cleanliness"):
+                orig_p = str(tool_args.get("original_path", "")).strip()
+                res_p = str(tool_args.get("result_path") or tool_args.get("video_path", "")).strip()
+                sf = int(tool_args.get("sample_frames", 10))
+                m_regs = tool_args.get("mask_regions")
+                res = await self.video_editor_service.verify_media_cleanliness(
+                    original_path=orig_p,
+                    result_path=res_p,
+                    sample_frames=sf,
+                    mask_regions=m_regs,
+                )
+                if res.get("status") == "ok":
+                    verdict_icon = "✅" if res.get("verdict") == "PASS" else "⚠️"
+                    return (
+                        f"🔍 **BÁO CÁO THẨM ĐỊNH CHẤT LƯỢNG (QUALITY VERIFY)**:\n"
+                        f"• Đánh giá chung: {verdict_icon} **{res.get('verdict')}**\n"
+                        f"• PSNR phông nền trung bình: **{res.get('avg_psnr')} dB**\n"
+                        f"• SSIM phông nền trung bình: **{res.get('avg_ssim')}** (Độ bảo toàn kết cấu)\n"
+                        f"• Số từ text còn sót (Residual OCR Words): **{res.get('residual_text_count')}** từ\n"
+                        f"• Số khung hình đã kiểm tra: **{res.get('frames_evaluated')}** frames"
+                    )
+                return f"❌ Lỗi khi thẩm định chất lượng: {res.get('message', 'Không rõ nguyên nhân')}"
+
+            if tool_name in ("temporal_compare_tool", "generate_comparison_artifacts"):
+                v_path = str(tool_args.get("video_path", "")).strip()
+                f_indices = tool_args.get("frame_indices") or tool_args.get("timestamps")
+                orig_p = tool_args.get("original_path")
+                out_d = tool_args.get("output_dir")
+                res = await self.video_editor_service.generate_comparison_artifacts(
+                    video_path=v_path,
+                    frame_indices=f_indices,
+                    original_path=orig_p,
+                    output_dir=out_d,
+                )
+                if res.get("status") == "ok":
+                    arts = res.get("artifact_paths", [])
+                    lines = [
+                        f"🎞️ **ĐÁNH GIÁ TÍNH LIÊN TỤC THEO THỜI GIAN (TEMPORAL CONSISTENCY)**:\n"
+                        f"• Temporal MAD: **{res.get('temporal_mad')}** (Mức nhấp nháy: **{res.get('flicker_level').upper()}**)\n"
+                        f"• Số lượng artifact so sánh: **{len(arts)}** ảnh"
+                    ]
+                    for idx, a in enumerate(arts[:8], 1):
+                        lines.append(f"  • Ảnh #{idx}: `{a}`")
+                    return "\n".join(lines)
+                return f"❌ Lỗi khi đánh giá độ liên tục thời gian: {res.get('message', 'Không rõ nguyên nhân')}"
 
             return f"Unknown tool: {tool_name}"
 

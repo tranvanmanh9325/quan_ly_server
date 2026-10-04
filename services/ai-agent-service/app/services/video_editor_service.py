@@ -49,6 +49,27 @@ except ImportError:
         except ImportError:
             TexturePreservingInpainter = None
 
+try:
+    from app.services.hosted_inpainter_client import (
+        HostedInpainterClient,
+        get_hosted_inpainter_client,
+    )
+except ImportError:
+    try:
+        from services.hosted_inpainter_client import (  # type: ignore
+            HostedInpainterClient,
+            get_hosted_inpainter_client,
+        )
+    except ImportError:
+        try:
+            from hosted_inpainter_client import (  # type: ignore
+                HostedInpainterClient,
+                get_hosted_inpainter_client,
+            )
+        except ImportError:
+            HostedInpainterClient = None
+            get_hosted_inpainter_client = None
+
 
 def get_texture_preserving_inpainter(
     model_path: Optional[Union[str, Path]] = None,
@@ -155,7 +176,18 @@ class VideoEditorService:
 
         base_temp = Path(temp_dir or os.getenv("MEDIA_STUDIO_TEMP_DIR", tempfile.gettempdir()))
         self._temp_dir = base_temp / "video_editor"
+        self._roi_inpaint_cache: Dict[str, Any] = {}
         self._ensure_temp_dir()
+
+    @staticmethod
+    def _create_dis_optical_flow() -> Any:
+        """Create OpenCV DISOpticalFlow instance with fast preset."""
+        import cv2
+        if hasattr(cv2, "DISOpticalFlow_create"):
+            return cv2.DISOpticalFlow_create(cv2.DISOPTICAL_FLOW_PRESET_FAST)
+        if hasattr(cv2, "DISOpticalFlow") and hasattr(cv2.DISOpticalFlow, "create"):
+            return cv2.DISOpticalFlow.create(cv2.DISOPTICAL_FLOW_PRESET_FAST)
+        return None
 
     def _ensure_temp_dir(self) -> None:
         """Create scratch directory if missing."""
@@ -2252,16 +2284,31 @@ class VideoEditorService:
 
         return sorted(list(kfs))
 
+    def _get_roi_cache_key(self, roi_img: Any, roi_mask: Any) -> Optional[str]:
+        """Generate compact hash key for static/temporal ROI caching."""
+        try:
+            import cv2
+            import hashlib
+            rh, rw = roi_img.shape[:2]
+            sw, sh = min(32, max(4, rw // 4)), min(32, max(4, rh // 4))
+            small_i = cv2.resize(roi_img, (sw, sh), interpolation=cv2.INTER_AREA)
+            small_m = cv2.resize(roi_mask, (sw, sh), interpolation=cv2.INTER_NEAREST)
+            h = hashlib.md5(small_i.tobytes() + small_m.tobytes()).hexdigest()
+            return f"{rw}x{rh}_{h}"
+        except Exception:
+            return None
+
     def _inpaint_roi_fallback_chain(
         self,
         roi_img: Any,
         roi_mask: Any,
-        timeout_sec: float = 35.0,
+        timeout_sec: float = 15.0,
+        use_hosted: bool = True,
     ) -> Any:
         """
-        Chuỗi dự phòng chuẩn Studio:
-        - Cấp 1 (Primary Studio): TexturePreservingInpainter (Pure Guided Filter Structure-Texture Synthesis)
-        - Cấp 2 (Texture Fallback): Pure Guided Filter Structure-Texture Synthesis
+        Chuỗi dự phòng chuẩn Studio tích hợp Hosted Specialist AI:
+        - Cấp 1 (Hosted Specialist AI): Hosted LaMa Inpainter Client (Hugging Face Spaces pool)
+        - Cấp 2 (Primary Studio Texture): TexturePreservingInpainter (Pure Guided Filter Structure-Texture Synthesis)
         - Cấp 3 (Emergency Fallback): cv2.inpaint TELEA/NS
         """
         import cv2
@@ -2270,30 +2317,55 @@ class VideoEditorService:
         if roi_img is None or roi_mask is None or np.count_nonzero(roi_mask) == 0:
             return roi_img
 
-        # --- Cấp 1 (Primary Studio): TexturePreservingInpainter qua Pure Guided Filter ---
+        cache_key = self._get_roi_cache_key(roi_img, roi_mask)
+        if cache_key and cache_key in self._roi_inpaint_cache:
+            return self._roi_inpaint_cache[cache_key].copy()
+
+        # --- Cấp 1 (Hosted Specialist AI): Hosted LaMa Inpainter Client ---
+        if use_hosted:
+            try:
+                if get_hosted_inpainter_client is not None:
+                    client = get_hosted_inpainter_client()
+                    res_hosted = client.inpaint_roi_sync(roi_img, roi_mask, timeout=min(15.0, timeout_sec))
+                    if res_hosted is not None and getattr(res_hosted, "shape", None) == roi_img.shape:
+                        if cache_key:
+                            self._roi_inpaint_cache[cache_key] = res_hosted.copy()
+                        return res_hosted
+            except Exception as exc:
+                logger.info("[VideoEditorService] Hosted LaMa inpaint unavailable/timeout (%s). Soft fallback to Guided Filter.", exc)
+
+        # --- Cấp 2 (Primary Studio): TexturePreservingInpainter qua Pure Guided Filter ---
         try:
             inpainter = get_texture_preserving_inpainter()
             if inpainter is not None:
                 res_inpaint = inpainter.inpaint_roi(roi_img, roi_mask)
                 if res_inpaint is not None and res_inpaint.shape == roi_img.shape:
+                    if cache_key:
+                        self._roi_inpaint_cache[cache_key] = res_inpaint.copy()
                     return res_inpaint
         except Exception as exc:
-            logger.debug("[VideoEditorService] Tier 1 (Pure Guided Filter) error: %s", exc)
+            logger.debug("[VideoEditorService] Tier 2 (Pure Guided Filter) error: %s", exc)
 
-        # --- Cấp 2 (Texture Fallback): Pure Guided Filter Structure-Texture Synthesis ---
+        # --- Cấp 2 Fallback: Guided Filter with alpha feathering ---
         try:
             inpainter = get_texture_preserving_inpainter()
             if inpainter is not None and hasattr(inpainter, "fallback_texture_inpaint"):
                 res_gf = inpainter.fallback_texture_inpaint(roi_img, roi_mask)
                 if res_gf is not None and res_gf.shape == roi_img.shape:
-                    return inpainter.apply_alpha_feathering(roi_img, res_gf, roi_mask)
+                    feathered = inpainter.apply_alpha_feathering(roi_img, res_gf, roi_mask)
+                    if cache_key:
+                        self._roi_inpaint_cache[cache_key] = feathered.copy()
+                    return feathered
         except Exception as exc:
             logger.debug("[VideoEditorService] Tier 2 (Guided Filter) error: %s", exc)
 
         # --- Cấp 3 (Khẩn cấp tối hậu): OpenCV Telea ---
         try:
             telea_flag = getattr(cv2, "INPAINT_TELEA", 0)
-            return cv2.inpaint(roi_img, roi_mask, 3, telea_flag)
+            res_telea = cv2.inpaint(roi_img, roi_mask, 3, telea_flag)
+            if cache_key:
+                self._roi_inpaint_cache[cache_key] = res_telea.copy()
+            return res_telea
         except Exception:
             return roi_img.copy()
 
@@ -2496,10 +2568,7 @@ class VideoEditorService:
                 x2 = min(out_f.shape[1], bx + bw + margin)
                 roi = out_f[y1:y2, x1:x2]
                 m_roi = full_mask[y1:y2, x1:x2]
-                if inp is not None:
-                    clean_roi = inp.inpaint_roi(roi, m_roi)
-                else:
-                    clean_roi = cv2.inpaint(roi, m_roi, 3, cv2.INPAINT_TELEA)
+                clean_roi = self._inpaint_roi_fallback_chain(roi, m_roi)
                 if clean_roi is not None and clean_roi.shape == roi.shape:
                     dst = out_f[y1:y2, x1:x2]
                     dst[m_roi > 0] = clean_roi[m_roi > 0]
@@ -2524,7 +2593,7 @@ class VideoEditorService:
         import numpy as np
 
         cap = cv2.VideoCapture(str(video_path))
-        dis = cv2.DISOpticalFlow.create(cv2.DISOPTICAL_FLOW_PRESET_FAST)
+        dis = self._create_dis_optical_flow()
 
         w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or 576
         h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 1024
@@ -2634,11 +2703,7 @@ class VideoEditorService:
                 if is_flow_reliable:
                     hdr_part[tight_mask_header > 0] = blended_hdr[tight_mask_header > 0]
                 else:
-                    inp = get_texture_preserving_inpainter()
-                    if inp is not None:
-                        clean_hdr = inp.inpaint_roi(frame[hy1:hy2, hx1:hx2], tight_mask_header)
-                    else:
-                        clean_hdr = cv2.inpaint(frame[hy1:hy2, hx1:hx2], tight_mask_header, 2, cv2.INPAINT_NS)
+                    clean_hdr = self._inpaint_roi_fallback_chain(frame[hy1:hy2, hx1:hx2], tight_mask_header)
                     if clean_hdr is not None and clean_hdr.shape == hdr_part.shape:
                         hdr_part[tight_mask_header > 0] = clean_hdr[tight_mask_header > 0]
                 out_frame[hy1:hy2, hx1:hx2] = hdr_part
@@ -2654,7 +2719,7 @@ class VideoEditorService:
                 if np.count_nonzero(s_mask) > 0:
                     mask_sub = cv2.dilate(s_mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)))
                     sub_roi = out_frame[sy1:sy2, sx1:sx2]
-                    clean_sub_roi = cv2.inpaint(sub_roi, mask_sub, 3, cv2.INPAINT_TELEA)
+                    clean_sub_roi = self._inpaint_roi_fallback_chain(sub_roi, mask_sub)
                     sub_part = out_frame[sy1:sy2, sx1:sx2]
                     sub_part[mask_sub > 0] = clean_sub_roi[mask_sub > 0]
                     out_frame[sy1:sy2, sx1:sx2] = sub_part
@@ -3478,3 +3543,690 @@ class VideoEditorService:
                 output_file.unlink(missing_ok=True)
             if is_transient and input_file.exists():
                 input_file.unlink(missing_ok=True)
+
+    # ─── 10. COMPOSABLE SPECIALIST EDITING TOOLS (Milestone 2) ────────────
+
+    async def probe_media_metadata(self, file_path: Union[str, Path]) -> Dict[str, Any]:
+        """
+        video_probe_tool: Trích xuất toàn diện thông số kỹ thuật (resolution, fps, duration, codecs, bitrate).
+        """
+        resolved, is_transient = await self._resolve_input(str(file_path))
+        try:
+            if not resolved.exists():
+                raise FileNotFoundError(f"Tệp không tồn tại: {file_path}")
+
+            info = await asyncio.to_thread(self._probe_media_sync, resolved)
+            f_size = resolved.stat().st_size
+            f_size_fmt = f"{f_size / (1024 * 1024):.2f} MB" if f_size >= 1024 * 1024 else f"{f_size / 1024:.2f} KB"
+
+            return {
+                "status": "ok",
+                "tool": "video_probe_tool",
+                "file_path": str(resolved),
+                "width": info.get("w", 0),
+                "height": info.get("h", 0),
+                "fps": round(info.get("fps", 0.0), 3),
+                "total_frames": info.get("total_frames", 0),
+                "duration_seconds": round(info.get("duration", 0.0), 2),
+                "video_codec": info.get("v_codec", "unknown"),
+                "audio_codec": info.get("a_codec", "unknown"),
+                "file_size_bytes": f_size,
+                "file_size_formatted": f_size_fmt,
+            }
+        finally:
+            if is_transient and resolved.exists():
+                resolved.unlink(missing_ok=True)
+
+    def _probe_media_sync(self, file_path: Path) -> Dict[str, Any]:
+        """Probe media parameters (resolution, fps, duration, codecs) via OpenCV."""
+        import cv2
+        cap = cv2.VideoCapture(str(file_path))
+        info = {
+            "w": 0, "h": 0, "fps": 0.0, "total_frames": 0, "duration": 0.0,
+            "v_codec": "unknown", "a_codec": "unknown"
+        }
+        if cap.isOpened():
+            w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
+            total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            duration = (total / fps) if fps > 0 else 0.0
+            fourcc = int(cap.get(cv2.CAP_PROP_FOURCC))
+            v_codec = "".join([chr((fourcc >> (8 * i)) & 0xFF) for i in range(4)]).strip() or "h264"
+            cap.release()
+            info.update({
+                "w": w, "h": h, "fps": fps, "total_frames": total,
+                "duration": duration, "v_codec": v_codec, "a_codec": "aac"
+            })
+        else:
+            img = cv2.imread(str(file_path))
+            if img is not None:
+                ih, iw = img.shape[:2]
+                info.update({
+                    "w": iw, "h": ih, "fps": 0.0, "total_frames": 1,
+                    "duration": 0.0, "v_codec": "image", "a_codec": "none"
+                })
+        return info
+
+    async def detect_text_and_overlays(
+        self,
+        media_path: Union[str, Path],
+        sample_frames: int = 5,
+    ) -> Dict[str, Any]:
+        """
+        text_detection_tool: Quét nhận diện bounding boxes và văn bản trên ảnh hoặc video.
+        """
+        resolved, is_transient = await self._resolve_input(str(media_path))
+        try:
+            if not resolved.exists():
+                raise FileNotFoundError(f"Tệp không tồn tại: {media_path}")
+
+            import cv2
+            suffix = resolved.suffix.lower()
+            is_image = suffix in {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
+
+            if is_image:
+                img = await asyncio.to_thread(cv2.imread, str(resolved))
+                if img is None:
+                    raise ValueError(f"Không thể đọc ảnh: {resolved}")
+                h, w = img.shape[:2]
+                boxes = await asyncio.to_thread(self._detect_text_boxes_image_sync, img)
+                return {
+                    "status": "ok",
+                    "tool": "text_detection_tool",
+                    "media_type": "image",
+                    "width": w,
+                    "height": h,
+                    "detected_regions": boxes,
+                    "count": len(boxes),
+                }
+            else:
+                regions = await self._auto_detect_text_region(resolved)
+                return {
+                    "status": "ok",
+                    "tool": "text_detection_tool",
+                    "media_type": "video",
+                    "sample_frames": sample_frames,
+                    "detected_regions": regions,
+                    "count": len(regions),
+                }
+        finally:
+            if is_transient and resolved.exists():
+                resolved.unlink(missing_ok=True)
+
+    def _detect_text_boxes_image_sync(self, img: Any) -> Any:
+        import cv2
+        import numpy as np
+        h, w = img.shape[:2]
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        boxes = []
+        try:
+            import pytesseract
+            data = pytesseract.image_to_data(gray, output_type=pytesseract.Output.DICT)
+            n_boxes = len(data.get("text", []))
+            for i in range(n_boxes):
+                txt = data["text"][i].strip()
+                conf = int(data.get("conf", [0])[i])
+                if txt and conf > 25:
+                    bx = int(data["left"][i])
+                    by = int(data["top"][i])
+                    bw = int(data["width"][i])
+                    bh = int(data["height"][i])
+                    if bw > 8 and bh > 8 and (bw * bh) < (w * h * 0.5):
+                        boxes.append({"x": bx, "y": by, "w": bw, "h": bh, "text": txt, "conf": conf})
+        except Exception:
+            pass
+
+        if not boxes:
+            thresh = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 15, 4)
+            cnts, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            for c in cnts:
+                bx, by, bw, bh = cv2.boundingRect(c)
+                area = bw * bh
+                if 12 <= bh <= 120 and 20 <= bw <= w * 0.9 and 200 <= area <= (w * h * 0.25):
+                    boxes.append({"x": bx, "y": by, "w": bw, "h": bh, "text": "", "conf": 50})
+        return boxes
+
+    def build_inpaint_mask(
+        self,
+        dimensions: Union[Tuple[int, int], List[int], Dict[str, Any]],
+        regions: List[Dict[str, Any]],
+        dilation: int = 5,
+        output_path: Optional[Union[str, Path]] = None,
+    ) -> Dict[str, Any]:
+        """
+        mask_generation_tool: Sinh mặt nạ nhị phân từ danh sách bounding boxes và dilation.
+        """
+        import cv2
+        import numpy as np
+
+        if isinstance(dimensions, dict):
+            w = int(dimensions.get("width", dimensions.get("w", 0)))
+            h = int(dimensions.get("height", dimensions.get("h", 0)))
+        elif isinstance(dimensions, (list, tuple)) and len(dimensions) >= 2:
+            w, h = int(dimensions[0]), int(dimensions[1])
+        else:
+            raise ValueError(f"Kích thước dimensions không hợp lệ: {dimensions}")
+
+        if w <= 0 or h <= 0:
+            raise ValueError(f"Kích thước dimensions phải > 0: ({w}x{h})")
+
+        mask = np.zeros((h, w), dtype=np.uint8)
+        valid_regions_count = 0
+
+        for r in regions:
+            rx = int(r.get("x", 0))
+            ry = int(r.get("y", 0))
+            rw = int(r.get("w", 0))
+            rh = int(r.get("h", 0))
+            if rw <= 0 or rh <= 0:
+                continue
+            x1 = max(0, rx)
+            y1 = max(0, ry)
+            x2 = min(w, rx + rw)
+            y2 = min(h, ry + rh)
+            if x2 > x1 and y2 > y1:
+                mask[y1:y2, x1:x2] = 255
+                valid_regions_count += 1
+
+        if dilation > 0:
+            k_size = int(dilation)
+            if k_size % 2 == 0:
+                k_size += 1
+            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k_size, k_size))
+            mask = cv2.dilate(mask, kernel)
+
+        coverage = float(np.count_nonzero(mask)) / float(w * h)
+
+        if output_path is not None:
+            out_p = Path(output_path)
+            out_p.parent.mkdir(parents=True, exist_ok=True)
+        else:
+            token = secrets.token_hex(4)
+            out_p = self._temp_dir / f"mask_{token}.png"
+
+        cv2.imwrite(str(out_p), mask)
+
+        return {
+            "status": "ok",
+            "tool": "mask_generation_tool",
+            "mask_path": str(out_p),
+            "width": w,
+            "height": h,
+            "coverage_ratio": round(coverage, 4),
+            "regions_count": valid_regions_count,
+            "dilation": dilation,
+        }
+
+    async def inpaint_image_hosted(
+        self,
+        image_path: Union[str, Path],
+        mask_path: Union[str, Path],
+        output_path: Optional[Union[str, Path]] = None,
+        timeout: float = 15.0,
+    ) -> Dict[str, Any]:
+        """
+        image_inpaint_tool: Inpaint ảnh đơn qua Hosted Client (Hugging Face Spaces) có fallback.
+        """
+        img_p, is_img_trans = await self._resolve_input(str(image_path))
+        mask_p, is_mask_trans = await self._resolve_input(str(mask_path))
+        success = False
+
+        try:
+            if not img_p.exists():
+                raise FileNotFoundError(f"Tệp ảnh không tồn tại: {image_path}")
+            if not mask_p.exists():
+                raise FileNotFoundError(f"Tệp mask không tồn tại: {mask_path}")
+
+            if output_path is not None:
+                out_p = Path(output_path)
+                out_p.parent.mkdir(parents=True, exist_ok=True)
+            else:
+                token = secrets.token_hex(4)
+                out_p = self._temp_dir / f"inp_{token}{img_p.suffix or '.png'}"
+
+            import cv2
+            img_arr = await asyncio.to_thread(cv2.imread, str(img_p))
+            mask_arr = await asyncio.to_thread(cv2.imread, str(mask_p), cv2.IMREAD_GRAYSCALE)
+
+            if img_arr is None or mask_arr is None:
+                raise ValueError("Không thể tải ảnh hoặc mask để inpaint")
+
+            tier_used = "hosted_lama"
+            try:
+                if get_hosted_inpainter_client is not None:
+                    client = get_hosted_inpainter_client()
+                    clean_arr = await client.inpaint_roi(img_arr, mask_arr, timeout=timeout)
+                else:
+                    raise RuntimeError("Hosted inpainter client not imported")
+            except Exception as h_err:
+                logger.info("[VideoEditorService] Hosted LaMa image inpaint failed (%s). Fallback to guided filter.", h_err)
+                tier_used = "guided_filter"
+                clean_arr = await asyncio.to_thread(self._inpaint_roi_fallback_chain, img_arr, mask_arr, timeout_sec=15.0, use_hosted=False)
+
+            await asyncio.to_thread(cv2.imwrite, str(out_p), clean_arr)
+            success = True
+            delivery_info = self._publish_or_direct(out_p, title="Ảnh đã inpaint")
+
+            return {
+                "status": "ok",
+                "tool": "image_inpaint_tool",
+                "tier_used": tier_used,
+                "output_path": str(out_p),
+                **delivery_info,
+                "message": f"Inpaint ảnh thành công bằng {tier_used}.",
+            }
+        finally:
+            if not success and output_path is None and 'out_p' in locals() and out_p.exists():
+                out_p.unlink(missing_ok=True)
+            if is_img_trans and img_p.exists():
+                img_p.unlink(missing_ok=True)
+            if is_mask_trans and mask_p.exists():
+                mask_p.unlink(missing_ok=True)
+
+    async def inpaint_video_hosted(
+        self,
+        video_path: Union[str, Path],
+        target_regions: Optional[List[Dict[str, Any]]] = None,
+        method: str = "auto",
+        output_path: Optional[Union[str, Path]] = None,
+        progress_callback: Optional[Callable[[int, str], Any]] = None,
+    ) -> Dict[str, Any]:
+        """
+        video_inpaint_tool: Inpaint video qua Keyframe Hosted LaMa + DIS Optical Flow.
+        """
+        res = await self.remove_text_from_video(
+            input_path_or_url=str(video_path),
+            region=target_regions,
+            mode=method if method in {"delogo", "inpaint", "auto"} else "auto",
+            progress_callback=progress_callback,
+        )
+        if res.get("status") == "ok" and output_path is not None:
+            raw_out = Path(res["output_path"])
+            dest = Path(output_path)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(raw_out, dest)
+            res["output_path"] = str(dest)
+        res["tool"] = "video_inpaint_tool"
+        return res
+
+    async def edit_video_ffmpeg(
+        self,
+        command_type: str,
+        input_path: Union[str, Path],
+        output_path: Optional[Union[str, Path]] = None,
+        **params: Any,
+    ) -> Dict[str, Any]:
+        """
+        ffmpeg_process_tool: Thực hiện thao tác FFmpeg nguyên tử
+        (cut_clip, extract_audio, merge_audio_video, change_speed, resize).
+        """
+        valid_cmds = {"cut_clip", "extract_audio", "merge_audio_video", "change_speed", "resize"}
+        cmd_type = str(command_type).strip().lower()
+        if cmd_type not in valid_cmds:
+            raise ValueError(f"command_type '{command_type}' không hợp lệ. Hỗ trợ: {', '.join(sorted(valid_cmds))}")
+
+        resolved, is_transient = await self._resolve_input(str(input_path))
+        success = False
+
+        try:
+            if not resolved.exists():
+                raise FileNotFoundError(f"Tệp không tồn tại: {input_path}")
+
+            token = secrets.token_hex(4)
+            ext = ".mp4"
+            if cmd_type == "extract_audio":
+                ext = ".mp3" if params.get("audio_format", "mp3") == "mp3" else ".aac"
+
+            out_file = Path(output_path) if output_path is not None else self._temp_dir / f"ffmpeg_{cmd_type}_{token}{ext}"
+            out_file.parent.mkdir(parents=True, exist_ok=True)
+
+            ffmpeg_bin = self._find_ffmpeg_binary()
+            cmd: List[str] = [ffmpeg_bin, "-y"]
+
+            if cmd_type == "cut_clip":
+                st = str(params.get("start_time", "00:00:00"))
+                dur = params.get("duration")
+                cmd.extend(["-ss", st, "-i", str(resolved)])
+                if dur:
+                    cmd.extend(["-t", str(dur)])
+                cmd.extend(["-c", "copy", str(out_file)])
+
+            elif cmd_type == "extract_audio":
+                cmd.extend(["-i", str(resolved), "-vn", "-c:a", "libmp3lame" if ext == ".mp3" else "aac", "-b:a", "192k", str(out_file)])
+
+            elif cmd_type == "merge_audio_video":
+                audio_input = params.get("audio_path")
+                if not audio_input:
+                    raise ValueError("merge_audio_video yêu cầu tham số audio_path")
+                a_resolved, a_trans = await self._resolve_input(str(audio_input))
+                try:
+                    cmd.extend([
+                        "-i", str(resolved),
+                        "-i", str(a_resolved),
+                        "-c:v", "copy",
+                        "-c:a", "aac",
+                        "-map", "0:v:0",
+                        "-map", "1:a:0",
+                        "-shortest",
+                        str(out_file),
+                    ])
+                    code, stdout, stderr = await self._run_command(cmd, timeout=120)
+                    if code != 0:
+                        raise RuntimeError(f"FFmpeg merge thất bại (code {code}): {stderr.decode(errors='replace')[-200:]}")
+                finally:
+                    if a_trans and a_resolved.exists():
+                        a_resolved.unlink(missing_ok=True)
+                success = True
+                delivery_info = self._publish_or_direct(out_file, title="Video đã ghép audio")
+                return {"status": "ok", "tool": "ffmpeg_process_tool", "command_type": cmd_type, "output_path": str(out_file), **delivery_info}
+
+            elif cmd_type == "change_speed":
+                speed = float(params.get("speed", 1.0))
+                if speed <= 0.0 or speed > 10.0:
+                    raise ValueError("Tốc độ speed phải trong khoảng (0, 10.0]")
+                pts = 1.0 / speed
+                atempo = speed
+                vf = f"setpts={pts}*PTS"
+                af = f"atempo={atempo}"
+                cmd.extend(["-i", str(resolved), "-vf", vf, "-af", af, "-c:v", "libx264", "-c:a", "aac", str(out_file)])
+
+            elif cmd_type == "resize":
+                w = int(params.get("width", 720))
+                h = int(params.get("height", -2))
+                vf = f"scale={w}:{h}"
+                cmd.extend(["-i", str(resolved), "-vf", vf, "-c:v", "libx264", "-c:a", "copy", str(out_file)])
+
+            code, stdout, stderr = await self._run_command(cmd, timeout=180)
+            if code != 0:
+                raise RuntimeError(f"FFmpeg {cmd_type} thất bại (code {code}): {stderr.decode(errors='replace')[-200:]}")
+
+            success = True
+            delivery_info = self._publish_or_direct(out_file, title=f"FFmpeg {cmd_type}")
+            return {
+                "status": "ok",
+                "tool": "ffmpeg_process_tool",
+                "command_type": cmd_type,
+                "output_path": str(out_file),
+                **delivery_info,
+                "message": f"Thực hiện thao tác FFmpeg '{cmd_type}' thành công.",
+            }
+        finally:
+            if not success and output_path is None and 'out_file' in locals() and out_file.exists():
+                out_file.unlink(missing_ok=True)
+            if is_transient and resolved.exists():
+                resolved.unlink(missing_ok=True)
+
+    async def verify_media_cleanliness(
+        self,
+        original_path: Union[str, Path],
+        result_path: Union[str, Path],
+        sample_frames: int = 10,
+        mask_regions: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        """
+        quality_verify_tool: Đo kiểm tra chất lượng kết quả (PSNR, SSIM phông nền, residual text OCR).
+        """
+        orig_p, is_orig_trans = await self._resolve_input(str(original_path))
+        res_p, is_res_trans = await self._resolve_input(str(result_path))
+
+        try:
+            if not orig_p.exists():
+                raise FileNotFoundError(f"Tệp video/ảnh gốc không tồn tại: {original_path}")
+            if not res_p.exists():
+                raise FileNotFoundError(f"Tệp video/ảnh kết quả không tồn tại: {result_path}")
+
+            report = await asyncio.to_thread(
+                self._compute_cleanliness_metrics_sync,
+                orig_p,
+                res_p,
+                sample_frames,
+                mask_regions,
+            )
+            report["tool"] = "quality_verify_tool"
+            return report
+        finally:
+            if is_orig_trans and orig_p.exists():
+                orig_p.unlink(missing_ok=True)
+            if is_res_trans and res_p.exists():
+                res_p.unlink(missing_ok=True)
+
+    def _compute_cleanliness_metrics_sync(
+        self,
+        orig_p: Path,
+        res_p: Path,
+        sample_frames: int = 10,
+        mask_regions: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        import cv2
+        import numpy as np
+
+        cap_o = cv2.VideoCapture(str(orig_p))
+        cap_r = cv2.VideoCapture(str(res_p))
+
+        if not cap_o.isOpened() or not cap_r.isOpened():
+            img_o = cv2.imread(str(orig_p))
+            img_r = cv2.imread(str(res_p))
+            if img_o is not None and img_r is not None:
+                psnr, ssim = self._calculate_psnr_ssim(img_o, img_r, mask_regions)
+                ocr_count = self._count_ocr_words(img_r)
+                return {
+                    "status": "ok",
+                    "avg_psnr": round(float(psnr), 2),
+                    "avg_ssim": round(float(ssim), 4),
+                    "residual_text_count": ocr_count,
+                    "verdict": "PASS" if ocr_count == 0 and ssim >= 0.85 else "WARN",
+                    "frames_evaluated": 1,
+                }
+            raise ValueError("Không thể mở file video hoặc ảnh để đo chất lượng")
+
+        total_f_o = int(cap_o.get(cv2.CAP_PROP_FRAME_COUNT))
+        total_f_r = int(cap_r.get(cv2.CAP_PROP_FRAME_COUNT))
+        n_eval = min(sample_frames, max(1, min(total_f_o, total_f_r)))
+
+        step = max(1, min(total_f_o, total_f_r) // n_eval)
+        indices = [min(min(total_f_o, total_f_r) - 1, i * step) for i in range(n_eval)]
+
+        psnr_list, ssim_list = [], []
+        total_residual_words = 0
+
+        for f_idx in indices:
+            cap_o.set(cv2.CAP_PROP_POS_FRAMES, f_idx)
+            cap_r.set(cv2.CAP_PROP_POS_FRAMES, f_idx)
+            ret_o, f_o = cap_o.read()
+            ret_r, f_r = cap_r.read()
+            if not ret_o or not ret_r or f_o is None or f_r is None:
+                continue
+
+            psnr, ssim = self._calculate_psnr_ssim(f_o, f_r, mask_regions)
+            psnr_list.append(psnr)
+            ssim_list.append(ssim)
+            words = self._count_ocr_words(f_r)
+            total_residual_words += words
+
+        cap_o.release()
+        cap_r.release()
+
+        avg_psnr = float(np.mean(psnr_list)) if psnr_list else 100.0
+        avg_ssim = float(np.mean(ssim_list)) if ssim_list else 1.0
+
+        return {
+            "status": "ok",
+            "avg_psnr": round(avg_psnr, 2),
+            "avg_ssim": round(avg_ssim, 4),
+            "residual_text_count": total_residual_words,
+            "verdict": "PASS" if total_residual_words == 0 and avg_ssim >= 0.85 else "WARN",
+            "frames_evaluated": len(psnr_list),
+        }
+
+    @staticmethod
+    def _calculate_psnr_ssim(
+        img_o: Any,
+        img_r: Any,
+        mask_regions: Optional[List[Dict[str, Any]]] = None,
+    ) -> Tuple[float, float]:
+        import cv2
+        import numpy as np
+
+        if img_o.shape != img_r.shape:
+            img_r = cv2.resize(img_r, (img_o.shape[1], img_o.shape[0]))
+
+        h, w = img_o.shape[:2]
+        bg_mask = np.ones((h, w), dtype=bool)
+
+        if mask_regions:
+            for r in mask_regions:
+                rx = max(0, int(r.get("x", 0)))
+                ry = max(0, int(r.get("y", 0)))
+                rw = max(0, int(r.get("w", 0)))
+                rh = max(0, int(r.get("h", 0)))
+                bg_mask[ry:ry + rh, rx:rx + rw] = False
+
+        diff = img_o.astype(np.float64) - img_r.astype(np.float64)
+        if bg_mask.any():
+            diff = diff[bg_mask]
+
+        mse = float(np.mean(diff ** 2))
+        if mse == 0:
+            psnr = 100.0
+            ssim = 1.0
+        else:
+            psnr = 10.0 * np.log10((255.0 ** 2) / mse)
+            g_o = cv2.cvtColor(img_o, cv2.COLOR_BGR2GRAY).astype(np.float64)
+            g_r = cv2.cvtColor(img_r, cv2.COLOR_BGR2GRAY).astype(np.float64)
+            mu_o = np.mean(g_o)
+            mu_r = np.mean(g_r)
+            var_o = np.var(g_o)
+            var_r = np.var(g_r)
+            cov = np.mean((g_o - mu_o) * (g_r - mu_r))
+            c1, c2 = (0.01 * 255) ** 2, (0.03 * 255) ** 2
+            ssim = float(((2 * mu_o * mu_r + c1) * (2 * cov + c2)) / ((mu_o ** 2 + mu_r ** 2 + c1) * (var_o + var_r + c2)))
+
+        return max(0.0, psnr), max(0.0, min(1.0, ssim))
+
+    @staticmethod
+    def _count_ocr_words(img: Any) -> int:
+        try:
+            import pytesseract
+            import cv2
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            data = pytesseract.image_to_data(gray, output_type=pytesseract.Output.DICT)
+            words = [w.strip() for i, w in enumerate(data.get("text", [])) if w.strip() and int(data.get("conf", [0])[i]) > 40]
+            return len(words)
+        except Exception:
+            return 0
+
+    async def generate_comparison_artifacts(
+        self,
+        video_path: Union[str, Path],
+        frame_indices: Optional[List[int]] = None,
+        original_path: Optional[Union[str, Path]] = None,
+        output_dir: Optional[Union[str, Path]] = None,
+    ) -> Dict[str, Any]:
+        """
+        temporal_compare_tool: Đo tính liên tục giữa các frame (temporal consistency / flicker MAD)
+        và xuất artifact ảnh đối chiếu side-by-side (trước/sau).
+        """
+        vid_p, is_vid_trans = await self._resolve_input(str(video_path))
+        orig_p, is_orig_trans = await self._resolve_input(str(original_path)) if original_path else (None, False)
+
+        try:
+            if not vid_p.exists():
+                raise FileNotFoundError(f"Tệp không tồn tại: {video_path}")
+
+            out_d = Path(output_dir) if output_dir else self._temp_dir / f"compare_{secrets.token_hex(4)}"
+            out_d.mkdir(parents=True, exist_ok=True)
+
+            res = await asyncio.to_thread(
+                self._generate_comparison_artifacts_sync,
+                vid_p,
+                frame_indices,
+                orig_p,
+                out_d,
+            )
+            res["tool"] = "temporal_compare_tool"
+            return res
+        finally:
+            if is_vid_trans and vid_p.exists():
+                vid_p.unlink(missing_ok=True)
+            if is_orig_trans and orig_p and orig_p.exists():
+                orig_p.unlink(missing_ok=True)
+
+    def _generate_comparison_artifacts_sync(
+        self,
+        vid_p: Path,
+        frame_indices: Optional[List[int]],
+        orig_p: Optional[Path],
+        out_d: Path,
+    ) -> Dict[str, Any]:
+        import cv2
+        import numpy as np
+
+        cap = cv2.VideoCapture(str(vid_p))
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+        cap_orig = cv2.VideoCapture(str(orig_p)) if orig_p and orig_p.exists() else None
+
+        if frame_indices:
+            kfs = [f for f in frame_indices if 0 <= f < max(1, total_frames)]
+        else:
+            n_samples = min(8, max(2, total_frames))
+            kfs = [int(i * (total_frames - 1) / max(1, n_samples - 1)) for i in range(n_samples)]
+
+        artifact_paths = []
+        mad_samples = []
+        sample_step = max(1, total_frames // 30)
+        prev_f = None
+
+        for idx in range(0, total_frames, sample_step):
+            cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+            ret, frame = cap.read()
+            if not ret or frame is None:
+                continue
+            if prev_f is not None:
+                diff = cv2.absdiff(frame, prev_f)
+                mad_samples.append(float(np.mean(diff)))
+            prev_f = frame
+
+        for f_idx in kfs:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, f_idx)
+            ret_r, f_r = cap.read()
+            if not ret_r or f_r is None:
+                continue
+
+            if cap_orig:
+                cap_orig.set(cv2.CAP_PROP_POS_FRAMES, f_idx)
+                ret_o, f_o = cap_orig.read()
+                if ret_o and f_o is not None:
+                    if f_o.shape != f_r.shape:
+                        f_r = cv2.resize(f_r, (f_o.shape[1], f_o.shape[0]))
+                    h, w = f_o.shape[:2]
+                    combined = np.zeros((h + 40, w * 2, 3), dtype=np.uint8)
+                    combined[40:, :w] = f_o
+                    combined[40:, w:] = f_r
+                    cv2.putText(combined, f"ORIGINAL (Frame {f_idx})", (15, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                    cv2.putText(combined, f"EDITED / CLEAN (Frame {f_idx})", (w + 15, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                    art_file = out_d / f"compare_frame_{f_idx:04d}.png"
+                    cv2.imwrite(str(art_file), combined)
+                    artifact_paths.append(str(art_file))
+                    continue
+
+            art_file = out_d / f"frame_{f_idx:04d}.png"
+            cv2.imwrite(str(art_file), f_r)
+            artifact_paths.append(str(art_file))
+
+        cap.release()
+        if cap_orig:
+            cap_orig.release()
+
+        mean_mad = float(np.mean(mad_samples)) if mad_samples else 0.0
+        flicker_level = "low" if mean_mad < 8.0 else ("moderate" if mean_mad < 20.0 else "high")
+
+        return {
+            "status": "ok",
+            "frames_evaluated": len(kfs),
+            "temporal_mad": round(mean_mad, 2),
+            "flicker_level": flicker_level,
+            "artifact_paths": artifact_paths,
+            "message": f"Đã sinh {len(artifact_paths)} ảnh đối chiếu và đo temporal MAD = {mean_mad:.2f} ({flicker_level} flicker).",
+        }

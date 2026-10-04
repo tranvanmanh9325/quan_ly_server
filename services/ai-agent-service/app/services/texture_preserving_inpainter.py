@@ -289,14 +289,21 @@ class TexturePreservingInpainter:
         roi_mask: np.ndarray,
     ) -> np.ndarray:
         """
-        Structure-Texture Decomposition Fallback Engine:
+        Structure-Texture Decomposition Engine:
         Decomposes image into structural base + micro-texture residual,
         inpaints structure with Navier-Stokes, synthesizes texture residual,
         and recomposes with Guided Filter refinement.
         """
+        if roi_img is None or roi_mask is None or np.count_nonzero(roi_mask) == 0:
+            return roi_img.copy() if roi_img is not None else None
+
+        is_bgra = len(roi_img.shape) == 3 and roi_img.shape[2] == 4
+        if is_bgra:
+            bgr_inp = self.fallback_texture_inpaint(roi_img[:, :, :3], roi_mask)
+            res = np.dstack([bgr_inp, roi_img[:, :, 3]])
+            return res
+
         h, w = roi_img.shape[:2]
-        if roi_mask is None or np.count_nonzero(roi_mask) == 0:
-            return roi_img.copy()
 
         struct_layer = self.pure_guided_filter(roi_img, roi_img, radius=4, eps=0.04)
         texture_layer = roi_img.astype(np.float32) - struct_layer.astype(np.float32)
@@ -306,25 +313,32 @@ class TexturePreservingInpainter:
         k_collar = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
         collar_mask = (cv2.dilate(roi_mask, k_collar) & (~roi_mask)) > 0
 
+        mean_tex = np.zeros(3, dtype=np.float32)
+        std_tex = np.zeros(3, dtype=np.float32)
+
         if np.count_nonzero(collar_mask) > 10:
-            mean_tex = np.mean(texture_layer[collar_mask], axis=0)
-            std_tex = np.std(texture_layer[collar_mask], axis=0)
+            collar_tex = texture_layer[collar_mask]
+            mean_tex = np.mean(collar_tex, axis=0)
+            std_tex = np.std(collar_tex, axis=0)
+            # If the surrounding region has negligible texture variance (flat surface,
+            # solid color, all-black, all-white), do NOT inject artificial noise.
+            if np.max(std_tex) < 1.0:
+                std_tex = np.zeros(3, dtype=np.float32)
+                mean_tex = np.zeros(3, dtype=np.float32)
+
+        if np.max(std_tex) > 0.0:
+            seed = int(np.sum(roi_img[:10, :10])) % 65535
+            rng = np.random.RandomState(seed)
+            noise = rng.normal(loc=0.0, scale=1.0, size=(h, w, 3)).astype(np.float32)
+            synth_texture = noise * std_tex + mean_tex
+
+            recomposed = struct_inp.astype(np.float32) + synth_texture
+            recomposed = np.clip(recomposed, 0.0, 255.0).astype(np.uint8)
+
+            refined = self.pure_guided_filter(struct_inp, recomposed, radius=2, eps=0.02)
+            return refined
         else:
-            mean_tex = np.zeros(3, dtype=np.float32)
-            std_tex = np.full(3, 8.0, dtype=np.float32)
-
-        std_tex = np.maximum(std_tex, 4.0)
-
-        seed = int(np.sum(roi_img[:10, :10])) % 65535
-        rng = np.random.RandomState(seed)
-        noise = rng.normal(loc=0.0, scale=1.0, size=(h, w, 3)).astype(np.float32)
-        synth_texture = noise * std_tex + mean_tex
-
-        recomposed = struct_inp.astype(np.float32) + synth_texture
-        recomposed = np.clip(recomposed, 0.0, 255.0).astype(np.uint8)
-
-        refined = self.pure_guided_filter(struct_inp, recomposed, radius=2, eps=0.02)
-        return refined
+            return struct_inp
 
     def inpaint_roi(
         self,
@@ -410,13 +424,20 @@ class TexturePreservingInpainter:
         self,
         frame: Optional[np.ndarray],
         regions: List[Dict[str, Any]],
+        stroke_mask_generator_fn: Optional[Callable[..., Any]] = None,
+        prev_masks: Optional[Dict[Any, np.ndarray]] = None,
+        context_margin: int = 32,
         mask_generator: Optional[Callable[..., Any]] = None,
-        context_margin: int = 16,
-    ) -> Tuple[Optional[np.ndarray], Dict[str, Any]]:
+        **kwargs: Any,
+    ) -> Tuple[Optional[np.ndarray], Dict[Any, np.ndarray]]:
         """
-        Process all subtitle/watermark regions in a single video frame.
-        Guarantees zero texture corruption outside each region's tight bounding box.
-        Returns: (cleaned_frame, masks_dict)
+        Process all subtitle/watermark regions in a single video frame conforming to
+        PROJECT.md § Interface Contracts:
+          1. Crops localized ROI around each region with context margin.
+          2. Generates pixel-perfect text stroke mask using stroke_mask_generator_fn with prev_masks.
+          3. Inpaints ROI preserving background texture.
+          4. Gaussian Alpha Feathering stitches the result back into frame.
+        Returns: (cleaned_frame, current_masks)
         """
         if frame is None:
             return None, {}
@@ -424,46 +445,94 @@ class TexturePreservingInpainter:
             return frame.copy(), {}
 
         out_frame = frame.copy()
+        current_masks: Dict[Any, np.ndarray] = {}
+        prev_masks = prev_masks or {}
         fh, fw = out_frame.shape[:2]
-        masks_dict: Dict[str, Any] = {}
+        gen_fn = stroke_mask_generator_fn or mask_generator or kwargs.get("stroke_mask_generator_fn") or kwargs.get("mask_generator")
 
-        for reg in regions:
+        for idx, reg in enumerate(regions):
             rx = int(reg.get("x", 0))
             ry = int(reg.get("y", 0))
             rw = int(reg.get("w", 0))
             rh = int(reg.get("h", 0))
-            reg_text = reg.get("text", f"region_{rx}_{ry}")
 
-            pad = context_margin
-            x1 = max(0, rx - pad)
-            y1 = max(0, ry - pad)
-            x2 = min(fw, rx + rw + pad)
-            y2 = min(fh, ry + rh + pad)
-
-            if x2 <= x1 or y2 <= y1:
+            if rw <= 0 or rh <= 0:
                 continue
 
-            roi_img = out_frame[y1:y2, x1:x2].copy()
+            # Context margin expansion clamped to frame
+            rx1 = max(0, rx - context_margin)
+            ry1 = max(0, ry - context_margin)
+            rx2 = min(fw, rx + rw + context_margin)
+            ry2 = min(fh, ry + rh + context_margin)
 
-            if mask_generator is not None:
+            if rx2 <= rx1 or ry2 <= ry1:
+                continue
+
+            roi = out_frame[ry1:ry2, rx1:rx2]
+            reg_key = reg.get("text", idx)
+            p_mask = prev_masks.get(reg_key)
+
+            # Sub-box relative coordinates inside the ROI
+            bx1 = max(0, rx - rx1)
+            by1 = max(0, ry - ry1)
+            bx2 = min(rx2 - rx1, rx + rw - rx1)
+            by2 = min(ry2 - ry1, ry + rh - ry1)
+
+            # Generate stroke mask
+            stroke_mask: Any = None
+            lines = reg.get("lines")
+            reg_meta = {"x": rx1, "y": ry1, "w": rx2 - rx1, "h": ry2 - ry1, "lines": lines}
+
+            if gen_fn is not None:
                 try:
-                    roi_mask = mask_generator(roi_img)
+                    stroke_mask = gen_fn(roi, p_mask, lines=lines, region_meta=reg_meta)
                 except TypeError:
-                    roi_mask = mask_generator(roi_img, None)
+                    try:
+                        stroke_mask = gen_fn(roi, p_mask)
+                    except TypeError:
+                        try:
+                            stroke_mask = gen_fn(roi)
+                        except Exception:
+                            try:
+                                sub_roi = roi[by1:by2, bx1:bx2]
+                                stroke_mask = gen_fn(sub_roi, p_mask)
+                            except Exception as gen_err:
+                                logger.debug("[TexturePreservingInpainter] Mask generator error: %s", gen_err)
+                                stroke_mask = None
+                    except Exception as gen_err:
+                        logger.debug("[TexturePreservingInpainter] Mask generator error: %s", gen_err)
+                        stroke_mask = None
+                except Exception as gen_err:
+                    logger.debug("[TexturePreservingInpainter] Mask generator error: %s", gen_err)
+                    stroke_mask = None
             else:
-                roi_mask = np.zeros((y2 - y1, x2 - x1), dtype=np.uint8)
-                mx1 = rx - x1
-                my1 = ry - y1
-                mx2 = min(x2 - x1, mx1 + rw)
-                my2 = min(y2 - y1, my1 + rh)
-                if mx2 > mx1 and my2 > my1:
-                    roi_mask[my1:my2, mx1:mx2] = 255
+                roi_h, roi_w = roi.shape[:2]
+                stroke_mask = np.zeros((roi_h, roi_w), dtype=np.uint8)
+                stroke_mask[by1:by2, bx1:bx2] = 255
 
-            if roi_mask is None or np.count_nonzero(roi_mask) == 0:
+            if isinstance(stroke_mask, tuple):
+                stroke_mask = stroke_mask[0]
+
+            if stroke_mask is None or not isinstance(stroke_mask, np.ndarray):
                 continue
 
-            masks_dict[reg_text] = roi_mask
-            inpainted_roi = self.inpaint_roi(roi_img, roi_mask)
-            out_frame = self.feather_stitch_roi(out_frame, inpainted_roi, roi_mask, (x1, y1, x2 - x1, y2 - y1))
+            current_masks[reg_key] = stroke_mask
 
-        return out_frame, masks_dict
+            # Align stroke mask to ROI coordinate frame
+            roi_h, roi_w = roi.shape[:2]
+            if stroke_mask.shape == (roi_h, roi_w):
+                roi_mask = stroke_mask
+            elif stroke_mask.shape == (by2 - by1, bx2 - bx1):
+                roi_mask = np.zeros((roi_h, roi_w), dtype=np.uint8)
+                roi_mask[by1:by2, bx1:bx2] = stroke_mask
+            else:
+                roi_mask = cv2.resize(stroke_mask, (roi_w, roi_h), interpolation=cv2.INTER_NEAREST)
+
+            if np.count_nonzero(roi_mask) == 0:
+                continue
+
+            # Localized ROI inpainting with Structure-Texture decomposition & alpha feathering
+            inpainted_roi = self.inpaint_roi(roi, roi_mask)
+            out_frame[ry1:ry2, rx1:rx2] = inpainted_roi
+
+        return out_frame, current_masks

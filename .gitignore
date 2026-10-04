@@ -62,4 +62,5 @@ android-app/model/
 services/ai-agent-service/app/models/*.onnx
 
 # Empirical & Local Test Directory
-test/
+test/
+data/

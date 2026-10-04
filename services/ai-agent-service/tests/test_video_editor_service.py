@@ -2760,9 +2760,9 @@ class TestVideoEditorService(unittest.IsolatedAsyncioTestCase):
         tiny_sub = dict(valid_sub, w=10, h=5)
         self.assertFalse(VideoEditorService._is_valid_short_subtitle(tiny_sub, 576, 1024))
 
-        # Invalid: out of subtitle zone (e.g. y < 450 in a 1024h video)
+        # Generalized: subtitles at top or center must be accepted (no fixed height assumption)
         top_sub = dict(valid_sub, y=200)
-        self.assertFalse(VideoEditorService._is_valid_short_subtitle(top_sub, 576, 1024))
+        self.assertTrue(VideoEditorService._is_valid_short_subtitle(top_sub, 576, 1024))
 
     def test_m1_helper_merge_line_clusters_unit(self):
         """F1.3 Unit: _merge_line_clusters correctly merges words on the same line and preserves vertical stacks."""
@@ -3165,6 +3165,32 @@ class TestVideoEditorService(unittest.IsolatedAsyncioTestCase):
         # Scratch dir must be clean of inp_raw_*.mp4 files despite crash
         leftover_raw = list(self.scratch_path.glob("**/inp_raw_*.mp4"))
         self.assertEqual(len(leftover_raw), 0, f"Scratch files must be unlinked in finally block: {leftover_raw}")
+
+    def test_multi_candidate_concurrent_text_detection_top_center_bottom(self):
+        """M2.4 Generalization: Detects and masks text candidates at top, center, and bottom concurrently without positional bias."""
+        import cv2
+        import numpy as np
+
+        # Create synthetic test frame 800x600 with white background
+        h, w = 600, 800
+        frame = np.full((h, w, 3), 240, dtype=np.uint8)
+
+        # Place 3 text lines concurrently: top (y=80), center (y=300), bottom (y=520)
+        cv2.putText(frame, "TOP TITLE", (200, 80), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (20, 20, 20), 3)
+        cv2.putText(frame, "CENTER SUBTITLE", (180, 300), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (20, 20, 20), 3)
+        cv2.putText(frame, "BOTTOM CAPTION", (220, 520), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (20, 20, 20), 3)
+
+        full_mask, sub_info = self.service._build_inpaint_mask_for_frame(0, (h, w, 3), frame_img=frame)
+        self.assertIsNotNone(full_mask)
+
+        # Check mask presence at top, center, and bottom areas
+        top_mask = full_mask[40:120, 150:650]
+        center_mask = full_mask[260:340, 150:650]
+        bottom_mask = full_mask[480:560, 150:650]
+
+        self.assertGreater(np.count_nonzero(top_mask > 0), 200, "Top text line must be captured by mask")
+        self.assertGreater(np.count_nonzero(center_mask > 0), 200, "Center text line must be captured by mask")
+        self.assertGreater(np.count_nonzero(bottom_mask > 0), 200, "Bottom text line must be captured by mask")
 
 
 if __name__ == "__main__":

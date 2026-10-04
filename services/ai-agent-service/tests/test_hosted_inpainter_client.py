@@ -27,8 +27,8 @@ class TestHostedInpainterClient(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.dummy_png = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15c4\x00\x00\x00\nIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82" + b"A" * 150
         self.endpoints = [
-            "https://sanster-iopaint-lama.hf.space/api/v1/inpaint",
             "https://gyufyjk-iopaint-lama.hf.space/api/v1/inpaint",
+            "https://sanster-iopaint-lama.hf.space/api/v1/inpaint",
         ]
         self.client = HostedInpainterClient(endpoints=self.endpoints, timeout=5.0, max_retries=1)
 
@@ -44,7 +44,7 @@ class TestHostedInpainterClient(unittest.IsolatedAsyncioTestCase):
         stats = client.get_stats()
         self.assertEqual(stats["total_requests"], 0)
         self.assertEqual(stats["success_requests"], 0)
-        self.assertIn("sanster", list(stats["endpoint_usage"].keys())[0])
+        self.assertIn("gyufyjk", list(stats["endpoint_usage"].keys())[0])
 
     async def test_inpaint_roi_bytes_success_primary(self):
         """Verify successful inpaint from primary endpoint returning bytes."""
@@ -185,6 +185,21 @@ class TestHostedInpainterClient(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(health), 2)
             self.assertTrue(health[self.endpoints[0]])
             self.assertFalse(health[self.endpoints[1]])
+
+    async def test_inpaint_roi_batch_async(self):
+        """Verify batch inpaint runs items concurrently and returns results in order."""
+        mock_resp = MagicMock(spec=httpx.Response)
+        mock_resp.status_code = 200
+        mock_resp.content = self.dummy_png
+
+        with patch.object(httpx.AsyncClient, "post", new_callable=AsyncMock) as mock_post:
+            mock_post.return_value = mock_resp
+            items = [(self.dummy_png, self.dummy_png), (self.dummy_png, self.dummy_png)]
+            results = await self.client.inpaint_roi_batch_async(items)
+            self.assertEqual(len(results), 2)
+            self.assertEqual(results[0], self.dummy_png)
+            self.assertEqual(results[1], self.dummy_png)
+            self.assertEqual(mock_post.call_count, 2)
 
     def test_singleton_factory(self):
         """Verify get_hosted_inpainter_client returns a valid singleton."""

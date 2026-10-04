@@ -22,8 +22,8 @@ import httpx
 logger = logging.getLogger(__name__)
 
 DEFAULT_ENDPOINTS = [
-    "https://sanster-iopaint-lama.hf.space/api/v1/inpaint",
     "https://gyufyjk-iopaint-lama.hf.space/api/v1/inpaint",
+    "https://sanster-iopaint-lama.hf.space/api/v1/inpaint",
 ]
 
 
@@ -43,7 +43,7 @@ class HostedInpainterClient:
         endpoints: Optional[List[str]] = None,
         timeout: float = 15.0,
         max_retries: int = 2,
-        concurrency_limit: int = 3,
+        concurrency_limit: int = 4,
         http_client: Optional[httpx.AsyncClient] = None,
     ):
         self.endpoints = list(endpoints) if endpoints else list(DEFAULT_ENDPOINTS)
@@ -221,14 +221,29 @@ class HostedInpainterClient:
                 f"All hosted inpainting endpoints failed. Last error: {last_error}"
             ) from last_error
 
+    async def inpaint_roi_batch_async(
+        self,
+        items: List[Tuple[Union[bytes, Any], Union[bytes, Any]]],
+        timeout: Optional[float] = None,
+    ) -> List[Union[bytes, Any]]:
+        """
+        Inpaint a batch of (image, mask) crops concurrently bounded by self._semaphore (concurrency=4).
+        Returns the list of inpainted crops in the exact same order as input items.
+        """
+        if not items:
+            return []
+        tasks = [self.inpaint_roi(img, msk, timeout=timeout) for img, msk in items]
+        return await asyncio.gather(*tasks)
+
     def inpaint_roi_sync(
         self,
         image: Union[bytes, Any],
         mask: Union[bytes, Any],
         timeout: Optional[float] = None,
+        max_retries: Optional[int] = None,
     ) -> Union[bytes, Any]:
         """
-        Synchronous thread-safe inpainting directly via httpx.Client,
+        Synchronous thread-safe inpainting directly via httpx.Client with automatic retries and failover,
         completely avoiding cross-thread asyncio event loop collisions and deadlocks.
         """
         import numpy as np
@@ -245,31 +260,56 @@ class HostedInpainterClient:
         if len(img_bytes) == 0 or len(mask_bytes) == 0:
             raise ValueError("Image or mask bytes cannot be empty")
 
-        req_timeout = min(3.0, float(timeout) if timeout is not None else 3.0)
+        req_timeout = float(timeout) if timeout is not None else 15.0
+        retries = int(max_retries) if max_retries is not None else self.max_retries
         payload = {
             "image": self._encode_to_data_uri(img_bytes),
             "mask": self._encode_to_data_uri(mask_bytes),
             "hd_strategy": "Original",
         }
 
-        # Send via pure synchronous httpx.Client to be 100% thread-safe
+        # Send via synchronous httpx.Client with failover across endpoints and retry support
         res_bytes = None
-        ep_idx = self._current_endpoint_idx % len(self.endpoints)
-        endpoint = self.endpoints[ep_idx]
-        try:
-            with httpx.Client(timeout=req_timeout) as client:
-                resp = client.post(
-                    endpoint,
-                    json=payload,
-                    headers={"Content-Type": "application/json"},
-                )
-                if resp.status_code == 200 and len(resp.content) > 100:
-                    res_bytes = resp.content
-        except Exception as e:
-            logger.debug("[HostedInpainterClient] sync post error on %s: %s", endpoint, e)
+        num_endpoints = len(self.endpoints)
+        if num_endpoints == 0:
+            raise HostedInpainterError("No inpainting endpoints configured in pool")
+
+        last_error = None
+        for attempt_ep in range(num_endpoints):
+            ep_idx = (self._current_endpoint_idx + attempt_ep) % num_endpoints
+            endpoint = self.endpoints[ep_idx]
+            for retry in range(retries + 1):
+                try:
+                    with httpx.Client(timeout=req_timeout) as client:
+                        resp = client.post(
+                            endpoint,
+                            json=payload,
+                            headers={"Content-Type": "application/json"},
+                        )
+                        if resp.status_code == 200 and len(resp.content) > 100:
+                            res_bytes = resp.content
+                            self._current_endpoint_idx = ep_idx
+                            self._stats["success_requests"] += 1
+                            self._stats["endpoint_usage"][endpoint] = (
+                                self._stats["endpoint_usage"].get(endpoint, 0) + 1
+                            )
+                            break
+                        err_msg = f"HTTP {resp.status_code}"
+                        logger.debug("[HostedInpainterClient] sync post returned %s on %s (attempt %d)", err_msg, endpoint, retry)
+                        last_error = HostedInpainterError(f"Endpoint {endpoint} {err_msg}")
+                except Exception as e:
+                    logger.debug("[HostedInpainterClient] sync post error on %s (attempt %d): %s", endpoint, retry, e)
+                    last_error = e
+
+                if retry < retries:
+                    self._stats["retries"] += 1
+                    time.sleep(0.3 * (2 ** retry))
+            if res_bytes is not None:
+                break
 
         if res_bytes is None:
-            raise HostedInpainterError("All hosted inpainting endpoints failed synchronously")
+            self._stats["failed_requests"] += 1
+            raise HostedInpainterError(f"All hosted inpainting endpoints failed synchronously: {last_error}")
 
         if is_ndarray:
             return self._png_bytes_to_ndarray(res_bytes)

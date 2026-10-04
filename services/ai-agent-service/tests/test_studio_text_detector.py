@@ -32,18 +32,18 @@ class TestStudioTextDetector(unittest.TestCase):
 
     def test_detect_regions_synthetic_text(self):
         """detect_regions identifies text box on synthetic high-contrast image."""
-        if not self.detector.is_available():
-            # Zero Local AI Policy: Khi không có local ONNX model, detect_regions trả về rỗng an toàn
-            boxes = self.detector.detect_regions(img)
-            self.assertEqual(boxes, [])
-            return
-
         h, w = 320, 640
         img = np.full((h, w, 3), 40, dtype=np.uint8)
         # Draw prominent title text
         cv2.putText(img, "TOP TITLE LINE", (50, 80), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (255, 255, 255), 4)
         # Draw subtitle text
         cv2.putText(img, "BOTTOM SUBTITLE LINE", (50, 260), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (255, 255, 255), 4)
+
+        if not self.detector.is_available():
+            # Zero Local AI Policy: Khi không có local ONNX model, detect_regions trả về rỗng an toàn
+            boxes = self.detector.detect_regions(img)
+            self.assertEqual(boxes, [])
+            return
 
         boxes = self.detector.detect_regions(img)
         self.assertGreaterEqual(len(boxes), 1, "Must detect at least 1 text line")

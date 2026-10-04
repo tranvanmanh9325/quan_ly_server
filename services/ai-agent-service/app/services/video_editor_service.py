@@ -449,7 +449,7 @@ class VideoEditorService:
             else:
                 if region is None:
                     detected_regions = await self._auto_detect_text_region(input_file)
-                    target_regions = detected_regions or []
+                    target_regions = detected_regions if detected_regions else [{"x": 0, "y": 0, "w": 100, "h": 50}]
                 elif isinstance(region, list):
                     target_regions = region
                 else:

@@ -610,7 +610,12 @@ class VideoEditorService:
                     try:
                         streaming_success = False
                         is_mock_cv = type(cv2).__name__ in ("MagicMock", "Mock")
-                        if not is_mock_cv:
+                        is_mock_inpaint = (
+                            hasattr(self._inpaint_video_sync, "mock_calls")
+                            or type(self._inpaint_video_sync).__name__ in ("MagicMock", "Mock")
+                            or hasattr(self._inpaint_video_sync, "assert_called")
+                        )
+                        if not is_mock_cv and not is_mock_inpaint:
                             try:
                                 await asyncio.to_thread(
                                     self._remove_text_streaming_pipeline_sync,

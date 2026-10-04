@@ -87,84 +87,17 @@ class TestF31ModelLoadingAndCache(unittest.TestCase):
             res_sync = self.inpainter.ensure_model_available(sync=True)
             self.assertTrue(res_sync)
 
-    def test_ensure_model_available_async_atomic_download_success(self):
-        """ensure_model_available async downloads via streaming to temp file then atomically renames."""
-        with patch.object(self.inpainter, "is_model_ready", side_effect=[False, True]), \
-             patch("httpx.AsyncClient") as mock_client_cls, \
-             patch("os.replace") as mock_replace:
-
-            mock_resp = AsyncMock()
-            mock_resp.status_code = 200
-            mock_resp.aiter_bytes = MagicMock(return_value=_async_chunk_gen([b"chunk1", b"chunk2"]))
-
-            mock_stream_ctx = AsyncMock()
-            mock_stream_ctx.__aenter__.return_value = mock_resp
-            mock_stream_ctx.__aexit__.return_value = None
-
-            mock_client = AsyncMock()
-            mock_client.stream = MagicMock(return_value=mock_stream_ctx)
-            mock_client_ctx = AsyncMock()
-            mock_client_ctx.__aenter__.return_value = mock_client
-            mock_client_ctx.__aexit__.return_value = None
-            mock_client_cls.return_value = mock_client_ctx
-
-            with patch("os.path.getsize", return_value=208_044_816):
-                res = asyncio.run(self.inpainter.ensure_model_available())
-
-            self.assertTrue(res)
-            mock_replace.assert_called_once()
-
-    def test_ensure_model_available_download_failure_cleans_up_temp(self):
-        """ensure_model_available cleans up temporary file on HTTP error."""
-        with patch.object(self.inpainter, "is_model_ready", return_value=False), \
-             patch("httpx.AsyncClient") as mock_client_cls:
-
-            mock_resp = AsyncMock()
-            mock_resp.status_code = 404
-
-            mock_stream_ctx = AsyncMock()
-            mock_stream_ctx.__aenter__.return_value = mock_resp
-            mock_stream_ctx.__aexit__.return_value = None
-
-            mock_client = AsyncMock()
-            mock_client.stream = MagicMock(return_value=mock_stream_ctx)
-            mock_client_ctx = AsyncMock()
-            mock_client_ctx.__aenter__.return_value = mock_client
-            mock_client_ctx.__aexit__.return_value = None
-            mock_client_cls.return_value = mock_client_ctx
-
+    def test_ensure_model_available_async_download_disabled(self):
+        """Zero Local AI Policy: ensure_model_available returns False without downloading when model is absent."""
+        with patch.object(self.inpainter, "is_model_ready", return_value=False):
             res = asyncio.run(self.inpainter.ensure_model_available())
             self.assertFalse(res)
-            # Ensure no partial files left in model_dir
-            temp_files = list(self.model_dir.glob("*.tmp*"))
-            self.assertEqual(len(temp_files), 0)
 
-    def test_ensure_model_available_sync_download_success(self):
-        """ensure_model_available_sync streams download and atomically renames."""
-        with patch.object(self.inpainter, "is_model_ready", side_effect=[False, True]), \
-             patch("httpx.Client") as mock_client_cls, \
-             patch("os.replace") as mock_replace:
-
-            mock_resp = MagicMock()
-            mock_resp.status_code = 200
-            mock_resp.iter_bytes.return_value = [b"chunkA", b"chunkB"]
-
-            mock_stream_ctx = MagicMock()
-            mock_stream_ctx.__enter__.return_value = mock_resp
-            mock_stream_ctx.__exit__.return_value = None
-
-            mock_client = MagicMock()
-            mock_client.stream.return_value = mock_stream_ctx
-            mock_client_ctx = MagicMock()
-            mock_client_ctx.__enter__.return_value = mock_client
-            mock_client_ctx.__exit__.return_value = None
-            mock_client_cls.return_value = mock_client_ctx
-
-            with patch("os.path.getsize", return_value=208_044_816):
-                res = self.inpainter.ensure_model_available(sync=True)
-
-            self.assertTrue(res)
-            mock_replace.assert_called_once()
+    def test_ensure_model_available_sync_download_disabled(self):
+        """Zero Local AI Policy: ensure_model_available(sync=True) returns False without downloading when model is absent."""
+        with patch.object(self.inpainter, "is_model_ready", return_value=False):
+            res = self.inpainter.ensure_model_available(sync=True)
+            self.assertFalse(res)
 
 
 async def _async_chunk_gen(chunks):

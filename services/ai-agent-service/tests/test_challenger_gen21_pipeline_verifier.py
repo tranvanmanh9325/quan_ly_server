@@ -22,7 +22,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 # Ensure app is on path
 APP_ROOT = Path(__file__).resolve().parent.parent
@@ -118,10 +118,11 @@ class TestEmpiricalChallengerGen21Pipeline(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.bot._video_pipeline.process_video.call_count, 0)
 
         # 3. CRITICAL CHECK: remove_text_from_video called EXACTLY ONCE with mode='auto'
-        self.mock_editor.remove_text_from_video.assert_called_once_with(
-            input_path_or_url=self.dummy_video_path,
-            mode="auto",
-        )
+        self.mock_editor.remove_text_from_video.assert_called_once()
+        call_kwargs = self.mock_editor.remove_text_from_video.call_args.kwargs
+        self.assertEqual(call_kwargs.get("input_path_or_url"), self.dummy_video_path)
+        self.assertEqual(call_kwargs.get("mode"), "auto")
+        self.assertTrue(callable(call_kwargs.get("progress_callback")), "progress_callback must be callable!")
 
         # 4. Progress message was sent
         progress_sent = any(

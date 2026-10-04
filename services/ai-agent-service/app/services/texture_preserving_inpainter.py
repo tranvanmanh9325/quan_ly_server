@@ -138,77 +138,24 @@ class TexturePreservingInpainter:
             return False
 
     async def _ensure_model_available_async(self, timeout: float = 300.0) -> bool:
-        """Asynchronously stream download model to a temp file and atomically rename."""
+        """
+        Zero Local AI Policy: Automatic ONNX model weight download is disabled.
+        Returns True only if model file is already present on local disk.
+        """
         if self.is_model_ready():
             return True
-
-        self._model_dir.mkdir(parents=True, exist_ok=True)
-        token = secrets.token_hex(4)
-        tmp_path = self._model_path.with_suffix(f".tmp.{token}")
-
-        try:
-            import httpx
-
-            logger.info("[TexturePreservingInpainter] Streaming LaMa ONNX model from %s...", self._model_url)
-            async with httpx.AsyncClient(follow_redirects=True, timeout=timeout) as client:
-                async with client.stream("GET", self._model_url) as resp:
-                    if resp.status_code != 200:
-                        logger.error("[TexturePreservingInpainter] Download failed with HTTP %s", resp.status_code)
-                        return False
-
-                    with open(tmp_path, "wb") as f:
-                        async for chunk in resp.aiter_bytes(chunk_size=131072):
-                            if chunk:
-                                f.write(chunk)
-
-            if tmp_path.exists() and os.path.getsize(tmp_path) >= self.MODEL_MIN_BYTES:
-                os.replace(tmp_path, self._model_path)
-                logger.info("[TexturePreservingInpainter] Model cached successfully: %s", self._model_path)
-                return True
-            else:
-                logger.warning("[TexturePreservingInpainter] Downloaded model is incomplete or corrupted.")
-                tmp_path.unlink(missing_ok=True)
-                return False
-        except Exception as exc:
-            logger.warning("[TexturePreservingInpainter] Exception during async model download: %s", exc)
-            tmp_path.unlink(missing_ok=True)
-            return False
+        logger.warning("[TexturePreservingInpainter] Zero Local AI Policy: Local ONNX model download is disabled.")
+        return False
 
     def _ensure_model_available_sync(self, timeout: float = 300.0) -> bool:
-        """Synchronously stream download model to a temp file and atomically rename."""
+        """
+        Zero Local AI Policy: Automatic ONNX model weight download is disabled.
+        Returns True only if model file is already present on local disk.
+        """
         if self.is_model_ready():
             return True
-
-        self._model_dir.mkdir(parents=True, exist_ok=True)
-        token = secrets.token_hex(4)
-        tmp_path = self._model_path.with_suffix(f".tmp.{token}")
-
-        try:
-            import httpx
-
-            logger.info("[TexturePreservingInpainter] Streaming LaMa ONNX model (sync) from %s...", self._model_url)
-            with httpx.Client(follow_redirects=True, timeout=timeout) as client:
-                with client.stream("GET", self._model_url) as resp:
-                    if resp.status_code != 200:
-                        logger.error("[TexturePreservingInpainter] Sync download failed with HTTP %s", resp.status_code)
-                        return False
-
-                    with open(tmp_path, "wb") as f:
-                        for chunk in resp.iter_bytes(chunk_size=131072):
-                            if chunk:
-                                f.write(chunk)
-
-            if tmp_path.exists() and os.path.getsize(tmp_path) >= self.MODEL_MIN_BYTES:
-                os.replace(tmp_path, self._model_path)
-                logger.info("[TexturePreservingInpainter] Model cached successfully (sync): %s", self._model_path)
-                return True
-            else:
-                tmp_path.unlink(missing_ok=True)
-                return False
-        except Exception as exc:
-            logger.warning("[TexturePreservingInpainter] Exception during sync model download: %s", exc)
-            tmp_path.unlink(missing_ok=True)
-            return False
+        logger.warning("[TexturePreservingInpainter] Zero Local AI Policy: Local ONNX model download is disabled.")
+        return False
 
     def ensure_model_available(self, timeout: float = 300.0, sync: bool = False, **kwargs: Any) -> Any:
         """

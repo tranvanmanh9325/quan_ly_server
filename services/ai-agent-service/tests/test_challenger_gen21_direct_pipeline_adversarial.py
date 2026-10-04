@@ -29,7 +29,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 _SERVICE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if _SERVICE_DIR not in sys.path:
@@ -118,10 +118,11 @@ class TestAdversarialDirectRoutingMatrix(unittest.IsolatedAsyncioTestCase):
                     instruction=query,
                 )
 
-                self.mock_editor.remove_text_from_video.assert_called_once_with(
-                    input_path_or_url=self.dummy_video_path,
-                    mode=expected_mode,
-                )
+                self.mock_editor.remove_text_from_video.assert_called_once()
+                call_kwargs = self.mock_editor.remove_text_from_video.call_args.kwargs
+                self.assertEqual(call_kwargs.get("input_path_or_url"), self.dummy_video_path)
+                self.assertEqual(call_kwargs.get("mode"), expected_mode)
+                self.assertTrue(callable(call_kwargs.get("progress_callback")), "progress_callback must be callable!")
                 self.bot.chat_with_agent.assert_not_called()
 
     async def test_color_grade_presets_routing(self):

@@ -2475,7 +2475,19 @@ class TestVideoEditorService(unittest.IsolatedAsyncioTestCase):
 
         video_path = Path("test/tmpy8evxmno.mp4")
         if not video_path.exists():
-            self.skipTest(f"Video {video_path} not found in workspace")
+            _alt = Path(__file__).resolve().parent.parent.parent.parent / "test" / "tmpy8evxmno.mp4"
+            if _alt.exists():
+                video_path = _alt
+
+        if not video_path.exists():
+            # Synthetic fallback: create representative 137x479 subtitle ROI
+            synthetic_roi = np.full((137, 479, 3), 120, dtype=np.uint8)
+            cv2.putText(synthetic_roi, "Title Line 1", (40, 45), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 3)
+            cv2.putText(synthetic_roi, "Title Line 2", (40, 95), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 3)
+            mask = VideoEditorService._generate_text_stroke_mask(synthetic_roi)
+            cov = np.count_nonzero(mask > 0) / mask.size
+            self.assertLess(cov, 0.30, f"Coverage {cov*100:.2f}% exceeds 30% ceiling")
+            return
 
         cap = cv2.VideoCapture(str(video_path))
         self.assertTrue(cap.isOpened(), "Cannot open test video")

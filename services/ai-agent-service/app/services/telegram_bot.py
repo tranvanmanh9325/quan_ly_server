@@ -1899,9 +1899,9 @@ class TelegramBot:
                                 mode = "delogo" if "delogo" in q else ("inpaint" if "inpaint" in q else "auto")
                                 status_msg = await self.send_message(
                                     chat_id,
-                                    "⚡ <b>Tiểu Bảo Bảo đang chuẩn bị xóa text trong video...</b>\n"
+                                    "⚡ <b>Đang tự động xóa text/watermark khỏi video của anh Mạnh...</b>\n"
                                     "<code>[░░░░░░░░░░] 0%</code>\n"
-                                    "<i>(Đang khởi động phân tích khung hình...)</i>",
+                                    "<i>(Tiểu Bảo Bảo đang phân tích khung hình và làm sạch video)</i>",
                                 )
                                 status_msg_id = status_msg.get("message_id") if isinstance(status_msg, dict) else None
                                 last_edit_time = 0.0

@@ -59,4 +59,7 @@ android-app/model/
 
 # Deep Learning Models (ONNX)
 *.onnx
-services/ai-agent-service/app/models/*.onnx
+services/ai-agent-service/app/models/*.onnx
+
+# Empirical & Local Test Directory
+test/

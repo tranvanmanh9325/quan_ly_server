@@ -33,7 +33,10 @@ class TestStudioTextDetector(unittest.TestCase):
     def test_detect_regions_synthetic_text(self):
         """detect_regions identifies text box on synthetic high-contrast image."""
         if not self.detector.is_available():
-            self.skipTest("ONNX model or onnxruntime not available locally")
+            # Zero Local AI Policy: Khi không có local ONNX model, detect_regions trả về rỗng an toàn
+            boxes = self.detector.detect_regions(img)
+            self.assertEqual(boxes, [])
+            return
 
         h, w = 320, 640
         img = np.full((h, w, 3), 40, dtype=np.uint8)

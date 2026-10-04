@@ -138,26 +138,21 @@ class TestChallengerPureGuidedFilterRealTextures(unittest.TestCase):
 
     def setUp(self):
         self.inpainter = TexturePreservingInpainter()
-        self.repo_root = Path(__file__).resolve().parents[3]
-        self.frame700_path = self.repo_root / "test" / "inspect_all" / "frame_700.jpg"
-        self.frame150_path = self.repo_root / "test" / "inspect_all" / "frame_150.jpg"
 
     def test_porsche_frame700_speaker_grill_texture_preservation(self):
         """
-        Tests inpainting on Porsche Burmester perforated metallic speaker grill region.
+        Tests inpainting on perforated metallic speaker grill region (synthetic texture).
         Verifies that Fallback inpaint prevents flat cement blob by maintaining non-zero texture std
         and luminance continuity with the neighboring metallic collar.
         """
-        if not self.frame700_path.is_file():
-            self.skipTest(f"Frame 700 not found at {self.frame700_path}")
-
-        frame700 = cv2.imread(str(self.frame700_path))
-        self.assertIsNotNone(frame700, "Frame 700 must be readable by OpenCV.")
-
-        # Representative metallic panel & grill ROI from Frame 700
-        y1, y2, x1, x2 = 150, 330, 30, 515
-        roi_speaker = frame700[y1:y2, x1:x2].copy()
-        rh, rw = roi_speaker.shape[:2]
+        rh, rw = 180, 485
+        roi_speaker = np.full((rh, rw, 3), 150, dtype=np.uint8)
+        # Sinh cấu trúc lưới micro-perforations mô phỏng mặt loa Burmester
+        for y in range(0, rh, 6):
+            for x in range(0, rw, 6):
+                roi_speaker[y:y+2, x:x+2] = [45, 45, 45]
+        noise = np.random.RandomState(42).randint(-8, 9, (rh, rw, 3), dtype=np.int16)
+        roi_speaker = np.clip(roi_speaker.astype(np.int16) + noise, 0, 255).astype(np.uint8)
 
         # Realistic subtitle stroke mask
         mask = np.zeros((rh, rw), dtype=np.uint8)
@@ -194,19 +189,17 @@ class TestChallengerPureGuidedFilterRealTextures(unittest.TestCase):
 
     def test_document_frame150_paper_texture_preservation(self):
         """
-        Tests inpainting on Frame 150 (paper document background).
+        Tests inpainting on paper document background (synthetic texture).
         Ensures inpainter does not smudge surrounding printed text into a muddy gray blob.
         """
-        if not self.frame150_path.is_file():
-            self.skipTest(f"Frame 150 not found at {self.frame150_path}")
-
-        frame150 = cv2.imread(str(self.frame150_path))
-        self.assertIsNotNone(frame150, "Frame 150 must be readable by OpenCV.")
-
-        # Document paper zone around subtitle region
-        y1, y2, x1, x2 = 500, 620, 100, 350
-        roi_paper = frame150[y1:y2, x1:x2].copy()
-        rh, rw = roi_paper.shape[:2]
+        rh, rw = 120, 250
+        roi_paper = np.full((rh, rw, 3), 235, dtype=np.uint8)
+        grain = np.random.RandomState(150).randint(-5, 6, (rh, rw, 3), dtype=np.int16)
+        roi_paper = np.clip(roi_paper.astype(np.int16) + grain, 0, 255).astype(np.uint8)
+        for y in range(15, 35, 8):
+            roi_paper[y:y+2, 20:rw-20] = [30, 30, 30]
+        for y in range(85, 115, 8):
+            roi_paper[y:y+2, 20:rw-20] = [30, 30, 30]
 
         mask = np.zeros((rh, rw), dtype=np.uint8)
         mask[40:80, 30:rw - 30] = 255  # subtitle box

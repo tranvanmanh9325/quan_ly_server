@@ -59,23 +59,6 @@ DIRECT_RETURN_TOOLS = frozenset({
     "extract_document_text",
     "translate_text",
     "download_direct_file",
-    # M2 Composable Specialist Editing Tools (8 tools + aliases)
-    "video_probe_tool",
-    "text_detection_tool",
-    "mask_generation_tool",
-    "image_inpaint_tool",
-    "video_inpaint_tool",
-    "ffmpeg_process_tool",
-    "quality_verify_tool",
-    "temporal_compare_tool",
-    "probe_media_metadata",
-    "detect_text_and_overlays",
-    "build_inpaint_mask",
-    "inpaint_image_hosted",
-    "inpaint_video_hosted",
-    "edit_video_ffmpeg",
-    "verify_media_cleanliness",
-    "generate_comparison_artifacts",
 })
 
 SCREENSHOT_TOOLS = frozenset({

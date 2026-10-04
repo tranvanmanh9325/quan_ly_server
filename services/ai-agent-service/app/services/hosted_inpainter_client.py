@@ -228,24 +228,52 @@ class HostedInpainterClient:
         timeout: Optional[float] = None,
     ) -> Union[bytes, Any]:
         """
-        Synchronous thread-safe wrapper for inpaint_roi.
-        Can be called directly from worker threads without active asyncio event loop.
+        Synchronous thread-safe inpainting directly via httpx.Client,
+        completely avoiding cross-thread asyncio event loop collisions and deadlocks.
         """
+        import numpy as np
+        is_ndarray = isinstance(image, np.ndarray)
+        if is_ndarray:
+            img_bytes = self._ndarray_to_png_bytes(image)
+            mask_bytes = self._ndarray_to_png_bytes(mask)
+        elif isinstance(image, bytes) and isinstance(mask, bytes):
+            img_bytes = image
+            mask_bytes = mask
+        else:
+            raise TypeError("Image and mask must both be bytes or numpy ndarrays")
+
+        if len(img_bytes) == 0 or len(mask_bytes) == 0:
+            raise ValueError("Image or mask bytes cannot be empty")
+
+        req_timeout = min(3.0, float(timeout) if timeout is not None else 3.0)
+        payload = {
+            "image": self._encode_to_data_uri(img_bytes),
+            "mask": self._encode_to_data_uri(mask_bytes),
+            "hd_strategy": "Original",
+        }
+
+        # Send via pure synchronous httpx.Client to be 100% thread-safe
+        res_bytes = None
+        ep_idx = self._current_endpoint_idx % len(self.endpoints)
+        endpoint = self.endpoints[ep_idx]
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # If running inside active loop (e.g. from async caller via thread), run in dedicated thread
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                    fut = executor.submit(
-                        asyncio.run,
-                        self.inpaint_roi(image, mask, timeout=timeout),
-                    )
-                    return fut.result()
-            else:
-                return loop.run_until_complete(self.inpaint_roi(image, mask, timeout=timeout))
-        except RuntimeError:
-            return asyncio.run(self.inpaint_roi(image, mask, timeout=timeout))
+            with httpx.Client(timeout=req_timeout) as client:
+                resp = client.post(
+                    endpoint,
+                    json=payload,
+                    headers={"Content-Type": "application/json"},
+                )
+                if resp.status_code == 200 and len(resp.content) > 100:
+                    res_bytes = resp.content
+        except Exception as e:
+            logger.debug("[HostedInpainterClient] sync post error on %s: %s", endpoint, e)
+
+        if res_bytes is None:
+            raise HostedInpainterError("All hosted inpainting endpoints failed synchronously")
+
+        if is_ndarray:
+            return self._png_bytes_to_ndarray(res_bytes)
+        return res_bytes
 
     async def inpaint_image(
         self,

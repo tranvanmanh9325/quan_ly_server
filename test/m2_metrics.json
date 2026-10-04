@@ -1,0 +1,206 @@
+{
+  "pipeline_time_sec": 385.05,
+  "branch_counters": {
+    "keyframe_exact": 77,
+    "optical_flow": 1002,
+    "translation_aligned": 7,
+    "inpaint_fallback": 859
+  },
+  "original_video": {
+    "width": 576,
+    "height": 1024,
+    "fps": 30.0,
+    "duration": 64.876009,
+    "audio_codec": "aac",
+    "audio_channels": 2,
+    "size_mb": 14.35
+  },
+  "cleaned_video": {
+    "width": 576,
+    "height": 1024,
+    "fps": 29.98,
+    "duration": 64.866675,
+    "audio_codec": "aac",
+    "audio_channels": 2,
+    "size_mb": 22.82
+  },
+  "dense_ocr_cfr": 97.09,
+  "cfr_pass": false,
+  "rtmr_mean": 0.807,
+  "rtmr_median": 0.723,
+  "rtmr_pass": true,
+  "before_after_pairs": [
+    {
+      "frame": 55,
+      "timestamp_sec": 1.83,
+      "before_image": "before_frame_0055.png",
+      "after_image": "after_frame_0055.png",
+      "comparison_image": "comparison_frame_0055.png"
+    },
+    {
+      "frame": 164,
+      "timestamp_sec": 5.47,
+      "before_image": "before_frame_0164.png",
+      "after_image": "after_frame_0164.png",
+      "comparison_image": "comparison_frame_0164.png"
+    },
+    {
+      "frame": 245,
+      "timestamp_sec": 8.17,
+      "before_image": "before_frame_0245.png",
+      "after_image": "after_frame_0245.png",
+      "comparison_image": "comparison_frame_0245.png"
+    },
+    {
+      "frame": 372,
+      "timestamp_sec": 12.41,
+      "before_image": "before_frame_0372.png",
+      "after_image": "after_frame_0372.png",
+      "comparison_image": "comparison_frame_0372.png"
+    },
+    {
+      "frame": 700,
+      "timestamp_sec": 23.35,
+      "before_image": "before_frame_0700.png",
+      "after_image": "after_frame_0700.png",
+      "comparison_image": "comparison_frame_0700.png"
+    },
+    {
+      "frame": 1092,
+      "timestamp_sec": 36.42,
+      "before_image": "before_frame_1092.png",
+      "after_image": "after_frame_1092.png",
+      "comparison_image": "comparison_frame_1092.png"
+    },
+    {
+      "frame": 1354,
+      "timestamp_sec": 45.16,
+      "before_image": "before_frame_1354.png",
+      "after_image": "after_frame_1354.png",
+      "comparison_image": "comparison_frame_1354.png"
+    },
+    {
+      "frame": 1425,
+      "timestamp_sec": 47.53,
+      "before_image": "before_frame_1425.png",
+      "after_image": "after_frame_1425.png",
+      "comparison_image": "comparison_frame_1425.png"
+    },
+    {
+      "frame": 1517,
+      "timestamp_sec": 50.6,
+      "before_image": "before_frame_1517.png",
+      "after_image": "after_frame_1517.png",
+      "comparison_image": "comparison_frame_1517.png"
+    },
+    {
+      "frame": 1662,
+      "timestamp_sec": 55.44,
+      "before_image": "before_frame_1662.png",
+      "after_image": "after_frame_1662.png",
+      "comparison_image": "comparison_frame_1662.png"
+    }
+  ],
+  "ocr_samples_10": [
+    {
+      "frame": 55,
+      "time_sec": 1.83,
+      "hdr_ocr_before": "'25X4tUOIS\\n® 1rựwiậnlhênineông)0/[IU©lisowreo\\nCnuyemlamilVebsite\\\\S\\\\ WED IAD'",
+      "hdr_ocr_after": "''",
+      "hdr_diff": 25.78,
+      "sub_ocr_before": "''",
+      "sub_ocr_after": "''",
+      "sub_diff": 2.24
+    },
+    {
+      "frame": 164,
+      "time_sec": 5.47,
+      "hdr_ocr_before": "';\\n\\n2x tuổi.\\nTự vận hành công ty IT Outsource)\\nchuyên làm Website, & \\\\WebyApp'",
+      "hdr_ocr_after": "''",
+      "hdr_diff": 25.36,
+      "sub_ocr_before": "''",
+      "sub_ocr_after": "''",
+      "sub_diff": 2.5
+    },
+    {
+      "frame": 245,
+      "time_sec": 8.17,
+      "hdr_ocr_before": "'— ot\\naan 2XAtUGIS\\nicongityilif#Outsource\\nichuyenjlam)\\\\WWebsitelsavMebyAipp)'",
+      "hdr_ocr_after": "''",
+      "hdr_diff": 25.94,
+      "sub_ocr_before": "'An & BOOKIM'",
+      "sub_ocr_after": "'HỆ THONG TRAVEL & BOOKIN'",
+      "sub_diff": 2.67
+    },
+    {
+      "frame": 372,
+      "time_sec": 12.41,
+      "hdr_ocr_before": "'2x tuổi.\\nTự vận hành công ty IT Outsource Ỉ\\nchuyên làm Website & Web App'",
+      "hdr_ocr_after": "''",
+      "hdr_diff": 25.03,
+      "sub_ocr_before": "'ý\\nĐi gặp khách) é)\\ntư vấn website, Ý\\nX-.'",
+      "sub_ocr_after": "''",
+      "sub_diff": 16.27
+    },
+    {
+      "frame": 700,
+      "time_sec": 23.35,
+      "hdr_ocr_before": "'Outsource\\nchuyén lam Website & Web App\\nyy\\n\\na'",
+      "hdr_ocr_after": "''",
+      "hdr_diff": 29.82,
+      "sub_ocr_before": "''",
+      "sub_ocr_after": "''",
+      "sub_diff": 2.6
+    },
+    {
+      "frame": 1092,
+      "time_sec": 36.42,
+      "hdr_ocr_before": "'——\\n\\n—— 2x tuổi: —\\nTavanhanh công ty IT Outsource\\nhuyền làm)\\n\\nWÈbsite & & Web ) App'",
+      "hdr_ocr_after": "''",
+      "hdr_diff": 42.19,
+      "sub_ocr_before": "''",
+      "sub_ocr_after": "''",
+      "sub_diff": 30.26
+    },
+    {
+      "frame": 1354,
+      "time_sec": 45.16,
+      "hdr_ocr_before": "''",
+      "hdr_ocr_after": "''",
+      "hdr_diff": 55.12,
+      "sub_ocr_before": "''",
+      "sub_ocr_after": "''",
+      "sub_diff": 29.45
+    },
+    {
+      "frame": 1425,
+      "time_sec": 47.53,
+      "hdr_ocr_before": "\"- CI Ni ho: { lễ oi\\nMi hanhicong; như (HC oi/63045/\\n- choyen' = ESS sẽ Web App\"",
+      "hdr_ocr_after": "''",
+      "hdr_diff": 34.48,
+      "sub_ocr_before": "'= 0 verealson\\n\\n> admin.htm.\\n\\nali iém trate dán website Net\\n\\n-car6 ( backgre\\n\\n© enuexample -carg h2 { mang\\n\\ngilgnore card h2 4 €\\n(0 package-lockjson ard p ( nar\\n(0 package json\\n© READMEmd\\n15 servers “'",
+      "sub_ocr_after": "'© admin. html ”\\n\\ndrm\\n: A tonto\\nil 3 obs ss abtitle { col\\nNền: \" card ( backgro\\n© amemampe “càng kẽ C arg\\n¬ seang m2 (fo\\nEm “card p ( nara\\na = „bta { display:\\na] vn „btn-prieary {\\n(© —— \\'btA-pr i8Ary tac\\n2 senerjs w -Btn-secendary\\n(0 vercetjson Teto-secondary\\n\\nbtn-danger (\\nir Bes'",
+      "sub_diff": 16.41
+    },
+    {
+      "frame": 1517,
+      "time_sec": 50.6,
+      "hdr_ocr_before": "''",
+      "hdr_ocr_after": "''",
+      "hdr_diff": 25.86,
+      "sub_ocr_before": "''",
+      "sub_ocr_after": "''",
+      "sub_diff": 12.26
+    },
+    {
+      "frame": 1662,
+      "time_sec": 55.44,
+      "hdr_ocr_before": "'iphone Oct'",
+      "hdr_ocr_after": "''",
+      "hdr_diff": 30.44,
+      "sub_ocr_before": "''",
+      "sub_ocr_after": "''",
+      "sub_diff": 11.12
+    }
+  ]
+}

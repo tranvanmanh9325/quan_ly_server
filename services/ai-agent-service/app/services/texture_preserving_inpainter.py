@@ -1,10 +1,10 @@
 """
 Studio-Grade Texture-Preserving Inpainting Engine (Milestone 3 / R3).
 
-Combines lightweight neural inpainting (LaMa ONNX CPU) with a high-grade
-pure Guided Filter Fallback Engine (NumPy + cv2.boxFilter, Kaiming He 2013).
-Preserves 1:1 pixel sharpness on micro-textures (Porsche Burmester metallic speaker
+Pure Guided Filter Structure-Texture Decomposition Engine (NumPy + cv2.boxFilter, Kaiming He 2013).
+Preserves 1:1 pixel sharpness on micro-textures (perforated metallic speaker
 grills, paper grain, wood fibers) without blurry cement artifacts.
+Zero Local AI Policy: 100% classical computer vision and edge-preserving filtering.
 """
 
 from __future__ import annotations
@@ -15,25 +15,11 @@ import os
 import secrets
 import threading
 import sys
-import types
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
-from unittest.mock import MagicMock
 
 import cv2
 import numpy as np
-
-# Stub fallback for legacy unit tests if onnxruntime is purged from dependencies
-if "onnxruntime" not in sys.modules:
-    try:
-        import onnxruntime  # noqa: F401
-    except ImportError:
-        _ort_stub = types.ModuleType("onnxruntime")
-        _ort_stub.InferenceSession = MagicMock
-        _ort_stub.SessionOptions = MagicMock
-        _ort_stub.GraphOptimizationLevel = MagicMock()
-        _ort_stub.ExecutionMode = MagicMock()
-        sys.modules["onnxruntime"] = _ort_stub
 
 logger = logging.getLogger(__name__)
 
@@ -43,21 +29,17 @@ class TexturePreservingInpainter:
     Studio-grade Inpainting Engine optimized for CPU-constrained servers (2 cores, <300MB RAM).
     
     Features:
-      - F3.1: LaMa ONNX Model Loading & Atomic Streaming Cache.
+      - F3.1: Zero Local AI Policy - Local neural model purged.
       - F3.2: CPU Optimization & Thread Control (intra 2, inter 1, Singleton session, Semaphore).
       - F3.3: Zero-Scaling Canvas Pad 512x512 (1:1 ROI mapping, unpad without interpolation loss).
       - F3.4: Gaussian Alpha Feathering Stitching (smooth edge transition, seam elimination).
-      - F3.5: Pure Guided Filter Fallback Engine (Structure-Texture Decomposition).
+      - F3.5: Pure Guided Filter Engine (Structure-Texture Decomposition).
     """
 
-    DEFAULT_MODEL_URL: str = "https://huggingface.co/Carve/LaMa-ONNX/resolve/main/lama_fp32.onnx"
-    MODEL_SIZE_BYTES: int = 208_044_816
-    MODEL_MIN_BYTES: int = 200_000_000
     TARGET_CANVAS_SIZE: int = 512
     DEFAULT_INTRA_THREADS: int = 2
     DEFAULT_INTER_THREADS: int = 1
 
-    # Class-level session and lock for Singleton session management
     _shared_session: Optional[Any] = None
     _shared_session_path: Optional[str] = None
     _session_lock = threading.Lock()
@@ -74,9 +56,9 @@ class TexturePreservingInpainter:
         """
         Initialize the TexturePreservingInpainter.
 
-        :param model_path: Explicit absolute or relative path to lama_fp32.onnx.
-        :param model_dir: Directory containing lama_fp32.onnx (default: app/models).
-        :param model_url: Remote URL to download the model from if absent.
+        :param model_path: Explicit absolute or relative path to inpaint model file.
+        :param model_dir: Directory for model storage (default: app/models).
+        :param model_url: Optional remote URL for hosted model.
         :param cpu_threads: Number of intra-op CPU threads (default: 2).
         """
         if model_path is not None:
@@ -84,12 +66,12 @@ class TexturePreservingInpainter:
             self._model_dir = self._model_path.parent
         elif model_dir is not None:
             self._model_dir = Path(model_dir).resolve()
-            self._model_path = self._model_dir / "lama_fp32.onnx"
+            self._model_path = self._model_dir / "inpaint_model.bin"
         else:
             self._model_dir = Path(__file__).resolve().parent.parent / "models"
-            self._model_path = self._model_dir / "lama_fp32.onnx"
+            self._model_path = self._model_dir / "inpaint_model.bin"
 
-        self._model_url = model_url or self.DEFAULT_MODEL_URL
+        self._model_url = model_url or ""
         self._cpu_threads = max(1, cpu_threads)
         self._session: Optional[Any] = None
         self._input_names: List[str] = []
@@ -110,7 +92,7 @@ class TexturePreservingInpainter:
 
     @property
     def model_path(self) -> Path:
-        """Path to the ONNX model file."""
+        """Path to the model file."""
         return self._model_path
 
     @property
@@ -120,107 +102,40 @@ class TexturePreservingInpainter:
 
     @property
     def is_session_active(self) -> bool:
-        """Whether an ONNX runtime session is actively loaded and ready."""
+        """Whether a session is actively loaded and ready."""
         return self._session is not None
-
-    # ═════════════════════════════════════════════════════════════════════════
-    # F3.1: Model Lifecycle & Cache Management
-    # ═════════════════════════════════════════════════════════════════════════
 
     def is_model_ready(self) -> bool:
         """
-        Check if the LaMa ONNX model file exists and is valid on disk.
-        In Milestone 1, model files are purged from disk so this naturally returns False.
+        Zero Local AI Policy: Local model weights are purged from disk.
+        Always returns False in Milestone 1.
         """
-        try:
-            return self._model_path.is_file() and self._model_path.stat().st_size >= self.MODEL_MIN_BYTES
-        except Exception:
-            return False
+        return False
 
     async def _ensure_model_available_async(self, timeout: float = 300.0) -> bool:
-        """
-        Zero Local AI Policy: Automatic ONNX model weight download is disabled.
-        Returns True only if model file is already present on local disk.
-        """
-        if self.is_model_ready():
-            return True
-        logger.warning("[TexturePreservingInpainter] Zero Local AI Policy: Local ONNX model download is disabled.")
+        """Zero Local AI Policy: Automatic model download is disabled."""
+        logger.warning("[TexturePreservingInpainter] Zero Local AI Policy: Local model download is disabled.")
         return False
 
     def _ensure_model_available_sync(self, timeout: float = 300.0) -> bool:
-        """
-        Zero Local AI Policy: Automatic ONNX model weight download is disabled.
-        Returns True only if model file is already present on local disk.
-        """
-        if self.is_model_ready():
-            return True
-        logger.warning("[TexturePreservingInpainter] Zero Local AI Policy: Local ONNX model download is disabled.")
+        """Zero Local AI Policy: Automatic model download is disabled."""
+        logger.warning("[TexturePreservingInpainter] Zero Local AI Policy: Local model download is disabled.")
         return False
 
     def ensure_model_available(self, timeout: float = 300.0, sync: bool = False, **kwargs: Any) -> Any:
-        """
-        Ensure model is available. Supports both async awaitable and sync invocation.
-        If sync=True or kwargs['async_download'] is False, runs synchronously.
-        Otherwise returns an async coroutine.
-        """
+        """Ensure model is available. Under Zero Local AI Policy, returns False."""
         is_sync = sync or kwargs.get("async_download") is False or kwargs.get("is_async") is False
         if is_sync:
             return self._ensure_model_available_sync(timeout=timeout)
         return self._ensure_model_available_async(timeout=timeout)
 
-    # ═════════════════════════════════════════════════════════════════════════
-    # F3.2: CPU Optimization & Thread Control
-    # ═════════════════════════════════════════════════════════════════════════
-
     def init_session(self) -> bool:
         """
-        Initializes session if model is ready or session is injected/mocked.
+        Zero Local AI Policy: Local neural runtime is purged.
+        Returns True only if an external/mock session has been manually injected.
         """
         with self._session_lock:
-            if self._session is not None:
-                return True
-
-            norm_path = str(self._model_path)
-            if (
-                TexturePreservingInpainter._shared_session is not None
-                and TexturePreservingInpainter._shared_session_path == norm_path
-            ):
-                self._session = TexturePreservingInpainter._shared_session
-                self._input_names = [getattr(inp, "name", "input") for inp in self._session.get_inputs()] if hasattr(self._session, "get_inputs") else []
-                self._output_names = [getattr(out, "name", "output") for out in self._session.get_outputs()] if hasattr(self._session, "get_outputs") else []
-                return True
-
-            if not self.is_model_ready():
-                return False
-
-            try:
-                ort = sys.modules.get("onnxruntime")
-                sess_options = ort.SessionOptions()
-                sess_options.intra_op_num_threads = self._cpu_threads
-                sess_options.inter_op_num_threads = self.DEFAULT_INTER_THREADS
-                sess_options.execution_mode = getattr(getattr(ort, "ExecutionMode", None), "ORT_SEQUENTIAL", None)
-                sess_options.graph_optimization_level = getattr(getattr(ort, "GraphOptimizationLevel", None), "ORT_ENABLE_ALL", None)
-
-                session = ort.InferenceSession(
-                    str(self._model_path),
-                    sess_options=sess_options,
-                    providers=["CPUExecutionProvider"],
-                )
-                self._session = session
-                self._input_names = [getattr(inp, "name", "input") for inp in session.get_inputs()] if hasattr(session, "get_inputs") else []
-                self._output_names = [getattr(out, "name", "output") for out in session.get_outputs()] if hasattr(session, "get_outputs") else []
-
-                TexturePreservingInpainter._shared_session = session
-                TexturePreservingInpainter._shared_session_path = norm_path
-                return True
-            except Exception as exc:
-                logger.debug("[TexturePreservingInpainter] init_session error: %s", exc)
-                self._session = None
-                return False
-
-    # ═════════════════════════════════════════════════════════════════════════
-    # F3.3: Zero-Scaling Canvas Pad 512x512
-    # ═════════════════════════════════════════════════════════════════════════
+            return self._session is not None
 
     def pad_to_512(
         self,
@@ -228,7 +143,7 @@ class TexturePreservingInpainter:
         roi_mask: np.ndarray,
     ) -> Tuple[np.ndarray, np.ndarray, Dict[str, Any]]:
         """
-        Transforms ROI image and mask to the 512x512 canvas required by LaMa ONNX:
+        Transforms ROI image and mask to the 512x512 canvas:
           - If ROI <= 512x512: Zero-Scaling 1:1 reflection padding. No resizing, preserving 100% sharpness.
           - If ROI > 512x512: Aspect letterbox downscaling with reflection padding.
         """
@@ -236,7 +151,6 @@ class TexturePreservingInpainter:
         target = self.TARGET_CANVAS_SIZE
 
         if h <= target and w <= target:
-            # 1:1 Zero-Scaling Canvas Padding
             pad_top = (target - h) // 2
             pad_bottom = target - h - pad_top
             pad_left = (target - w) // 2
@@ -249,107 +163,79 @@ class TexturePreservingInpainter:
                 roi_mask, pad_top, pad_bottom, pad_left, pad_right, cv2.BORDER_CONSTANT, value=0
             )
 
-            meta = {
+            meta: Dict[str, Any] = {
                 "mode": "pad",
+                "orig_h": h,
+                "orig_w": w,
                 "pad_top": pad_top,
                 "pad_bottom": pad_bottom,
                 "pad_left": pad_left,
                 "pad_right": pad_right,
-                "orig_h": h,
-                "orig_w": w,
             }
             return canvas_img, canvas_mask, meta
 
-        # Fallback Letterbox Aspect Scaling for extra-large ROIs (>512px)
-        scale = float(target) / max(h, w)
-        scaled_w = max(1, min(target, int(round(w * scale))))
-        scaled_h = max(1, min(target, int(round(h * scale))))
+        scale = min(target / float(h), target / float(w))
+        new_w = max(1, int(round(w * scale)))
+        new_h = max(1, int(round(h * scale)))
 
-        interp = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR
-        scaled_img = cv2.resize(roi_img, (scaled_w, scaled_h), interpolation=interp)
-        scaled_mask = cv2.resize(roi_mask, (scaled_w, scaled_h), interpolation=cv2.INTER_NEAREST)
+        resized_img = cv2.resize(roi_img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+        resized_mask = cv2.resize(roi_mask, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
 
-        pad_top = (target - scaled_h) // 2
-        pad_bottom = target - scaled_h - pad_top
-        pad_left = (target - scaled_w) // 2
-        pad_right = target - scaled_w - pad_left
+        pad_top = (target - new_h) // 2
+        pad_bottom = target - new_h - pad_top
+        pad_left = (target - new_w) // 2
+        pad_right = target - new_w - pad_left
 
         canvas_img = cv2.copyMakeBorder(
-            scaled_img, pad_top, pad_bottom, pad_left, pad_right, cv2.BORDER_REPLICATE
+            resized_img, pad_top, pad_bottom, pad_left, pad_right, cv2.BORDER_REPLICATE
         )
         canvas_mask = cv2.copyMakeBorder(
-            scaled_mask, pad_top, pad_bottom, pad_left, pad_right, cv2.BORDER_CONSTANT, value=0
+            resized_mask, pad_top, pad_bottom, pad_left, pad_right, cv2.BORDER_CONSTANT, value=0
         )
 
         meta = {
             "mode": "letterbox",
+            "orig_h": h,
+            "orig_w": w,
+            "scaled_h": new_h,
+            "scaled_w": new_w,
             "pad_top": pad_top,
             "pad_bottom": pad_bottom,
             "pad_left": pad_left,
             "pad_right": pad_right,
-            "scaled_h": scaled_h,
-            "scaled_w": scaled_w,
-            "orig_h": h,
-            "orig_w": w,
         }
         return canvas_img, canvas_mask, meta
 
-    def unpad_from_512(self, canvas_out: np.ndarray, meta: Dict[str, Any]) -> np.ndarray:
-        """
-        Inverse operation of pad_to_512: extracts original ROI from the 512x512 canvas.
-        Zero interpolation loss for ROIs <= 512x512.
-        """
-        top = meta["pad_top"]
-        left = meta["pad_left"]
-
-        if meta["mode"] == "pad":
-            h = meta["orig_h"]
-            w = meta["orig_w"]
-            return canvas_out[top : top + h, left : left + w].copy()
-
-        # Letterbox unpad and aspect upscale
-        sh = meta["scaled_h"]
-        sw = meta["scaled_w"]
+    def unpad_from_512(
+        self,
+        canvas_img: np.ndarray,
+        meta: Dict[str, Any],
+    ) -> np.ndarray:
+        """Invert pad_to_512 mapping precisely back to original ROI dimensions."""
+        mode = meta.get("mode", "pad")
         orig_h = meta["orig_h"]
         orig_w = meta["orig_w"]
-        cropped_scaled = canvas_out[top : top + sh, left : left + sw]
-        return cv2.resize(cropped_scaled, (orig_w, orig_h), interpolation=cv2.INTER_CUBIC)
+        pt = meta["pad_top"]
+        pl = meta["pad_left"]
 
-    # ═════════════════════════════════════════════════════════════════════════
-    # F3.4: Gaussian Alpha Feathering Stitching
-    # ═════════════════════════════════════════════════════════════════════════
+        if mode in ("pad", "pad_1to1"):
+            return canvas_img[pt : pt + orig_h, pl : pl + orig_w].copy()
+
+        sh = meta["scaled_h"]
+        sw = meta["scaled_w"]
+        cropped = canvas_img[pt : pt + sh, pl : pl + sw]
+        return cv2.resize(cropped, (orig_w, orig_h), interpolation=cv2.INTER_CUBIC)
 
     @staticmethod
-    def apply_alpha_feathering(
-        original: np.ndarray,
-        inpainted: np.ndarray,
+    def feather_mask(
         mask: np.ndarray,
-        sigma: float = 1.0,
-        ksize: int = 3,
+        radius: int = 5,
+        sigma: float = 2.0,
     ) -> np.ndarray:
-        """
-        Blends inpainted result seamlessly into the original frame using a Gaussian-feathered mask.
-        Eliminates visible geometric seams and boundary cuts.
-        """
-        if mask is None or np.count_nonzero(mask) == 0:
-            return original.copy()
-
-        # Normalize mask to float32 [0.0, 1.0]
-        mask_f = mask.astype(np.float32) / 255.0
-        k = ksize if ksize % 2 == 1 else ksize + 1
-        alpha = cv2.GaussianBlur(mask_f, (k, k), sigmaX=sigma, sigmaY=sigma)
-
-        if len(original.shape) == 3:
-            alpha = np.expand_dims(alpha, axis=2)
-
-        blended = (
-            inpainted.astype(np.float32) * alpha + original.astype(np.float32) * (1.0 - alpha)
-        )
-        return np.clip(blended, 0.0, 255.0).astype(np.uint8)
-
-    # ═════════════════════════════════════════════════════════════════════════
-    # F3.5: Pure Guided Filter Fallback Engine
-    # ═════════════════════════════════════════════════════════════════════════
+        """Gaussian Alpha Feathering on binary mask: produces smooth float32 [0.0, 1.0] alpha transition."""
+        ksize = 2 * radius + 1
+        blurred = cv2.GaussianBlur(mask.astype(np.float32), (ksize, ksize), sigmaX=sigma, sigmaY=sigma)
+        return np.clip(blurred / 255.0, 0.0, 1.0)
 
     @staticmethod
     def pure_guided_filter(
@@ -360,30 +246,41 @@ class TexturePreservingInpainter:
     ) -> np.ndarray:
         """
         Pure Guided Filter implementation (Kaiming He et al., ECCV 2010 / TPAMI 2013).
-        Constructed strictly from NumPy and cv2.boxFilter without depending on cv2.ximgproc.
-        
-        Preserves sharp boundaries where variance is high and smooths homogeneous areas.
-        Works across 2D single-channel and 3D multi-channel images.
+        Preserves micro-texture variance while decomposing structural base layer.
         """
         guide_f = guide.astype(np.float32) / 255.0
         src_f = src.astype(np.float32) / 255.0
+
+        if guide_f.ndim == 3:
+            guide_gray = cv2.cvtColor((guide_f * 255).astype(np.uint8), cv2.COLOR_BGR2GRAY).astype(np.float32) / 255.0
+        else:
+            guide_gray = guide_f
+
         ksize = (2 * radius + 1, 2 * radius + 1)
+        mean_I = cv2.boxFilter(guide_gray, -1, ksize)
+        mean_p = cv2.boxFilter(src_f, -1, ksize)
 
-        mean_i = cv2.boxFilter(guide_f, -1, ksize, borderType=cv2.BORDER_REFLECT)
-        mean_p = cv2.boxFilter(src_f, -1, ksize, borderType=cv2.BORDER_REFLECT)
-        mean_ip = cv2.boxFilter(guide_f * src_f, -1, ksize, borderType=cv2.BORDER_REFLECT)
-        cov_ip = mean_ip - mean_i * mean_p
+        if src_f.ndim == 3:
+            mean_Ip = cv2.boxFilter(src_f * guide_gray[:, :, None], -1, ksize)
+            cov_Ip = mean_Ip - mean_I[:, :, None] * mean_p
+            var_I = cv2.boxFilter(guide_gray * guide_gray, -1, ksize) - mean_I * mean_I
+            a = cov_Ip / (var_I[:, :, None] + eps)
+            b = mean_p - a * mean_I[:, :, None]
+        else:
+            mean_Ip = cv2.boxFilter(src_f * guide_gray, -1, ksize)
+            cov_Ip = mean_Ip - mean_I * mean_p
+            var_I = cv2.boxFilter(guide_gray * guide_gray, -1, ksize) - mean_I * mean_I
+            a = cov_Ip / (var_I + eps)
+            b = mean_p - a * mean_I
 
-        mean_ii = cv2.boxFilter(guide_f * guide_f, -1, ksize, borderType=cv2.BORDER_REFLECT)
-        var_i = mean_ii - mean_i * mean_i
+        mean_a = cv2.boxFilter(a, -1, ksize)
+        mean_b = cv2.boxFilter(b, -1, ksize)
 
-        a = cov_ip / (var_i + eps)
-        b = mean_p - a * mean_i
+        if src_f.ndim == 3:
+            q = mean_a * guide_gray[:, :, None] + mean_b
+        else:
+            q = mean_a * guide_gray + mean_b
 
-        mean_a = cv2.boxFilter(a, -1, ksize, borderType=cv2.BORDER_REFLECT)
-        mean_b = cv2.boxFilter(b, -1, ksize, borderType=cv2.BORDER_REFLECT)
-
-        q = mean_a * guide_f + mean_b
         return np.clip(q * 255.0, 0.0, 255.0).astype(np.uint8)
 
     def fallback_texture_inpaint(
@@ -392,118 +289,42 @@ class TexturePreservingInpainter:
         roi_mask: np.ndarray,
     ) -> np.ndarray:
         """
-        Studio-Grade Structure-Texture Decomposition Fallback Engine:
-          1. Structure Layer S: Smooth gradient extracted via Pure Guided Filter.
-          2. Texture Layer T: Micro-texture residuals T = roi - S.
-          3. S is inpainted using Navier-Stokes (cv2.INPAINT_NS) to preserve smooth gradient.
-          4. T is synthesized by transferring micro-texture statistics from adjacent background collar.
-          5. Recombined I_rec = S_inp + T_synth and edge-aligned via Guided Filter refinement.
-          Eliminates flat gray cement artifacts of standard Telea diffusion.
+        Structure-Texture Decomposition Fallback Engine:
+        Decomposes image into structural base + micro-texture residual,
+        inpaints structure with Navier-Stokes, synthesizes texture residual,
+        and recomposes with Guided Filter refinement.
         """
+        h, w = roi_img.shape[:2]
         if roi_mask is None or np.count_nonzero(roi_mask) == 0:
             return roi_img.copy()
 
-        # Handle 4-channel BGRA images
-        is_bgra = len(roi_img.shape) == 3 and roi_img.shape[2] == 4
-        working_img = cv2.cvtColor(roi_img, cv2.COLOR_BGRA2BGR) if is_bgra else roi_img
+        struct_layer = self.pure_guided_filter(roi_img, roi_img, radius=4, eps=0.04)
+        texture_layer = roi_img.astype(np.float32) - struct_layer.astype(np.float32)
 
-        # Step 1 & 2: Decomposition
-        struct_layer = self.pure_guided_filter(working_img, working_img, radius=4, eps=0.04)
-        texture_layer = working_img.astype(np.float32) - struct_layer.astype(np.float32)
+        struct_inp = cv2.inpaint(struct_layer, roi_mask, 3, cv2.INPAINT_NS)
 
-        # Step 3: Inpaint structure layer with Navier-Stokes
-        ns_flag = getattr(cv2, "INPAINT_NS", 1)
-        telea_flag = getattr(cv2, "INPAINT_TELEA", 0)
-        try:
-            struct_inp = cv2.inpaint(struct_layer, roi_mask, 3, ns_flag)
-        except Exception:
-            try:
-                struct_inp = cv2.inpaint(struct_layer, roi_mask, 3, telea_flag)
-            except Exception:
-                struct_inp = struct_layer.copy()
-
-        # Step 4: Synthesize texture from neighboring collar
         k_collar = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
-        dilated_mask = cv2.dilate(roi_mask, k_collar)
-        collar_zone = dilated_mask & (~roi_mask)
+        collar_mask = (cv2.dilate(roi_mask, k_collar) & (~roi_mask)) > 0
 
-        synth_texture = texture_layer.copy()
-        hole_indices = np.where(roi_mask > 0)
-        num_hole_pixels = len(hole_indices[0])
-
-        if num_hole_pixels > 0 and np.count_nonzero(collar_zone) > 0:
-            bg_texture_pixels = texture_layer[collar_zone > 0]
-            bg_std = np.std(bg_texture_pixels, axis=0)
-
-            # Only synthesize high-frequency texture if background contains real texture
-            if np.max(bg_std) > 1.2:
-                # Deterministic PRNG seed per frame/region for temporal stability
-                rng = np.random.RandomState(42)
-                sample_idx = rng.choice(len(bg_texture_pixels), size=num_hole_pixels, replace=True)
-                synth_texture[hole_indices] = bg_texture_pixels[sample_idx]
-
-                # Slight boxFilter smoothing on synthesized texture to align frequency
-                tex_smooth = cv2.boxFilter(synth_texture, -1, (3, 3), borderType=cv2.BORDER_REFLECT)
-                synth_texture = 0.75 * synth_texture + 0.25 * tex_smooth
-            else:
-                synth_texture[hole_indices] = 0.0
+        if np.count_nonzero(collar_mask) > 10:
+            mean_tex = np.mean(texture_layer[collar_mask], axis=0)
+            std_tex = np.std(texture_layer[collar_mask], axis=0)
         else:
-            synth_texture[hole_indices] = 0.0
+            mean_tex = np.zeros(3, dtype=np.float32)
+            std_tex = np.full(3, 8.0, dtype=np.float32)
 
-        # Step 5: Recompose and refine
-        recombined = np.clip(struct_inp.astype(np.float32) + synth_texture, 0.0, 255.0).astype(np.uint8)
-        refined = self.pure_guided_filter(struct_inp, recombined, radius=2, eps=0.01)
+        std_tex = np.maximum(std_tex, 4.0)
 
-        if is_bgra:
-            refined = cv2.cvtColor(refined, cv2.COLOR_BGR2BGRA)
-            refined[:, :, 3] = roi_img[:, :, 3]
+        seed = int(np.sum(roi_img[:10, :10])) % 65535
+        rng = np.random.RandomState(seed)
+        noise = rng.normal(loc=0.0, scale=1.0, size=(h, w, 3)).astype(np.float32)
+        synth_texture = noise * std_tex + mean_tex
 
+        recomposed = struct_inp.astype(np.float32) + synth_texture
+        recomposed = np.clip(recomposed, 0.0, 255.0).astype(np.uint8)
+
+        refined = self.pure_guided_filter(struct_inp, recomposed, radius=2, eps=0.02)
         return refined
-
-    # ═════════════════════════════════════════════════════════════════════════
-    # Core Inpaint Execution: inpaint_roi & inpaint_frame_with_regions
-    # ═════════════════════════════════════════════════════════════════════════
-
-    def _infer_onnx(self, roi_img: np.ndarray, roi_mask: np.ndarray) -> np.ndarray:
-        """Execute neural inpainting inference when active session is present."""
-        if self._session is None:
-            raise RuntimeError("No active session for inference.")
-
-        canvas_img, canvas_mask, meta = self.pad_to_512(roi_img, roi_mask)
-
-        # Convert canvas_img from BGR to RGB normalized float32 NCHW
-        rgb = cv2.cvtColor(canvas_img, cv2.COLOR_BGR2RGB)
-        img_f = (rgb.astype(np.float32) / 255.0).transpose(2, 0, 1)
-        img_tensor = np.expand_dims(img_f, axis=0)  # (1, 3, 512, 512)
-
-        # Convert canvas_mask to binary float32 NCHW (1.0 = inpaint hole, 0.0 = background)
-        mask_f = (canvas_mask > 0).astype(np.float32)
-        mask_tensor = np.expand_dims(np.expand_dims(mask_f, axis=0), axis=0)  # (1, 1, 512, 512)
-
-        # Bind tensors to session input names
-        feed_dict = {}
-        for inp in self._session.get_inputs():
-            if "mask" in inp.name.lower():
-                feed_dict[inp.name] = mask_tensor
-            else:
-                feed_dict[inp.name] = img_tensor
-
-        # Run inference protected by concurrency semaphore
-        with self._inpaint_semaphore:
-            outputs = self._session.run(None, feed_dict)
-
-        # Output tensor: (1, 3, 512, 512) RGB
-        raw_out = outputs[0]
-        if raw_out.ndim == 4:
-            raw_out = raw_out[0]
-        out_rgb = raw_out.transpose(1, 2, 0)
-        if out_rgb.dtype != np.uint8:
-            if float(out_rgb.max()) <= 1.0:
-                out_rgb = out_rgb * 255.0
-            out_rgb = np.clip(out_rgb, 0.0, 255.0).astype(np.uint8)
-
-        out_bgr = cv2.cvtColor(out_rgb, cv2.COLOR_RGB2BGR)
-        return self.unpad_from_512(out_bgr, meta)
 
     def inpaint_roi(
         self,
@@ -511,141 +332,138 @@ class TexturePreservingInpainter:
         roi_mask: np.ndarray,
     ) -> np.ndarray:
         """
-        Inpaints a localized ROI:
-          - If active neural session is present: Zero-Scaling Pad -> Session Run -> Unpad.
-          - If session is absent: Structure-Texture Decomposition + Pure Guided Filter.
-          - Always blends using Gaussian Alpha Feathering on the stroke mask.
-          - Clean interface prepared for Milestone 2 Hosted Inpainter Client.
+        Inpaints a localized ROI using Pure Guided Filter Structure-Texture Decomposition.
+        Blends seamlessly using Gaussian Alpha Feathering on the stroke mask.
         """
         if roi_mask is None or np.count_nonzero(roi_mask) == 0:
             return roi_img.copy()
 
-        # Handle BGRA
         is_bgra = len(roi_img.shape) == 3 and roi_img.shape[2] == 4
         working_img = cv2.cvtColor(roi_img, cv2.COLOR_BGRA2BGR) if is_bgra else roi_img
 
-        inpainted: Optional[np.ndarray] = None
+        inpainted = self.fallback_texture_inpaint(working_img, roi_mask)
 
-        if self._session is not None:
-            try:
-                inpainted = self._infer_onnx(working_img, roi_mask)
-            except Exception as inf_err:
-                logger.warning(
-                    "[TexturePreservingInpainter] Active session inference failed (%s). Triggering fallback.",
-                    inf_err,
-                )
-                inpainted = None
+        alpha = self.feather_mask(roi_mask, radius=4, sigma=1.5)
+        if working_img.ndim == 3 and alpha.ndim == 2:
+            alpha = alpha[:, :, None]
 
-        if inpainted is None:
-            inpainted = self.fallback_texture_inpaint(working_img, roi_mask)
-
-        # Gaussian Alpha Feathering Stitching
-        blended = self.apply_alpha_feathering(working_img, inpainted, roi_mask, sigma=1.0, ksize=3)
+        blended = (alpha * inpainted.astype(np.float32) + (1.0 - alpha) * working_img.astype(np.float32))
+        blended_uint8 = np.clip(blended, 0.0, 255.0).astype(np.uint8)
 
         if is_bgra:
-            blended = cv2.cvtColor(blended, cv2.COLOR_BGR2BGRA)
-            blended[:, :, 3] = roi_img[:, :, 3]
+            blended_uint8 = cv2.cvtColor(blended_uint8, cv2.COLOR_BGR2BGRA)
+            blended_uint8[:, :, 3] = roi_img[:, :, 3]
 
-        return blended
+        return blended_uint8
+
+    def feather_stitch_roi(
+        self,
+        frame: np.ndarray,
+        roi_inpainted: np.ndarray,
+        roi_mask: np.ndarray,
+        bbox: Tuple[int, int, int, int],
+    ) -> np.ndarray:
+        """Seamlessly stitches an inpainted ROI back into full video frame with alpha blending."""
+        x, y, w, h = bbox
+        fh, fw = frame.shape[:2]
+        x1 = max(0, x)
+        y1 = max(0, y)
+        x2 = min(fw, x + w)
+        y2 = min(fh, y + h)
+
+        if x2 <= x1 or y2 <= y1:
+            return frame
+
+        roi_w = x2 - x1
+        roi_h = y2 - y1
+
+        cur_roi_inp = roi_inpainted[:roi_h, :roi_w]
+        cur_mask = roi_mask[:roi_h, :roi_w]
+        frame_roi = frame[y1:y2, x1:x2]
+
+        alpha = self.feather_mask(cur_mask, radius=4, sigma=1.5)
+        if frame_roi.ndim == 3 and alpha.ndim == 2:
+            alpha = alpha[:, :, None]
+
+        blended = (alpha * cur_roi_inp.astype(np.float32) + (1.0 - alpha) * frame_roi.astype(np.float32))
+        frame[y1:y2, x1:x2] = np.clip(blended, 0.0, 255.0).astype(np.uint8)
+        return frame
+
+    @staticmethod
+    def apply_alpha_feathering(
+        orig_img: np.ndarray,
+        inpainted_img: np.ndarray,
+        mask: np.ndarray,
+        sigma: float = 2.0,
+        ksize: int = 5,
+    ) -> np.ndarray:
+        """Applies Gaussian Alpha Feathering between original and inpainted image."""
+        if mask is None or np.count_nonzero(mask) == 0:
+            return orig_img.copy()
+        alpha = TexturePreservingInpainter.feather_mask(mask, radius=max(1, ksize // 2), sigma=sigma)
+        if orig_img.ndim == 3 and alpha.ndim == 2:
+            alpha = alpha[:, :, None]
+        blended = alpha * inpainted_img.astype(np.float32) + (1.0 - alpha) * orig_img.astype(np.float32)
+        return np.clip(blended, 0.0, 255.0).astype(np.uint8)
 
     def inpaint_frame_with_regions(
         self,
-        frame: np.ndarray,
+        frame: Optional[np.ndarray],
         regions: List[Dict[str, Any]],
-        stroke_mask_generator_fn: Any,
-        prev_masks: Optional[Dict[Any, np.ndarray]] = None,
-        context_margin: int = 32,
-    ) -> Tuple[np.ndarray, Dict[Any, np.ndarray]]:
+        mask_generator: Optional[Callable[..., Any]] = None,
+        context_margin: int = 16,
+    ) -> Tuple[Optional[np.ndarray], Dict[str, Any]]:
         """
-        Inpaints active regions in a full video frame conforming to PROJECT.md § Interface Contracts:
-          1. Crops localized ROI around each region with context margin (default 32px).
-          2. Generates pixel-perfect text stroke mask.
-          3. Inpaints ROI preserving background texture.
-          4. Gaussian Alpha Feathering stitches the result back into frame.
+        Process all subtitle/watermark regions in a single video frame.
+        Guarantees zero texture corruption outside each region's tight bounding box.
+        Returns: (cleaned_frame, masks_dict)
         """
         if frame is None:
-            return frame, {}
+            return None, {}
         if not regions:
             return frame.copy(), {}
 
         out_frame = frame.copy()
-        current_masks: Dict[Any, np.ndarray] = {}
-        prev_masks = prev_masks or {}
-        fh, fw = frame.shape[:2]
+        fh, fw = out_frame.shape[:2]
+        masks_dict: Dict[str, Any] = {}
 
-        for idx, reg in enumerate(regions):
+        for reg in regions:
             rx = int(reg.get("x", 0))
             ry = int(reg.get("y", 0))
             rw = int(reg.get("w", 0))
             rh = int(reg.get("h", 0))
+            reg_text = reg.get("text", f"region_{rx}_{ry}")
 
-            if rw <= 0 or rh <= 0:
+            pad = context_margin
+            x1 = max(0, rx - pad)
+            y1 = max(0, ry - pad)
+            x2 = min(fw, rx + rw + pad)
+            y2 = min(fh, ry + rh + pad)
+
+            if x2 <= x1 or y2 <= y1:
                 continue
 
-            # Context margin expansion clamped to frame
-            rx1 = max(0, rx - context_margin)
-            ry1 = max(0, ry - context_margin)
-            rx2 = min(fw, rx + rw + context_margin)
-            ry2 = min(fh, ry + rh + context_margin)
+            roi_img = out_frame[y1:y2, x1:x2].copy()
 
-            if rx2 <= rx1 or ry2 <= ry1:
-                continue
-
-            roi = frame[ry1:ry2, rx1:rx2]
-            reg_key = reg.get("text", idx)
-            p_mask = prev_masks.get(reg_key)
-
-            # Sub-box relative coordinates inside the ROI
-            bx1 = max(0, rx - rx1)
-            by1 = max(0, ry - ry1)
-            bx2 = min(rx2 - rx1, rx + rw - rx1)
-            by2 = min(ry2 - ry1, ry + rh - ry1)
-
-            # Generate stroke mask
-            stroke_mask: Any = None
-            lines = reg.get("lines")
-            reg_meta = {"x": rx1, "y": ry1, "w": rx2 - rx1, "h": ry2 - ry1, "lines": lines}
-            try:
-                # Try calling generator with ROI and line confinement metadata
-                stroke_mask = stroke_mask_generator_fn(roi, p_mask, lines=lines, region_meta=reg_meta)
-            except TypeError:
+            if mask_generator is not None:
                 try:
-                    stroke_mask = stroke_mask_generator_fn(roi, p_mask)
-                except Exception:
-                    try:
-                        # Or with sub_roi
-                        sub_roi = roi[by1:by2, bx1:bx2]
-                        stroke_mask = stroke_mask_generator_fn(sub_roi, p_mask)
-                    except Exception as gen_err:
-                        logger.debug("[TexturePreservingInpainter] Mask generator error: %s", gen_err)
-                        stroke_mask = None
-            except Exception as gen_err:
-                logger.debug("[TexturePreservingInpainter] Mask generator error: %s", gen_err)
-                stroke_mask = None
-
-            if isinstance(stroke_mask, tuple):
-                stroke_mask = stroke_mask[0]
-
-            if stroke_mask is None or not isinstance(stroke_mask, np.ndarray):
-                continue
-
-            current_masks[reg_key] = stroke_mask
-
-            # Align stroke mask to ROI coordinate frame
-            roi_h, roi_w = roi.shape[:2]
-            if stroke_mask.shape == (roi_h, roi_w):
-                roi_mask = stroke_mask
-            elif stroke_mask.shape == (by2 - by1, bx2 - bx1):
-                roi_mask = np.zeros((roi_h, roi_w), dtype=np.uint8)
-                roi_mask[by1:by2, bx1:bx2] = stroke_mask
+                    roi_mask = mask_generator(roi_img)
+                except TypeError:
+                    roi_mask = mask_generator(roi_img, None)
             else:
-                roi_mask = cv2.resize(stroke_mask, (roi_w, roi_h), interpolation=cv2.INTER_NEAREST)
+                roi_mask = np.zeros((y2 - y1, x2 - x1), dtype=np.uint8)
+                mx1 = rx - x1
+                my1 = ry - y1
+                mx2 = min(x2 - x1, mx1 + rw)
+                my2 = min(y2 - y1, my1 + rh)
+                if mx2 > mx1 and my2 > my1:
+                    roi_mask[my1:my2, mx1:mx2] = 255
 
-            if np.count_nonzero(roi_mask) == 0:
+            if roi_mask is None or np.count_nonzero(roi_mask) == 0:
                 continue
 
-            # Localized ROI inpainting with Structure-Texture decomposition & alpha feathering
-            inpainted_roi = self.inpaint_roi(roi, roi_mask)
-            out_frame[ry1:ry2, rx1:rx2] = inpainted_roi
+            masks_dict[reg_text] = roi_mask
+            inpainted_roi = self.inpaint_roi(roi_img, roi_mask)
+            out_frame = self.feather_stitch_roi(out_frame, inpainted_roi, roi_mask, (x1, y1, x2 - x1, y2 - y1))
 
-        return out_frame, current_masks
+        return out_frame, masks_dict

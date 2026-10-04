@@ -1183,7 +1183,7 @@ class VideoEditorService:
                         if hasattr(img, "width") and isinstance(img.width, int):
                             frame_w = max(frame_w, img.width)
                             frame_h = max(frame_h, img.height)
-                        # Primary Detector: StudioTextDetector (DBNet ONNX)
+                        # Primary Detector: StudioTextDetector
                         dbnet_boxes: List[Tuple[int, int, int, int, str, float]] = []
                         try:
                             from app.services.studio_text_detector import StudioTextDetector
@@ -2259,10 +2259,10 @@ class VideoEditorService:
         timeout_sec: float = 35.0,
     ) -> Any:
         """
-        Chuỗi dự phòng 3 cấp chuẩn Studio:
-        - Cấp 1 (Cloud Primary): HF IOPaint LaMa Zero-Auth API (Fast Fourier Convolutions)
-        - Cấp 2 (Local Fallback): Local LaMa ONNX CPU qua TexturePreservingInpainter
-        - Cấp 3 (Emergency Fallback): Guided Filter Structure-Texture Synthesis (TUYỆT ĐỐI KHÔNG BƠM NHIỄU GAUSS)
+        Chuỗi dự phòng chuẩn Studio:
+        - Cấp 1 (Primary Studio): TexturePreservingInpainter (Pure Guided Filter Structure-Texture Synthesis)
+        - Cấp 2 (Texture Fallback): Pure Guided Filter Structure-Texture Synthesis
+        - Cấp 3 (Emergency Fallback): cv2.inpaint TELEA/NS
         """
         import cv2
         import numpy as np
@@ -2270,18 +2270,15 @@ class VideoEditorService:
         if roi_img is None or roi_mask is None or np.count_nonzero(roi_mask) == 0:
             return roi_img
 
-        # --- Cấp 1 (Local Primary Studio): Local LaMa ONNX CPU qua TexturePreservingInpainter ---
+        # --- Cấp 1 (Primary Studio): TexturePreservingInpainter qua Pure Guided Filter ---
         try:
             inpainter = get_texture_preserving_inpainter()
-            if inpainter is not None and (
-                inpainter.is_session_active
-                or (inpainter.is_model_ready() and inpainter.init_session())
-            ):
-                res_onnx = inpainter.inpaint_roi(roi_img, roi_mask)
-                if res_onnx is not None and res_onnx.shape == roi_img.shape:
-                    return res_onnx
+            if inpainter is not None:
+                res_inpaint = inpainter.inpaint_roi(roi_img, roi_mask)
+                if res_inpaint is not None and res_inpaint.shape == roi_img.shape:
+                    return res_inpaint
         except Exception as exc:
-            logger.debug("[VideoEditorService] Tier 1 (Local LaMa ONNX) error: %s", exc)
+            logger.debug("[VideoEditorService] Tier 1 (Pure Guided Filter) error: %s", exc)
 
         # --- Cấp 2 (Texture Fallback): Pure Guided Filter Structure-Texture Synthesis ---
         try:

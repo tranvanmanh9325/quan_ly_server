@@ -357,12 +357,15 @@ class TexturePreservingInpainter:
 
         inpainted = self.fallback_texture_inpaint(working_img, roi_mask)
 
+        if np.array_equal(inpainted, working_img):
+            return roi_img.copy()
+
         alpha = self.feather_mask(roi_mask, radius=4, sigma=1.5)
         if working_img.ndim == 3 and alpha.ndim == 2:
             alpha = alpha[:, :, None]
 
         blended = (alpha * inpainted.astype(np.float32) + (1.0 - alpha) * working_img.astype(np.float32))
-        blended_uint8 = np.clip(blended, 0.0, 255.0).astype(np.uint8)
+        blended_uint8 = np.clip(np.round(blended), 0.0, 255.0).astype(np.uint8)
 
         if is_bgra:
             blended_uint8 = cv2.cvtColor(blended_uint8, cv2.COLOR_BGR2BGRA)
@@ -400,7 +403,7 @@ class TexturePreservingInpainter:
             alpha = alpha[:, :, None]
 
         blended = (alpha * cur_roi_inp.astype(np.float32) + (1.0 - alpha) * frame_roi.astype(np.float32))
-        frame[y1:y2, x1:x2] = np.clip(blended, 0.0, 255.0).astype(np.uint8)
+        frame[y1:y2, x1:x2] = np.clip(np.round(blended), 0.0, 255.0).astype(np.uint8)
         return frame
 
     @staticmethod
@@ -418,7 +421,7 @@ class TexturePreservingInpainter:
         if orig_img.ndim == 3 and alpha.ndim == 2:
             alpha = alpha[:, :, None]
         blended = alpha * inpainted_img.astype(np.float32) + (1.0 - alpha) * orig_img.astype(np.float32)
-        return np.clip(blended, 0.0, 255.0).astype(np.uint8)
+        return np.clip(np.round(blended), 0.0, 255.0).astype(np.uint8)
 
     def inpaint_frame_with_regions(
         self,

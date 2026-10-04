@@ -30,6 +30,7 @@ from app.services.video_pipeline import (
     PendingVideoSession,
     VideoMetadata,
 )
+import app.services.video_editor_service
 
 
 class TestTelegramVideoDirectPipeline(unittest.IsolatedAsyncioTestCase):

@@ -26,7 +26,6 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Generator, List, Optional, Tuple, Union
 
 import httpx
-import requests
 
 try:
     from app.services.media_storage_manager import media_storage_manager

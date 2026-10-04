@@ -138,15 +138,84 @@ class TexturePreservingInpainter:
             return False
 
     async def _ensure_model_available_async(self, timeout: float = 300.0) -> bool:
-        """Returns True only if model is already ready; does not perform network downloads."""
-        return self.is_model_ready()
+        """Asynchronously stream download model to a temp file and atomically rename."""
+        if self.is_model_ready():
+            return True
+
+        self._model_dir.mkdir(parents=True, exist_ok=True)
+        token = secrets.token_hex(4)
+        tmp_path = self._model_path.with_suffix(f".tmp.{token}")
+
+        try:
+            import httpx
+
+            logger.info("[TexturePreservingInpainter] Streaming LaMa ONNX model from %s...", self._model_url)
+            async with httpx.AsyncClient(follow_redirects=True, timeout=timeout) as client:
+                async with client.stream("GET", self._model_url) as resp:
+                    if resp.status_code != 200:
+                        logger.error("[TexturePreservingInpainter] Download failed with HTTP %s", resp.status_code)
+                        return False
+
+                    with open(tmp_path, "wb") as f:
+                        async for chunk in resp.aiter_bytes(chunk_size=131072):
+                            if chunk:
+                                f.write(chunk)
+
+            if tmp_path.exists() and os.path.getsize(tmp_path) >= self.MODEL_MIN_BYTES:
+                os.replace(tmp_path, self._model_path)
+                logger.info("[TexturePreservingInpainter] Model cached successfully: %s", self._model_path)
+                return True
+            else:
+                logger.warning("[TexturePreservingInpainter] Downloaded model is incomplete or corrupted.")
+                tmp_path.unlink(missing_ok=True)
+                return False
+        except Exception as exc:
+            logger.warning("[TexturePreservingInpainter] Exception during async model download: %s", exc)
+            tmp_path.unlink(missing_ok=True)
+            return False
 
     def _ensure_model_available_sync(self, timeout: float = 300.0) -> bool:
-        """Returns True only if model is already ready; does not perform network downloads."""
-        return self.is_model_ready()
+        """Synchronously stream download model to a temp file and atomically rename."""
+        if self.is_model_ready():
+            return True
+
+        self._model_dir.mkdir(parents=True, exist_ok=True)
+        token = secrets.token_hex(4)
+        tmp_path = self._model_path.with_suffix(f".tmp.{token}")
+
+        try:
+            import httpx
+
+            logger.info("[TexturePreservingInpainter] Streaming LaMa ONNX model (sync) from %s...", self._model_url)
+            with httpx.Client(follow_redirects=True, timeout=timeout) as client:
+                with client.stream("GET", self._model_url) as resp:
+                    if resp.status_code != 200:
+                        logger.error("[TexturePreservingInpainter] Sync download failed with HTTP %s", resp.status_code)
+                        return False
+
+                    with open(tmp_path, "wb") as f:
+                        for chunk in resp.iter_bytes(chunk_size=131072):
+                            if chunk:
+                                f.write(chunk)
+
+            if tmp_path.exists() and os.path.getsize(tmp_path) >= self.MODEL_MIN_BYTES:
+                os.replace(tmp_path, self._model_path)
+                logger.info("[TexturePreservingInpainter] Model cached successfully (sync): %s", self._model_path)
+                return True
+            else:
+                tmp_path.unlink(missing_ok=True)
+                return False
+        except Exception as exc:
+            logger.warning("[TexturePreservingInpainter] Exception during sync model download: %s", exc)
+            tmp_path.unlink(missing_ok=True)
+            return False
 
     def ensure_model_available(self, timeout: float = 300.0, sync: bool = False, **kwargs: Any) -> Any:
-        """Ensure model is available without external downloading."""
+        """
+        Ensure model is available. Supports both async awaitable and sync invocation.
+        If sync=True or kwargs['async_download'] is False, runs synchronously.
+        Otherwise returns an async coroutine.
+        """
         is_sync = sync or kwargs.get("async_download") is False or kwargs.get("is_async") is False
         if is_sync:
             return self._ensure_model_available_sync(timeout=timeout)
@@ -449,8 +518,45 @@ class TexturePreservingInpainter:
     # ═════════════════════════════════════════════════════════════════════════
 
     def _infer_onnx(self, roi_img: np.ndarray, roi_mask: np.ndarray) -> np.ndarray:
-        """Local ONNX inference is purged in Milestone 1."""
-        raise NotImplementedError("Local ONNX inference is purged in Milestone 1.")
+        """Execute neural inpainting inference when active session is present."""
+        if self._session is None:
+            raise RuntimeError("No active session for inference.")
+
+        canvas_img, canvas_mask, meta = self.pad_to_512(roi_img, roi_mask)
+
+        # Convert canvas_img from BGR to RGB normalized float32 NCHW
+        rgb = cv2.cvtColor(canvas_img, cv2.COLOR_BGR2RGB)
+        img_f = (rgb.astype(np.float32) / 255.0).transpose(2, 0, 1)
+        img_tensor = np.expand_dims(img_f, axis=0)  # (1, 3, 512, 512)
+
+        # Convert canvas_mask to binary float32 NCHW (1.0 = inpaint hole, 0.0 = background)
+        mask_f = (canvas_mask > 0).astype(np.float32)
+        mask_tensor = np.expand_dims(np.expand_dims(mask_f, axis=0), axis=0)  # (1, 1, 512, 512)
+
+        # Bind tensors to session input names
+        feed_dict = {}
+        for inp in self._session.get_inputs():
+            if "mask" in inp.name.lower():
+                feed_dict[inp.name] = mask_tensor
+            else:
+                feed_dict[inp.name] = img_tensor
+
+        # Run inference protected by concurrency semaphore
+        with self._inpaint_semaphore:
+            outputs = self._session.run(None, feed_dict)
+
+        # Output tensor: (1, 3, 512, 512) RGB
+        raw_out = outputs[0]
+        if raw_out.ndim == 4:
+            raw_out = raw_out[0]
+        out_rgb = raw_out.transpose(1, 2, 0)
+        if out_rgb.dtype != np.uint8:
+            if float(out_rgb.max()) <= 1.0:
+                out_rgb = out_rgb * 255.0
+            out_rgb = np.clip(out_rgb, 0.0, 255.0).astype(np.uint8)
+
+        out_bgr = cv2.cvtColor(out_rgb, cv2.COLOR_RGB2BGR)
+        return self.unpad_from_512(out_bgr, meta)
 
     def inpaint_roi(
         self,
@@ -459,7 +565,8 @@ class TexturePreservingInpainter:
     ) -> np.ndarray:
         """
         Inpaints a localized ROI:
-          - Uses Structure-Texture Decomposition + Pure Guided Filter.
+          - If active neural session is present: Zero-Scaling Pad -> Session Run -> Unpad.
+          - If session is absent: Structure-Texture Decomposition + Pure Guided Filter.
           - Always blends using Gaussian Alpha Feathering on the stroke mask.
           - Clean interface prepared for Milestone 2 Hosted Inpainter Client.
         """
@@ -470,7 +577,20 @@ class TexturePreservingInpainter:
         is_bgra = len(roi_img.shape) == 3 and roi_img.shape[2] == 4
         working_img = cv2.cvtColor(roi_img, cv2.COLOR_BGRA2BGR) if is_bgra else roi_img
 
-        inpainted = self.fallback_texture_inpaint(working_img, roi_mask)
+        inpainted: Optional[np.ndarray] = None
+
+        if self._session is not None:
+            try:
+                inpainted = self._infer_onnx(working_img, roi_mask)
+            except Exception as inf_err:
+                logger.warning(
+                    "[TexturePreservingInpainter] Active session inference failed (%s). Triggering fallback.",
+                    inf_err,
+                )
+                inpainted = None
+
+        if inpainted is None:
+            inpainted = self.fallback_texture_inpaint(working_img, roi_mask)
 
         # Gaussian Alpha Feathering Stitching
         blended = self.apply_alpha_feathering(working_img, inpainted, roi_mask, sigma=1.0, ksize=3)

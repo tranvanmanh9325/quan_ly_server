@@ -82,58 +82,21 @@ class StudioTextDetector:
         return self._model_path
 
     def is_available(self) -> bool:
-        """Check whether the ONNX model file exists and onnxruntime is installed."""
+        """Check whether the detector is available (purged local ONNX in M1)."""
         if self._is_available is not None:
             return self._is_available
-
-        if not self._model_path.is_file():
-            self._is_available = False
-            return False
-
-        try:
-            import onnxruntime
-            self._is_available = True
-            return True
-        except ImportError:
-            self._is_available = False
-            return False
+        return False
 
     def init_session(self) -> bool:
         """
-        Initialize and warm up the ONNX Runtime session with thread constraints.
-        Thread-safe singleton session initialization.
+        Initialize the detector session.
+        Returns True only if an external/mock session has been configured.
         """
         if self._session is not None:
             return True
-
         if not self.is_available():
-            logger.warning("[StudioTextDetector] Model not found at %s or onnxruntime missing.", self._model_path)
             return False
-
-        with self._session_lock:
-            if self._session is not None:
-                return True
-
-            try:
-                import onnxruntime as ort
-
-                opts = ort.SessionOptions()
-                opts.intra_op_num_threads = self._cpu_threads
-                opts.inter_op_num_threads = 1
-                opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-                opts.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
-
-                session = ort.InferenceSession(
-                    str(self._model_path),
-                    sess_options=opts,
-                    providers=["CPUExecutionProvider"],
-                )
-                self._session = session
-                logger.info("[StudioTextDetector] DBNet session initialized from %s", self._model_path)
-                return True
-            except Exception as exc:
-                logger.error("[StudioTextDetector] Failed to initialize DBNet session: %s", exc)
-                return False
+        return self._session is not None
 
     def detect_regions(
         self,

@@ -20,7 +20,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 # Ensure app is in path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -119,6 +119,7 @@ class TestTelegramVideoDirectPipeline(unittest.IsolatedAsyncioTestCase):
         self.mock_editor.remove_text_from_video.assert_called_once_with(
             input_path_or_url=self.dummy_video_path,
             mode="auto",
+            progress_callback=ANY,
         )
         # LLM was NOT called
         self.bot.chat_with_agent.assert_not_called()
@@ -151,6 +152,7 @@ class TestTelegramVideoDirectPipeline(unittest.IsolatedAsyncioTestCase):
         self.mock_editor.remove_text_from_video.assert_called_once_with(
             input_path_or_url=self.dummy_video_path,
             mode="delogo",
+            progress_callback=ANY,
         )
         self.bot.chat_with_agent.assert_not_called()
 

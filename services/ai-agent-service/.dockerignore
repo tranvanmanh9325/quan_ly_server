@@ -1,0 +1,15 @@
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/*.pyd
+models/
+app/models/
+*.onnx
+*.pt
+*.pth
+*.bin
+*.safetensors
+.git
+.pytest_cache
+.coverage
+htmlcov/

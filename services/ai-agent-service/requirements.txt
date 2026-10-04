@@ -23,4 +23,3 @@ python-multipart>=0.0.32
 opencv-python-headless>=4.10.0
 mutagen>=1.47.0
 pytesseract>=0.3.10
-onnxruntime>=1.18.0

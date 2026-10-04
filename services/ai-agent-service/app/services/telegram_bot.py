@@ -1897,14 +1897,36 @@ class TelegramBot:
                             res: Optional[Dict[str, Any]] = None
                             if is_remove_text:
                                 mode = "delogo" if "delogo" in q else ("inpaint" if "inpaint" in q else "auto")
-                                await self.send_message(
+                                status_msg = await self.send_message(
                                     chat_id,
-                                    "⚡ <i>Đang tự động xóa text/watermark khỏi video của anh Mạnh...</i>\n"
-                                    "<i>(Tiểu Bảo Bảo đang phân tích khung hình và làm sạch video)</i>",
+                                    "⚡ <b>Tiểu Bảo Bảo đang chuẩn bị xóa text trong video...</b>\n"
+                                    "<code>[░░░░░░░░░░] 0%</code>\n"
+                                    "<i>(Đang khởi động phân tích khung hình...)</i>",
                                 )
+                                status_msg_id = status_msg.get("message_id") if isinstance(status_msg, dict) else None
+                                last_edit_time = 0.0
+
+                                async def telegram_progress_callback(percent: int, stage_text: str) -> None:
+                                    nonlocal last_edit_time
+                                    now = time.time()
+                                    if status_msg_id and (now - last_edit_time >= 3.0 or percent >= 100):
+                                        last_edit_time = now
+                                        p_filled = min(10, max(0, percent // 10))
+                                        progress_bar = "▓" * p_filled + "░" * (10 - p_filled)
+                                        text = (
+                                            f"⚡ <b>Đang làm sạch video ({percent}%):</b>\n"
+                                            f"<code>[{progress_bar}]</code>\n"
+                                            f"<i>{stage_text}</i>"
+                                        )
+                                        try:
+                                            await self.edit_message_text(chat_id, status_msg_id, text)
+                                        except Exception as edit_err:
+                                            logger.debug("[TelegramBot] Error updating progress: %s", edit_err)
+
                                 edit_coro = self._video_editor_service.remove_text_from_video(
                                     input_path_or_url=session.video_path,
                                     mode=mode,
+                                    progress_callback=telegram_progress_callback,
                                 )
                                 edit_task = asyncio.create_task(edit_coro)
                                 self._last_video_task = edit_task

@@ -94,64 +94,109 @@ class TestTelegramVideoDirectPipeline(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(mock_cls.call_count, 1)
             self.assertIs(svc1, svc2)
 
-    async def test_video_pipeline_routes_to_agent_react_for_remove_text_auto(self):
-        """Test 2: Instruction 'xóa sạch text trong video giúp tôi' routes to AI Agent ReAct reasoning."""
-        instruction = "xóa sạch text trong video giúp tôi"
+    async def test_video_pipeline_bypasses_llm_and_executes_remove_text_auto(self):
+        """Test 2: Instruction 'xóa sạch text trong video giúp tôi' calls remove_text_from_video mode='auto' and bypasses LLM."""
+        clean_output = os.path.join(self.temp_dir, "clean_out.mp4")
+        with open(clean_output, "wb") as f:
+            f.write(b"\x00" * 1024)
+
+        self.mock_editor.remove_text_from_video = AsyncMock(return_value={
+            "status": "ok",
+            "output_path": clean_output,
+            "delivery": "direct",
+            "message": "Đã làm sạch text",
+        })
+
         await self.bot._on_video_process_pipeline(
             chat_id="12345",
             session=self.session,
-            instruction=instruction,
+            instruction="xóa sạch text trong video giúp tôi",
         )
 
-        # VideoPipeline processes video context
-        self.bot._video_pipeline.process_video.assert_called_once()
-        # AI Agent chat_with_agent is invoked with video context & instruction
-        self.bot.chat_with_agent.assert_called_once()
-        call_prompt = self.bot.chat_with_agent.call_args[0][1]
-        self.assertIn(self.dummy_video_path, call_prompt)
-        self.assertIn(instruction, call_prompt)
+        self.mock_editor.remove_text_from_video.assert_called_once()
+        call_kwargs = self.mock_editor.remove_text_from_video.call_args[1]
+        self.assertEqual(call_kwargs.get("input_path_or_url"), self.dummy_video_path)
+        self.assertEqual(call_kwargs.get("mode"), "auto")
+        self.bot.chat_with_agent.assert_not_called()
+        self.bot.send_video.assert_called_once()
 
     async def test_video_pipeline_delogo_mode_explicit(self):
-        """Test 3: Instruction containing 'delogo' routes to AI Agent ReAct reasoning."""
-        instruction = "delogo video này giùm em"
+        """Test 3: Instruction containing 'delogo' passes mode='delogo' to remove_text_from_video."""
+        clean_output = os.path.join(self.temp_dir, "clean_delogo.mp4")
+        with open(clean_output, "wb") as f:
+            f.write(b"\x00" * 1024)
+
+        self.mock_editor.remove_text_from_video = AsyncMock(return_value={
+            "status": "ok",
+            "output_path": clean_output,
+            "delivery": "direct",
+            "message": "Đã làm sạch text qua delogo",
+        })
+
         await self.bot._on_video_process_pipeline(
             chat_id="12345",
             session=self.session,
-            instruction=instruction,
+            instruction="delogo video này giùm em",
         )
 
-        self.bot._video_pipeline.process_video.assert_called_once()
-        self.bot.chat_with_agent.assert_called_once()
-        call_prompt = self.bot.chat_with_agent.call_args[0][1]
-        self.assertIn(instruction, call_prompt)
+        self.mock_editor.remove_text_from_video.assert_called_once()
+        self.assertEqual(
+            self.mock_editor.remove_text_from_video.call_args[1].get("mode"),
+            "delogo",
+        )
+        self.bot.chat_with_agent.assert_not_called()
 
-    async def test_video_pipeline_routes_to_agent_react_for_color_grade(self):
-        """Test 4: Instruction 'chỉnh màu video vintage hoài cổ' routes to AI Agent ReAct reasoning."""
-        instruction = "chỉnh màu video vintage hoài cổ"
+    async def test_video_pipeline_bypasses_llm_and_executes_apply_color_grade(self):
+        """Test 4: Instruction 'chỉnh màu video vintage hoài cổ' calls apply_color_grade preset='vintage' and bypasses LLM."""
+        color_output = os.path.join(self.temp_dir, "color_out.mp4")
+        with open(color_output, "wb") as f:
+            f.write(b"\x00" * 1024)
+
+        self.mock_editor.apply_color_grade = AsyncMock(return_value={
+            "status": "ok",
+            "output_path": color_output,
+            "delivery": "direct",
+            "message": "Đã áp dụng bộ lọc màu vintage",
+        })
+
         await self.bot._on_video_process_pipeline(
             chat_id="12345",
             session=self.session,
-            instruction=instruction,
+            instruction="chỉnh màu video vintage hoài cổ",
         )
 
-        self.bot._video_pipeline.process_video.assert_called_once()
-        self.bot.chat_with_agent.assert_called_once()
-        call_prompt = self.bot.chat_with_agent.call_args[0][1]
-        self.assertIn(instruction, call_prompt)
+        self.mock_editor.apply_color_grade.assert_called_once_with(
+            input_path_or_url=self.dummy_video_path,
+            preset="vintage",
+        )
+        self.bot.chat_with_agent.assert_not_called()
+        self.bot.send_video.assert_called_once()
 
-    async def test_video_pipeline_routes_to_agent_react_for_stabilize_video(self):
-        """Test 5: Instruction 'ổn định video bị rung camera này' routes to AI Agent ReAct reasoning."""
-        instruction = "ổn định video bị rung camera này"
+    async def test_video_pipeline_bypasses_llm_and_executes_stabilize_video(self):
+        """Test 5: Instruction 'ổn định video bị rung camera này' calls stabilize_video and bypasses LLM."""
+        stab_output = os.path.join(self.temp_dir, "stab_out.mp4")
+        with open(stab_output, "wb") as f:
+            f.write(b"\x00" * 1024)
+
+        self.mock_editor.stabilize_video = AsyncMock(return_value={
+            "status": "ok",
+            "output_path": stab_output,
+            "delivery": "direct",
+            "message": "Đã khử rung thành công",
+        })
+
         await self.bot._on_video_process_pipeline(
             chat_id="12345",
             session=self.session,
-            instruction=instruction,
+            instruction="ổn định video bị rung camera này",
         )
 
-        self.bot._video_pipeline.process_video.assert_called_once()
-        self.bot.chat_with_agent.assert_called_once()
-        call_prompt = self.bot.chat_with_agent.call_args[0][1]
-        self.assertIn(instruction, call_prompt)
+        self.mock_editor.stabilize_video.assert_called_once_with(
+            input_path_or_url=self.dummy_video_path,
+            smoothing=15,
+        )
+        self.bot.chat_with_agent.assert_not_called()
+        self.bot.send_video.assert_called_once()
 
     async def test_video_pipeline_falls_back_to_llm_for_complex_concat(self):
         """Test 6: Complex multi-file instruction 'ghép 2 video này lại thành một' falls back to LLM."""
@@ -197,25 +242,25 @@ class TestTelegramVideoDirectPipeline(unittest.IsolatedAsyncioTestCase):
         self.bot.chat_with_agent.assert_called_once()
 
     async def test_video_pipeline_large_file_portal_delivery(self):
-        """Test 9: When video editor returns portal delivery (>50MB), _deliver_media_result sends portal download link."""
-        from app.services.ai_agent_tools import AgentToolExecutor
-        executor = AgentToolExecutor(ssh_client=None, message_cache=None, telegram_bot=self.bot)
-
-        portal_res = {
+        """Test 9: When video editor returns portal delivery (>50MB), send portal download link instead of send_video."""
+        self.mock_editor.remove_text_from_video = AsyncMock(return_value={
             "status": "ok",
+            "tool": "remove_text_from_video",
             "delivery": "portal",
             "file_size_formatted": "68.2 MB",
             "internet_url": "https://ngrok.example.com/download/large_video.mp4",
             "lan_url": "http://192.168.1.10:8084/download/large_video.mp4",
             "message": "Đã xóa logo thành công",
-        }
+        })
 
-        msg = await executor._deliver_media_result(
-            res=portal_res,
+        await self.bot._on_video_process_pipeline(
             chat_id="12345",
-            summary_msg="Đã xóa logo thành công",
-            media_type="video",
+            session=self.session,
+            instruction="xóa logo trong video",
         )
+
+        # send_video MUST NOT be called because file exceeds 50MB
+        self.bot.send_video.assert_not_called()
 
         # send_message MUST contain both URLs and file size
         found_portal_msg = False
@@ -230,9 +275,10 @@ class TestTelegramVideoDirectPipeline(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(found_portal_msg, "Portal download links must be delivered to chat via send_message")
 
     async def test_video_pipeline_tool_error_graceful_recovery(self):
-        """Test 10: Graceful recovery and Vietnamese error message when video pipeline raises exception."""
-        self.bot._video_pipeline.process_video = AsyncMock(
-            side_effect=RuntimeError("Video processing crashed")
+        """Test 10: Graceful recovery and Vietnamese error message when VideoEditorService raises exception or error."""
+        # 10a: VideoEditorService raises an exception
+        self.mock_editor.remove_text_from_video = AsyncMock(
+            side_effect=RuntimeError("FFmpeg delogo filter crashed")
         )
 
         await self.bot._on_video_process_pipeline(
@@ -245,9 +291,32 @@ class TestTelegramVideoDirectPipeline(unittest.IsolatedAsyncioTestCase):
         found_err = False
         for call_item in self.bot.send_message.call_args_list:
             text = call_item[0][1] if len(call_item[0]) > 1 else call_item[1].get("text", "")
-            if "Xin lỗi anh Mạnh, đã xảy ra lỗi trong quá trình xử lý video" in text:
+            if "Có lỗi trong quá trình biên tập video" in text:
                 found_err = True
                 break
+        self.assertTrue(found_err, "Polite Vietnamese error notification must be sent on exception")
+        self.bot.chat_with_agent.assert_not_called()
+
+        # 10b: VideoEditorService returns status='error'
+        self.bot.send_message.reset_mock()
+        self.mock_editor.remove_text_from_video = AsyncMock(return_value={
+            "status": "error",
+            "message": "Không tìm thấy vùng text hợp lệ",
+        })
+
+        await self.bot._on_video_process_pipeline(
+            chat_id="12345",
+            session=self.session,
+            instruction="xóa text trên video",
+        )
+
+        found_err_status = False
+        for call_item in self.bot.send_message.call_args_list:
+            text = call_item[0][1] if len(call_item[0]) > 1 else call_item[1].get("text", "")
+            if "Không thể hoàn thành biên tập video" in text or "Không tìm thấy vùng text hợp lệ" in text:
+                found_err_status = True
+                break
+        self.assertTrue(found_err_status, "Status='error' must be communicated clearly to user")
         self.assertTrue(found_err, "Polite Vietnamese error notification must be sent on exception")
 
     async def test_send_video_file_under_50mb_direct_and_cleans_up(self):

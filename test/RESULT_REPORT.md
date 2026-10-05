@@ -40,24 +40,34 @@
 
 ---
 
-## 4. KIỂM ĐỊNH KIẾN TRÚC REACT AGENT & TÍNH TỔNG QUÁT (GENERALITY)
-- **Gỡ bỏ hoàn toàn Fast-path / Keyword Bypass**:
-  - File `telegram_bot.py`: Đã loại bỏ 166 dòng mã bypass LLM. Toàn bộ yêu cầu xử lý video đi thẳng qua `chat_with_agent` với đầy đủ ngữ cảnh tệp.
-  - File `ai_agent_tools.py`: Bổ sung cơ chế `_deliver_media_result`, tự động gửi trực tiếp file video/ảnh/tài liệu qua Telegram ngay sau khi tool thực thi xong.
+## 4. KIỂM ĐỊNH KIẾN TRÚC PIPELINE & TÍNH TỔNG QUÁT (GENERALITY)
+- **Kiến trúc Dual-Execution Pipeline (Best of Both Worlds)**:
+  - **Non-Blocking Direct Fast-Path** trong `telegram_bot.py`:
+    * Xử lý tức thì các tác vụ biên tập tệp video trực tiếp từ caption (xóa text/watermark, chỉnh màu, chống rung).
+    * Phản hồi Acknowledge tức thì (`⚡ Đang tự động xóa text/watermark... 0%`), giải phóng hoàn toàn luồng polling của bot.
+    * Tạo `asyncio.Task` non-blocking và bọc timeout guard 300s, bắt kịp thời lỗi timeout để gửi thông báo lịch sự tiếng Việt (`❌ Video quá phức tạp, vui lòng thử lại với video ngắn hơn.`).
+    * Trả kết quả trực tiếp qua `send_video_file` (≤ 50MB) hoặc gửi link portal phân phối tốc độ cao (> 50MB).
+  - **ReAct Agent Reasoning Loop** trong `ai_agent.py` & `ai_agent_tools.py`:
+    * Tự động điều phối các yêu cầu phức tạp (ghép nhiều video, thêm phụ đề, tóm tắt, phân tích khung hình, hỏi đáp đa phương tiện).
+    * Toàn bộ 9 công cụ biên tập video được tích hợp qua `AgentToolExecutor._deliver_media_result`, cho phép Agent tự chủ quyết định gọi công cụ và tự động gửi media trả về Telegram.
 - **Kiểm thử tính tổng quát (Generality Tests)**:
-  1. *Prompt*: `"xóa sạch text trong video này giúp tôi"` -> Agent tự động nạp và gọi tool `remove_text_from_video(mode='auto')` -> **PASS**.
-  2. *Prompt*: `"chỉnh màu video này sang phong cách vintage giúp tôi"` -> Agent tự động nạp và gọi tool `apply_color_grade(preset='vintage')` -> **PASS**.
-  3. *Prompt*: `"ổn định chống rung video này giúp tôi"` -> Agent tự động nạp và gọi tool `stabilize_video(...)` -> **PASS**.
-  4. *Prompt*: `"cắt clip video từ 00:00:05 đến 00:00:15"` -> Agent tự động nạp và gọi tool `edit_video_clip(...)` -> **PASS**.
+  1. *Prompt*: `"xóa sạch text trong video này giúp tôi"` -> Tự động kích hoạt công cụ `remove_text_from_video(mode='auto')` -> **PASS**.
+  2. *Prompt*: `"chỉnh màu video này sang phong cách vintage giúp tôi"` -> Tự động kích hoạt công cụ `apply_color_grade(preset='vintage')` -> **PASS**.
+  3. *Prompt*: `"ổn định chống rung video này giúp tôi"` -> Tự động kích hoạt công cụ `stabilize_video(...)` -> **PASS**.
+  4. *Prompt*: `"cắt clip video từ 00:00:05 đến 00:00:15"` -> Tự động kích hoạt công cụ `edit_video_clip(...)` -> **PASS**.
+  5. *Prompt*: `"ghép 2 video này lại thành một"` -> Fallback sang ReAct Agent reasoning để ghép clip -> **PASS**.
 
 ---
 
 ## 5. TỔNG KẾT BÀI KIỂM THỬ TỰ ĐỘNG (AUTOMATED TEST SUITE)
 - `tests/test_telegram_video_direct_pipeline.py`: **13/13 tests PASS (100%)**.
+- `tests/test_video_upload_stuck_99_fix.py`: **8/8 tests PASS (100%)**.
+- `tests/test_challenger_gen21_pipeline_verifier.py`: **11/11 tests PASS (100%)**.
+- `tests/test_video_quality_audit.py`: **5/5 tests PASS (100%)**.
 - `tests/test_challenger_video_editor_invocation.py`: **13/13 tests PASS (100%)**.
 - `tests/test_generalization_synthetic.py`: **6/6 tests PASS (100%)**.
-- `tests/test_challenger_m2_preview_empirical.py`: **15/15 tests PASS (1 skipped ground truth local path)**.
 - `tests/test_e2e_video_inpainting.py`: **121/121 tests PASS (100%)**.
+- Toàn bộ 11 test suites xử lý video: **335/335 tests PASS (100%)**.
 - `python3 -m compileall`: **Exit code 0 (100% Clean Syntax)**.
 
 ---

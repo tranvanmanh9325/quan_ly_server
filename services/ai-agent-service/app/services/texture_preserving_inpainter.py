@@ -360,12 +360,13 @@ class TexturePreservingInpainter:
         if np.array_equal(inpainted, working_img):
             return roi_img.copy()
 
-        alpha = self.feather_mask(roi_mask, radius=4, sigma=1.5)
-        if working_img.ndim == 3 and alpha.ndim == 2:
-            alpha = alpha[:, :, None]
+        alpha_2d = self.feather_mask(roi_mask, radius=4, sigma=1.5)
+        alpha = alpha_2d[:, :, None] if working_img.ndim == 3 else alpha_2d
 
         blended = (alpha * inpainted.astype(np.float32) + (1.0 - alpha) * working_img.astype(np.float32))
-        blended_uint8 = np.clip(np.round(blended), 0.0, 255.0).astype(np.uint8)
+        blended_uint8 = working_img.copy()
+        active = (alpha_2d > 0.001)
+        blended_uint8[active] = np.clip(np.round(blended[active]), 0.0, 255.0).astype(np.uint8)
 
         if is_bgra:
             blended_uint8 = cv2.cvtColor(blended_uint8, cv2.COLOR_BGR2BGRA)
@@ -398,12 +399,14 @@ class TexturePreservingInpainter:
         cur_mask = roi_mask[:roi_h, :roi_w]
         frame_roi = frame[y1:y2, x1:x2]
 
-        alpha = self.feather_mask(cur_mask, radius=4, sigma=1.5)
-        if frame_roi.ndim == 3 and alpha.ndim == 2:
-            alpha = alpha[:, :, None]
+        alpha_2d = self.feather_mask(cur_mask, radius=4, sigma=1.5)
+        alpha = alpha_2d[:, :, None] if frame_roi.ndim == 3 else alpha_2d
 
         blended = (alpha * cur_roi_inp.astype(np.float32) + (1.0 - alpha) * frame_roi.astype(np.float32))
-        frame[y1:y2, x1:x2] = np.clip(np.round(blended), 0.0, 255.0).astype(np.uint8)
+        res_roi = frame_roi.copy()
+        active = (alpha_2d > 0.001)
+        res_roi[active] = np.clip(np.round(blended[active]), 0.0, 255.0).astype(np.uint8)
+        frame[y1:y2, x1:x2] = res_roi
         return frame
 
     @staticmethod

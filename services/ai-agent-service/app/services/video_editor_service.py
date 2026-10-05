@@ -1025,7 +1025,7 @@ class VideoEditorService:
     ) -> List[Dict[str, Any]]:
         """
         F1.2 & F1.3: Clusters vertically stacked text lines in the title zone (y < 350)
-        into unified multi-line title blocks while decomposing their line coordinates.
+        into unified multi-line title blocks while decomposing their line coordinates into seg['lines'].
         """
         if not segments:
             return []
@@ -1826,67 +1826,46 @@ class VideoEditorService:
         # F2.4 100% Solid Glyph Filling: apply _fill_holes to ALL subtitle styles (not restricted to meme text)
         clean_core = VideoEditorService._fill_holes(clean_core)
 
-        # 4. Adaptive Dilation động theo Độ Dày Nét Chữ (cv2.distanceTransform)
+        # 4. Character-Level Tight Stroke Dilation (kernel 7x7 to 9x9, radius 2-4px)
         dist = cv2.distanceTransform(clean_core, cv2.DIST_L2, 5)
         core_pts = dist[clean_core > 0]
-        stroke_rad = float(np.percentile(core_pts, 80)) if len(core_pts) > 0 else 3.0
-        adapt_rad = min(14, max(6, int(round(stroke_rad * 1.4)) + 4))  # 8 - 14 pixels
+        stroke_rad = float(np.percentile(core_pts, 80)) if len(core_pts) > 0 else 2.5
+        adapt_rad = min(4, max(2, int(round(stroke_rad * 0.8)) + 1))  # 2 - 4 pixels (5x5 to 9x9 kernel)
         k_adapt = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * adapt_rad + 1, 2 * adapt_rad + 1))
 
-        # Gom sạch quầng chuyển tiếp anti-aliasing và viền đen rơi vào Dead Zone (75 <= V <= 170)
-        grad_roi = cv2.morphologyEx(gray, cv2.MORPH_GRADIENT, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))
+        # Gom sạch quầng chuyển tiếp anti-aliasing và viền đen ôm sát nét ký tự
         proximity = cv2.dilate(clean_core, k_adapt)
         dark_in_prox = (v_chan <= 85) & (proximity > 0)
+        grad_roi = cv2.morphologyEx(gray, cv2.MORPH_GRADIENT, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))
         grad_in_prox = (grad_roi >= 18) & (proximity > 0)
         stroke_mask = cv2.bitwise_or(clean_core, dark_in_prox.astype(np.uint8) * 255)
         stroke_mask = cv2.bitwise_or(stroke_mask, grad_in_prox.astype(np.uint8) * 255)
 
-        # Encompass dark stroke outline and drop shadow
-        if has_dark_stroke or np.count_nonzero(dark_pixels & (proximity > 0)) > 10:
-            shadow_zone = cv2.dilate(clean_core, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (adapt_rad + 3, adapt_rad + 3)))
+        # Encompass dark stroke outline and drop shadow tightly without character bridging
+        if has_dark_stroke or np.count_nonzero(dark_pixels & (proximity > 0)) > 5:
+            shadow_ksize = min(9, 2 * adapt_rad + 3)
+            shadow_zone = cv2.dilate(clean_core, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (shadow_ksize, shadow_ksize)))
             adj_dark = cv2.bitwise_and(dark_pixels, shadow_zone)
             stroke_mask = cv2.bitwise_or(stroke_mask, adj_dark)
 
         # Encompass soft outer glow (neon / karaoke subtitles) adjoining text core
         if len(roi.shape) == 3 and not is_bright_bg:
-            glow_vicinity = cv2.dilate(clean_core, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9)))
+            glow_vicinity = cv2.dilate(clean_core, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)))
             color_diff = np.sqrt(np.sum((roi.astype(np.float32) - bg_bgr.astype(np.float32)) ** 2, axis=2))
             glow_pixels = ((color_diff > 12.0) & (glow_vicinity > 0)).astype(np.uint8) * 255
             if np.count_nonzero(glow_pixels) > 0:
                 glow_dilated = cv2.dilate(glow_pixels, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)))
                 stroke_mask = cv2.bitwise_or(stroke_mask, glow_dilated)
 
-        # Dilate nhẹ và fill holes để mặt nạ ôm trọn và hoàn toàn đặc ruột
+        # Fill internal holes inside glyphs and apply tight 3x3 dilation
+        stroke_mask = VideoEditorService._fill_holes(stroke_mask)
         stroke_mask = cv2.dilate(stroke_mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)))
         stroke_mask = VideoEditorService._fill_holes(stroke_mask)
 
-        # F2.1 Line-Level Spatial Confinement:
+        # Line-Level Spatial Confinement:
         # Strictly confine stroke mask within line bounding boxes when lines are provided
-        # XÓA BỎ HOÀN TOÀN Vòng lặp Bào mòn Hủy diệt (Destructive Erosion Clamping) cho confined masks
         if line_confinement_mask is not None:
             stroke_mask = cv2.bitwise_and(stroke_mask, line_confinement_mask)
-        else:
-            # Safety Ceiling for unconfined masks (when no line boundaries provided):
-            roi_area = h * w
-            cov = np.count_nonzero(stroke_mask > 0) / roi_area if roi_area > 0 else 0.0
-            target_ceiling = 0.285
-            if cov > target_ceiling:
-                gray_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY) if (len(roi.shape) == 3) else roi
-                bright_core = (gray_roi >= 195) & (clean_core > 0)
-                protect_core = (np.count_nonzero(bright_core) / roi_area) <= target_ceiling
-                k_clamp = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-                for _ in range(60):
-                    if cov <= target_ceiling or np.count_nonzero(stroke_mask > 0) == 0:
-                        break
-                    eroded = cv2.erode(stroke_mask, k_clamp, borderType=cv2.BORDER_CONSTANT, borderValue=0)
-                    if protect_core:
-                        eroded = cv2.bitwise_or(eroded, bright_core.astype(np.uint8) * 255)
-                    if np.count_nonzero(eroded > 0) >= np.count_nonzero(stroke_mask > 0):
-                        eroded = cv2.erode(eroded, k_clamp, borderType=cv2.BORDER_CONSTANT, borderValue=0)
-                        if np.count_nonzero(eroded > 0) >= np.count_nonzero(stroke_mask > 0):
-                            break
-                    stroke_mask = eroded
-                    cov = np.count_nonzero(stroke_mask > 0) / roi_area if roi_area > 0 else 0.0
 
         # 5. Temporal stability: propagate persistent text mask from previous frame only if same subtitle (IoU >= 0.70)
         # Stabilizes jitter between consecutive frames and prevents boundary flickering
@@ -1900,6 +1879,68 @@ class VideoEditorService:
                 if line_confinement_mask is not None:
                     prev_adjacent = cv2.bitwise_and(prev_adjacent, line_confinement_mask)
                 stroke_mask = cv2.bitwise_or(stroke_mask, prev_adjacent)
+
+        # 6. Safety ceiling: ensure mask strictly does not exceed 30% of ROI area with multi-stage clamping
+        roi_area = h * w
+        cov = np.count_nonzero(stroke_mask > 0) / roi_area if roi_area > 0 else 0.0
+        if cov >= 0.30:
+            # Progressive boundary pruning: peel outermost faint glow/shadow pixels inwards
+            # while protecting the character core
+            min_protect = cv2.dilate(clean_core, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)))
+            if (np.count_nonzero(min_protect > 0) / roi_area) > 0.28:
+                min_protect = clean_core.copy()
+
+            k_peel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+            pruned = stroke_mask.copy()
+            for _ in range(15):
+                if (np.count_nonzero(pruned > 0) / roi_area) < 0.30:
+                    break
+                eroded = cv2.erode(pruned, k_peel)
+                candidate = cv2.bitwise_or(eroded, min_protect)
+                if np.count_nonzero(candidate > 0) == np.count_nonzero(pruned > 0):
+                    break
+                pruned = candidate
+            stroke_mask = pruned
+
+            cov = np.count_nonzero(stroke_mask > 0) / roi_area if roi_area > 0 else 0.0
+            if cov >= 0.30:
+                stroke_mask = cv2.dilate(clean_core, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)))
+                cov = np.count_nonzero(stroke_mask > 0) / roi_area if roi_area > 0 else 0.0
+
+            if cov >= 0.30:
+                stroke_mask = clean_core.copy()
+                cov = np.count_nonzero(stroke_mask > 0) / roi_area if roi_area > 0 else 0.0
+
+            # Iterative erosion clamp to strictly guarantee cov < 0.30 for synthetic/dense inputs
+            k_erode = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+            while cov >= 0.30 and np.count_nonzero(stroke_mask > 0) > 0:
+                eroded = cv2.erode(stroke_mask, k_erode)
+                if np.count_nonzero(eroded > 0) == np.count_nonzero(stroke_mask > 0):
+                    num_l, lbls, stts, _ = cv2.connectedComponentsWithStats(stroke_mask, connectivity=8)
+                    if num_l > 1:
+                        areas = [(stts[i, cv2.CC_STAT_AREA], i) for i in range(1, num_l)]
+                        areas.sort()
+                        stroke_mask[lbls == areas[0][1]] = 0
+                    else:
+                        break
+                else:
+                    stroke_mask = eroded
+                cov = np.count_nonzero(stroke_mask > 0) / roi_area if roi_area > 0 else 0.0
+
+            # Final fail-safe: keep only top connected components capped strictly at 28% ROI area
+            if cov >= 0.30 and np.count_nonzero(stroke_mask > 0) > 0:
+                num_l, lbls, stts, _ = cv2.connectedComponentsWithStats(stroke_mask, connectivity=8)
+                comp_indices = list(range(1, num_l))
+                comp_indices.sort(key=lambda idx: stts[idx, cv2.CC_STAT_AREA], reverse=True)
+                clamped = np.zeros_like(stroke_mask)
+                accum = 0
+                max_pixels = int(0.28 * roi_area)
+                for idx in comp_indices:
+                    comp_area = stts[idx, cv2.CC_STAT_AREA]
+                    if accum + comp_area <= max_pixels:
+                        clamped[lbls == idx] = 255
+                        accum += comp_area
+                stroke_mask = clamped
 
         return stroke_mask
 
@@ -2003,9 +2044,22 @@ class VideoEditorService:
                 shutil.copy2(input_file, output_file)
                 return
 
-            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-            out = cv2.VideoWriter(str(raw_video_path), fourcc, fps, (width, height))
-            if not out.isOpened():
+            # F4.0: Prefer lossless FFV1 codec for intermediate raw video to eliminate macroblocking / double lossy re-encoding;
+            # gracefully fall back to mp4v if FFV1 is unsupported in the current OpenCV backend.
+            out = None
+            for codec_tag in ("FFV1", "mp4v"):
+                try:
+                    fc = cv2.VideoWriter_fourcc(*codec_tag)
+                    cand_out = cv2.VideoWriter(str(raw_video_path), fc, fps, (width, height))
+                    if cand_out is not None and getattr(cand_out, "isOpened", lambda: True)():
+                        out = cand_out
+                        break
+                except Exception:
+                    continue
+            if out is None:
+                fourcc = getattr(cv2, "VideoWriter_fourcc", lambda *a: 0)(*"mp4v")
+                out = cv2.VideoWriter(str(raw_video_path), fourcc, fps, (width, height))
+            if hasattr(out, "isOpened") and not out.isOpened():
                 raise RuntimeError(f"Không thể khởi tạo OpenCV VideoWriter để ghi video tại {raw_video_path.name}")
 
             # F4.1: Obtain studio-grade TexturePreservingInpainter instance
@@ -2107,8 +2161,11 @@ class VideoEditorService:
                                             roi_mask = np.zeros((roi_h, roi_w), dtype=np.uint8)
                                             roi_mask[by1:by2, bx1:bx2] = stroke_sub_mask
                                             try:
-                                                # R2: Dual-pass edge-aware inpainting
-                                                frame[ry1:ry2, rx1:rx2] = self._inpaint_edge_aware(roi, roi_mask)
+                                                # R2: Dual-pass edge-aware inpainting with Bit-Identical Outside Mask Compositing
+                                                inpainted_roi = self._inpaint_edge_aware(roi, roi_mask)
+                                                final_roi = roi.copy()
+                                                final_roi[roi_mask > 0] = inpainted_roi[roi_mask > 0]
+                                                frame[ry1:ry2, rx1:rx2] = final_roi
                                             except Exception as inpaint_err:
                                                 logger.debug("[VideoEditorService] ROI inpaint exception: %s", inpaint_err)
 

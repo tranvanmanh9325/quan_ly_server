@@ -22,7 +22,6 @@ import httpx
 logger = logging.getLogger(__name__)
 
 DEFAULT_ENDPOINTS = [
-    "https://gyufyjk-iopaint-lama.hf.space/api/v1/inpaint",
     "https://sanster-iopaint-lama.hf.space/api/v1/inpaint",
 ]
 
@@ -41,8 +40,8 @@ class HostedInpainterClient:
     def __init__(
         self,
         endpoints: Optional[List[str]] = None,
-        timeout: float = 15.0,
-        max_retries: int = 2,
+        timeout: float = 35.0,
+        max_retries: int = 3,
         concurrency_limit: int = 4,
         http_client: Optional[httpx.AsyncClient] = None,
     ):

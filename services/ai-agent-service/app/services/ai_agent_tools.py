@@ -5268,11 +5268,7 @@ class AgentToolExecutor:
                         f"• Dung lượng tệp: {res.get('file_size_formatted', 'N/A')}\n"
                         f"• Đường dẫn: `{res.get('output_path', '')}`"
                     )
-                    if res.get("delivery") == "direct":
-                        msg += "\n• Phương thức: Sẵn sàng gửi trực tiếp qua Telegram (<= 50MB)."
-                    elif res.get("internet_url"):
-                        msg += f"\n• Link tải trực tiếp (Dual-Delivery): {res.get('internet_url')}"
-                    return msg
+                    return await self._deliver_media_result(res, chat_id, msg, media_type="video")
                 return f"❌ Lỗi khi xóa text video: {res.get('message', 'Không rõ nguyên nhân')}"
 
             if tool_name == "add_subtitle_to_video":
@@ -5295,11 +5291,7 @@ class AgentToolExecutor:
                         f"• Dung lượng tệp: {res.get('file_size_formatted', 'N/A')}\n"
                         f"• Đường dẫn: `{res.get('output_path', '')}`"
                     )
-                    if res.get("delivery") == "direct":
-                        msg += "\n• Phương thức: Sẵn sàng gửi trực tiếp qua Telegram (<= 50MB)."
-                    elif res.get("internet_url"):
-                        msg += f"\n• Link tải trực tiếp (Dual-Delivery): {res.get('internet_url')}"
-                    return msg
+                    return await self._deliver_media_result(res, chat_id, msg, media_type="video")
                 return f"❌ Lỗi khi gắn phụ đề video: {res.get('message', 'Không rõ nguyên nhân')}"
 
             if tool_name == "apply_color_grade":
@@ -5320,11 +5312,7 @@ class AgentToolExecutor:
                         f"• Dung lượng tệp: {res.get('file_size_formatted', 'N/A')}\n"
                         f"• Đường dẫn: `{res.get('output_path', '')}`"
                     )
-                    if res.get("delivery") == "direct":
-                        msg += "\n• Phương thức: Sẵn sàng gửi trực tiếp qua Telegram (<= 50MB)."
-                    elif res.get("internet_url"):
-                        msg += f"\n• Link tải trực tiếp (Dual-Delivery): {res.get('internet_url')}"
-                    return msg
+                    return await self._deliver_media_result(res, chat_id, msg, media_type="video")
                 return f"❌ Lỗi khi chỉnh màu video: {res.get('message', 'Không rõ nguyên nhân')}"
 
             if tool_name == "stabilize_video":
@@ -5343,11 +5331,7 @@ class AgentToolExecutor:
                         f"• Dung lượng tệp: {res.get('file_size_formatted', 'N/A')}\n"
                         f"• Đường dẫn: `{res.get('output_path', '')}`"
                     )
-                    if res.get("delivery") == "direct":
-                        msg += "\n• Phương thức: Sẵn sàng gửi trực tiếp qua Telegram (<= 50MB)."
-                    elif res.get("internet_url"):
-                        msg += f"\n• Link tải trực tiếp (Dual-Delivery): {res.get('internet_url')}"
-                    return msg
+                    return await self._deliver_media_result(res, chat_id, msg, media_type="video")
                 return f"❌ Lỗi khi chống rung video: {res.get('message', 'Không rõ nguyên nhân')}"
 
             if tool_name == "concatenate_videos":
@@ -5370,7 +5354,7 @@ class AgentToolExecutor:
                         msg += "\n• Phương thức: Sẵn sàng gửi trực tiếp qua Telegram (<= 50MB)."
                     elif res.get("internet_url"):
                         msg += f"\n• Link tải trực tiếp (Dual-Delivery): {res.get('internet_url')}"
-                    return msg
+                    return await self._deliver_media_result(res, chat_id, msg, media_type="video")
                 return f"❌ Lỗi khi ghép video: {res.get('message', 'Không rõ nguyên nhân')}"
 
             if tool_name == "extract_frames":
@@ -5392,11 +5376,7 @@ class AgentToolExecutor:
                         f"• Tệp nén ZIP: `{res.get('zip_path', '')}`\n"
                         f"• Dung lượng ZIP: {res.get('file_size_formatted', 'N/A')}"
                     )
-                    if res.get("delivery") == "direct":
-                        msg += "\n• Phương thức: Sẵn sàng gửi trực tiếp qua Telegram (<= 50MB)."
-                    elif res.get("internet_url"):
-                        msg += f"\n• Link tải trực tiếp (Dual-Delivery): {res.get('internet_url')}"
-                    return msg
+                    return await self._deliver_media_result(res, chat_id, msg, media_type="document")
                 return f"❌ Lỗi khi trích xuất frames: {res.get('message', 'Không rõ nguyên nhân')}"
 
             if tool_name == "remove_watermark_region":
@@ -5415,11 +5395,7 @@ class AgentToolExecutor:
                         f"• Dung lượng tệp: {res.get('file_size_formatted', 'N/A')}\n"
                         f"• Đường dẫn: `{res.get('output_path', '')}`"
                     )
-                    if res.get("delivery") == "direct":
-                        msg += "\n• Phương thức: Sẵn sàng gửi trực tiếp qua Telegram (<= 50MB)."
-                    elif res.get("internet_url"):
-                        msg += f"\n• Link tải trực tiếp (Dual-Delivery): {res.get('internet_url')}"
-                    return msg
+                    return await self._deliver_media_result(res, chat_id, msg, media_type="video")
                 return f"❌ Lỗi khi xóa nhiều watermark: {res.get('message', 'Không rõ nguyên nhân')}"
 
             if tool_name == "enhance_video_quality":
@@ -5438,11 +5414,7 @@ class AgentToolExecutor:
                         f"• Dung lượng tệp: {res.get('file_size_formatted', 'N/A')}\n"
                         f"• Đường dẫn: `{res.get('output_path', '')}`"
                     )
-                    if res.get("delivery") == "direct":
-                        msg += "\n• Phương thức: Sẵn sàng gửi trực tiếp qua Telegram (<= 50MB)."
-                    elif res.get("internet_url"):
-                        msg += f"\n• Link tải trực tiếp (Dual-Delivery): {res.get('internet_url')}"
-                    return msg
+                    return await self._deliver_media_result(res, chat_id, msg, media_type="video")
                 return f"❌ Lỗi khi nâng cấp chất lượng video: {res.get('message', 'Không rõ nguyên nhân')}"
 
             if tool_name == "generate_video_thumbnail":
@@ -5463,13 +5435,14 @@ class AgentToolExecutor:
                     if pending_photos is not None and out_path:
                         pending_photos.clear()
                         pending_photos.append((f"Thumbnail video ({ts}s)", out_path))
-                    return (
+                    msg = (
                         f"🖼️ **Tạo ảnh thumbnail video thành công!**\n"
                         f"• Mốc thời gian: {ts}s\n"
                         f"• Kích thước: {res.get('width', w)}x{res.get('height', h)} px\n"
                         f"• Dung lượng: {res.get('file_size_formatted', 'N/A')}\n"
                         f"• Đường dẫn tệp: `{out_path}`"
                     )
+                    return await self._deliver_media_result(res, chat_id, msg, media_type="photo")
                 return f"❌ Lỗi khi tạo thumbnail video: {res.get('message', 'Không rõ nguyên nhân')}"
 
             # ── M6 Omni Super-Agent Dispatchers (R1 - R4) ──
@@ -5494,11 +5467,7 @@ class AgentToolExecutor:
                         f"• Dung lượng: {res.get('file_size_formatted', 'N/A')}\n"
                         f"• Đường dẫn: `{res.get('output_path', '')}`"
                     )
-                    if res.get("delivery") == "direct":
-                        msg += "\n• Phương thức: Sẵn sàng gửi trực tiếp qua Telegram (<= 50MB)."
-                    elif res.get("public_url"):
-                        msg += f"\n• Link tải trực tiếp (Dual-Delivery): {res.get('public_url')}"
-                    return msg
+                    return await self._deliver_media_result(res, chat_id, msg, media_type="video")
                 return f"❌ Lỗi khi cắt clip video: {res.get('message', 'Không rõ nguyên nhân')}"
 
             if tool_name == "compress_video":
@@ -5509,7 +5478,7 @@ class AgentToolExecutor:
                     target_size_mb=target_mb,
                 )
                 if res.get("status") == "ok":
-                    return (
+                    msg = (
                         f"🗜️ **Nén video thành công qua FFmpeg 2-pass bitrate!**\n"
                         f"• Dung lượng ban đầu: {res.get('original_size_formatted', 'N/A')}\n"
                         f"• Dung lượng sau nén: {res.get('compressed_size_formatted', 'N/A')} (< {target_mb}MB)\n"
@@ -5518,6 +5487,7 @@ class AgentToolExecutor:
                         f"• Đường dẫn: `{res.get('output_path', '')}`\n"
                         f"• Trạng thái: Đã tối ưu hoàn hảo để gửi qua Telegram."
                     )
+                    return await self._deliver_media_result(res, chat_id, msg, media_type="video")
                 return f"❌ Lỗi khi nén video: {res.get('message', 'Không rõ nguyên nhân')}"
 
             if tool_name == "convert_video_format":
@@ -5530,12 +5500,13 @@ class AgentToolExecutor:
                     preset=preset,
                 )
                 if res.get("status") == "ok":
-                    return (
+                    msg = (
                         f"🔄 **Chuyển đổi định dạng video thành công!**\n"
                         f"• Định dạng đích: **{target_fmt.upper()}**\n"
                         f"• Dung lượng tệp: {res.get('file_size_formatted', 'N/A')}\n"
                         f"• Đường dẫn: `{res.get('output_path', '')}`"
                     )
+                    return await self._deliver_media_result(res, chat_id, msg, media_type="video")
                 return f"❌ Lỗi khi chuyển đổi video: {res.get('message', 'Không rõ nguyên nhân')}"
 
             if tool_name == "convert_audio_format":
@@ -5548,12 +5519,13 @@ class AgentToolExecutor:
                     bitrate=bitrate,
                 )
                 if res.get("status") == "ok":
-                    return (
+                    msg = (
                         f"🎵 **Chuyển đổi âm thanh chuyên nghiệp thành công!**\n"
                         f"• Định dạng: **{target_fmt.upper()}** ({bitrate})\n"
                         f"• Dung lượng: {res.get('file_size_formatted', 'N/A')}\n"
                         f"• Đường dẫn: `{res.get('output_path', '')}`"
                     )
+                    return await self._deliver_media_result(res, chat_id, msg, media_type="document")
                 return f"❌ Lỗi khi chuyển đổi âm thanh: {res.get('message', 'Không rõ nguyên nhân')}"
 
             if tool_name == "trim_audio_clip":
@@ -5566,13 +5538,14 @@ class AgentToolExecutor:
                     duration=str(duration) if duration is not None else None,
                 )
                 if res.get("status") == "ok":
-                    return (
+                    msg = (
                         f"✂️ **Cắt đoạn âm thanh / nhạc chuông thành công!**\n"
                         f"• Mốc bắt đầu: {start_time}\n"
                         f"• Thời lượng: {duration}s\n"
                         f"• Dung lượng: {res.get('file_size_formatted', 'N/A')}\n"
                         f"• Đường dẫn: `{res.get('output_path', '')}`"
                     )
+                    return await self._deliver_media_result(res, chat_id, msg, media_type="document")
                 return f"❌ Lỗi khi cắt âm thanh: {res.get('message', 'Không rõ nguyên nhân')}"
 
             if tool_name == "normalize_audio_volume":
@@ -5603,13 +5576,18 @@ class AgentToolExecutor:
                     quality=quality,
                 )
                 if res.get("status") == "ok":
-                    return (
+                    out_path = res.get("output_path", "")
+                    if pending_photos is not None and out_path:
+                        pending_photos.clear()
+                        pending_photos.append((f"Ảnh đã xử lý ({fmt})", out_path))
+                    msg = (
                         f"🖼️ **Xử lý hình ảnh thành công!**\n"
                         f"• Định dạng: **{fmt.upper()}** (Chất lượng: {quality}%)\n"
                         f"• Kích thước: {res.get('width', 'N/A')}x{res.get('height', 'N/A')} px\n"
                         f"• Dung lượng: {res.get('file_size_formatted', 'N/A')}\n"
                         f"• Đường dẫn: `{res.get('output_path', '')}`"
                     )
+                    return await self._deliver_media_result(res, chat_id, msg, media_type="photo")
                 return f"❌ Lỗi khi xử lý ảnh: {res.get('message', 'Không rõ nguyên nhân')}"
 
             if tool_name == "generate_custom_qr":
@@ -5628,13 +5606,14 @@ class AgentToolExecutor:
                     if pending_photos is not None and out_path:
                         pending_photos.clear()
                         pending_photos.append((f"Mã QR: {label or content[:30]}", out_path))
-                    return (
+                    msg = (
                         f"📱 **Sinh mã QR Code độ nét cao thành công!**\n"
                         f"• Nội dung: `{content[:100]}{'...' if len(content) > 100 else ''}`\n"
                         f"• Nhãn chú thích: {label or 'Không có'}\n"
                         f"• Kích thước: {res.get('width', 0)}x{res.get('height', 0)} px\n"
                         f"• Đường dẫn tệp: `{out_path}`"
                     )
+                    return await self._deliver_media_result(res, chat_id, msg, media_type="photo")
                 return f"❌ Lỗi khi sinh mã QR: {res.get('message', 'Không rõ nguyên nhân')}"
 
             if tool_name == "merge_pdf_documents":
@@ -6160,6 +6139,56 @@ class AgentToolExecutor:
                 )
             except Exception as e:
                 logger.warning("[AiAgent] Failed to flush pending photo %s: %s", img_path, e)
+
+    async def _deliver_media_result(
+        self,
+        res: Dict[str, Any],
+        chat_id: Optional[str],
+        summary_msg: str,
+        media_type: str = "video",
+    ) -> str:
+        """
+        Giao tệp video/ảnh/tài liệu sau khi biên tập về Telegram cho người dùng:
+        - Tệp <= 50MB: Gửi trực tiếp qua send_video_file/send_photo/send_document_file.
+        - Tệp > 50MB: Gửi tin nhắn kèm portal URL tải trực tiếp.
+        """
+        if not res or res.get("status") != "ok":
+            return f"❌ Lỗi: {res.get('message', 'Không thể hoàn thành biên tập video')}"
+
+        delivery = res.get("delivery", "direct")
+        out_path = res.get("output_path") or res.get("file_path") or res.get("zip_path") or res.get("thumbnail_path")
+
+        if self.telegram_bot and chat_id:
+            try:
+                if delivery == "portal":
+                    size_fmt = res.get("file_size_formatted", "")
+                    portal_msg = (
+                        f"{summary_msg}\n\n"
+                        f"📦 <b>Tệp kết quả có dung lượng lớn ({size_fmt})!</b>\n"
+                        f"Do Telegram chỉ hỗ trợ gửi tệp tối đa <b>50MB</b>, Tiểu Bảo Bảo đã tải lên hệ thống phân phối tốc độ cao:\n\n"
+                        f"🌐 <b>Link Internet (Ngrok):</b> {res.get('internet_url')}\n"
+                        f"🏠 <b>Link Nội Bộ (LAN):</b> {res.get('lan_url')}\n\n"
+                        f"⏱ <i>(Đường link tải trực tiếp có hiệu lực trong vòng 4 giờ)</i>"
+                    )
+                    await self.telegram_bot.send_message(chat_id, portal_msg)
+                elif out_path and os.path.exists(out_path):
+                    if media_type == "video":
+                        sent = await self.telegram_bot.send_video_file(chat_id=chat_id, video_path=out_path, caption=summary_msg)
+                        if not sent and hasattr(self.telegram_bot, "send_document_file"):
+                            await self.telegram_bot.send_document_file(chat_id=chat_id, file_path=out_path, caption=summary_msg)
+                    elif media_type == "photo" and hasattr(self.telegram_bot, "send_photo"):
+                        await self.telegram_bot.send_photo(chat_id=chat_id, photo_path=out_path, caption=summary_msg)
+                    elif hasattr(self.telegram_bot, "send_document_file"):
+                        await self.telegram_bot.send_document_file(chat_id=chat_id, file_path=out_path, caption=summary_msg)
+            except Exception as d_err:
+                logger.warning("[AiAgentTools] Lỗi khi gửi tệp đa phương tiện qua Telegram: %s", d_err)
+
+        final_msg = summary_msg
+        if delivery == "direct":
+            final_msg += "\n• Trạng thái gửi: Đã gửi tệp kết quả trực tiếp qua Telegram cho anh Mạnh!"
+        elif res.get("internet_url"):
+            final_msg += f"\n• Link tải trực tiếp (Dual-Delivery): {res.get('internet_url')}"
+        return final_msg
 
     async def _handle_browser_result(
         self,

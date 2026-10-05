@@ -1856,186 +1856,17 @@ class TelegramBot:
         try:
             is_edit = self._is_video_edit_intent(instruction)
             instruction_clean = instruction.strip()
-            q = instruction_clean.lower()
 
-            # ── Fast-path Direct Video Editing (Bypass LLM) ──
-            if is_edit:
-                # Kiểm tra các thao tác phức tạp cần fallback sang LLM trước
-                is_complex_fallback = any(k in q for k in (
-                    "ghép video", "ghep video", "nối video", "noi video", "merge video", "concatenate",
-                    "thêm phụ đề", "them phu de", "thêm subtitle", "them subtitle", "thêm sub", "them sub",
-                    "chèn chữ", "chen chu", "chèn text", "chen text", "burn sub", "burn subtitle", "add subtitle",
-                ))
-
-                if not is_complex_fallback:
-                    # 1. Xóa text / Watermark / Logo / Subtitle
-                    is_remove_text = any(k in q for k in (
-                        "xóa text", "xoa text", "xóa chữ", "xoa chu",
-                        "xóa watermark", "xoa watermark", "xóa logo", "xoa logo",
-                        "remove text", "delogo", "xóa sạch", "xoa sach",
-                        "loại bỏ chữ", "loai bo chu", "loại bỏ text", "loai bo text",
-                        "bỏ chữ", "bo chu", "bỏ text", "bo text",
-                        "xóa phụ đề", "xoa phu de", "xóa sub", "xoa sub",
-                        "làm sạch video", "lam sach video", "clean text",
-                        "remove watermark", "watermark removal", "text removal",
-                    ))
-
-                    # 2. Chỉnh màu (Color Grade)
-                    is_color_grade = any(k in q for k in (
-                        "chỉnh màu", "chinh mau", "filter màu", "filter mau",
-                        "color grade", "cinematic", "vintage", "vivid", "lọc màu", "loc mau",
-                    ))
-
-                    # 3. Chống rung (Stabilization)
-                    is_stabilize = any(k in q for k in (
-                        "chống rung", "chong rung", "ổn định video", "on dinh video",
-                        "khử rung", "khu rung", "stabilize",
-                    ))
-
-                    if is_remove_text or is_color_grade or is_stabilize:
-                        try:
-                            res: Optional[Dict[str, Any]] = None
-                            if is_remove_text:
-                                mode = "delogo" if "delogo" in q else ("inpaint" if "inpaint" in q else "auto")
-                                status_msg = await self.send_message(
-                                    chat_id,
-                                    "⚡ <b>Đang tự động xóa text/watermark khỏi video của anh Mạnh...</b>\n"
-                                    "<code>[░░░░░░░░░░] 0%</code>\n"
-                                    "<i>(Tiểu Bảo Bảo đang phân tích khung hình và làm sạch video)</i>",
-                                )
-                                status_msg_id = status_msg.get("message_id") if isinstance(status_msg, dict) else None
-                                last_edit_time = 0.0
-
-                                async def telegram_progress_callback(percent: int, stage_text: str) -> None:
-                                    nonlocal last_edit_time
-                                    now = time.time()
-                                    if status_msg_id and (now - last_edit_time >= 3.0 or percent >= 100):
-                                        last_edit_time = now
-                                        p_filled = min(10, max(0, percent // 10))
-                                        progress_bar = "▓" * p_filled + "░" * (10 - p_filled)
-                                        text = (
-                                            f"⚡ <b>Đang làm sạch video ({percent}%):</b>\n"
-                                            f"<code>[{progress_bar}]</code>\n"
-                                            f"<i>{stage_text}</i>"
-                                        )
-                                        try:
-                                            await self.edit_message_text(chat_id, status_msg_id, text)
-                                        except Exception as edit_err:
-                                            logger.debug("[TelegramBot] Error updating progress: %s", edit_err)
-
-                                edit_coro = self._video_editor_service.remove_text_from_video(
-                                    input_path_or_url=session.video_path,
-                                    mode=mode,
-                                    progress_callback=telegram_progress_callback,
-                                )
-                                edit_task = asyncio.create_task(edit_coro)
-                                self._last_video_task = edit_task
-                                res = await asyncio.wait_for(edit_task, timeout=300.0)
-                            elif is_color_grade:
-                                if "vintage" in q:
-                                    preset = "vintage"
-                                elif "cinematic" in q:
-                                    preset = "cinematic"
-                                elif "cool" in q or "tông lạnh" in q:
-                                    preset = "cool"
-                                elif "warm" in q or "tông ấm" in q:
-                                    preset = "warm"
-                                elif "bw" in q or "đen trắng" in q or "den trang" in q:
-                                    preset = "bw"
-                                else:
-                                    preset = "vivid"
-
-                                await self.send_message(
-                                    chat_id,
-                                    f"🎨 <i>Đang áp dụng bộ lọc màu '{preset}' cho video...</i>",
-                                )
-                                edit_coro = self._video_editor_service.apply_color_grade(
-                                    input_path_or_url=session.video_path,
-                                    preset=preset,
-                                )
-                                edit_task = asyncio.create_task(edit_coro)
-                                self._last_video_task = edit_task
-                                res = await asyncio.wait_for(edit_task, timeout=300.0)
-                            elif is_stabilize:
-                                await self.send_message(
-                                    chat_id,
-                                    "🛡️ <i>Đang chạy thuật toán chống rung 2-pass cho video...</i>",
-                                )
-                                edit_coro = self._video_editor_service.stabilize_video(
-                                    input_path_or_url=session.video_path,
-                                    smoothing=15,
-                                )
-                                edit_task = asyncio.create_task(edit_coro)
-                                self._last_video_task = edit_task
-                                res = await asyncio.wait_for(edit_task, timeout=300.0)
-
-                            if res:
-                                if res.get("status") == "ok":
-                                    delivery = res.get("delivery")
-                                    caption = f"🎬 {res.get('message', 'Biên tập video hoàn tất!')}"
-                                    if delivery == "portal":
-                                        url = res.get("internet_url") or res.get("lan_url") or ""
-                                        size_fmt = res.get("file_size_formatted", "")
-                                        portal_msg = (
-                                            f"{caption}\n\n"
-                                            f"📦 <b>Video kết quả có dung lượng lớn ({size_fmt})!</b>\n"
-                                            f"Do Telegram Bot API chỉ hỗ trợ gửi tệp tối đa <b>50MB</b>, Tiểu Bảo Bảo đã lưu video lên hệ thống phân phối tệp tốc độ cao:\n\n"
-                                            f"🌐 <b>Link Internet (Ngrok):</b> {res.get('internet_url')}\n"
-                                            f"🏠 <b>Link Nội Bộ (LAN):</b> {res.get('lan_url')}\n\n"
-                                            f"⏱ <i>(Đường link tải trực tiếp có hiệu lực trong vòng 4 giờ)</i>"
-                                        )
-                                        await self.send_message(chat_id, portal_msg)
-                                    else:
-                                        output_path = res.get("output_path")
-                                        if output_path:
-                                            sent = await self.send_video_file(chat_id, output_path, caption=caption)
-                                            if not sent:
-                                                await self.send_message(chat_id, f"❌ Không thể gửi video qua Telegram. Đường dẫn tệp: `{output_path}`")
-                                        else:
-                                            await self.send_message(chat_id, "❌ Không tìm thấy tệp video kết quả sau khi biên tập.")
-                                    return
-                                elif res.get("status") == "error":
-                                    err_msg = res.get("message", "Đã xảy ra lỗi khi biên tập video.")
-                                    await self.send_message(chat_id, f"❌ Không thể hoàn thành biên tập video: {err_msg}")
-                                    return
-                        except asyncio.TimeoutError as t_err:
-                            if is_remove_text or not str(t_err):
-                                logger.error("[TelegramBot] Direct video edit timed out after 300s for chat %s", chat_id)
-                                await self.send_message(
-                                    chat_id,
-                                    "❌ Video quá phức tạp, vui lòng thử lại với video ngắn hơn.",
-                                )
-                            else:
-                                logger.error("[TelegramBot] Direct video edit execution error: %s", t_err, exc_info=True)
-                                await self.send_message(
-                                    chat_id, f"❌ Có lỗi trong quá trình biên tập video: {t_err}"
-                                )
-                            return
-                        except Exception as edit_err:
-                            if "timeout" in str(edit_err).lower() and is_remove_text:
-                                logger.error("[TelegramBot] Direct video edit timed out for chat %s: %s", chat_id, edit_err)
-                                await self.send_message(
-                                    chat_id,
-                                    "❌ Video quá phức tạp, vui lòng thử lại với video ngắn hơn.",
-                                )
-                                return
-                            logger.error("[TelegramBot] Direct video edit execution error: %s", edit_err, exc_info=True)
-                            await self.send_message(
-                                chat_id, f"❌ Có lỗi trong quá trình biên tập video: {edit_err}"
-                            )
-                            return
-
-            # ── Fallback về luồng LLM cũ (cho các yêu cầu phức tạp hoặc phân tích video) ──
             if is_edit:
                 await self.send_message(
                     chat_id,
-                    f"⚡ <i>Đang chuẩn bị biên tập video theo yêu cầu:</i> \"{instruction}\"...\n"
-                    f"<i>(Tiểu Bảo Bảo đang phân tích khung hình và kiểm tra cấu trúc tệp)</i>",
+                    f"⚡ <i>Đang chuẩn bị biên tập video theo yêu cầu:</i> \"{instruction_clean}\"...\n"
+                    f"<i>(Tiểu Bảo Bảo đang phân tích khung hình và chuẩn bị công cụ xử lý)</i>",
                 )
             else:
                 await self.send_message(
                     chat_id,
-                    f"⚡ <i>Đang phân tích video theo yêu cầu:</i> \"{instruction}\"...\n"
+                    f"⚡ <i>Đang phân tích video theo yêu cầu:</i> \"{instruction_clean}\"...\n"
                     f"<i>(Tiểu Bảo Bảo đang trích xuất âm thanh và khung hình)</i>",
                 )
 
@@ -2043,7 +1874,7 @@ class TelegramBot:
                 video_path=session.video_path,
                 filename=session.metadata.filename,
                 duration=session.metadata.duration,
-                instruction=instruction,
+                instruction=instruction_clean,
             )
 
             if is_edit:
@@ -2052,14 +1883,14 @@ class TelegramBot:
                     f"🎯 [YÊU CẦU BIÊN TẬP VIDEO]:\n"
                     f"• Đường dẫn file video trên máy chủ: `{session.video_path}`\n"
                     f"• Tên file gốc: `{session.metadata.filename}` | Thời lượng: {session.metadata.duration}s\n"
-                    f"• Yêu cầu từ anh Mạnh: \"{instruction}\"\n"
+                    f"• Yêu cầu từ anh Mạnh: \"{instruction_clean}\"\n"
                     f"👉 Hãy gọi công cụ biên tập video phù hợp với tham số `input_path_or_url='{session.video_path}'`."
                 )
             else:
                 prompt = (
                     f"{context}\n\n"
                     f"[THÔNG TIN TỆP NGUỒN TRÊN MÁY CHỦ]: `{session.video_path}`\n"
-                    f"[Chỉ đạo/Yêu cầu từ anh Mạnh]: {instruction}"
+                    f"[Chỉ đạo/Yêu cầu từ anh Mạnh]: {instruction_clean}"
                 )
 
             reply = await self.chat_with_agent(chat_id, prompt)

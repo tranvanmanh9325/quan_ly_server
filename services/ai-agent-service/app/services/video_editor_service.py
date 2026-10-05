@@ -2510,7 +2510,17 @@ class VideoEditorService:
             sub_mask_strip = np.zeros((strip_h, strip_w), dtype=np.uint8)
             boxes_all = []
 
-            # --- TH1: Nền thông thường / Nền tối -> Phát hiện lõi chữ sáng (Bright Core) ---
+            title_max_y = 0
+            if target_regions:
+                title_regs = [
+                    r for r in target_regions
+                    if (r.get("type") == "title" or r.get("is_static", False))
+                    and (int(r.get("y", 0)) + int(r.get("h", 0)) <= 330)
+                ]
+                if title_regs:
+                    title_max_y = min(320, max(int(r.get("y", 0)) + int(r.get("h", 0)) for r in title_regs))
+
+            # --- TH1: Nền thông thường / Nền tối -> Nhận diện lõi chữ sáng (Bright Core + Dark Outline) ---
             bright_white = (gray >= 165) & (hsv[:, :, 1] <= 85)
             bright_yellow = (hsv[:, :, 0] >= 15) & (hsv[:, :, 0] <= 35) & (hsv[:, :, 1] >= 80) & (hsv[:, :, 2] >= 180)
             core_bright = (bright_white | bright_yellow).astype(np.uint8) * 255
@@ -2521,7 +2531,7 @@ class VideoEditorService:
             for c in cnts_b:
                 cx, cy, cw, ch = cv2.boundingRect(c)
                 area = cv2.contourArea(c)
-                if 3 <= ch <= 45 and 3 <= cw <= 55 and 4 <= area <= 900:
+                if 8 <= ch <= 50 and 4 <= cw <= 60 and 10 <= area <= 1500:
                     glyphs.append((c, cx, cy, cw, ch))
 
             main_glyphs = [g for g in glyphs if 10 <= g[4] <= 45]
@@ -2530,75 +2540,129 @@ class VideoEditorService:
                 mid_y = cy + ch // 2
                 assigned = False
                 for ly in list(lines.keys()):
-                    if abs(mid_y - ly) <= 35:
+                    if abs(mid_y - ly) <= 15:
                         lines[ly].append((c, cx, cy, cw, ch))
                         assigned = True
                         break
                 if not assigned:
                     lines[mid_y] = [(c, cx, cy, cw, ch)]
 
-            valid_bright_lines = [l for l in lines.values() if len(l) >= 2]
-
-            if valid_bright_lines:
-                # Xử lý đồng thời TẤT CẢ các cụm text/subtitle hợp lệ trên frame (đa ứng viên song song)
-                for line in valid_bright_lines:
-                    l_ymin = max(0, min(g[2] for g in line) - 8)
-                    l_ymax = min(strip_h, max(g[2] + g[4] for g in line) + 8)
-                    l_xmin = max(0, min(g[1] for g in line) - 8)
-                    l_xmax = min(strip_w, max(g[1] + g[3] for g in line) + 8)
-                    boxes_all.append((l_xmin, l_ymin, l_xmax - l_xmin, l_ymax - l_ymin))
-
-                    for c, cx, cy, cw, ch in glyphs:
-                        if (l_ymin <= cy <= l_ymax) and (l_xmin <= cx <= l_xmax):
+            # Lọc theo luật cụm từ liền kề (Adjacent Glyph Clustering, dx <= 32px) để loại bỏ 100% đốm sáng tự nhiên
+            for ly, l in lines.items():
+                if title_max_y <= 0 or ly > title_max_y - 20:
+                    sorted_l = sorted(l, key=lambda g: g[1])
+                    cur_cl = [sorted_l[0]]
+                    for i in range(1, len(sorted_l)):
+                        prev_g = cur_cl[-1]
+                        cur_g = sorted_l[i]
+                        dx = cur_g[1] - (prev_g[1] + prev_g[3])
+                        if dx <= 32:
+                            cur_cl.append(cur_g)
+                        else:
+                            if len(cur_cl) >= 4 or (len(cur_cl) >= 3 and (cur_cl[-1][1] + cur_cl[-1][3] - cur_cl[0][1]) >= 100):
+                                xmin = min(g[1] for g in cur_cl)
+                                xmax = max(g[1] + g[3] for g in cur_cl)
+                                ymin = min(g[2] for g in cur_cl)
+                                ymax = max(g[2] + g[4] for g in cur_cl)
+                                boxes_all.append((xmin, ymin, xmax - xmin, ymax - ymin))
+                                for c, cx, cy, cw, ch in cur_cl:
+                                    cv2.drawContours(sub_mask_strip, [c], -1, 255, -1)
+                            cur_cl = [cur_g]
+                    if len(cur_cl) >= 4 or (len(cur_cl) >= 3 and (cur_cl[-1][1] + cur_cl[-1][3] - cur_cl[0][1]) >= 100):
+                        xmin = min(g[1] for g in cur_cl)
+                        xmax = max(g[1] + g[3] for g in cur_cl)
+                        ymin = min(g[2] for g in cur_cl)
+                        ymax = max(g[2] + g[4] for g in cur_cl)
+                        boxes_all.append((xmin, ymin, xmax - xmin, ymax - ymin))
+                        for c, cx, cy, cw, ch in cur_cl:
                             cv2.drawContours(sub_mask_strip, [c], -1, 255, -1)
 
-                # Search band bao trọn viền đen chống chói của phụ đề (ôm sát 7x7)
-                k7 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
-                search_band = cv2.dilate(sub_mask_strip, k7)
+            if np.count_nonzero(sub_mask_strip) > 0:
+                k5 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+                search_band = cv2.dilate(sub_mask_strip, k5)
                 dark_stroke = (search_band > 0) & (gray <= 120)
-                combined_sub = sub_mask_strip | (dark_stroke.astype(np.uint8) * 255)
-                # Dynamic Dilation theo Font Size: r = max(5, int(0.20 * h_c))
-                max_glyph_h = max([g[4] for g in glyphs], default=22)
-                r_dil = max(5, int(0.20 * max_glyph_h))
-                k_dil = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * r_dil + 1, 2 * r_dil + 1))
-                sub_mask_strip = cv2.dilate(combined_sub, k_dil)
+                sub_mask_strip = sub_mask_strip | (dark_stroke.astype(np.uint8) * 255)
+                sub_mask_strip = cv2.dilate(sub_mask_strip, k5)
 
-            # --- TH2: Nền sáng / Giấy tờ / Tủ trắng -> Nhận diện dải viền đen & Stroke Gradient ---
-            dark_strip = (gray <= 85).astype(np.uint8) * 255
-            cnt_res_d = cv2.findContours(dark_strip, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            cnts_d = cnt_res_d[0] if (isinstance(cnt_res_d, (tuple, list)) and len(cnt_res_d) == 2) else (cnt_res_d[1] if (isinstance(cnt_res_d, (tuple, list)) and len(cnt_res_d) == 3) else [])
-            dark_word_boxes = []
+            # --- TH2: Nền sáng / Giấy tờ / Tủ trắng -> Nhận diện chữ tối trên nền sáng thực thụ (Local Bright Paper Check) ---
+            dark_cands = (gray <= 100).astype(np.uint8) * 255
+            cnt_d_res = cv2.findContours(dark_cands, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            cnts_d = cnt_d_res[0] if (isinstance(cnt_d_res, (tuple, list)) and len(cnt_d_res) == 2) else (cnt_d_res[1] if (isinstance(cnt_d_res, (tuple, list)) and len(cnt_d_res) == 3) else [])
+            dark_words = []
             for c in cnts_d:
                 cx, cy, cw, ch = cv2.boundingRect(c)
                 area = cv2.contourArea(c)
-                if 12 <= ch <= 75 and 18 <= cw <= 250 and 150 <= area <= 9000:
-                    c_mask = np.zeros((strip_h, strip_w), dtype=np.uint8)
-                    cv2.drawContours(c_mask, [c], -1, 255, -1)
-                    if np.mean(gray[c_mask > 0] > 165) > 0.15:
-                        char_stroke = np.where((c_mask > 0) & ((gray <= 95) | (gray >= 165)), 255, 0).astype(np.uint8)
-                        sub_mask_strip = np.maximum(sub_mask_strip, char_stroke)
-                        dark_word_boxes.append((cx, cy, cw, ch))
+                if 15 <= ch <= 70 and 10 <= cw <= 150 and 40 <= area <= 5000:
+                    pad = 12
+                    x1, y1 = max(0, cx - pad), max(0, cy - pad)
+                    x2, y2 = min(strip_w, cx + cw + pad), min(strip_h, cy + ch + pad)
+                    surr_gray = gray[y1:y2, x1:x2]
+                    surr_sat = hsv[y1:y2, x1:x2, 1]
+                    if np.mean(surr_gray) >= 145 and np.mean(surr_sat) <= 70:
+                        dark_words.append((c, cx, cy, cw, ch))
 
-            # Phát hiện gradient nét chữ trên nền giấy trắng (chữ nghiêng hoặc tương phản cao)
-            k_rect = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-            grad_strip = cv2.morphologyEx(gray, cv2.MORPH_GRADIENT, k_rect)
-            paper_contrast = (grad_strip >= 16) & ((gray <= 120) | (gray >= 165))
-            paper_closed = cv2.morphologyEx(paper_contrast.astype(np.uint8) * 255, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (9, 5)))
-            cnt_res_p = cv2.findContours(paper_closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            cnts_p = cnt_res_p[0] if (isinstance(cnt_res_p, (tuple, list)) and len(cnt_res_p) == 2) else (cnt_res_p[1] if (isinstance(cnt_res_p, (tuple, list)) and len(cnt_res_p) == 3) else [])
-            for c in cnts_p:
-                cx, cy, cw, ch = cv2.boundingRect(c)
-                area = cv2.contourArea(c)
-                if 12 <= ch <= 85 and 20 <= cw <= 350 and 120 <= area <= 15000:
-                    sub_mask_strip[cy:cy+ch, cx:cx+cw] = np.maximum(sub_mask_strip[cy:cy+ch, cx:cx+cw], paper_contrast[cy:cy+ch, cx:cx+cw].astype(np.uint8) * 255)
-                    dark_word_boxes.append((cx, cy, cw, ch))
+            d_lines = {}
+            for c, cx, cy, cw, ch in dark_words:
+                mid_y = cy + ch // 2
+                assigned = False
+                for ly in list(d_lines.keys()):
+                    if abs(mid_y - ly) <= 15:
+                        d_lines[ly].append((c, cx, cy, cw, ch))
+                        assigned = True
+                        break
+                if not assigned:
+                    d_lines[mid_y] = [(c, cx, cy, cw, ch)]
 
-            if dark_word_boxes:
-                boxes_all.extend(dark_word_boxes)
-                sub_mask_strip = cv2.dilate(sub_mask_strip, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)))
+            for ly, l in d_lines.items():
+                if title_max_y <= 0 or ly > title_max_y - 20:
+                    sorted_l = sorted(l, key=lambda g: g[1])
+                    cur_cl = [sorted_l[0]]
+                    for i in range(1, len(sorted_l)):
+                        prev_g = cur_cl[-1]
+                        cur_g = sorted_l[i]
+                        dx = cur_g[1] - (prev_g[1] + prev_g[3])
+                        if dx <= 45:
+                            cur_cl.append(cur_g)
+                        else:
+                            if len(cur_cl) >= 2 or (cur_cl[-1][1] + cur_cl[-1][3] - cur_cl[0][1]) >= 100:
+                                xmin = min(g[1] for g in cur_cl)
+                                xmax = max(g[1] + g[3] for g in cur_cl)
+                                ymin = min(g[2] for g in cur_cl)
+                                ymax = max(g[2] + g[4] for g in cur_cl)
+                                boxes_all.append((xmin, ymin, xmax - xmin, ymax - ymin))
+                                for c, cx, cy, cw, ch in cur_cl:
+                                    cv2.drawContours(sub_mask_strip, [c], -1, 255, -1)
+                            cur_cl = [cur_g]
+                    if len(cur_cl) >= 2 or (cur_cl[-1][1] + cur_cl[-1][3] - cur_cl[0][1]) >= 100:
+                        xmin = min(g[1] for g in cur_cl)
+                        xmax = max(g[1] + g[3] for g in cur_cl)
+                        ymin = min(g[2] for g in cur_cl)
+                        ymax = max(g[2] + g[4] for g in cur_cl)
+                        boxes_all.append((xmin, ymin, xmax - xmin, ymax - ymin))
+                        for c, cx, cy, cw, ch in cur_cl:
+                            cv2.drawContours(sub_mask_strip, [c], -1, 255, -1)
 
-            # Đảm bảo sub_mask_strip thuần túy nhị phân 0 hoặc 255
+            if np.count_nonzero(sub_mask_strip) > 0:
+                k_close = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+                sub_mask_strip = cv2.morphologyEx(sub_mask_strip, cv2.MORPH_CLOSE, k_close)
+
+            sub_mask_strip = cv2.dilate(sub_mask_strip, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)))
             sub_mask_strip = np.where(sub_mask_strip > 0, 255, 0).astype(np.uint8)
+
+            # Sanity Guard Tuyệt Đối: Subtitle mask không bao giờ vượt quá 18% diện tích khung hình (chặn đứng nổ bệt 49% của M2.5, nhưng không bóp chết các frame có phụ đề + tiêu đề dày)
+            nz_sub = np.count_nonzero(sub_mask_strip)
+            if nz_sub > 0.18 * strip_w * strip_h:
+                # Thay vì xóa sạch về 0 làm mất phụ đề, loại bỏ các contours quá khổ dị thường (> 15000px)
+                cnt_filter, _ = cv2.findContours(sub_mask_strip, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                filtered_mask = np.zeros_like(sub_mask_strip)
+                valid_boxes = []
+                for cf in cnt_filter:
+                    if cv2.contourArea(cf) <= 15000:
+                        cv2.drawContours(filtered_mask, [cf], -1, 255, -1)
+                        bx, by, bw, bh = cv2.boundingRect(cf)
+                        valid_boxes.append((bx, by, bw, bh))
+                sub_mask_strip = filtered_mask
+                boxes_all = valid_boxes
 
             # Nếu có phụ đề hợp lệ: cập nhật full_mask và sub_info
             if np.count_nonzero(sub_mask_strip) > 0 and boxes_all:
@@ -2682,7 +2746,7 @@ class VideoEditorService:
                                 out_f[thy1:thy2, thx1:thx2] = clean_t
                                 full_mask[thy1:thy2, thx1:thx2] = 0
 
-            # 2. Inpaint Subtitle ROI (Dynamic Spoken Subtitles) nguyên khối
+            # 2. Inpaint Subtitle ROI (Dynamic Spoken Subtitles) ôm sát nét chữ
             if sub_info is not None:
                 sy1, sy2 = sub_info["y1"], sub_info["y2"]
                 sx1, sx2 = sub_info["x1"], sub_info["x2"]
@@ -2690,8 +2754,10 @@ class VideoEditorService:
                     sub_roi = out_f[sy1:sy2, sx1:sx2]
                     sub_m = full_mask[sy1:sy2, sx1:sx2]
                     if np.count_nonzero(sub_m) > 0:
-                        r_dil = max(5, int(0.20 * (sy2 - sy1) / 2))
-                        dil_sub_m = cv2.dilate(sub_m, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * r_dil + 1, 2 * r_dil + 1)))
+                        r_dil = 3
+                        dil_sub_m = cv2.dilate(sub_m, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)))
+                        if np.count_nonzero(dil_sub_m) > 0.85 * dil_sub_m.size:
+                            dil_sub_m = sub_m.copy()
                         dil_sub_m = np.where(dil_sub_m > 0, 255, 0).astype(np.uint8)
                         clean_s = self._inpaint_roi_fallback_chain(sub_roi, dil_sub_m, timeout_sec=15.0, use_hosted=True)
                         if clean_s is not None and clean_s.shape == sub_roi.shape:
@@ -2967,8 +3033,11 @@ class VideoEditorService:
                     sy1, sy2, sx1, sx2 = sub_info["y1"], sub_info["y2"], sub_info["x1"], sub_info["x2"]
                     s_mask = full_m[sy1:sy2, sx1:sx2]
                     if np.count_nonzero(s_mask) > 0:
-                        r_dil = max(5, int(0.20 * (sy2 - sy1) / 2))
-                        mask_sub = cv2.dilate(s_mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * r_dil + 1, 2 * r_dil + 1)))
+                        # Dilation nhẹ ôm sát nét chữ (bán kính 3px, kernel 7x7) để tránh phồng to thành mảng bệt
+                        r_dil = 3
+                        mask_sub = cv2.dilate(s_mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)))
+                        if np.count_nonzero(mask_sub) > 0.85 * mask_sub.size:
+                            mask_sub = s_mask.copy()
                         mask_sub = np.where(mask_sub > 0, 255, 0).astype(np.uint8)
                         sub_roi = out_frame[sy1:sy2, sx1:sx2]
                         sub_w, sub_h = sx2 - sx1, sy2 - sy1

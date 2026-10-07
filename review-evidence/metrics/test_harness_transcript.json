@@ -8,18 +8,18 @@
     "options": {
       "enable_critique": true,
       "mode": "auto",
-      "timeout_sec": 1200.0
+      "timeout_sec": 1800.0
     }
   },
   "status_code": 200,
   "response": {
     "success": true,
     "error": null,
-    "duration_sec": 805.1216399669647,
+    "duration_sec": 757.6795244216919,
     "transcript": [
       {
-        "timestamp": 1791405597.7727706,
-        "timestamp_iso": "2026-10-07T20:39:57.772772+00:00",
+        "timestamp": 1791411010.8708777,
+        "timestamp_iso": "2026-10-07T22:10:10.870885+00:00",
         "action": "send_message",
         "chat_id": "999999999",
         "message_id": 1001,
@@ -32,8 +32,8 @@
         }
       },
       {
-        "timestamp": 1791405643.0498989,
-        "timestamp_iso": "2026-10-07T20:40:43.049902+00:00",
+        "timestamp": 1791411055.5862222,
+        "timestamp_iso": "2026-10-07T22:10:55.586223+00:00",
         "action": "edit_message_text",
         "chat_id": "999999999",
         "message_id": 1001,
@@ -46,8 +46,8 @@
         }
       },
       {
-        "timestamp": 1791405654.808105,
-        "timestamp_iso": "2026-10-07T20:40:54.808111+00:00",
+        "timestamp": 1791411067.256585,
+        "timestamp_iso": "2026-10-07T22:11:07.256591+00:00",
         "action": "edit_message_text",
         "chat_id": "999999999",
         "message_id": 1001,
@@ -60,8 +60,8 @@
         }
       },
       {
-        "timestamp": 1791405659.3861318,
-        "timestamp_iso": "2026-10-07T20:40:59.386134+00:00",
+        "timestamp": 1791411071.743506,
+        "timestamp_iso": "2026-10-07T22:11:11.743508+00:00",
         "action": "edit_message_text",
         "chat_id": "999999999",
         "message_id": 1001,
@@ -74,8 +74,8 @@
         }
       },
       {
-        "timestamp": 1791405739.85817,
-        "timestamp_iso": "2026-10-07T20:42:19.858173+00:00",
+        "timestamp": 1791411152.6248095,
+        "timestamp_iso": "2026-10-07T22:12:32.624815+00:00",
         "action": "edit_message_text",
         "chat_id": "999999999",
         "message_id": 1001,
@@ -88,12 +88,12 @@
         }
       },
       {
-        "timestamp": 1791405743.264624,
-        "timestamp_iso": "2026-10-07T20:42:23.264628+00:00",
+        "timestamp": 1791411156.4819157,
+        "timestamp_iso": "2026-10-07T22:12:36.481924+00:00",
         "action": "edit_message_text",
         "chat_id": "999999999",
         "message_id": 1001,
-        "text": "⚡ <b>Đang làm sạch video (46%):</b>\n<code>[▓▓▓▓░░░░░░]</code>\n<i>Inpaint keyframes: 40/64 frames...</i>",
+        "text": "⚡ <b>Đang làm sạch video (42%):</b>\n<code>[▓▓▓▓░░░░░░]</code>\n<i>Inpaint keyframes: 32/64 frames...</i>",
         "caption": null,
         "file_path": null,
         "extra_params": {
@@ -102,8 +102,22 @@
         }
       },
       {
-        "timestamp": 1791405761.9234102,
-        "timestamp_iso": "2026-10-07T20:42:41.923414+00:00",
+        "timestamp": 1791411160.018956,
+        "timestamp_iso": "2026-10-07T22:12:40.018960+00:00",
+        "action": "edit_message_text",
+        "chat_id": "999999999",
+        "message_id": 1001,
+        "text": "⚡ <b>Đang làm sạch video (51%):</b>\n<code>[▓▓▓▓▓░░░░░]</code>\n<i>Inpaint keyframes: 48/64 frames...</i>",
+        "caption": null,
+        "file_path": null,
+        "extra_params": {
+          "parse_mode": "HTML",
+          "has_reply_markup": false
+        }
+      },
+      {
+        "timestamp": 1791411183.892023,
+        "timestamp_iso": "2026-10-07T22:13:03.892027+00:00",
         "action": "edit_message_text",
         "chat_id": "999999999",
         "message_id": 1001,
@@ -116,8 +130,8 @@
         }
       },
       {
-        "timestamp": 1791405786.8157609,
-        "timestamp_iso": "2026-10-07T20:43:06.815765+00:00",
+        "timestamp": 1791411211.6650918,
+        "timestamp_iso": "2026-10-07T22:13:31.665095+00:00",
         "action": "edit_message_text",
         "chat_id": "999999999",
         "message_id": 1001,
@@ -130,8 +144,8 @@
         }
       },
       {
-        "timestamp": 1791405809.5830379,
-        "timestamp_iso": "2026-10-07T20:43:29.583046+00:00",
+        "timestamp": 1791411237.1580184,
+        "timestamp_iso": "2026-10-07T22:13:57.158022+00:00",
         "action": "edit_message_text",
         "chat_id": "999999999",
         "message_id": 1001,
@@ -144,8 +158,8 @@
         }
       },
       {
-        "timestamp": 1791405833.2068765,
-        "timestamp_iso": "2026-10-07T20:43:53.206883+00:00",
+        "timestamp": 1791411263.723234,
+        "timestamp_iso": "2026-10-07T22:14:23.723241+00:00",
         "action": "edit_message_text",
         "chat_id": "999999999",
         "message_id": 1001,
@@ -158,8 +172,8 @@
         }
       },
       {
-        "timestamp": 1791405855.6122763,
-        "timestamp_iso": "2026-10-07T20:44:15.612286+00:00",
+        "timestamp": 1791411291.767767,
+        "timestamp_iso": "2026-10-07T22:14:51.767774+00:00",
         "action": "edit_message_text",
         "chat_id": "999999999",
         "message_id": 1001,
@@ -172,8 +186,8 @@
         }
       },
       {
-        "timestamp": 1791405875.1205244,
-        "timestamp_iso": "2026-10-07T20:44:35.120528+00:00",
+        "timestamp": 1791411317.890934,
+        "timestamp_iso": "2026-10-07T22:15:17.890937+00:00",
         "action": "edit_message_text",
         "chat_id": "999999999",
         "message_id": 1001,
@@ -186,8 +200,8 @@
         }
       },
       {
-        "timestamp": 1791405906.6169677,
-        "timestamp_iso": "2026-10-07T20:45:06.616973+00:00",
+        "timestamp": 1791411348.3032613,
+        "timestamp_iso": "2026-10-07T22:15:48.303263+00:00",
         "action": "edit_message_text",
         "chat_id": "999999999",
         "message_id": 1001,
@@ -200,8 +214,8 @@
         }
       },
       {
-        "timestamp": 1791405944.673749,
-        "timestamp_iso": "2026-10-07T20:45:44.673753+00:00",
+        "timestamp": 1791411379.6880841,
+        "timestamp_iso": "2026-10-07T22:16:19.688088+00:00",
         "action": "edit_message_text",
         "chat_id": "999999999",
         "message_id": 1001,
@@ -214,8 +228,8 @@
         }
       },
       {
-        "timestamp": 1791405980.808896,
-        "timestamp_iso": "2026-10-07T20:46:20.808900+00:00",
+        "timestamp": 1791411412.6189175,
+        "timestamp_iso": "2026-10-07T22:16:52.618927+00:00",
         "action": "edit_message_text",
         "chat_id": "999999999",
         "message_id": 1001,
@@ -228,8 +242,8 @@
         }
       },
       {
-        "timestamp": 1791406021.409082,
-        "timestamp_iso": "2026-10-07T20:47:01.409093+00:00",
+        "timestamp": 1791411444.8368962,
+        "timestamp_iso": "2026-10-07T22:17:24.836903+00:00",
         "action": "edit_message_text",
         "chat_id": "999999999",
         "message_id": 1001,
@@ -242,8 +256,8 @@
         }
       },
       {
-        "timestamp": 1791406069.666396,
-        "timestamp_iso": "2026-10-07T20:47:49.666399+00:00",
+        "timestamp": 1791411479.4895334,
+        "timestamp_iso": "2026-10-07T22:17:59.489537+00:00",
         "action": "edit_message_text",
         "chat_id": "999999999",
         "message_id": 1001,
@@ -256,8 +270,8 @@
         }
       },
       {
-        "timestamp": 1791406088.2992334,
-        "timestamp_iso": "2026-10-07T20:48:08.299238+00:00",
+        "timestamp": 1791411500.8506331,
+        "timestamp_iso": "2026-10-07T22:18:20.850637+00:00",
         "action": "edit_message_text",
         "chat_id": "999999999",
         "message_id": 1001,
@@ -270,8 +284,8 @@
         }
       },
       {
-        "timestamp": 1791406125.136269,
-        "timestamp_iso": "2026-10-07T20:48:45.136272+00:00",
+        "timestamp": 1791411533.8219113,
+        "timestamp_iso": "2026-10-07T22:18:53.821915+00:00",
         "action": "edit_message_text",
         "chat_id": "999999999",
         "message_id": 1001,
@@ -284,8 +298,8 @@
         }
       },
       {
-        "timestamp": 1791406164.9992332,
-        "timestamp_iso": "2026-10-07T20:49:24.999241+00:00",
+        "timestamp": 1791411567.2520995,
+        "timestamp_iso": "2026-10-07T22:19:27.252103+00:00",
         "action": "edit_message_text",
         "chat_id": "999999999",
         "message_id": 1001,
@@ -298,8 +312,8 @@
         }
       },
       {
-        "timestamp": 1791406199.2174132,
-        "timestamp_iso": "2026-10-07T20:49:59.217422+00:00",
+        "timestamp": 1791411595.882196,
+        "timestamp_iso": "2026-10-07T22:19:55.882204+00:00",
         "action": "edit_message_text",
         "chat_id": "999999999",
         "message_id": 1001,
@@ -312,8 +326,8 @@
         }
       },
       {
-        "timestamp": 1791406234.408065,
-        "timestamp_iso": "2026-10-07T20:50:34.408068+00:00",
+        "timestamp": 1791411626.0465267,
+        "timestamp_iso": "2026-10-07T22:20:26.046530+00:00",
         "action": "edit_message_text",
         "chat_id": "999999999",
         "message_id": 1001,
@@ -326,8 +340,8 @@
         }
       },
       {
-        "timestamp": 1791406272.2022357,
-        "timestamp_iso": "2026-10-07T20:51:12.202242+00:00",
+        "timestamp": 1791411656.6015038,
+        "timestamp_iso": "2026-10-07T22:20:56.601508+00:00",
         "action": "edit_message_text",
         "chat_id": "999999999",
         "message_id": 1001,
@@ -340,8 +354,8 @@
         }
       },
       {
-        "timestamp": 1791406306.3129559,
-        "timestamp_iso": "2026-10-07T20:51:46.312966+00:00",
+        "timestamp": 1791411684.8946645,
+        "timestamp_iso": "2026-10-07T22:21:24.894667+00:00",
         "action": "edit_message_text",
         "chat_id": "999999999",
         "message_id": 1001,
@@ -354,8 +368,8 @@
         }
       },
       {
-        "timestamp": 1791406338.6855314,
-        "timestamp_iso": "2026-10-07T20:52:18.685534+00:00",
+        "timestamp": 1791411711.746468,
+        "timestamp_iso": "2026-10-07T22:21:51.746471+00:00",
         "action": "edit_message_text",
         "chat_id": "999999999",
         "message_id": 1001,
@@ -368,8 +382,8 @@
         }
       },
       {
-        "timestamp": 1791406352.5714312,
-        "timestamp_iso": "2026-10-07T20:52:32.571433+00:00",
+        "timestamp": 1791411722.5325534,
+        "timestamp_iso": "2026-10-07T22:22:02.532556+00:00",
         "action": "edit_message_text",
         "chat_id": "999999999",
         "message_id": 1001,
@@ -382,8 +396,8 @@
         }
       },
       {
-        "timestamp": 1791406402.8333275,
-        "timestamp_iso": "2026-10-07T20:53:22.833330+00:00",
+        "timestamp": 1791411768.4875512,
+        "timestamp_iso": "2026-10-07T22:22:48.487553+00:00",
         "action": "edit_message_text",
         "chat_id": "999999999",
         "message_id": 1001,
@@ -396,8 +410,8 @@
         }
       },
       {
-        "timestamp": 1791406402.8348196,
-        "timestamp_iso": "2026-10-07T20:53:22.834821+00:00",
+        "timestamp": 1791411768.4890854,
+        "timestamp_iso": "2026-10-07T22:22:48.489087+00:00",
         "action": "edit_message_text",
         "chat_id": "999999999",
         "message_id": 1001,
@@ -410,8 +424,8 @@
         }
       },
       {
-        "timestamp": 1791406402.8937893,
-        "timestamp_iso": "2026-10-07T20:53:22.893791+00:00",
+        "timestamp": 1791411768.5497775,
+        "timestamp_iso": "2026-10-07T22:22:48.549779+00:00",
         "action": "delete_message",
         "chat_id": "999999999",
         "message_id": 1001,
@@ -421,14 +435,14 @@
         "extra_params": {}
       },
       {
-        "timestamp": 1791406402.8938503,
-        "timestamp_iso": "2026-10-07T20:53:22.893850+00:00",
+        "timestamp": 1791411768.549844,
+        "timestamp_iso": "2026-10-07T22:22:48.549844+00:00",
         "action": "send_video_file",
         "chat_id": "999999999",
         "message_id": 1002,
         "text": null,
-        "caption": "🎬 <b>Tiểu Bảo Bảo đã xóa sạch text trong video cho anh Mạnh!</b>\n\n📊 <b>BẢNG TỔNG KẾT CHẤT LƯỢNG (AI QUALITY AUDIT):</b>\n├ 🔍 <b>Residual OCR:</b> <code>436 từ tồn dư</code> (Sạch hoàn toàn)\n├ 🎨 <b>Laplacian Texture:</b> <code>1.73</code> (Bảo toàn vân nền)\n├ ⏱ <b>Temporal Flicker:</b> <code>19.38x</code> (Chuyển động mượt mà)\n├ 🪡 <b>Seam Discontinuity:</b> <code>2.171</code> (Mép biên liền mạch)\n├ 📸 <b>pHash Visual Drift:</b> <code>12 bit</code> (Khung cảnh ổn định)\n├ 👁 <b>Vision-LLM Score:</b> <code>2.0/5</code>\n└ 🔄 <b>Vòng tinh chỉnh:</b> <code>1 vòng</code>\n\n⚡ <b>Âm thanh:</b> Bit-exact Copy | <b>Định dạng:</b> H.264 FastStart",
-        "file_path": "/tmp/video_editor/clean_0cd6985bdeee.mp4",
+        "caption": "🎬 <b>Tiểu Bảo Bảo đã xóa sạch text trong video cho anh Mạnh!</b>\n\n📊 <b>BẢNG TỔNG KẾT CHẤT LƯỢNG (AI QUALITY AUDIT):</b>\n├ 🔍 <b>Residual OCR:</b> <code>352 từ tồn dư</code> (Cảnh báo: Còn dư ảnh chữ)\n├ 🎨 <b>Laplacian Texture:</b> <code>1.61</code> (Bảo toàn vân nền)\n├ ⏱ <b>Temporal Flicker:</b> <code>16.03x</code> (Chuyển động mượt mà)\n├ 🪡 <b>Seam Discontinuity:</b> <code>2.227</code> (Mép biên liền mạch)\n├ 📸 <b>pHash Visual Drift:</b> <code>20 bit</code> (Khung cảnh ổn định)\n├ 👁 <b>Vision-LLM Score:</b> <code>2.0/5</code>\n└ 🔄 <b>Vòng tinh chỉnh:</b> <code>1 vòng</code>\n\n⚡ <b>Âm thanh:</b> Bit-exact Copy | <b>Định dạng:</b> H.264 FastStart",
+        "file_path": "/tmp/video_editor/clean_6c496a85d8b2.mp4",
         "extra_params": {
           "duration": 0,
           "width": 0,
@@ -439,10 +453,10 @@
         }
       }
     ],
-    "output_video_path": "/tmp/video_editor/clean_0cd6985bdeee.mp4",
-    "caption": "🎬 <b>Tiểu Bảo Bảo đã xóa sạch text trong video cho anh Mạnh!</b>\n\n📊 <b>BẢNG TỔNG KẾT CHẤT LƯỢNG (AI QUALITY AUDIT):</b>\n├ 🔍 <b>Residual OCR:</b> <code>436 từ tồn dư</code> (Sạch hoàn toàn)\n├ 🎨 <b>Laplacian Texture:</b> <code>1.73</code> (Bảo toàn vân nền)\n├ ⏱ <b>Temporal Flicker:</b> <code>19.38x</code> (Chuyển động mượt mà)\n├ 🪡 <b>Seam Discontinuity:</b> <code>2.171</code> (Mép biên liền mạch)\n├ 📸 <b>pHash Visual Drift:</b> <code>12 bit</code> (Khung cảnh ổn định)\n├ 👁 <b>Vision-LLM Score:</b> <code>2.0/5</code>\n└ 🔄 <b>Vòng tinh chỉnh:</b> <code>1 vòng</code>\n\n⚡ <b>Âm thanh:</b> Bit-exact Copy | <b>Định dạng:</b> H.264 FastStart",
+    "output_video_path": "/tmp/video_editor/clean_6c496a85d8b2.mp4",
+    "caption": "🎬 <b>Tiểu Bảo Bảo đã xóa sạch text trong video cho anh Mạnh!</b>\n\n📊 <b>BẢNG TỔNG KẾT CHẤT LƯỢNG (AI QUALITY AUDIT):</b>\n├ 🔍 <b>Residual OCR:</b> <code>352 từ tồn dư</code> (Cảnh báo: Còn dư ảnh chữ)\n├ 🎨 <b>Laplacian Texture:</b> <code>1.61</code> (Bảo toàn vân nền)\n├ ⏱ <b>Temporal Flicker:</b> <code>16.03x</code> (Chuyển động mượt mà)\n├ 🪡 <b>Seam Discontinuity:</b> <code>2.227</code> (Mép biên liền mạch)\n├ 📸 <b>pHash Visual Drift:</b> <code>20 bit</code> (Khung cảnh ổn định)\n├ 👁 <b>Vision-LLM Score:</b> <code>2.0/5</code>\n└ 🔄 <b>Vòng tinh chỉnh:</b> <code>1 vòng</code>\n\n⚡ <b>Âm thanh:</b> Bit-exact Copy | <b>Định dạng:</b> H.264 FastStart",
     "critique": null,
     "metrics": null
   },
-  "client_duration_sec": 805.172191619873
+  "client_duration_sec": 757.72425532341
 }

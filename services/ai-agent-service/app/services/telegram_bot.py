@@ -2044,7 +2044,9 @@ class TelegramBot:
 
                                     delivery = res.get("delivery") if isinstance(res, dict) else getattr(res, "delivery", None)
                                     msg_text = res.get("message", "Biên tập video hoàn tất!") if isinstance(res, dict) else getattr(res, "message", "Biên tập video hoàn tất!")
-                                    if is_remove_text:
+                                    if is_remove_text and (isinstance(res, dict) and (res.get("critique") or res.get("metrics"))):
+                                        caption = self._format_video_quality_caption(res)
+                                    elif is_remove_text and not (isinstance(res, dict) and res.get("message")):
                                         caption = self._format_video_quality_caption(res)
                                     else:
                                         caption = f"🎬 {msg_text}"

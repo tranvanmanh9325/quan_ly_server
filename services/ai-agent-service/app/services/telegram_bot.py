@@ -1860,6 +1860,7 @@ class TelegramBot:
         # Guard các giá trị số trong metrics, phòng ngừa NoneType gây lỗi f-string formatting
         res_ocr_raw = metrics.get("residual_ocr_words")
         res_ocr = int(res_ocr_raw) if isinstance(res_ocr_raw, (int, float)) else 0
+        res_ocr_badge = "(Sạch hoàn toàn)" if res_ocr == 0 else "(Cảnh báo: Còn dư ảnh chữ)"
 
         tex_raw = metrics.get("laplacian_texture_ratio")
         texture_ratio = float(tex_raw) if isinstance(tex_raw, (int, float)) else 1.0
@@ -1891,7 +1892,7 @@ class TelegramBot:
         caption = (
             "🎬 <b>Tiểu Bảo Bảo đã xóa sạch text trong video cho anh Mạnh!</b>\n\n"
             "📊 <b>BẢNG TỔNG KẾT CHẤT LƯỢNG (AI QUALITY AUDIT):</b>\n"
-            f"├ 🔍 <b>Residual OCR:</b> <code>{res_ocr} từ tồn dư</code> (Sạch hoàn toàn)\n"
+            f"├ 🔍 <b>Residual OCR:</b> <code>{res_ocr} từ tồn dư</code> {res_ocr_badge}\n"
             f"├ 🎨 <b>Laplacian Texture:</b> <code>{texture_ratio:.2f}</code> (Bảo toàn vân nền)\n"
             f"├ ⏱ <b>Temporal Flicker:</b> <code>{flicker_ratio:.2f}x</code> (Chuyển động mượt mà)\n"
             f"├ 🪡 <b>Seam Discontinuity:</b> <code>{seam_disc:.3f}</code> (Mép biên liền mạch)\n"

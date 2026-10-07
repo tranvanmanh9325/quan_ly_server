@@ -128,7 +128,12 @@ class ClassicalFallbackManager:
         diff = cv2.absdiff(current_frame, warped_bg)
         gray_diff = cv2.cvtColor(diff, cv2.COLOR_BGR2GRAY) if diff.ndim == 3 else diff
         if np.count_nonzero(outside_mask) > 0:
-            mean_error = cv2.mean(gray_diff, mask=outside_mask)[0]
+            out_diffs = gray_diff[outside_mask > 0]
+            # Rigid Masking: Loại trừ chuyển động phi cứng / ngoại lai (như cử động đầu gối, vật thể độc lập)
+            # bằng cách tính trimmed error trên 85% diện tích bề mặt cứng ổn định nhất
+            trimmed_thresh = float(np.percentile(out_diffs, 85)) if len(out_diffs) > 0 else 999.0
+            valid_diffs = out_diffs[out_diffs <= trimmed_thresh]
+            mean_error = float(np.mean(valid_diffs)) if len(valid_diffs) > 0 else float(np.mean(out_diffs))
         else:
             mean_error = 999.0
 

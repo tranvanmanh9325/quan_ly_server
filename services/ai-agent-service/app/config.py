@@ -39,6 +39,13 @@ class Settings(BaseSettings):
     TELEGRAM_BOT_TOKEN: str = Field(default="", alias="TELEGRAM_BOT_TOKEN")
     TELEGRAM_CHAT_ID: str = Field(default="", alias="TELEGRAM_CHAT_ID")
     TELEGRAM_POLLING_ENABLED: bool = Field(default=True, alias="TELEGRAM_POLLING_ENABLED")
+    ENABLE_TELEGRAM_TEST_HARNESS: bool = Field(default=False, alias="ENABLE_TELEGRAM_TEST_HARNESS")
+    TEST_HARNESS_SECRET_KEY: str = Field(default="", alias="TEST_HARNESS_SECRET_KEY")
+    TEST_HARNESS_ALLOWED_IPS: List[str] = Field(
+        default=["127.0.0.1", "::1", "localhost", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"],
+        alias="TEST_HARNESS_ALLOWED_IPS",
+    )
+    VIDEO_PROCESS_TIMEOUT_SEC: float = Field(default=1200.0, alias="VIDEO_PROCESS_TIMEOUT_SEC")
 
     # Groq Multi-Key Pool (Supports 10+ keys with dynamic environment discovery)
     GROQ_API_KEY: str = Field(default="", alias="GROQ_API_KEY")

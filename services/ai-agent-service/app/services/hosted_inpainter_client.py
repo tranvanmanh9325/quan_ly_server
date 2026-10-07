@@ -22,6 +22,7 @@ import httpx
 logger = logging.getLogger(__name__)
 
 DEFAULT_ENDPOINTS = [
+    "https://gyufyjk-iopaint-lama.hf.space/api/v1/inpaint",
     "https://sanster-iopaint-lama.hf.space/api/v1/inpaint",
 ]
 

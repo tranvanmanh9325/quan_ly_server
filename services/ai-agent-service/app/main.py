@@ -18,7 +18,16 @@ from app.services.memory_service import AgentMemoryService
 from app.services.telegram_bot import TelegramBot
 from app.services.proactive_service import ProactiveIntelligenceService
 from app.services.dream_engine import SubconsciousDreamEngine
-from app.routers import health, facebook, tiktok, openai_gateway, brain, media_download, file_transfer
+from app.routers import (
+    health,
+    facebook,
+    tiktok,
+    openai_gateway,
+    brain,
+    media_download,
+    file_transfer,
+    telegram_test_harness,
+)
 from app.services.media_storage_manager import media_storage_manager
 from app.services.transfer_storage_manager import transfer_storage_manager
 from app.services.security_alert_engine import SecurityAlertEngine
@@ -525,3 +534,4 @@ app.include_router(openai_gateway.router)
 app.include_router(brain.router)
 app.include_router(media_download.router)
 app.include_router(file_transfer.router)
+app.include_router(telegram_test_harness.router)

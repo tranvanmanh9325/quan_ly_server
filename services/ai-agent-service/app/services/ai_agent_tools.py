@@ -2860,6 +2860,12 @@ class AgentToolExecutor:
                                 "enum": ["mp4", "mkv", "mov", "webm"],
                                 "default": "mp4",
                                 "description": "Định dạng tệp video đầu ra."
+                            },
+                            "target_scope": {
+                                "type": "string",
+                                "enum": ["overlay", "all"],
+                                "default": "overlay",
+                                "description": "Phạm vi xóa text: 'overlay' (mặc định - chỉ xóa phụ đề/watermark chèn, bảo tồn chữ thực trong cảnh) hoặc 'all' (xóa toàn bộ kể cả chữ trong cảnh)."
                             }
                         },
                         "required": ["input_path_or_url"]
@@ -5253,11 +5259,13 @@ class AgentToolExecutor:
                 region = tool_args.get("region")
                 mode = str(tool_args.get("mode", "delogo")).strip().lower()
                 out_format = str(tool_args.get("output_format", "mp4")).strip()
+                target_scope = str(tool_args.get("target_scope", "overlay")).strip().lower()
                 res = await self.video_editor_service.remove_text_from_video(
                     input_path_or_url=in_target,
                     region=region,
                     mode=mode,
                     output_format=out_format,
+                    target_scope=target_scope,
                 )
                 if res.get("status") == "ok":
                     r = res.get("region", {})

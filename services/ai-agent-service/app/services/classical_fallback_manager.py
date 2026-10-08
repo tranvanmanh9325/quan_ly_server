@@ -170,21 +170,36 @@ class ClassicalFallbackManager:
         self,
         roi_img: np.ndarray,
         roi_mask: np.ndarray,
+        full_frame: Optional[np.ndarray] = None,
+        roi_bbox: Optional[Tuple[int, int, int, int]] = None,
+        full_mask: Optional[np.ndarray] = None,
+        context_img: Optional[np.ndarray] = None,
+        context_mask: Optional[np.ndarray] = None,
     ) -> np.ndarray:
         """
         Tier C2: Structure-Texture Decomposition Engine.
         Uses Guided Filter + Navier-Stokes to preserve micro-textures without blur.
-        Prioritizes in-house Pure Guided Filter decomposition to preserve high-frequency
-        mesh and surface textures (variance > 3000), avoiding over-smoothing artifacts.
+        Supports Expanded Spatial Context for Periodic Lattice Synthesis (e.g. Burmester speaker mesh).
         """
         self._stats["c2_guided_filter_invocations"] += 1
 
         if roi_img is None or roi_mask is None or np.count_nonzero(roi_mask) == 0:
             return roi_img.copy() if roi_img is not None else None
 
+        if full_frame is None and context_img is not None:
+            full_frame = context_img
+        if full_mask is None and context_mask is not None:
+            full_mask = context_mask
+
         try:
-            # Primary: Exemplar Micro-Lattice Texture Synthesis & Guided Filter
-            result = self.synthesize_periodic_exemplar_texture(roi_img, roi_mask)
+            # Primary: Exemplar Micro-Lattice Texture Synthesis with Expanded Spatial Context
+            result = self.synthesize_periodic_exemplar_texture(
+                roi_img=roi_img,
+                roi_mask=roi_mask,
+                full_frame=full_frame,
+                roi_bbox=roi_bbox,
+                full_mask=full_mask,
+            )
             if result is not None and result.shape == roi_img.shape:
                 return result
         except Exception as err:
@@ -248,100 +263,160 @@ class ClassicalFallbackManager:
         roi_mask: np.ndarray,
         radius: int = 4,
         eps: float = 0.04,
+        full_frame: Optional[np.ndarray] = None,
+        roi_bbox: Optional[Tuple[int, int, int, int]] = None,
+        full_mask: Optional[np.ndarray] = None,
+        context_img: Optional[np.ndarray] = None,
+        context_mask: Optional[np.ndarray] = None,
     ) -> np.ndarray:
         """
         Spatial Exemplar Micro-Lattice Texture Synthesis:
         Preserves high-frequency periodic micro-patterns (e.g. Burmester speaker mesh on Porsche door).
-        1. Decomposes structure and high-frequency texture via Guided Filter.
-        2. Inpaints structural illumination base using Navier-Stokes.
-        3. Scans unmasked context for highest Laplacian variance exemplar patch (W=60, H=28 / 16x24).
-        4. Synthesizes/tiles periodic texture into inpaint mask with phase-aligned grid.
-        5. Hard-locks glyph core (alpha=1.0) to eliminate residual text bleed.
+        1. Decomposes structural illumination base using Navier-Stokes.
+        2. Scans context ring or expanded spatial neighborhood for highest Laplacian variance exemplar patch.
+        3. Isolates micro-perforation detail via Scale-Separation (Gaussian detail extraction).
+        4. Tiles periodic texture into inpaint mask with phase-aligned grid.
+        5. Hard-locks glyph core (alpha=1.0) while strictly preserving background pixels (alpha=0.0).
         Guarantees Laplacian variance > 2500 and background SSIM >= 0.85.
         """
         if roi_img is None or roi_mask is None or np.count_nonzero(roi_mask) == 0:
             return roi_img.copy() if roi_img is not None else None
 
+        if full_frame is None and context_img is not None:
+            full_frame = context_img
+        if full_mask is None and context_mask is not None:
+            full_mask = context_mask
+
         h, w = roi_img.shape[:2]
         mask_u8 = roi_mask if roi_mask.ndim == 2 else roi_mask[:, :, 0]
 
-        # 1. Structure-texture decomposition via Guided Filter
-        src_f = roi_img.astype(np.float32) / 255.0
-        gray_f = cv2.cvtColor(roi_img, cv2.COLOR_BGR2GRAY).astype(np.float32) / 255.0
-        ksize = (2 * radius + 1, 2 * radius + 1)
+        # 1. Base structural illumination layer via Navier-Stokes
+        struct_base = cv2.inpaint(roi_img, mask_u8, inpaintRadius=3, flags=cv2.INPAINT_NS).astype(np.float32)
 
-        mean_I = cv2.boxFilter(gray_f, -1, ksize)
-        mean_p = cv2.boxFilter(src_f, -1, ksize)
-        mean_Ip = cv2.boxFilter(src_f * gray_f[:, :, None], -1, ksize)
-        cov_Ip = mean_Ip - mean_I[:, :, None] * mean_p
-        var_I = cv2.boxFilter(gray_f * gray_f, -1, ksize) - mean_I * mean_I
-        a = cov_Ip / (var_I[:, :, None] + eps)
-        b = mean_p - a * mean_I[:, :, None]
-        mean_a = cv2.boxFilter(a, -1, ksize)
-        mean_b = cv2.boxFilter(b, -1, ksize)
-        struct_f = mean_a * gray_f[:, :, None] + mean_b
+        # 2. Determine search canvas (either expanded full_frame or local roi_img)
+        use_expanded = (
+            full_frame is not None
+            and roi_bbox is not None
+            and full_mask is not None
+            and full_frame.shape[0] >= h
+            and full_frame.shape[1] >= w
+        )
 
-        # High-frequency micro-texture residual
-        texture_f = src_f - struct_f
-
-        # 2. Inpaint structural illumination base
-        struct_u8 = np.clip(struct_f * 255.0, 0, 255).astype(np.uint8)
-        struct_inp = cv2.inpaint(struct_u8, mask_u8, inpaintRadius=3, flags=cv2.INPAINT_NS).astype(np.float32) / 255.0
-
-        # 3. Locate best exemplar lattice patch in context ring
-        gray_u8 = cv2.cvtColor(roi_img, cv2.COLOR_BGR2GRAY)
-        lap = cv2.Laplacian(gray_u8, cv2.CV_32F)
-
-        # Scanning for exemplar bank (Burmester speaker lattice periodicity)
-        H_E, W_E = 28, 60
         best_var = -1.0
         best_y, best_x = 0, 0
+        best_patch: Optional[np.ndarray] = None
+        phase_offset_y, phase_offset_x = 0, 0
+        H_E, W_E = 24, 48
 
-        step = 4
-        if h > H_E and w > W_E:
-            for y in range(0, h - H_E, step):
-                for x in range(0, w - W_E, step):
-                    sub_mask = mask_u8[y:y+H_E, x:x+W_E]
-                    if np.count_nonzero(sub_mask) == 0:
-                        var_val = float(np.var(lap[y:y+H_E, x:x+W_E]))
-                        if var_val > best_var:
-                            best_var = var_val
+        if use_expanded:
+            hy1, hy2, hx1, hx2 = roi_bbox
+            pad_y_top = min(hy1, 60)
+            pad_y_bot = min(full_frame.shape[0] - hy2, 80)
+            pad_x_left = min(hx1, 40)
+            pad_x_right = min(full_frame.shape[1] - hx2, 40)
+
+            search_y1 = hy1 - pad_y_top
+            search_y2 = hy2 + pad_y_bot
+            search_x1 = hx1 - pad_x_left
+            search_x2 = hx2 + pad_x_right
+
+            gray_search = cv2.cvtColor(full_frame, cv2.COLOR_BGR2GRAY)
+            lap_search = cv2.Laplacian(gray_search, cv2.CV_32F)
+            f_mask_u8 = full_mask if full_mask.ndim == 2 else full_mask[:, :, 0]
+
+            for y in range(search_y1, search_y2 - H_E, 2):
+                for x in range(search_x1, search_x2 - W_E, 2):
+                    if np.count_nonzero(f_mask_u8[y:y+H_E, x:x+W_E]) == 0:
+                        v = float(np.var(lap_search[y:y+H_E, x:x+W_E]))
+                        if v > best_var:
+                            best_var = v
                             best_y, best_x = y, x
 
-        # Fallback to smaller lattice tile if large one not clean
-        if best_var < 1200.0:
-            H_E, W_E = 16, 24
-            if h > H_E and w > W_E:
-                for y in range(0, h - H_E, 2):
-                    for x in range(0, w - W_E, 2):
-                        if np.count_nonzero(mask_u8[y:y+H_E, x:x+W_E]) == 0:
-                            var_val = float(np.var(lap[y:y+H_E, x:x+W_E]))
-                            if var_val > best_var:
-                                best_var = var_val
+            if best_var < 1500.0:
+                H_E, W_E = 16, 24
+                for y in range(search_y1, search_y2 - H_E, 2):
+                    for x in range(search_x1, search_x2 - W_E, 2):
+                        if np.count_nonzero(f_mask_u8[y:y+H_E, x:x+W_E]) == 0:
+                            v = float(np.var(lap_search[y:y+H_E, x:x+W_E]))
+                            if v > best_var:
+                                best_var = v
                                 best_y, best_x = y, x
 
-        # 4. Synthesize periodic texture or fallback to standard decomposition
-        if best_var >= 1200.0:
-            exemplar_tex = texture_f[best_y:best_y+H_E, best_x:best_x+W_E]
+            if best_var >= 1200.0:
+                best_patch = full_frame[best_y:best_y+H_E, best_x:best_x+W_E].astype(np.float32)
+                phase_offset_y = best_y - hy1
+                phase_offset_x = best_x - hx1
+
+        # Local ROI search fallback (if expanded search not provided or failed)
+        if best_patch is None:
+            gray_u8 = cv2.cvtColor(roi_img, cv2.COLOR_BGR2GRAY)
+            lap_local = cv2.Laplacian(gray_u8, cv2.CV_32F)
+            H_E, W_E = 28, 60
+            step = 4
+            if h > H_E and w > W_E:
+                for y in range(0, h - H_E, step):
+                    for x in range(0, w - W_E, step):
+                        if np.count_nonzero(mask_u8[y:y+H_E, x:x+W_E]) == 0:
+                            v = float(np.var(lap_local[y:y+H_E, x:x+W_E]))
+                            if v > best_var:
+                                best_var = v
+                                best_y, best_x = y, x
+
+            if best_var < 1200.0:
+                H_E, W_E = 16, 24
+                if h > H_E and w > W_E:
+                    for y in range(0, h - H_E, 2):
+                        for x in range(0, w - W_E, 2):
+                            if np.count_nonzero(mask_u8[y:y+H_E, x:x+W_E]) == 0:
+                                v = float(np.var(lap_local[y:y+H_E, x:x+W_E]))
+                                if v > best_var:
+                                    best_var = v
+                                    best_y, best_x = y, x
+
+            if best_var >= 1200.0:
+                best_patch = roi_img[best_y:best_y+H_E, best_x:best_x+W_E].astype(np.float32)
+                phase_offset_y = best_y
+                phase_offset_x = best_x
+
+        # 3. High-Frequency Periodic Synthesis
+        if best_patch is not None and best_var >= 1200.0:
+            # Scale-separation: Extract micro-perforations detail without low-frequency illumination
+            k_blur = (15, 15) if (H_E >= 20 and W_E >= 20) else (7, 7)
+            patch_base = cv2.GaussianBlur(best_patch, k_blur, 3.0)
+            patch_detail = best_patch - patch_base
+
             yy, xx = np.indices((h, w))
-            ey = (yy - best_y) % H_E
-            ex = (xx - best_x) % W_E
-            synth_tex = exemplar_tex[ey, ex]
-            recomposed = struct_inp + synth_tex
+            ey = (yy - phase_offset_y) % H_E
+            ex = (xx - phase_offset_x) % W_E
+            tiled_detail = patch_detail[ey, ex]
+            recomposed = np.clip(struct_base + tiled_detail, 0, 255).astype(np.uint8)
         else:
+            # Standard Guided Filter fallback
+            src_f = roi_img.astype(np.float32) / 255.0
+            gray_f = cv2.cvtColor(roi_img, cv2.COLOR_BGR2GRAY).astype(np.float32) / 255.0
+            ksize = (2 * radius + 1, 2 * radius + 1)
+            mean_I = cv2.boxFilter(gray_f, -1, ksize)
+            mean_p = cv2.boxFilter(src_f, -1, ksize)
+            mean_Ip = cv2.boxFilter(src_f * gray_f[:, :, None], -1, ksize)
+            cov_Ip = mean_Ip - mean_I[:, :, None] * mean_p
+            var_I = cv2.boxFilter(gray_f * gray_f, -1, ksize) - mean_I * mean_I
+            a = cov_Ip / (var_I[:, :, None] + eps)
+            b = mean_p - a * mean_I[:, :, None]
+            struct_f = cv2.boxFilter(a, -1, ksize) * gray_f[:, :, None] + cv2.boxFilter(b, -1, ksize)
             smooth = np.clip(struct_f * 255.0, 0.0, 255.0).astype(np.uint8)
-            texture_residual = cv2.absdiff(roi_img, smooth).astype(np.float32) / 255.0
-            recomposed = struct_inp + texture_residual * 0.5
+            texture_residual = cv2.absdiff(roi_img, smooth).astype(np.float32)
+            recomposed = np.clip(struct_base + texture_residual * 0.5, 0, 255).astype(np.uint8)
 
-        recomposed_u8 = np.clip(recomposed * 255.0, 0, 255).astype(np.uint8)
-
-        # 5. Smooth boundary feathering with solid glyph core lock
-        blurred_mask = cv2.GaussianBlur(mask_u8.astype(np.float32) / 255.0, (5, 5), 1.5)
+        # 4. Seamless feathering with solid glyph core lock & bit-exact background preservation
+        k_feather = 3
+        blurred_mask = cv2.GaussianBlur(mask_u8.astype(np.float32) / 255.0, (k_feather, k_feather), 1.0)
         alpha = np.clip(blurred_mask[:, :, None], 0.0, 1.0)
         alpha = np.maximum(alpha, (mask_u8 > 0).astype(np.float32)[:, :, None])
+        alpha[mask_u8 == 0] = 0.0
 
-        final_res = roi_img.astype(np.float32) * (1.0 - alpha) + recomposed_u8.astype(np.float32) * alpha
+        final_res = roi_img.astype(np.float32) * (1.0 - alpha) + recomposed.astype(np.float32) * alpha
         return np.clip(final_res, 0, 255).astype(np.uint8)
+
 
     @staticmethod
     def _pure_guided_filter_inpaint(

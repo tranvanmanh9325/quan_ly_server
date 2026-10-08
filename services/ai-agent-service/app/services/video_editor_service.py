@@ -1339,6 +1339,7 @@ class VideoEditorService:
                 return []
 
             frame_w, frame_h = 0, 0
+            frame_area = 0
             raw_frame_detections: List[Tuple[int, float, int, int, List[Tuple[int, int, int, int, str]]]] = []
 
             for idx, frame_path in enumerate(frames):
@@ -1361,6 +1362,7 @@ class VideoEditorService:
                         if hasattr(img, "width") and isinstance(img.width, int):
                             frame_w = max(frame_w, img.width)
                             frame_h = max(frame_h, img.height)
+                            frame_area = frame_w * frame_h
                         # Primary Detector: StudioTextDetector
                         dbnet_boxes: List[Tuple[int, int, int, int, str, float]] = []
                         try:
@@ -1423,7 +1425,10 @@ class VideoEditorService:
 
                             # Lấy mảng grayscale của frame để tính toán stroke gradient cục bộ
                             try:
-                                img_gray_arr = np.array(img.convert("L")) if hasattr(img, "convert") else None
+                                conv = img.convert("L") if hasattr(img, "convert") else None
+                                img_gray_arr = np.array(conv) if conv is not None else None
+                                if img_gray_arr is not None and getattr(img_gray_arr, "ndim", 0) != 2:
+                                    img_gray_arr = None
                             except Exception:
                                 img_gray_arr = None
 
@@ -1436,7 +1441,7 @@ class VideoEditorService:
                                 has_alpha = bool(re.search(r'[a-zA-Z0-9\u00C0-\u024F\u1EA0-\u1EF9]', text))
 
                                 has_strong_stroke = False
-                                if img_gray_arr is not None:
+                                if img_gray_arr is not None and getattr(img_gray_arr, "ndim", 0) == 2:
                                     bx = max(0, int(lefts[i]))
                                     by = max(0, int(tops[i]))
                                     bw = max(1, int(widths[i]))
@@ -1458,7 +1463,7 @@ class VideoEditorService:
                                         boxes_in_frame.append((x, y, w, h, text, conf))
 
                             # Visual Gradient Candidate Extraction: trích xuất ứng viên phụ đề theo gradient hình thái học
-                            if img_gray_arr is not None:
+                            if img_gray_arr is not None and getattr(img_gray_arr, "ndim", 0) == 2:
                                 sub_y1, sub_y2 = 0, frame_h
                                 if sub_y2 > sub_y1:
                                     grad_sub = cv2.morphologyEx(img_gray_arr, cv2.MORPH_GRADIENT, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))
@@ -1470,7 +1475,8 @@ class VideoEditorService:
                                         for cvg in cnts_vg:
                                             vx, vy, vw, vh = cv2.boundingRect(cvg)
                                             vy_full = vy
-                                            if 12 <= vh <= max(24, int(frame_h // 8)) and vw >= int(vh * 1.0) and (vw * vh) <= int(frame_area // 4):
+                                            cand_max_area = int(frame_area // 4) if frame_area > 0 else (576 * 1024 // 4)
+                                            if 12 <= vh <= max(24, int(frame_h // 8)) and vw >= int(vh * 1.0) and (vw * vh) <= cand_max_area:
                                                 b_edge = edge_sub[vy:vy+vh, vx:vx+vw]
                                                 dens = float(np.count_nonzero(b_edge)) / max(1, vw * vh)
                                                 if dens >= 0.10:

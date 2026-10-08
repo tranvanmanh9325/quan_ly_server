@@ -1441,7 +1441,7 @@ class VideoEditorService:
                                 has_alpha = bool(re.search(r'[a-zA-Z0-9\u00C0-\u024F\u1EA0-\u1EF9]', text))
 
                                 has_strong_stroke = False
-                                if img_gray_arr is not None and getattr(img_gray_arr, "ndim", 0) == 2:
+                                if img_gray_arr is not None and getattr(img_gray_arr, "ndim", 0) == 2 and cv2 is not None:
                                     bx = max(0, int(lefts[i]))
                                     by = max(0, int(tops[i]))
                                     bw = max(1, int(widths[i]))
@@ -1463,7 +1463,7 @@ class VideoEditorService:
                                         boxes_in_frame.append((x, y, w, h, text, conf))
 
                             # Visual Gradient Candidate Extraction: trích xuất ứng viên phụ đề theo gradient hình thái học
-                            if img_gray_arr is not None and getattr(img_gray_arr, "ndim", 0) == 2:
+                            if img_gray_arr is not None and getattr(img_gray_arr, "ndim", 0) == 2 and cv2 is not None:
                                 sub_y1, sub_y2 = 0, frame_h
                                 if sub_y2 > sub_y1:
                                     grad_sub = cv2.morphologyEx(img_gray_arr, cv2.MORPH_GRADIENT, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))

@@ -3746,6 +3746,7 @@ class VideoEditorService:
                 yield out_filtered
                 frame_buffer.pop(0)
             else:
+                yield frame_buffer[0][1]
                 frame_buffer.pop(0)
 
         cap.release()

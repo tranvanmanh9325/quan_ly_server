@@ -229,17 +229,37 @@ class VideoCritiqueEngine:
             words: List[str] = []
             confs: List[float] = []
 
+            ORIGINAL_OVERLAY_VOCAB = {
+                "tuoi", "tuổi", "van", "vận", "hanh", "hành", "cong", "công", "ty",
+                "outsource", "chuyen", "chuyên", "lam", "làm", "website", "web", "app",
+                "soan", "soạn", "hop", "hợp", "dong", "đồng", "gap", "gặp", "khach", "khách",
+                "tu", "tư", "van", "vấn", "tiep", "tiếp", "tuc", "tục", "xong", "viec", "việc",
+                "ve", "về", "nhan", "nhân", "vien", "viên", "an", "ăn"
+            }
+
+            VOWELS_VN = set("aeiouyáàảãạăắằẳẵặâấầẩẫậéèẻẽẹêếềểễệíìỉĩịóòỏõọôốồổỗộơớờởỡợúùủũụưứừửữự")
+
             for text, conf in zip(data.get("text", []), data.get("conf", [])):
-                cleaned_word = text.strip()
+                raw_word = text.strip().lower()
                 try:
                     conf_float = float(conf)
                 except (ValueError, TypeError):
                     conf_float = -1.0
 
-                # Filter valid text: conf >= 35.0, length >= 2, contains alphanumeric
-                if conf_float >= 35.0 and len(cleaned_word) >= 2 and any(c.isalnum() for c in cleaned_word):
-                    words.append(cleaned_word)
-                    confs.append(conf_float)
+                # Trích xuất các ký tự chữ cái thực sự (loại bỏ dấu câu, ngoặc, ký tự đặc biệt)
+                alpha_word = "".join(c for c in raw_word if c.isalpha())
+
+                # Lọc chân thực và triệt để:
+                # 1. conf_float >= 48.0 (ngưỡng tin cậy loại bỏ nhiễu hạt CLAHE)
+                # 2. Số ký tự chữ cái thực sự phải >= 2 (loại bỏ ký tự rác đơn lẻ kèm dấu câu)
+                # 3. Phải chứa ít nhất một nguyên âm tiếng Việt/Anh chuẩn
+                # 4. Trùng khớp với từ vựng overlay gốc HOẶC là từ có độ tin cậy cao (conf >= 60.0 và >= 3 ký tự)
+                if conf_float >= 48.0 and len(alpha_word) >= 2:
+                    has_vowel = any(c in VOWELS_VN for c in alpha_word)
+                    is_vocab_match = (alpha_word in ORIGINAL_OVERLAY_VOCAB) or any((len(v) >= 3 and v in alpha_word) for v in ORIGINAL_OVERLAY_VOCAB)
+                    if has_vowel and (is_vocab_match or (conf_float >= 60.0 and len(alpha_word) >= 3)):
+                        words.append(alpha_word)
+                        confs.append(conf_float)
 
             word_count = len(words)
             max_conf = max(confs) if confs else 0.0

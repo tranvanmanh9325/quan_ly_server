@@ -2818,7 +2818,7 @@ class VideoEditorService:
             for c in cnts_b:
                 cx, cy, cw, ch = cv2.boundingRect(c)
                 area = cv2.contourArea(c)
-                if 8 <= ch <= 50 and 4 <= cw <= 60 and 10 <= area <= 1500:
+                if 6 <= ch <= 70 and 3 <= cw <= 70 and 8 <= area <= 2000:
                     glyphs.append((c, cx, cy, cw, ch))
 
             # TH1.B: Adaptive Thresholding cục bộ giải quyết nền phân cực kép khi ứng viên chữ còn thưa thớt
@@ -2831,10 +2831,10 @@ class VideoEditorService:
                 for c in cnts_ad:
                     cx, cy, cw, ch = cv2.boundingRect(c)
                     area = cv2.contourArea(c)
-                    if 8 <= ch <= 50 and 4 <= cw <= 60 and 10 <= area <= 1500:
+                    if 6 <= ch <= 70 and 3 <= cw <= 70 and 8 <= area <= 2000:
                         glyphs.append((c, cx, cy, cw, ch))
 
-            main_glyphs = [g for g in glyphs if 10 <= g[4] <= 45]
+            main_glyphs = [g for g in glyphs if 7 <= g[4] <= 65]
             lines = {}
             for c, cx, cy, cw, ch in main_glyphs:
                 mid_y = cy + ch // 2
@@ -3004,14 +3004,18 @@ class VideoEditorService:
                                 )
                                 line_stroke = line_stroke | adapt_bright
                             else:
-                                # Bề mặt tối / trung bình (quán ăn F1383, cửa kính F1496): bắt trọn cả ký tự mép ngoài 'g', 'ey', 'at'
-                                thresh_diff = 10
-                                thresh_grad = 12
+                                # Bề mặt tối / trung bình (quán ăn F1383, cửa kính F1496, F1050): bắt trọn cả ký tự mép ngoài 'g', 'ey', 'at', 'vi'
+                                thresh_diff = 7
+                                thresh_grad = 8
                                 line_stroke = (diff_bg >= thresh_diff).astype(np.uint8) * 255
                                 grad_env = cv2.morphologyEx(
                                     env_roi_gray, cv2.MORPH_GRADIENT, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
                                 )
                                 line_stroke = line_stroke | ((grad_env >= thresh_grad).astype(np.uint8) * 255)
+                                adapt_stroke = cv2.adaptiveThreshold(
+                                    env_roi_gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, blockSize=21, C=4
+                                )
+                                line_stroke = line_stroke | adapt_stroke
 
                             sub_mask_strip[by1:by2, common_x1:common_x2] = np.maximum(
                                 sub_mask_strip[by1:by2, common_x1:common_x2], line_stroke
@@ -3120,6 +3124,67 @@ class VideoEditorService:
 
         return full_mask, sub_info
 
+    @staticmethod
+    def _inpaint_sub_roi_dual_zone_guided_filter(
+        sub_roi: np.ndarray, mask_sub: np.ndarray, classical_mgr: Any
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Structure-Aware Dual-Zone Guided Filter:
+        Tự động phát hiện gờ mép đứng vật lý phân tách hai bề mặt tương phản cao (như gờ mép tủ lạnh F350).
+        Khi phát hiện gờ mép (col_grad >= 200.0, lum_step >= 30.0), tách mask thành 2 nửa không gian
+        độc lập cách ly bởi hành lang vật lý cw = 14px, inpaint độc lập 2 bên và giữ 100% pixel gốc ở giữa.
+        Trả về: (clean_sub_roi, feather_sub)
+        """
+        import cv2
+        import numpy as np
+
+        sub_h, sub_w = sub_roi.shape[:2]
+        sub_gray = cv2.cvtColor(sub_roi, cv2.COLOR_BGR2GRAY)
+        sobel_x_roi = np.abs(cv2.Sobel(sub_gray, cv2.CV_32F, 1, 0, ksize=3))
+
+        dual_zone_seam_lx = None
+        best_seam_grad = 0.0
+
+        # Quét tìm cột có đạo hàm Sobel X cực đại cắt qua mask phụ đề
+        # và có độ chênh lệch độ sáng nền (left vs right) đáng kể (>= 30.0)
+        for lx in range(15, sub_w - 15):
+            col_grad = float(np.mean(sobel_x_roi[:, lx]))
+            if col_grad >= 200.0:
+                bg_m = (mask_sub == 0)
+                left_samples = sub_gray[:, max(0, lx - 20):max(0, lx - 5)][bg_m[:, max(0, lx - 20):max(0, lx - 5)]]
+                right_samples = sub_gray[:, min(sub_w, lx + 5):min(sub_w, lx + 20)][bg_m[:, min(sub_w, lx + 5):min(sub_w, lx + 20)]]
+                if len(left_samples) >= 15 and len(right_samples) >= 15:
+                    lum_step = abs(float(np.mean(right_samples)) - float(np.mean(left_samples)))
+                    if lum_step >= 30.0 and col_grad > best_seam_grad:
+                        best_seam_grad = col_grad
+                        dual_zone_seam_lx = lx
+
+        if dual_zone_seam_lx is not None:
+            # Áp dụng Dual-Zone Corridor Guided Filter
+            cw = 14  # Bán kính hành lang gờ mép vật lý
+            lx = dual_zone_seam_lx
+            m_left = mask_sub.copy()
+            m_left[:, max(0, lx - cw):] = 0
+            m_right = mask_sub.copy()
+            m_right[:, :min(sub_w, lx + cw)] = 0
+
+            res_l = classical_mgr._pure_guided_filter_inpaint(sub_roi, m_left)
+            res_r = classical_mgr._pure_guided_filter_inpaint(sub_roi, m_right)
+
+            clean_sub_roi = sub_roi.copy()
+            clean_sub_roi[:, :max(0, lx - cw)] = res_l[:, :max(0, lx - cw)]
+            clean_sub_roi[:, min(sub_w, lx + cw):] = res_r[:, min(sub_w, lx + cw)]
+
+            m_active = m_left | m_right
+            feather_soft = cv2.GaussianBlur(m_active.astype(np.float32) / 255.0, (15, 15), 3.5)
+            feather_sub = feather_soft[:, :, np.newaxis]
+            return clean_sub_roi, feather_sub
+        else:
+            clean_sub_roi = classical_mgr._pure_guided_filter_inpaint(sub_roi, mask_sub)
+            feather_soft = cv2.GaussianBlur(mask_sub.astype(np.float32) / 255.0, (9, 9), 2.5)
+            feather_sub = np.maximum(feather_soft, (mask_sub > 0).astype(np.float32))[:, :, np.newaxis]
+            return clean_sub_roi, feather_sub
+
     def _inpaint_keyframe_full(
         self,
         frame: Any,
@@ -3222,19 +3287,26 @@ class VideoEditorService:
                                 dil_sub_m = sub_m.copy()
                             dil_sub_m = np.where(dil_sub_m > 0, 255, 0).astype(np.uint8)
                             clean_s = None
+                            feather_s = None
                             try:
                                 from app.services.classical_fallback_manager import get_classical_fallback_manager
                                 classical_mgr = get_classical_fallback_manager()
-                                clean_s = classical_mgr._pure_guided_filter_inpaint(sub_roi, dil_sub_m)
+                                clean_s, feather_s = VideoEditorService._inpaint_sub_roi_dual_zone_guided_filter(
+                                    sub_roi, dil_sub_m, classical_mgr
+                                )
                             except Exception:
                                 clean_s = None
+                                feather_s = None
                             if clean_s is None or clean_s.shape != sub_roi.shape:
                                 clean_s = self._inpaint_roi_fallback_chain(sub_roi, dil_sub_m, timeout_sec=2.0, use_hosted=False)
+                                feather_soft = cv2.GaussianBlur(dil_sub_m.astype(np.float32) / 255.0, (9, 9), 2.5)
+                                feather_s = np.maximum(feather_soft, (dil_sub_m > 0).astype(np.float32))[:, :, np.newaxis]
                         if clean_s is not None and clean_s.shape == sub_roi.shape:
                             # Gaussian Alpha Feathering bán kính 9px (sigma=2.5) loại bỏ Edge Seam triệt để,
-                            # đồng thời bảo đảm alpha = 1.0 bên trong mask để triệt tiêu hoàn toàn nét chữ gốc
-                            feather_soft = cv2.GaussianBlur(dil_sub_m.astype(np.float32) / 255.0, (9, 9), 2.5)
-                            feather_s = np.maximum(feather_soft, (dil_sub_m > 0).astype(np.float32))[:, :, np.newaxis]
+                            # hoặc feathering từ Dual-Zone Guided Filter bảo tồn mép đứng vật lý
+                            if feather_s is None:
+                                feather_soft = cv2.GaussianBlur(dil_sub_m.astype(np.float32) / 255.0, (9, 9), 2.5)
+                                feather_s = np.maximum(feather_soft, (dil_sub_m > 0).astype(np.float32))[:, :, np.newaxis]
                             out_f[sy1:sy2, sx1:sx2] = (
                                 clean_s.astype(np.float32) * feather_s
                                 + sub_roi.astype(np.float32) * (1.0 - feather_s)
@@ -3435,6 +3507,7 @@ class VideoEditorService:
         cur_shot_idx = 0
         frame_idx = 0
         last_clean_sub_data: Optional[Dict[str, Any]] = None
+        last_sub_mask_data: Optional[Dict[str, Any]] = None
 
         # Buffer 3-frame cho Local Temporal Bilateral Filter:
         # Mỗi phần tử: (frame_idx, clean_frame, full_mask_dilated)
@@ -3627,6 +3700,21 @@ class VideoEditorService:
                                 mask_sub = s_mask.copy()
                             mask_sub = np.where(mask_sub > 0, 255, 0).astype(np.uint8)
 
+                            # Duy trì tính liên tục của mask qua các frame kế tiếp trong cùng shot (Temporal Envelope)
+                            if (
+                                last_sub_mask_data is not None
+                                and last_sub_mask_data.get("shot_idx") == cur_shot_idx
+                                and last_sub_mask_data.get("bbox") == (sy1, sy2, sx1, sx2)
+                            ):
+                                prev_m = last_sub_mask_data.get("mask")
+                                if prev_m is not None and prev_m.shape == mask_sub.shape:
+                                    mask_sub = np.maximum(mask_sub, prev_m)
+                            last_sub_mask_data = {
+                                "shot_idx": cur_shot_idx,
+                                "bbox": (sy1, sy2, sx1, sx2),
+                                "mask": mask_sub.copy(),
+                            }
+
                             # Thử căn chỉnh trực tiếp từ keyframe sạch gần nhất trong cùng phân cảnh
                             shot_start, shot_end = shots[cur_shot_idx]
                             shot_kfs = [k for k in keyframe_indices if shot_start <= k <= shot_end and k in cleaned_keyframes]
@@ -3668,14 +3756,18 @@ class VideoEditorService:
                                 except Exception:
                                     used_sub_align = False
 
+                            clean_sub_roi = None
+                            feather_sub = None
                             if not used_sub_align or aligned_sub is None:
-                                clean_sub_roi = None
                                 try:
                                     from app.services.classical_fallback_manager import get_classical_fallback_manager
                                     classical_mgr = get_classical_fallback_manager()
-                                    clean_sub_roi = classical_mgr._pure_guided_filter_inpaint(sub_roi, mask_sub)
+                                    clean_sub_roi, feather_sub = VideoEditorService._inpaint_sub_roi_dual_zone_guided_filter(
+                                        sub_roi, mask_sub, classical_mgr
+                                    )
                                 except Exception:
                                     clean_sub_roi = None
+                                    feather_sub = None
                                 if clean_sub_roi is None or clean_sub_roi.shape != sub_roi.shape:
                                     clean_sub_roi = self._inpaint_roi_fallback_chain(sub_roi, mask_sub, timeout_sec=15.0, use_hosted=False)
                             else:
@@ -3701,8 +3793,10 @@ class VideoEditorService:
                                     "clean_roi": clean_sub_roi.copy(),
                                 }
 
-                                feather_soft = cv2.GaussianBlur(mask_sub.astype(np.float32) / 255.0, (9, 9), 2.5)
-                                feather_sub = np.maximum(feather_soft, (mask_sub > 0).astype(np.float32))[:, :, np.newaxis]
+                                if feather_sub is None:
+                                    feather_soft = cv2.GaussianBlur(mask_sub.astype(np.float32) / 255.0, (9, 9), 2.5)
+                                    feather_sub = np.maximum(feather_soft, (mask_sub > 0).astype(np.float32))[:, :, np.newaxis]
+
                                 out_frame[sy1:sy2, sx1:sx2] = (
                                     clean_sub_roi.astype(np.float32) * feather_sub
                                     + sub_roi.astype(np.float32) * (1.0 - feather_sub)
@@ -3711,6 +3805,7 @@ class VideoEditorService:
                             full_frame_mask[sy1:sy2, sx1:sx2] = np.maximum(full_frame_mask[sy1:sy2, sx1:sx2], mask_sub)
                 else:
                     last_clean_sub_data = None
+                    last_sub_mask_data = None
 
             # Thêm vào buffer 3-frame cho Temporal Bilateral Filter
             frame_buffer.append((frame_idx, out_frame, full_frame_mask))

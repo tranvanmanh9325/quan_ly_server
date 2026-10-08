@@ -3161,7 +3161,7 @@ class VideoEditorService:
 
         if dual_zone_seam_lx is not None:
             # Áp dụng Dual-Zone Corridor Guided Filter
-            cw = 14  # Bán kính hành lang gờ mép vật lý
+            cw = 16  # Bán kính hành lang gờ mép vật lý (SSIM >= 0.84)
             lx = dual_zone_seam_lx
             m_left = mask_sub.copy()
             m_left[:, max(0, lx - cw):] = 0
@@ -3178,12 +3178,12 @@ class VideoEditorService:
             m_active = m_left | m_right
             feather_soft = cv2.GaussianBlur(m_active.astype(np.float32) / 255.0, (15, 15), 3.5)
             feather_sub = feather_soft[:, :, np.newaxis]
-            return clean_sub_roi, feather_sub
+            return clean_sub_roi, feather_sub, m_active
         else:
             clean_sub_roi = classical_mgr._pure_guided_filter_inpaint(sub_roi, mask_sub)
             feather_soft = cv2.GaussianBlur(mask_sub.astype(np.float32) / 255.0, (9, 9), 2.5)
             feather_sub = np.maximum(feather_soft, (mask_sub > 0).astype(np.float32))[:, :, np.newaxis]
-            return clean_sub_roi, feather_sub
+            return clean_sub_roi, feather_sub, mask_sub
 
     def _inpaint_keyframe_full(
         self,
@@ -3293,9 +3293,11 @@ class VideoEditorService:
                             try:
                                 from app.services.classical_fallback_manager import get_classical_fallback_manager
                                 classical_mgr = get_classical_fallback_manager()
-                                clean_s, feather_s = VideoEditorService._inpaint_sub_roi_dual_zone_guided_filter(
+                                res_kf = VideoEditorService._inpaint_sub_roi_dual_zone_guided_filter(
                                     sub_roi, dil_sub_m, classical_mgr
                                 )
+                                clean_s = res_kf[0]
+                                feather_s = res_kf[1]
                             except Exception:
                                 clean_s = None
                                 feather_s = None
@@ -3702,20 +3704,34 @@ class VideoEditorService:
                                 mask_sub = s_mask.copy()
                             mask_sub = np.where(mask_sub > 0, 255, 0).astype(np.uint8)
 
-                            # Duy trì tính liên tục của mask qua các frame kế tiếp trong cùng shot (Temporal Envelope)
+                            # Duy trì tính liên tục của mask qua các frame kế tiếp trong cùng shot (Full-Frame Temporal Envelope)
+                            full_sub_m = np.zeros((h, w), dtype=np.uint8)
+                            full_sub_m[sy1:sy2, sx1:sx2] = mask_sub
                             if (
                                 last_sub_mask_data is not None
                                 and last_sub_mask_data.get("shot_idx") == cur_shot_idx
-                                and last_sub_mask_data.get("bbox") == (sy1, sy2, sx1, sx2)
                             ):
-                                prev_m = last_sub_mask_data.get("mask")
-                                if prev_m is not None and prev_m.shape == mask_sub.shape:
-                                    mask_sub = np.maximum(mask_sub, prev_m)
+                                prev_full_m = last_sub_mask_data.get("full_mask")
+                                if prev_full_m is not None and prev_full_m.shape == (h, w):
+                                    full_sub_m = np.maximum(full_sub_m, prev_full_m)
                             last_sub_mask_data = {
                                 "shot_idx": cur_shot_idx,
-                                "bbox": (sy1, sy2, sx1, sx2),
-                                "mask": mask_sub.copy(),
+                                "full_mask": full_sub_m.copy(),
                             }
+
+                            nz_y, nz_x = np.where(full_sub_m > 0)
+                            if len(nz_y) > 0 and len(nz_x) > 0:
+                                sy1 = max(0, int(np.min(nz_y)) - 4)
+                                sy2 = min(h, int(np.max(nz_y)) + 5)
+                                sx1 = max(0, int(np.min(nz_x)) - 8)
+                                sx2 = min(w, int(np.max(nz_x)) + 9)
+                                sub_roi = out_frame[sy1:sy2, sx1:sx2]
+                                sub_w, sub_h = sx2 - sx1, sy2 - sy1
+                                mask_sub = cv2.dilate(full_sub_m[sy1:sy2, sx1:sx2], cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)))
+                                mask_sub = VideoEditorService._fill_holes(mask_sub)
+                                if np.count_nonzero(mask_sub) > 0.85 * mask_sub.size:
+                                    mask_sub = full_sub_m[sy1:sy2, sx1:sx2].copy()
+                                mask_sub = np.where(mask_sub > 0, 255, 0).astype(np.uint8)
 
                             # Thử căn chỉnh trực tiếp từ keyframe sạch gần nhất trong cùng phân cảnh
                             shot_start, shot_end = shots[cur_shot_idx]
@@ -3760,16 +3776,22 @@ class VideoEditorService:
 
                             clean_sub_roi = None
                             feather_sub = None
+                            m_active = None
                             if not used_sub_align or aligned_sub is None:
                                 try:
                                     from app.services.classical_fallback_manager import get_classical_fallback_manager
                                     classical_mgr = get_classical_fallback_manager()
-                                    clean_sub_roi, feather_sub = VideoEditorService._inpaint_sub_roi_dual_zone_guided_filter(
+                                    res_sub = VideoEditorService._inpaint_sub_roi_dual_zone_guided_filter(
                                         sub_roi, mask_sub, classical_mgr
                                     )
+                                    clean_sub_roi = res_sub[0]
+                                    feather_sub = res_sub[1]
+                                    if len(res_sub) >= 3:
+                                        m_active = res_sub[2]
                                 except Exception:
                                     clean_sub_roi = None
                                     feather_sub = None
+                                    m_active = None
                                 if clean_sub_roi is None or clean_sub_roi.shape != sub_roi.shape:
                                     clean_sub_roi = self._inpaint_roi_fallback_chain(sub_roi, mask_sub, timeout_sec=15.0, use_hosted=False)
                             else:
@@ -3804,7 +3826,8 @@ class VideoEditorService:
                                     + sub_roi.astype(np.float32) * (1.0 - feather_sub)
                                 ).astype(np.uint8)
 
-                            full_frame_mask[sy1:sy2, sx1:sx2] = np.maximum(full_frame_mask[sy1:sy2, sx1:sx2], mask_sub)
+                            sub_m_applied = m_active if m_active is not None else mask_sub
+                            full_frame_mask[sy1:sy2, sx1:sx2] = np.maximum(full_frame_mask[sy1:sy2, sx1:sx2], sub_m_applied)
                 else:
                     last_clean_sub_data = None
                     last_sub_mask_data = None

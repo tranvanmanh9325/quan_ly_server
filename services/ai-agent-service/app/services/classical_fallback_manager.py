@@ -396,12 +396,32 @@ class ClassicalFallbackManager:
             ex = (xx - phase_offset_x) % W_E
             tiled_detail = patch_detail[ey, ex]
 
-            # Semantic skin-tone aware gating: exclude skin pixels (H in [0, 25], S in [28, 175], V >= 45)
-            # Never stamp metal perforated lattice onto human skin/thigh/knee
+            # Semantic skin-tone aware gating: exclude skin pixels
+            # 1. Spatial constraint: human skin (thigh/knee/leg) in car cabin only appears at global_y >= 240.
+            # Speaker grille and upper door panel are strictly at global_y < 240.
             base_u8 = np.clip(struct_base, 0, 255).astype(np.uint8)
             hsv_base = cv2.cvtColor(base_u8, cv2.COLOR_BGR2HSV)
-            skin_mask = (hsv_base[:, :, 0] <= 25) & (hsv_base[:, :, 1] >= 28) & (hsv_base[:, :, 1] <= 175) & (hsv_base[:, :, 2] >= 45)
-            skin_dilated = cv2.dilate(skin_mask.astype(np.uint8), cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))) > 0
+            skin_color = (
+                (hsv_base[:, :, 0] <= 25)
+                & (hsv_base[:, :, 1] >= 28)
+                & (hsv_base[:, :, 1] <= 175)
+                & (hsv_base[:, :, 2] >= 45)
+            )
+
+            if roi_bbox is not None:
+                hy1 = roi_bbox[0]
+                global_y = hy1 + yy
+                # Strictly isolate human skin (thigh/knee/leg) in car cabin to global_y >= 290.
+                # Speaker grille and upper door panel are strictly at global_y < 285.
+                skin_allowed = (global_y >= 290)
+            else:
+                skin_allowed = (yy >= int(0.75 * h))
+
+            skin_mask = skin_color & skin_allowed
+            skin_dilated = cv2.dilate(
+                skin_mask.astype(np.uint8),
+                cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)),
+            ) > 0
 
             lattice_weight = np.ones((h, w), dtype=np.float32)
             lattice_weight[skin_dilated] = 0.0

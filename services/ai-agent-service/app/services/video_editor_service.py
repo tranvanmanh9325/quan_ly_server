@@ -3173,7 +3173,7 @@ class VideoEditorService:
 
             clean_sub_roi = sub_roi.copy()
             clean_sub_roi[:, :max(0, lx - cw)] = res_l[:, :max(0, lx - cw)]
-            clean_sub_roi[:, min(sub_w, lx + cw):] = res_r[:, min(sub_w, lx + cw)]
+            clean_sub_roi[:, min(sub_w, lx + cw):] = res_r[:, min(sub_w, lx + cw):]
 
             m_active = m_left | m_right
             feather_soft = cv2.GaussianBlur(m_active.astype(np.float32) / 255.0, (15, 15), 3.5)

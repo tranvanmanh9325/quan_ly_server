@@ -191,22 +191,28 @@ class ClassicalFallbackManager:
         if full_mask is None and context_mask is not None:
             full_mask = context_mask
 
-        try:
-            # Primary: Exemplar Micro-Lattice Texture Synthesis with Expanded Spatial Context
-            result = self.synthesize_periodic_exemplar_texture(
-                roi_img=roi_img,
-                roi_mask=roi_mask,
-                full_frame=full_frame,
-                roi_bbox=roi_bbox,
-                full_mask=full_mask,
-            )
-            if result is not None and result.shape == roi_img.shape:
-                return result
-        except Exception as err:
-            logger.warning(
-                "[ClassicalFallbackManager] Exemplar texture synthesis failed: %s, trying pure guided filter",
-                err,
-            )
+        # Document / white paper detection: avoid periodic exemplar lattice on documents
+        gray_roi = cv2.cvtColor(roi_img, cv2.COLOR_BGR2GRAY) if roi_img.ndim == 3 else roi_img
+        mean_lum = float(np.mean(gray_roi))
+        is_document = (mean_lum >= 140.0) and (float(np.std(gray_roi)) < 65.0)
+
+        if not is_document:
+            try:
+                # Primary: Exemplar Micro-Lattice Texture Synthesis with Expanded Spatial Context
+                result = self.synthesize_periodic_exemplar_texture(
+                    roi_img=roi_img,
+                    roi_mask=roi_mask,
+                    full_frame=full_frame,
+                    roi_bbox=roi_bbox,
+                    full_mask=full_mask,
+                )
+                if result is not None and result.shape == roi_img.shape:
+                    return result
+            except Exception as err:
+                logger.warning(
+                    "[ClassicalFallbackManager] Exemplar texture synthesis failed: %s, trying pure guided filter",
+                    err,
+                )
 
         try:
             # Secondary: In-house Guided Filter Structure-Texture Decomposition
@@ -389,7 +395,19 @@ class ClassicalFallbackManager:
             ey = (yy - phase_offset_y) % H_E
             ex = (xx - phase_offset_x) % W_E
             tiled_detail = patch_detail[ey, ex]
-            recomposed = np.clip(struct_base + tiled_detail, 0, 255).astype(np.uint8)
+
+            # Semantic skin-tone aware gating: exclude skin pixels (H in [0, 25], S in [28, 175], V >= 45)
+            # Never stamp metal perforated lattice onto human skin/thigh/knee
+            base_u8 = np.clip(struct_base, 0, 255).astype(np.uint8)
+            hsv_base = cv2.cvtColor(base_u8, cv2.COLOR_BGR2HSV)
+            skin_mask = (hsv_base[:, :, 0] <= 25) & (hsv_base[:, :, 1] >= 28) & (hsv_base[:, :, 1] <= 175) & (hsv_base[:, :, 2] >= 45)
+            skin_dilated = cv2.dilate(skin_mask.astype(np.uint8), cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))) > 0
+
+            lattice_weight = np.ones((h, w), dtype=np.float32)
+            lattice_weight[skin_dilated] = 0.0
+            lattice_weight = cv2.GaussianBlur(lattice_weight, (5, 5), 1.0)[:, :, np.newaxis]
+
+            recomposed = np.clip(struct_base + tiled_detail * lattice_weight, 0, 255).astype(np.uint8)
         else:
             # Standard Guided Filter fallback
             src_f = roi_img.astype(np.float32) / 255.0
@@ -449,8 +467,9 @@ class ClassicalFallbackManager:
         q = mean_a * guide_gray[:, :, None] + mean_b
         smooth = np.clip(q * 255.0, 0.0, 255.0).astype(np.uint8)
 
-        # Residual micro-texture
+        # Residual micro-texture from unmasked context only (never inject text edges back into mask)
         texture_residual = cv2.absdiff(roi_img, smooth)
+        texture_residual[mask_u8 > 0] = 0
         synthesized = cv2.add(base_structure, texture_residual)
 
         # Smooth boundary blend

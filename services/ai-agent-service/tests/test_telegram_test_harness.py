@@ -459,6 +459,30 @@ class TestTelegramTestHarness(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("Temporal Flicker:", caption)
                 self.assertIn("Seam Discontinuity:", caption)
 
+    def test_format_video_quality_caption_residual_ocr_warning(self):
+        """Kiểm chứng caption hiển thị trung thực khi residual_ocr > 0 và sạch hoàn toàn khi = 0."""
+        # Nhánh 1: res_ocr == 0 -> Phải hiển thị (Sạch hoàn toàn)
+        res_clean = {
+            "critique": {
+                "metrics": {"residual_ocr_words": 0},
+                "vision_llm_score": 5.0,
+            }
+        }
+        caption_clean = self.bot._format_video_quality_caption(res_clean)
+        self.assertIn("<code>0 từ tồn dư</code> (Sạch hoàn toàn)", caption_clean)
+        self.assertNotIn("Cảnh báo: Còn dư ảnh chữ", caption_clean)
+
+        # Nhánh 2: res_ocr > 0 -> Phải hiển thị cảnh báo trung thực
+        res_dirty = {
+            "critique": {
+                "metrics": {"residual_ocr_words": 436},
+                "vision_llm_score": 2.0,
+            }
+        }
+        caption_dirty = self.bot._format_video_quality_caption(res_dirty)
+        self.assertIn("<code>436 từ tồn dư</code> (Cảnh báo: Còn dư ảnh chữ)", caption_dirty)
+        self.assertNotIn("(Sạch hoàn toàn)", caption_dirty)
+
 
 if __name__ == "__main__":
     unittest.main()

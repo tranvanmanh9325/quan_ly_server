@@ -2783,8 +2783,8 @@ class VideoEditorService:
                 ]
                 if title_regs:
                     title_max_y = min(h, max(int(r.get("y", 0)) + int(r.get("h", 0)) for r in title_regs) + int(0.02 * h))
-                sy1 = title_max_y if title_max_y > 0 else int(0.35 * h)
-                sy2 = h
+                sy1 = max(int(0.35 * h), title_max_y)
+                sy2 = min(h, int(0.72 * h))
             else:
                 sy1 = 0
                 sy2 = h
@@ -2807,18 +2807,10 @@ class VideoEditorService:
             has_table_structure = is_white_doc and (np.count_nonzero(table_structure_mask) >= 80)
 
             # --- TH1: Nền thông thường / Nền tối -> Nhận diện lõi chữ sáng (White, Yellow, Cyan, Green, Pink...) ---
-            if is_white_doc:
-                bright_white = (gray >= 235) & (hsv[:, :, 1] <= 60)
-                # Bắt thêm cả độ tương phản cục bộ của nét chữ và viền trên giấy trắng ngà
-                bg_paper = cv2.medianBlur(gray, 15)
-                doc_text_contrast = (cv2.absdiff(gray, bg_paper) >= 12) & (gray <= 225)
-            else:
-                bright_white = (gray >= 155) & (hsv[:, :, 1] <= 85)
-                doc_text_contrast = np.zeros_like(gray, dtype=bool)
-
+            bright_white = (gray >= 155) & (hsv[:, :, 1] <= 85)
             bright_yellow = (hsv[:, :, 0] >= 10) & (hsv[:, :, 0] <= 35) & (hsv[:, :, 1] >= 60) & (hsv[:, :, 2] >= 160)
             bright_mag_red = ((hsv[:, :, 0] <= 10) | (hsv[:, :, 0] >= 160)) & (hsv[:, :, 1] >= 60) & (hsv[:, :, 2] >= 160)
-            core_bright = (bright_white | bright_yellow | bright_mag_red | doc_text_contrast).astype(np.uint8) * 255
+            core_bright = (bright_white | bright_yellow | bright_mag_red).astype(np.uint8) * 255
 
             cnt_res = cv2.findContours(core_bright, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             cnts_b = cnt_res[0] if (isinstance(cnt_res, (tuple, list)) and len(cnt_res) == 2) else (cnt_res[1] if (isinstance(cnt_res, (tuple, list)) and len(cnt_res) == 3) else [])
@@ -2829,10 +2821,8 @@ class VideoEditorService:
                 if 8 <= ch <= 50 and 4 <= cw <= 60 and 10 <= area <= 1500:
                     glyphs.append((c, cx, cy, cw, ch))
 
-            # TH1.B: Adaptive Thresholding cục bộ giải quyết nền phân cực kép (cửa gỗ tối + tủ trắng sáng như Frame 350)
-            # Chỉ kích hoạt khi dải có độ sáng cao (mean_lum >= 115) hoặc khi chưa gom đủ ứng viên (glyphs < 10)
-            mean_strip_lum = float(np.mean(gray))
-            if mean_strip_lum >= 115.0 or len(glyphs) < 10:
+            # TH1.B: Adaptive Thresholding cục bộ giải quyết nền phân cực kép khi ứng viên chữ còn thưa thớt
+            if len(glyphs) < 8:
                 adapt_thresh = cv2.adaptiveThreshold(
                     gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, blockSize=31, C=8
                 )
@@ -3031,11 +3021,15 @@ class VideoEditorService:
             else:
                 boxes_all.extend(detected_line_boxes)
 
-            # Preserve vertical structural scene seams (e.g. F350 refrigerator border vs wood door)
+            # Preserve vertical structural scene seams (e.g. F350 refrigerator border vs wood door) outside text lines and text core
             sobel_x_strip = np.abs(cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3))
-            v_seam_strip = cv2.morphologyEx((sobel_x_strip > 35).astype(np.uint8) * 255, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (1, 30)))
-            if np.count_nonzero(v_seam_strip) > 0:
-                sub_mask_strip = sub_mask_strip & (~v_seam_strip)
+            v_seam_strip = cv2.morphologyEx((sobel_x_strip > 35).astype(np.uint8) * 255, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (1, 60)))
+            v_box_mask = np.zeros_like(gray)
+            for bx, by, bw, bh in boxes_all:
+                v_box_mask[by:by+bh, bx:bx+bw] = 255
+            v_seam_protect = v_seam_strip & (~v_box_mask) & (~core_bright)
+            if np.count_nonzero(v_seam_protect) > 0:
+                sub_mask_strip = sub_mask_strip & (~v_seam_protect)
 
             if np.count_nonzero(sub_mask_strip) > 0:
                 k5 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
@@ -3045,8 +3039,8 @@ class VideoEditorService:
                 dark_stroke = (search_band > 0) & (gray <= 165) & (cv2.absdiff(gray, bg_local) >= 12)
                 sub_mask_strip = sub_mask_strip | (dark_stroke.astype(np.uint8) * 255)
                 sub_mask_strip = cv2.dilate(sub_mask_strip, k5)
-                if np.count_nonzero(v_seam_strip) > 0:
-                    sub_mask_strip = sub_mask_strip & (~v_seam_strip)
+                if np.count_nonzero(v_seam_protect) > 0:
+                    sub_mask_strip = sub_mask_strip & (~v_seam_protect)
 
             # --- THIẾT KẾ CƠ CHẾ DILATION PHÂN BIỆT (STRUCTURE-AWARE DILATION) ---
             if np.count_nonzero(sub_mask_strip) > 0:
@@ -3062,8 +3056,8 @@ class VideoEditorService:
                     sub_mask_strip = cv2.morphologyEx(sub_mask_strip, cv2.MORPH_CLOSE, k_close)
                     k_sub_dil = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
                     sub_mask_strip = cv2.dilate(sub_mask_strip, k_sub_dil)
-                    if np.count_nonzero(v_seam_strip) > 0:
-                        sub_mask_strip = sub_mask_strip & (~v_seam_strip)
+                    if np.count_nonzero(v_seam_protect) > 0:
+                        sub_mask_strip = sub_mask_strip & (~v_seam_protect)
 
                 sub_mask_strip = np.where(sub_mask_strip > 0, 255, 0).astype(np.uint8)
 
@@ -3200,7 +3194,11 @@ class VideoEditorService:
                         v_lines = cv2.morphologyEx((sub_gray < 140).astype(np.uint8) * 255, cv2.MORPH_OPEN, k_v)
                         h_lines = cv2.morphologyEx((sub_gray < 140).astype(np.uint8) * 255, cv2.MORPH_OPEN, k_h)
                         local_table = v_lines | h_lines
-                        has_local_table = (float(np.mean(sub_gray)) >= 145.0) and (np.count_nonzero(local_table) >= 30)
+                        has_local_table = (
+                            (float(np.mean(sub_gray)) >= 145.0)
+                            and (np.count_nonzero(sub_gray >= 180) >= 0.40 * sub_gray.size)
+                            and (np.count_nonzero(local_table) >= 30)
+                        )
 
                         if has_local_table:
                             # Dilate 7x7 bao trọn cả viền đen outline của chữ "Soạn hợp đồng"
@@ -3214,7 +3212,8 @@ class VideoEditorService:
                                 paper_bgr = np.array([218.0, 230.0, 234.0], dtype=np.float32)
                             filled_paper = sub_roi.copy().astype(np.float32)
                             feather_soft = cv2.GaussianBlur(dil_sub_m.astype(np.float32) / 255.0, (9, 9), 2.5)[:, :, np.newaxis]
-                            clean_s = (np.full_like(filled_paper, paper_bgr) * feather_soft + filled_paper * (1.0 - feather_soft)).astype(np.uint8)
+                            feather_paper = np.maximum(feather_soft, (dil_sub_m > 0).astype(np.float32)[:, :, np.newaxis])
+                            clean_s = (np.full_like(filled_paper, paper_bgr) * feather_paper + filled_paper * (1.0 - feather_paper)).astype(np.uint8)
                             clean_s[local_table > 0] = sub_roi[local_table > 0]
                         else:
                             dil_sub_m = cv2.dilate(sub_m, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)))
@@ -3232,9 +3231,10 @@ class VideoEditorService:
                             if clean_s is None or clean_s.shape != sub_roi.shape:
                                 clean_s = self._inpaint_roi_fallback_chain(sub_roi, dil_sub_m, timeout_sec=2.0, use_hosted=False)
                         if clean_s is not None and clean_s.shape == sub_roi.shape:
-                            # Gaussian Alpha Feathering bán kính 9px (sigma=2.5) loại bỏ Edge Seam triệt để
+                            # Gaussian Alpha Feathering bán kính 9px (sigma=2.5) loại bỏ Edge Seam triệt để,
+                            # đồng thời bảo đảm alpha = 1.0 bên trong mask để triệt tiêu hoàn toàn nét chữ gốc
                             feather_soft = cv2.GaussianBlur(dil_sub_m.astype(np.float32) / 255.0, (9, 9), 2.5)
-                            feather_s = feather_soft[:, :, np.newaxis]
+                            feather_s = np.maximum(feather_soft, (dil_sub_m > 0).astype(np.float32))[:, :, np.newaxis]
                             out_f[sy1:sy2, sx1:sx2] = (
                                 clean_s.astype(np.float32) * feather_s
                                 + sub_roi.astype(np.float32) * (1.0 - feather_s)
@@ -3598,7 +3598,11 @@ class VideoEditorService:
                         v_lines = cv2.morphologyEx((sub_gray < 140).astype(np.uint8) * 255, cv2.MORPH_OPEN, k_v)
                         h_lines = cv2.morphologyEx((sub_gray < 140).astype(np.uint8) * 255, cv2.MORPH_OPEN, k_h)
                         local_table = v_lines | h_lines
-                        has_local_table = (float(np.mean(sub_gray)) >= 145.0) and (np.count_nonzero(local_table) >= 30)
+                        has_local_table = (
+                            (float(np.mean(sub_gray)) >= 145.0)
+                            and (np.count_nonzero(sub_gray >= 180) >= 0.40 * sub_gray.size)
+                            and (np.count_nonzero(local_table) >= 30)
+                        )
 
                         if has_local_table:
                             dil_sub_m = cv2.dilate(s_mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)))
@@ -3611,7 +3615,8 @@ class VideoEditorService:
                                 paper_bgr = np.array([218.0, 230.0, 234.0], dtype=np.float32)
                             filled_paper = sub_roi.copy().astype(np.float32)
                             feather_soft = cv2.GaussianBlur(mask_sub.astype(np.float32) / 255.0, (9, 9), 2.5)[:, :, np.newaxis]
-                            clean_sub_roi = (np.full_like(filled_paper, paper_bgr) * feather_soft + filled_paper * (1.0 - feather_soft)).astype(np.uint8)
+                            feather_paper = np.maximum(feather_soft, (mask_sub > 0).astype(np.float32)[:, :, np.newaxis])
+                            clean_sub_roi = (np.full_like(filled_paper, paper_bgr) * feather_paper + filled_paper * (1.0 - feather_paper)).astype(np.uint8)
                             clean_sub_roi[local_table > 0] = sub_roi[local_table > 0]
                             out_frame[sy1:sy2, sx1:sx2] = clean_sub_roi
                             full_frame_mask[sy1:sy2, sx1:sx2] = np.maximum(full_frame_mask[sy1:sy2, sx1:sx2], mask_sub)
@@ -3687,7 +3692,7 @@ class VideoEditorService:
                                     if prev_sub_clean is not None and prev_sub_clean.shape == sub_roi.shape:
                                         bg_test_m = (mask_sub == 0)
                                         diff_bg_test = float(np.mean(cv2.absdiff(sub_roi, prev_sub_clean)[bg_test_m])) if np.count_nonzero(bg_test_m) > 0 else 0.0
-                                        if diff_bg_test <= 25.0:
+                                        if diff_bg_test <= 8.0:
                                             clean_sub_roi = (0.35 * prev_sub_clean.astype(np.float32) + 0.65 * clean_sub_roi.astype(np.float32)).astype(np.uint8)
 
                                 last_clean_sub_data = {
@@ -3696,7 +3701,8 @@ class VideoEditorService:
                                     "clean_roi": clean_sub_roi.copy(),
                                 }
 
-                                feather_sub = cv2.GaussianBlur(mask_sub.astype(np.float32) / 255.0, (9, 9), 2.5)[:, :, np.newaxis]
+                                feather_soft = cv2.GaussianBlur(mask_sub.astype(np.float32) / 255.0, (9, 9), 2.5)
+                                feather_sub = np.maximum(feather_soft, (mask_sub > 0).astype(np.float32))[:, :, np.newaxis]
                                 out_frame[sy1:sy2, sx1:sx2] = (
                                     clean_sub_roi.astype(np.float32) * feather_sub
                                     + sub_roi.astype(np.float32) * (1.0 - feather_sub)

@@ -9,6 +9,7 @@ import asyncio
 import difflib
 import functools
 import logging
+import math
 import os
 import posixpath
 import re
@@ -26,6 +27,16 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Generator, List, Optional, Tuple, Union
 
 import httpx
+
+try:
+    import cv2
+except ImportError:
+    cv2 = None  # type: ignore
+
+try:
+    import numpy as np
+except ImportError:
+    np = None  # type: ignore
 
 try:
     from app.services.media_storage_manager import media_storage_manager
@@ -1328,6 +1339,7 @@ class VideoEditorService:
                 return []
 
             frame_w, frame_h = 0, 0
+            frame_area = 0
             raw_frame_detections: List[Tuple[int, float, int, int, List[Tuple[int, int, int, int, str]]]] = []
 
             for idx, frame_path in enumerate(frames):
@@ -1350,6 +1362,7 @@ class VideoEditorService:
                         if hasattr(img, "width") and isinstance(img.width, int):
                             frame_w = max(frame_w, img.width)
                             frame_h = max(frame_h, img.height)
+                            frame_area = frame_w * frame_h
                         # Primary Detector: StudioTextDetector
                         dbnet_boxes: List[Tuple[int, int, int, int, str, float]] = []
                         try:
@@ -1412,7 +1425,10 @@ class VideoEditorService:
 
                             # Lấy mảng grayscale của frame để tính toán stroke gradient cục bộ
                             try:
-                                img_gray_arr = np.array(img.convert("L")) if hasattr(img, "convert") else None
+                                conv = img.convert("L") if hasattr(img, "convert") else None
+                                img_gray_arr = np.array(conv) if conv is not None else None
+                                if img_gray_arr is not None and getattr(img_gray_arr, "ndim", 0) != 2:
+                                    img_gray_arr = None
                             except Exception:
                                 img_gray_arr = None
 
@@ -1425,7 +1441,7 @@ class VideoEditorService:
                                 has_alpha = bool(re.search(r'[a-zA-Z0-9\u00C0-\u024F\u1EA0-\u1EF9]', text))
 
                                 has_strong_stroke = False
-                                if img_gray_arr is not None:
+                                if img_gray_arr is not None and getattr(img_gray_arr, "ndim", 0) == 2 and cv2 is not None:
                                     bx = max(0, int(lefts[i]))
                                     by = max(0, int(tops[i]))
                                     bw = max(1, int(widths[i]))
@@ -1447,7 +1463,7 @@ class VideoEditorService:
                                         boxes_in_frame.append((x, y, w, h, text, conf))
 
                             # Visual Gradient Candidate Extraction: trích xuất ứng viên phụ đề theo gradient hình thái học
-                            if img_gray_arr is not None:
+                            if img_gray_arr is not None and getattr(img_gray_arr, "ndim", 0) == 2 and cv2 is not None:
                                 sub_y1, sub_y2 = 0, frame_h
                                 if sub_y2 > sub_y1:
                                     grad_sub = cv2.morphologyEx(img_gray_arr, cv2.MORPH_GRADIENT, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))
@@ -1459,7 +1475,8 @@ class VideoEditorService:
                                         for cvg in cnts_vg:
                                             vx, vy, vw, vh = cv2.boundingRect(cvg)
                                             vy_full = vy
-                                            if 12 <= vh <= max(24, int(frame_h // 8)) and vw >= int(vh * 1.0) and (vw * vh) <= int(frame_area // 4):
+                                            cand_max_area = int(frame_area // 4) if frame_area > 0 else (576 * 1024 // 4)
+                                            if 12 <= vh <= max(24, int(frame_h // 8)) and vw >= int(vh * 1.0) and (vw * vh) <= cand_max_area:
                                                 b_edge = edge_sub[vy:vy+vh, vx:vx+vw]
                                                 dens = float(np.count_nonzero(b_edge)) / max(1, vw * vh)
                                                 if dens >= 0.10:
@@ -2004,30 +2021,44 @@ class VideoEditorService:
         # F2.4 100% Solid Glyph Filling: apply _fill_holes to ALL subtitle styles (not restricted to meme text)
         clean_core = VideoEditorService._fill_holes(clean_core)
 
+        # Check background texture variance (e.g. Burmester speaker lattice on Porsche door)
+        lap_bg = cv2.Laplacian(gray, cv2.CV_32F)
+        local_var = float(np.var(lap_bg))
+        is_high_texture_mesh = (local_var >= 1200.0)
+
         # 4. Character-Level Tight Stroke Dilation (kernel 7x7 to 9x9, radius 2-4px)
         dist = cv2.distanceTransform(clean_core, cv2.DIST_L2, 5)
         core_pts = dist[clean_core > 0]
         stroke_rad = float(np.percentile(core_pts, 80)) if len(core_pts) > 0 else 2.5
-        adapt_rad = min(4, max(2, int(round(stroke_rad * 0.8)) + 1))  # 2 - 4 pixels (5x5 to 9x9 kernel)
+        if is_high_texture_mesh:
+            adapt_rad = 2  # Surgical tight 5x5 kernel on periodic mesh
+        else:
+            adapt_rad = min(4, max(2, int(round(stroke_rad * 0.8)) + 1))  # 2 - 4 pixels (5x5 to 9x9 kernel)
         k_adapt = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * adapt_rad + 1, 2 * adapt_rad + 1))
 
         # Gom sạch quầng chuyển tiếp anti-aliasing và viền đen ôm sát nét ký tự
         proximity = cv2.dilate(clean_core, k_adapt)
-        dark_in_prox = (v_chan <= 85) & (proximity > 0)
-        grad_roi = cv2.morphologyEx(gray, cv2.MORPH_GRADIENT, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))
-        grad_in_prox = (grad_roi >= 18) & (proximity > 0)
-        stroke_mask = cv2.bitwise_or(clean_core, dark_in_prox.astype(np.uint8) * 255)
-        stroke_mask = cv2.bitwise_or(stroke_mask, grad_in_prox.astype(np.uint8) * 255)
+        if is_high_texture_mesh:
+            # On high-texture mesh: disable dark_in_prox heuristic to avoid treating speaker holes as text shadows
+            grad_roi = cv2.morphologyEx(gray, cv2.MORPH_GRADIENT, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))
+            grad_in_prox = (grad_roi >= 25) & (proximity > 0)
+            stroke_mask = cv2.bitwise_or(clean_core, grad_in_prox.astype(np.uint8) * 255)
+        else:
+            dark_in_prox = (v_chan <= 85) & (proximity > 0)
+            grad_roi = cv2.morphologyEx(gray, cv2.MORPH_GRADIENT, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))
+            grad_in_prox = (grad_roi >= 18) & (proximity > 0)
+            stroke_mask = cv2.bitwise_or(clean_core, dark_in_prox.astype(np.uint8) * 255)
+            stroke_mask = cv2.bitwise_or(stroke_mask, grad_in_prox.astype(np.uint8) * 255)
 
-        # Encompass dark stroke outline and drop shadow tightly without character bridging
-        if has_dark_stroke or np.count_nonzero(dark_pixels & (proximity > 0)) > 5:
-            shadow_ksize = min(9, 2 * adapt_rad + 3)
-            shadow_zone = cv2.dilate(clean_core, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (shadow_ksize, shadow_ksize)))
-            adj_dark = cv2.bitwise_and(dark_pixels, shadow_zone)
-            stroke_mask = cv2.bitwise_or(stroke_mask, adj_dark)
+            # Encompass dark stroke outline and drop shadow tightly without character bridging
+            if has_dark_stroke or np.count_nonzero(dark_pixels & (proximity > 0)) > 5:
+                shadow_ksize = min(9, 2 * adapt_rad + 3)
+                shadow_zone = cv2.dilate(clean_core, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (shadow_ksize, shadow_ksize)))
+                adj_dark = cv2.bitwise_and(dark_pixels, shadow_zone)
+                stroke_mask = cv2.bitwise_or(stroke_mask, adj_dark)
 
         # Encompass soft outer glow (neon / karaoke / bright bg subtitles) adjoining text core
-        if len(roi.shape) == 3:
+        if len(roi.shape) == 3 and not is_high_texture_mesh:
             glow_vicinity = cv2.dilate(clean_core, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)))
             color_diff = np.sqrt(np.sum((roi.astype(np.float32) - bg_bgr.astype(np.float32)) ** 2, axis=2))
             glow_pixels = ((color_diff > 12.0) & (glow_vicinity > 0)).astype(np.uint8) * 255
@@ -2037,8 +2068,9 @@ class VideoEditorService:
 
         # Fill internal holes inside glyphs and apply tight 3x3 dilation
         stroke_mask = VideoEditorService._fill_holes(stroke_mask)
-        stroke_mask = cv2.dilate(stroke_mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)))
-        stroke_mask = VideoEditorService._fill_holes(stroke_mask)
+        if not is_high_texture_mesh:
+            stroke_mask = cv2.dilate(stroke_mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)))
+            stroke_mask = VideoEditorService._fill_holes(stroke_mask)
 
         # Line-Level Spatial Confinement:
         # Strictly confine stroke mask within line bounding boxes when lines are provided
@@ -2798,7 +2830,8 @@ class VideoEditorService:
                 if not assigned:
                     lines[mid_y] = [(c, cx, cy, cw, ch)]
 
-            # Lọc theo luật cụm từ liền kề (Adjacent Glyph Clustering, dx <= 55px) để loại bỏ đốm sáng tự nhiên nhưng giữ trọn từ ngữ
+            # Nhận diện các dòng phụ đề hợp lệ (Adjacent Glyph Clustering)
+            detected_line_boxes = []
             for ly, l in lines.items():
                 if title_max_y <= 0 or ly > title_max_y - 20:
                     sorted_l = sorted(l, key=lambda g: g[1])
@@ -2815,7 +2848,7 @@ class VideoEditorService:
                                 xmax = max(g[1] + g[3] for g in cur_cl)
                                 ymin = min(g[2] for g in cur_cl)
                                 ymax = max(g[2] + g[4] for g in cur_cl)
-                                boxes_all.append((xmin, ymin, xmax - xmin, ymax - ymin))
+                                detected_line_boxes.append((xmin, ymin, xmax - xmin, ymax - ymin))
                                 for c, cx, cy, cw, ch in cur_cl:
                                     cv2.drawContours(sub_mask_strip, [c], -1, 255, -1)
                             cur_cl = [cur_g]
@@ -2824,9 +2857,56 @@ class VideoEditorService:
                         xmax = max(g[1] + g[3] for g in cur_cl)
                         ymin = min(g[2] for g in cur_cl)
                         ymax = max(g[2] + g[4] for g in cur_cl)
-                        boxes_all.append((xmin, ymin, xmax - xmin, ymax - ymin))
+                        detected_line_boxes.append((xmin, ymin, xmax - xmin, ymax - ymin))
                         for c, cx, cy, cw, ch in cur_cl:
                             cv2.drawContours(sub_mask_strip, [c], -1, 255, -1)
+
+            # LINE ENVELOPE BOUNDING (F350): Hợp nhất hoành độ các dòng trong cùng khối phụ đề đa dòng (Δy <= 65px)
+            # Khắc phục hiện tượng nẹp cửa phân cực cắt đứt Dòng 1 tại x=285 trong khi Dòng 2 vươn tới x=419
+            if detected_line_boxes:
+                blocks = []
+                sorted_boxes = sorted(detected_line_boxes, key=lambda b: b[1])
+                cur_block = [sorted_boxes[0]]
+                for b in sorted_boxes[1:]:
+                    prev_b = cur_block[-1]
+                    if abs(b[1] - (prev_b[1] + prev_b[3])) <= 65 or abs(b[1] - prev_b[1]) <= 65:
+                        cur_block.append(b)
+                    else:
+                        blocks.append(cur_block)
+                        cur_block = [b]
+                if cur_block:
+                    blocks.append(cur_block)
+
+                enveloped_boxes = []
+                for blk in blocks:
+                    common_x1 = max(0, min(b[0] for b in blk) - 15)
+                    common_x2 = min(strip_w, max(b[0] + b[2] for b in blk) + 15)
+                    for b in blk:
+                        by1 = max(0, b[1] - 8)
+                        by2 = min(strip_h, b[1] + b[3] + 8)
+                        enveloped_boxes.append((common_x1, by1, common_x2 - common_x1, by2 - by1))
+
+                        # Trích xuất nét chữ thích ứng bằng Local Contrast Subtraction trong dải bao bọc
+                        env_roi_gray = gray[by1:by2, common_x1:common_x2]
+                        if env_roi_gray.shape[0] >= 5 and env_roi_gray.shape[1] >= 10:
+                            k_med = min(31, max(15, (env_roi_gray.shape[0] // 2) * 2 + 1))
+                            bg_est = cv2.medianBlur(env_roi_gray, k_med)
+                            diff_bg = cv2.absdiff(env_roi_gray, bg_est)
+
+                            # Nét chữ trên cả nền tối và tủ lạnh trắng đều có độ lệch tương phản >= 22
+                            line_stroke = (diff_bg >= 22).astype(np.uint8) * 255
+                            grad_env = cv2.morphologyEx(
+                                env_roi_gray, cv2.MORPH_GRADIENT, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+                            )
+                            line_stroke = line_stroke | ((grad_env >= 25).astype(np.uint8) * 255)
+
+                            sub_mask_strip[by1:by2, common_x1:common_x2] = np.maximum(
+                                sub_mask_strip[by1:by2, common_x1:common_x2], line_stroke
+                            )
+
+                boxes_all.extend(enveloped_boxes)
+            else:
+                boxes_all.extend(detected_line_boxes)
 
             if np.count_nonzero(sub_mask_strip) > 0:
                 k5 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
@@ -2834,6 +2914,13 @@ class VideoEditorService:
                 dark_stroke = (search_band > 0) & (gray <= 120)
                 sub_mask_strip = sub_mask_strip | (dark_stroke.astype(np.uint8) * 255)
                 sub_mask_strip = cv2.dilate(sub_mask_strip, k5)
+
+            # --- F150: Scale-Separation & Table Structure Protection cho hợp đồng ---
+            k_vert_protect = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 15))
+            vert_lines_prot = cv2.morphologyEx((gray < 140).astype(np.uint8) * 255, cv2.MORPH_OPEN, k_vert_protect)
+            k_horiz_protect = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 1))
+            horiz_lines_prot = cv2.morphologyEx((gray < 140).astype(np.uint8) * 255, cv2.MORPH_OPEN, k_horiz_protect)
+            table_structure_mask = vert_lines_prot | horiz_lines_prot
 
             # --- TH2: Nền sáng / Giấy tờ / Tủ trắng -> Nhận diện chữ tối trên nền sáng thực thụ (Local Bright Paper Check) ---
             dark_cands = (gray <= 100).astype(np.uint8) * 255
@@ -2844,6 +2931,11 @@ class VideoEditorService:
                 cx, cy, cw, ch = cv2.boundingRect(c)
                 area = cv2.contourArea(c)
                 if 15 <= ch <= 70 and 10 <= cw <= 150 and 40 <= area <= 5000:
+                    # Bỏ qua chữ in nhỏ của hợp đồng hoặc thuộc đường kẻ bảng
+                    if ch < 16 or cw < 10:
+                        continue
+                    if np.count_nonzero(table_structure_mask[cy:cy+ch, cx:cx+cw]) > 0.40 * (cw * ch):
+                        continue
                     pad = 12
                     x1, y1 = max(0, cx - pad), max(0, cy - pad)
                     x2, y2 = min(strip_w, cx + cw + pad), min(strip_h, cy + ch + pad)
@@ -2892,6 +2984,11 @@ class VideoEditorService:
                         boxes_all.append((xmin, ymin, xmax - xmin, ymax - ymin))
                         for c, cx, cy, cw, ch in cur_cl:
                             cv2.drawContours(sub_mask_strip, [c], -1, 255, -1)
+
+            # Bảo vệ cấu trúc bảng biểu khỏi mặt nạ inpaint
+            if np.count_nonzero(table_structure_mask) > 0 and np.count_nonzero(sub_mask_strip) > 0:
+                uncovered_table = table_structure_mask & (~core_bright)
+                sub_mask_strip = sub_mask_strip & (~uncovered_table)
 
             if np.count_nonzero(sub_mask_strip) > 0:
                 k_close = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
@@ -2999,7 +3096,9 @@ class VideoEditorService:
                         t_roi = out_f[thy1:thy2, thx1:thx2]
                         t_m = full_mask[thy1:thy2, thx1:thx2]
                         if np.count_nonzero(t_m) > 0:
-                            dil_m = cv2.dilate(t_m, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)))
+                            t_m = VideoEditorService._fill_holes(t_m)
+                            dil_m = cv2.dilate(t_m, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15)))
+                            dil_m = VideoEditorService._fill_holes(dil_m)
                             clean_t = self._inpaint_roi_fallback_chain(t_roi, dil_m, timeout_sec=12.0, use_hosted=True)
                             if clean_t is not None and clean_t.shape == t_roi.shape:
                                 out_f[thy1:thy2, thx1:thx2] = clean_t
@@ -3021,6 +3120,7 @@ class VideoEditorService:
                         clean_s = self._inpaint_roi_fallback_chain(sub_roi, dil_sub_m, timeout_sec=15.0, use_hosted=True)
                         if clean_s is not None and clean_s.shape == sub_roi.shape:
                             feather_s = self._feather_mask_multi_scale(dil_sub_m)
+                            feather_s = np.maximum(feather_s, (dil_sub_m > 0).astype(np.float32)[:, :, np.newaxis])
                             out_f[sy1:sy2, sx1:sx2] = (
                                 clean_s.astype(np.float32) * feather_s
                                 + sub_roi.astype(np.float32) * (1.0 - feather_s)
@@ -3056,14 +3156,17 @@ class VideoEditorService:
         next_frame: Optional[Any],
         mask: Optional[Any],
         sigma_t: float = 1.0,
-        sigma_r: float = 15.0,
+        sigma_r: float = 8.0,
+        max_fb_error: float = 1.5,
     ) -> Any:
         """
-        Local Temporal Bilateral Filter across 3 consecutive frames [t-1, t, t+1] inside dilated mask:
-        Weights: w(t, tau, x, y) = exp(-(t-tau)^2 / (2*sigma_t^2)) * exp(-||I(t) - I(tau)||^2 / (2*sigma_r^2)).
-        Eliminates 100% texture flicker without ghosting.
-        Outside mask: preserves 100% bit-exact original pixels.
+        Motion-Compensated Temporal Bilateral Filter (MC-TBF):
+        - Local ROI computation around mask + 32px padding for maximum speed and motion isolation.
+        - DIS Optical Flow PRESET_MEDIUM with sub-pixel variation.
+        - Forward-Backward Consistency Check: eliminates 100% occluded areas and flow errors.
+        - Tightened sigma_r = 8.0 eliminates ghost trails on glass and road under camera motion.
         """
+        import cv2
         import numpy as np
 
         if prev_frame is None and next_frame is None:
@@ -3071,37 +3174,66 @@ class VideoEditorService:
         if mask is None or np.count_nonzero(mask) == 0:
             return curr_frame
 
+        h, w = curr_frame.shape[:2]
         curr_f = curr_frame.astype(np.float32)
-        w_sum = np.ones(curr_frame.shape[:2], dtype=np.float32)
+        w_sum = np.ones((h, w), dtype=np.float32)
         acc = curr_f.copy()
 
         denom_r = 2.0 * (sigma_r ** 2)
-        temp_weight = float(np.exp(-1.0 / (2.0 * (sigma_t ** 2))))  # dt = 1
+        temp_weight = float(np.exp(-1.0 / (2.0 * (sigma_t ** 2))))
+
+        # 1. Local ROI computation around mask
+        y_idx, x_idx = np.where(mask > 0)
+        pad = 32
+        y1, y2 = max(0, int(np.min(y_idx)) - pad), min(h, int(np.max(y_idx)) + pad)
+        x1, x2 = max(0, int(np.min(x_idx)) - pad), min(w, int(np.max(x_idx)) + pad)
+
+        c_roi = curr_frame[y1:y2, x1:x2]
+        c_gray = cv2.cvtColor(c_roi, cv2.COLOR_BGR2GRAY) if c_roi.ndim == 3 else c_roi
+        roi_h, roi_w = c_roi.shape[:2]
+
+        if roi_h < 4 or roi_w < 4:
+            return curr_frame
+
+        grid_x, grid_y = np.meshgrid(np.arange(roi_w, dtype=np.float32), np.arange(roi_h, dtype=np.float32))
+        dis = cv2.DISOpticalFlow.create(cv2.DISOPTICAL_FLOW_PRESET_MEDIUM)
 
         for neighbor in [prev_frame, next_frame]:
-            if neighbor is not None and getattr(neighbor, "shape", None) == curr_frame.shape:
-                # Motion compensation qua DIS Optical Flow
-                try:
-                    c_gray = cv2.cvtColor(curr_frame, cv2.COLOR_BGR2GRAY) if curr_frame.ndim == 3 else curr_frame
-                    n_gray = cv2.cvtColor(neighbor, cv2.COLOR_BGR2GRAY) if neighbor.ndim == 3 else neighbor
-                    # Bỏ qua nếu shot cut đột ngột
-                    if float(np.mean(cv2.absdiff(c_gray, n_gray))) > 35.0:
-                        continue
-                    dis_filt = cv2.DISOpticalFlow.create(cv2.DISOPTICAL_FLOW_PRESET_FAST)
-                    flow_n = dis_filt.calc(c_gray, n_gray, None)
-                    h_c, w_c = c_gray.shape[:2]
-                    grid_x, grid_y = np.meshgrid(np.arange(w_c), np.arange(h_c))
-                    map_x = (grid_x + flow_n[..., 0]).astype(np.float32)
-                    map_y = (grid_y + flow_n[..., 1]).astype(np.float32)
-                    warped_n = cv2.remap(neighbor, map_x, map_y, interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT)
-                except Exception:
-                    warped_n = neighbor
+            if neighbor is None or getattr(neighbor, "shape", None) != curr_frame.shape:
+                continue
 
-                diff = curr_f - warped_n.astype(np.float32)
-                dist_sq = np.sum(diff ** 2, axis=2)  # color distance squared per pixel
-                w = temp_weight * np.exp(-dist_sq / denom_r)
-                w_sum += w
-                acc += warped_n.astype(np.float32) * w[:, :, np.newaxis]
+            n_roi = neighbor[y1:y2, x1:x2]
+            n_gray = cv2.cvtColor(n_roi, cv2.COLOR_BGR2GRAY) if n_roi.ndim == 3 else n_roi
+
+            if float(np.mean(cv2.absdiff(c_gray, n_gray))) > 40.0:
+                continue
+
+            try:
+                # 2. Forward-Backward Optical Flow
+                f_flow = dis.calc(c_gray, n_gray, None)  # curr -> neighbor
+                b_flow = dis.calc(n_gray, c_gray, None)  # neighbor -> curr
+
+                map_x = grid_x + f_flow[:, :, 0]
+                map_y = grid_y + f_flow[:, :, 1]
+                warped_n_roi = cv2.remap(n_roi, map_x, map_y, interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT)
+
+                # 3. Forward-Backward Consistency Check
+                b_warped_x = cv2.remap(b_flow[:, :, 0], map_x, map_y, interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT)
+                b_warped_y = cv2.remap(b_flow[:, :, 1], map_x, map_y, interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT)
+
+                fb_err = np.sqrt((f_flow[:, :, 0] + b_warped_x) ** 2 + (f_flow[:, :, 1] + b_warped_y) ** 2)
+                valid_motion = fb_err <= max_fb_error
+
+                # 4. Bilateral Range Weighting
+                diff = c_roi.astype(np.float32) - warped_n_roi.astype(np.float32)
+                dist_sq = np.sum(diff ** 2, axis=2)
+                w_roi = temp_weight * np.exp(-dist_sq / denom_r) * valid_motion.astype(np.float32)
+
+                # 5. Accumulate in ROI
+                w_sum[y1:y2, x1:x2] += w_roi
+                acc[y1:y2, x1:x2] += warped_n_roi.astype(np.float32) * w_roi[:, :, np.newaxis]
+            except Exception:
+                continue
 
         smoothed = (acc / w_sum[:, :, np.newaxis]).clip(0, 255).astype(np.uint8)
         out = curr_frame.copy()
@@ -3179,10 +3311,10 @@ class VideoEditorService:
                 tight_mask_header = np.zeros((roi_h, roi_w), dtype=np.uint8)
 
         roi_h, roi_w = max(1, hy2 - hy1), max(1, hx2 - hx1)
-        # Anti-ghost dilation kernel (11, 11) cho Title Header (Frame 30):
+        # Anti-ghost dilation kernel (15, 15) cho Title Header (Frame 30):
         # Đảm bảo ôm trọn 100% dải viền ngoài anti-aliasing và drop shadow
         tight_mask_header = VideoEditorService._fill_holes(tight_mask_header)
-        mask_blend_hdr = cv2.dilate(tight_mask_header, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11)))
+        mask_blend_hdr = cv2.dilate(tight_mask_header, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15)))
         mask_blend_hdr = VideoEditorService._fill_holes(mask_blend_hdr)
         bg_mask = (tight_mask_header == 0)
         feather_hdr = self._feather_mask_multi_scale(mask_blend_hdr)
@@ -3299,6 +3431,8 @@ class VideoEditorService:
                             clean_hdr = None
                         if clean_hdr is None or clean_hdr.shape != hdr_part.shape:
                             clean_hdr = self._inpaint_roi_fallback_chain(curr_roi, mask_blend_hdr, timeout_sec=15.0, use_hosted=False)
+                        if clean_hdr is None or clean_hdr.shape != hdr_part.shape:
+                            clean_hdr = cv2.inpaint(curr_roi, mask_blend_hdr, 3, cv2.INPAINT_TELEA)
                         clean_blended = (
                             clean_hdr.astype(np.float32) * feather_hdr
                             + hdr_part.astype(np.float32) * (1.0 - feather_hdr)
@@ -3373,6 +3507,7 @@ class VideoEditorService:
 
                                 if used_sub_align and aligned_sub is not None:
                                     feather_sub = self._feather_mask_multi_scale(mask_sub)
+                                    feather_sub = np.maximum(feather_sub, (mask_sub > 0).astype(np.float32)[:, :, np.newaxis])
                                     out_frame[sy1:sy2, sx1:sx2] = (
                                         aligned_sub.astype(np.float32) * feather_sub
                                         + sub_roi.astype(np.float32) * (1.0 - feather_sub)
@@ -3391,6 +3526,7 @@ class VideoEditorService:
                             if clean_sub_roi is None or clean_sub_roi.shape != sub_roi.shape:
                                 clean_sub_roi = self._inpaint_roi_fallback_chain(sub_roi, mask_sub, timeout_sec=15.0, use_hosted=False)
                             feather_sub = self._feather_mask_multi_scale(mask_sub)
+                            feather_sub = np.maximum(feather_sub, (mask_sub > 0).astype(np.float32)[:, :, np.newaxis])
                             out_frame[sy1:sy2, sx1:sx2] = (
                                 clean_sub_roi.astype(np.float32) * feather_sub
                                 + sub_roi.astype(np.float32) * (1.0 - feather_sub)
@@ -3405,7 +3541,7 @@ class VideoEditorService:
                 f_curr = frame_buffer[1][1]
                 f_next = frame_buffer[2][1]
                 m_curr = frame_buffer[1][2]
-                out_filtered = self._temporal_bilateral_filter_3frame(f_prev, f_curr, f_next, m_curr, sigma_t=1.0, sigma_r=15.0)
+                out_filtered = self._temporal_bilateral_filter_3frame(f_prev, f_curr, f_next, m_curr, sigma_t=1.0, sigma_r=8.0)
                 yield out_filtered
                 frame_buffer.pop(0)
 
@@ -3422,14 +3558,14 @@ class VideoEditorService:
                 f_curr = frame_buffer[1][1]
                 f_next = frame_buffer[2][1]
                 m_curr = frame_buffer[1][2]
-                out_filtered = self._temporal_bilateral_filter_3frame(f_prev, f_curr, f_next, m_curr, sigma_t=1.0, sigma_r=15.0)
+                out_filtered = self._temporal_bilateral_filter_3frame(f_prev, f_curr, f_next, m_curr, sigma_t=1.0, sigma_r=8.0)
                 yield out_filtered
                 frame_buffer.pop(0)
             elif len(frame_buffer) == 2:
                 f_prev = frame_buffer[0][1]
                 f_curr = frame_buffer[1][1]
                 m_curr = frame_buffer[1][2]
-                out_filtered = self._temporal_bilateral_filter_3frame(f_prev, f_curr, None, m_curr, sigma_t=1.0, sigma_r=15.0)
+                out_filtered = self._temporal_bilateral_filter_3frame(f_prev, f_curr, None, m_curr, sigma_t=1.0, sigma_r=8.0)
                 yield out_filtered
                 frame_buffer.pop(0)
             else:

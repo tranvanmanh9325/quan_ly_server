@@ -3560,8 +3560,10 @@ class VideoEditorService:
                     sy1, sy2, sx1, sx2 = sub_info["y1"], sub_info["y2"], sub_info["x1"], sub_info["x2"]
                     s_mask = full_m[sy1:sy2, sx1:sx2]
                     if np.count_nonzero(s_mask) > 0:
+                        sub_roi = out_frame[sy1:sy2, sx1:sx2]
+                        sub_w, sub_h = sx2 - sx1, sy2 - sy1
                         # Kiểm tra xem vùng sub_roi có chứa cấu trúc bảng biểu không
-                        sub_gray = cv2.cvtColor(out_frame[sy1:sy2, sx1:sx2], cv2.COLOR_BGR2GRAY)
+                        sub_gray = cv2.cvtColor(sub_roi, cv2.COLOR_BGR2GRAY)
                         k_v = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 15))
                         k_h = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 1))
                         v_lines = cv2.morphologyEx((sub_gray < 140).astype(np.uint8) * 255, cv2.MORPH_OPEN, k_v)
@@ -3587,8 +3589,6 @@ class VideoEditorService:
                             if np.count_nonzero(mask_sub) > 0.85 * mask_sub.size:
                                 mask_sub = s_mask.copy()
                             mask_sub = np.where(mask_sub > 0, 255, 0).astype(np.uint8)
-                            sub_roi = out_frame[sy1:sy2, sx1:sx2]
-                            sub_w, sub_h = sx2 - sx1, sy2 - sy1
 
                             # Thử căn chỉnh trực tiếp từ keyframe sạch gần nhất trong cùng phân cảnh
                             shot_start, shot_end = shots[cur_shot_idx]

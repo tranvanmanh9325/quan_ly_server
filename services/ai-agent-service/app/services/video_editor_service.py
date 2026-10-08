@@ -2813,9 +2813,8 @@ class VideoEditorService:
                 bright_white = (gray >= 155) & (hsv[:, :, 1] <= 85)
 
             bright_yellow = (hsv[:, :, 0] >= 10) & (hsv[:, :, 0] <= 35) & (hsv[:, :, 1] >= 60) & (hsv[:, :, 2] >= 160)
-            bright_cyan_green = (hsv[:, :, 0] >= 35) & (hsv[:, :, 0] <= 135) & (hsv[:, :, 1] >= 40) & (hsv[:, :, 2] >= 120)
             bright_mag_red = ((hsv[:, :, 0] <= 10) | (hsv[:, :, 0] >= 160)) & (hsv[:, :, 1] >= 60) & (hsv[:, :, 2] >= 160)
-            core_bright = (bright_white | bright_yellow | bright_cyan_green | bright_mag_red).astype(np.uint8) * 255
+            core_bright = (bright_white | bright_yellow | bright_mag_red).astype(np.uint8) * 255
 
             cnt_res = cv2.findContours(core_bright, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             cnts_b = cnt_res[0] if (isinstance(cnt_res, (tuple, list)) and len(cnt_res) == 2) else (cnt_res[1] if (isinstance(cnt_res, (tuple, list)) and len(cnt_res) == 3) else [])

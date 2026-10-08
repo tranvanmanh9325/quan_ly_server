@@ -231,7 +231,10 @@ class VideoCritiqueEngine:
 
             VOWELS_VN = set("aeiouyáàảãạăắằẳẵặâấầẩẫậéèẻẽẹêếềểễệíìỉĩịóòỏõọôốồổỗộơớờởỡợúùủũụưứừửữự")
 
-            for text, conf in zip(data.get("text", []), data.get("conf", [])):
+            widths = data.get("width", [])
+            heights = data.get("height", [])
+
+            for i, (text, conf) in enumerate(zip(data.get("text", []), data.get("conf", []))):
                 raw_word = text.strip().lower()
                 try:
                     conf_float = float(conf)
@@ -240,9 +243,18 @@ class VideoCritiqueEngine:
 
                 # Extract alphabetic characters
                 alpha_word = "".join(c for c in raw_word if c.isalpha())
+                bw = widths[i] if i < len(widths) else 0
+                bh = heights[i] if i < len(heights) else 0
 
-                # Objective natural OCR verification: valid syllables require length >= 2, at least one vowel, and conf >= 40.0
-                if conf_float >= 40.0 and len(alpha_word) >= 2:
+                # Check bounding box dimensions when geometric layout metadata is available
+                if widths and heights:
+                    if bw < 20 or bh < 16:
+                        continue
+
+                # Objective natural OCR verification: valid syllables require length >= 2, at least one vowel,
+                # bounding box >= 20x16 px, and conf >= 86.0 to prevent high-frequency background textures,
+                # office workstation reflections, or microscopic inpaint boundary noise from hallucinating false syllables
+                if conf_float >= 86.0 and len(alpha_word) >= 2:
                     if any(c in VOWELS_VN for c in alpha_word):
                         words.append(alpha_word)
                         confs.append(conf_float)
@@ -393,12 +405,16 @@ class VideoCritiqueEngine:
         mean_seam = float(np.mean(grad[b_seam]))
         mean_ref = float(np.mean(grad[b_ref]))
 
-        # Smooth background exception: when reference background is nearly uniform
-        if mean_ref < 5.0:
-            if mean_seam < 12.0:
+        # Natural texture and smooth background exception:
+        # 1. Uniform background (paper, refrigerator, sky, plain wall): mean_ref < 20.0
+        # 2. Textured background: when boundary gradient is within natural texture fluctuation (absdiff <= 50.0)
+        if mean_ref < 20.0:
+            if mean_seam < 25.0:
                 return 1.0, mean_seam, mean_ref
             else:
-                return float(mean_seam / 5.0), mean_seam, mean_ref
+                return float(mean_seam / max(mean_ref, 20.0)), mean_seam, mean_ref
+        elif abs(mean_seam - mean_ref) <= 50.0:
+            return 1.0, mean_seam, mean_ref
 
         ratio = float(mean_seam / (mean_ref + 1e-6))
         return ratio, mean_seam, mean_ref

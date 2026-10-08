@@ -3265,6 +3265,8 @@ class VideoEditorService:
                             and (np.count_nonzero(local_table) >= 30)
                         )
 
+                        clean_s = None
+                        feather_s = None
                         if has_local_table:
                             # Dilate 7x7 bao trọn cả viền đen outline của chữ "Soạn hợp đồng"
                             dil_sub_m = cv2.dilate(sub_m, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)))

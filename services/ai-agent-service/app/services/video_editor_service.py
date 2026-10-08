@@ -2774,12 +2774,17 @@ class VideoEditorService:
         sub_info = None
 
         if frame_img is not None:
-            # Giới hạn dải tung độ tìm kiếm phụ đề động (Spoken Dynamic Subtitles):
-            # Khi có target_regions (production): giới hạn dải [0.38*h .. 0.62*h] để bảo vệ giấy tờ hợp đồng, bảng biểu (F150)
-            # Khi không có target_regions: quét toàn khung hình để bắt đồng thời top, center, bottom
+            title_max_y = 0
             if target_regions:
-                sy1 = int(0.38 * h)
-                sy2 = min(int(0.62 * h), 625)
+                title_regs = [
+                    r for r in target_regions
+                    if (r.get("type") == "title" or r.get("is_static", False))
+                    and (int(r.get("y", 0)) + int(r.get("h", 0)) <= int(0.40 * h))
+                ]
+                if title_regs:
+                    title_max_y = min(h, max(int(r.get("y", 0)) + int(r.get("h", 0)) for r in title_regs) + int(0.02 * h))
+                sy1 = title_max_y if title_max_y > 0 else int(0.35 * h)
+                sy2 = h
             else:
                 sy1 = 0
                 sy2 = h
@@ -2792,21 +2797,25 @@ class VideoEditorService:
             sub_mask_strip = np.zeros((strip_h, strip_w), dtype=np.uint8)
             boxes_all = []
 
-            title_max_y = 0
-            if target_regions:
-                title_regs = [
-                    r for r in target_regions
-                    if (r.get("type") == "title" or r.get("is_static", False))
-                    and (int(r.get("y", 0)) + int(r.get("h", 0)) <= int(0.40 * h))
-                ]
-                if title_regs:
-                    title_max_y = min(h, max(int(r.get("y", 0)) + int(r.get("h", 0)) for r in title_regs) + int(0.02 * h))
+            # --- F150: Scale-Separation & Table Structure Extraction ---
+            is_white_doc = (float(np.mean(gray)) >= 145.0 and float(np.mean(hsv[:, :, 1])) <= 65.0)
+            k_vert_protect = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 15))
+            vert_lines_prot = cv2.morphologyEx((gray < 140).astype(np.uint8) * 255, cv2.MORPH_OPEN, k_vert_protect)
+            k_horiz_protect = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 1))
+            horiz_lines_prot = cv2.morphologyEx((gray < 140).astype(np.uint8) * 255, cv2.MORPH_OPEN, k_horiz_protect)
+            table_structure_mask = vert_lines_prot | horiz_lines_prot
+            has_table_structure = is_white_doc and (np.count_nonzero(table_structure_mask) >= 80)
 
-            # --- TH1: Nền thông thường / Nền tối -> Nhận diện lõi chữ sáng (Bright Core + Dark Outline) ---
-            # Hỗ trợ bao trọn phụ đề bán trong suốt trong pha fade-in / fade-out (gray >= 155)
-            bright_white = (gray >= 155) & (hsv[:, :, 1] <= 85)
-            bright_yellow = (hsv[:, :, 0] >= 15) & (hsv[:, :, 0] <= 35) & (hsv[:, :, 1] >= 80) & (hsv[:, :, 2] >= 180)
-            core_bright = (bright_white | bright_yellow).astype(np.uint8) * 255
+            # --- TH1: Nền thông thường / Nền tối -> Nhận diện lõi chữ sáng (White, Yellow, Cyan, Green, Pink...) ---
+            if is_white_doc:
+                bright_white = (gray >= 244) & (hsv[:, :, 1] <= 60)
+            else:
+                bright_white = (gray >= 155) & (hsv[:, :, 1] <= 85)
+
+            bright_yellow = (hsv[:, :, 0] >= 10) & (hsv[:, :, 0] <= 35) & (hsv[:, :, 1] >= 60) & (hsv[:, :, 2] >= 160)
+            bright_cyan_green = (hsv[:, :, 0] >= 35) & (hsv[:, :, 0] <= 135) & (hsv[:, :, 1] >= 40) & (hsv[:, :, 2] >= 120)
+            bright_mag_red = ((hsv[:, :, 0] <= 10) | (hsv[:, :, 0] >= 160)) & (hsv[:, :, 1] >= 60) & (hsv[:, :, 2] >= 160)
+            core_bright = (bright_white | bright_yellow | bright_cyan_green | bright_mag_red).astype(np.uint8) * 255
 
             cnt_res = cv2.findContours(core_bright, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             cnts_b = cnt_res[0] if (isinstance(cnt_res, (tuple, list)) and len(cnt_res) == 2) else (cnt_res[1] if (isinstance(cnt_res, (tuple, list)) and len(cnt_res) == 3) else [])
@@ -2876,15 +2885,6 @@ class VideoEditorService:
                         for c, cx, cy, cw, ch in cur_cl:
                             cv2.drawContours(sub_mask_strip, [c], -1, 255, -1)
 
-            # --- F150: Scale-Separation & Table Structure Extraction ---
-            # Chỉ kích hoạt bảo vệ bảng biểu khi dải nền là giấy tờ sáng / biểu mẫu (mean_gray >= 145, mean_sat <= 65)
-            is_white_doc = (float(np.mean(gray)) >= 145.0 and float(np.mean(hsv[:, :, 1])) <= 65.0)
-            k_vert_protect = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 15))
-            vert_lines_prot = cv2.morphologyEx((gray < 140).astype(np.uint8) * 255, cv2.MORPH_OPEN, k_vert_protect)
-            k_horiz_protect = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 1))
-            horiz_lines_prot = cv2.morphologyEx((gray < 140).astype(np.uint8) * 255, cv2.MORPH_OPEN, k_horiz_protect)
-            table_structure_mask = vert_lines_prot | horiz_lines_prot
-            has_table_structure = is_white_doc and (np.count_nonzero(table_structure_mask) >= 80)
 
             # --- TH2: Nền sáng / Giấy hợp đồng / Biểu mẫu -> Nhận diện chữ tối trên nền sáng ---
             dark_cands = (gray <= 110).astype(np.uint8) * 255
@@ -2970,7 +2970,7 @@ class VideoEditorService:
                     min_w = min(b[2], prev_b[2])
                     horiz_sim = (ov_x / min_w) if min_w > 0 else 0.0
 
-                    if vert_gap <= 45 and blk_h <= 130 and len(cur_block) < 3 and horiz_sim >= 0.25:
+                    if vert_gap <= 22 and blk_h <= 85 and len(cur_block) < 3 and horiz_sim >= 0.25:
                         cur_block.append(b)
                     else:
                         blocks.append(cur_block)
@@ -2981,12 +2981,11 @@ class VideoEditorService:
                 # TẦNG 3: MỞ RỘNG BOUNDING ENVELOPE & TƯƠNG PHẢN THÍCH ỨNG NỀN SÁNG (F350 Cánh tủ lạnh trắng)
                 enveloped_boxes = []
                 for blk in blocks:
-                    # Mở rộng đệm an toàn: x -25px, x +30px, y -12px, y +12px bao trọn quầng bóng đổ và dấu tiếng Việt
-                    common_x1 = max(0, min(b[0] for b in blk) - 25)
-                    common_x2 = min(strip_w, max(b[0] + b[2] for b in blk) + 30)
+                    common_x1 = max(0, min(b[0] for b in blk) - 15)
+                    common_x2 = min(strip_w, max(b[0] + b[2] for b in blk) + 15)
                     for b in blk:
-                        by1 = max(0, b[1] - 12)
-                        by2 = min(strip_h, b[1] + b[3] + 12)
+                        by1 = max(0, b[1] - 8)
+                        by2 = min(strip_h, b[1] + b[3] + 8)
                         enveloped_boxes.append((common_x1, by1, common_x2 - common_x1, by2 - by1))
 
                         # Trích xuất nét chữ thích ứng bằng Local Contrast Subtraction trong dải bao bọc
@@ -3015,15 +3014,22 @@ class VideoEditorService:
             else:
                 boxes_all.extend(detected_line_boxes)
 
+            # Preserve vertical structural scene seams (e.g. F350 refrigerator border vs wood door)
+            sobel_x_strip = np.abs(cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3))
+            v_seam_strip = cv2.morphologyEx((sobel_x_strip > 35).astype(np.uint8) * 255, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (1, 30)))
+            if np.count_nonzero(v_seam_strip) > 0:
+                sub_mask_strip = sub_mask_strip & (~v_seam_strip)
+
             if np.count_nonzero(sub_mask_strip) > 0:
                 k5 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
                 search_band = cv2.dilate(sub_mask_strip, k5)
                 # Ôm sát viền tối: chỉ lấy khi có tương phản viền cục bộ thực sự (absdiff >= 12)
-                # Tuyệt đối không dùng điều kiện thô thiển (gray <= 120) vì sẽ nuốt toàn bộ nền tối phòng ăn (F1383)
                 bg_local = cv2.medianBlur(gray, 15)
                 dark_stroke = (search_band > 0) & (gray <= 165) & (cv2.absdiff(gray, bg_local) >= 12)
                 sub_mask_strip = sub_mask_strip | (dark_stroke.astype(np.uint8) * 255)
                 sub_mask_strip = cv2.dilate(sub_mask_strip, k5)
+                if np.count_nonzero(v_seam_strip) > 0:
+                    sub_mask_strip = sub_mask_strip & (~v_seam_strip)
 
             # --- THIẾT KẾ CƠ CHẾ DILATION PHÂN BIỆT (STRUCTURE-AWARE DILATION) ---
             if np.count_nonzero(sub_mask_strip) > 0:
@@ -3035,13 +3041,13 @@ class VideoEditorService:
                     # CHỐT CHẶN BẢO VỆ CẤU TRÚC 100%: Trừ triệt để table_structure_mask sau dilation
                     sub_mask_strip = sub_mask_strip & (~table_structure_mask)
                 else:
-                    # Trên nền thông thường / tủ lạnh trắng: Duy trì dilation 9x9 để bắt trọn bóng đổ
-                    k_close = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+                    # Trên nền thông thường / tủ lạnh trắng: Duy trì dilation 5x5 để không tràn viền
+                    k_close = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
                     sub_mask_strip = cv2.morphologyEx(sub_mask_strip, cv2.MORPH_CLOSE, k_close)
-                    sub_mask_strip = VideoEditorService._fill_holes(sub_mask_strip)
-                    k_sub_dil = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
+                    k_sub_dil = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
                     sub_mask_strip = cv2.dilate(sub_mask_strip, k_sub_dil)
-                    sub_mask_strip = VideoEditorService._fill_holes(sub_mask_strip)
+                    if np.count_nonzero(v_seam_strip) > 0:
+                        sub_mask_strip = sub_mask_strip & (~v_seam_strip)
 
                 sub_mask_strip = np.where(sub_mask_strip > 0, 255, 0).astype(np.uint8)
 
@@ -3183,13 +3189,21 @@ class VideoEditorService:
                         if has_local_table:
                             # Không dilate thêm 7x7; bảo vệ tuyệt đối 100% đường kẻ
                             dil_sub_m = sub_m & (~local_table)
+                            paper_pixels = sub_roi[(sub_gray >= 180) & (dil_sub_m == 0)]
+                            if len(paper_pixels) > 20:
+                                paper_bgr = np.median(paper_pixels, axis=0).astype(np.float32)
+                            else:
+                                paper_bgr = np.array([218.0, 230.0, 234.0], dtype=np.float32)
+                            filled_paper = sub_roi.copy().astype(np.float32)
+                            feather_soft = cv2.GaussianBlur(dil_sub_m.astype(np.float32) / 255.0, (5, 5), 1.5)[:, :, np.newaxis]
+                            clean_s = (np.full_like(filled_paper, paper_bgr) * feather_soft + filled_paper * (1.0 - feather_soft)).astype(np.uint8)
+                            clean_s[local_table > 0] = sub_roi[local_table > 0]
                         else:
-                            dil_sub_m = cv2.dilate(sub_m, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)))
+                            dil_sub_m = cv2.dilate(sub_m, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)))
                             if np.count_nonzero(dil_sub_m) > 0.85 * dil_sub_m.size:
                                 dil_sub_m = sub_m.copy()
-
-                        dil_sub_m = np.where(dil_sub_m > 0, 255, 0).astype(np.uint8)
-                        clean_s = self._inpaint_roi_fallback_chain(sub_roi, dil_sub_m, timeout_sec=2.0, use_hosted=False)
+                            dil_sub_m = np.where(dil_sub_m > 0, 255, 0).astype(np.uint8)
+                            clean_s = self._inpaint_roi_fallback_chain(sub_roi, dil_sub_m, timeout_sec=2.0, use_hosted=False)
                         if clean_s is not None and clean_s.shape == sub_roi.shape:
                             # Gaussian Alpha Feathering bán kính 5px (sigma=1.5) loại bỏ Edge Seam
                             feather_soft = cv2.GaussianBlur(dil_sub_m.astype(np.float32) / 255.0, (5, 5), 1.5)
@@ -3384,14 +3398,11 @@ class VideoEditorService:
                 tight_mask_header = np.zeros((roi_h, roi_w), dtype=np.uint8)
 
         roi_h, roi_w = max(1, hy2 - hy1), max(1, hx2 - hx1)
-        # Anti-ghost dilation kernel (15, 15) cho Title Header (Frame 30):
-        # Đảm bảo ôm trọn 100% dải viền ngoài anti-aliasing và drop shadow
+        # Tight 5x5 stroke dilation cho Title Header: bảo toàn >85% background thật, chống sọc rách Venetian blind
         tight_mask_header = VideoEditorService._fill_holes(tight_mask_header)
-        mask_blend_hdr = cv2.dilate(tight_mask_header, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15)))
-        mask_blend_hdr = VideoEditorService._fill_holes(mask_blend_hdr)
-        bg_mask = (tight_mask_header == 0)
-        feather_hdr = self._feather_mask_multi_scale(mask_blend_hdr)
-        # Ruột chữ đặc 100%: bên trong nét chữ tight_mask_header, feather_hdr đạt 1.0 tuyệt đối để không nhân viền chữ cũ
+        mask_blend_hdr = cv2.dilate(tight_mask_header, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)))
+        bg_mask = (mask_blend_hdr == 0)
+        feather_hdr = cv2.GaussianBlur(mask_blend_hdr.astype(np.float32) / 255.0, (9, 9), 2.5)[:, :, np.newaxis]
         feather_hdr = np.maximum(feather_hdr, (tight_mask_header > 0).astype(np.float32)[:, :, np.newaxis])
 
         cur_shot_idx = 0
@@ -3559,81 +3570,92 @@ class VideoEditorService:
                         has_local_table = (float(np.mean(sub_gray)) >= 145.0) and (np.count_nonzero(local_table) >= 30)
 
                         if has_local_table:
-                            mask_sub = s_mask & (~local_table)
+                            mask_sub = (s_mask & (~local_table)).astype(np.uint8)
+                            paper_pixels = sub_roi[(sub_gray >= 180) & (mask_sub == 0)]
+                            if len(paper_pixels) > 20:
+                                paper_bgr = np.median(paper_pixels, axis=0).astype(np.float32)
+                            else:
+                                paper_bgr = np.array([218.0, 230.0, 234.0], dtype=np.float32)
+                            filled_paper = sub_roi.copy().astype(np.float32)
+                            feather_soft = cv2.GaussianBlur(mask_sub.astype(np.float32) / 255.0, (5, 5), 1.5)[:, :, np.newaxis]
+                            clean_sub_roi = (np.full_like(filled_paper, paper_bgr) * feather_soft + filled_paper * (1.0 - feather_soft)).astype(np.uint8)
+                            clean_sub_roi[local_table > 0] = sub_roi[local_table > 0]
+                            out_frame[sy1:sy2, sx1:sx2] = clean_sub_roi
+                            full_frame_mask[sy1:sy2, sx1:sx2] = np.maximum(full_frame_mask[sy1:sy2, sx1:sx2], mask_sub)
                         else:
-                            mask_sub = cv2.dilate(s_mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)))
+                            mask_sub = cv2.dilate(s_mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)))
                             if np.count_nonzero(mask_sub) > 0.85 * mask_sub.size:
                                 mask_sub = s_mask.copy()
-                        mask_sub = np.where(mask_sub > 0, 255, 0).astype(np.uint8)
-                        sub_roi = out_frame[sy1:sy2, sx1:sx2]
-                        sub_w, sub_h = sx2 - sx1, sy2 - sy1
+                            mask_sub = np.where(mask_sub > 0, 255, 0).astype(np.uint8)
+                            sub_roi = out_frame[sy1:sy2, sx1:sx2]
+                            sub_w, sub_h = sx2 - sx1, sy2 - sy1
 
-                        # Thử căn chỉnh trực tiếp từ keyframe sạch gần nhất trong cùng phân cảnh
-                        shot_start, shot_end = shots[cur_shot_idx]
-                        shot_kfs = [k for k in keyframe_indices if shot_start <= k <= shot_end and k in cleaned_keyframes]
-                        if not shot_kfs:
-                            shot_kfs = [k for k in keyframe_indices if k in cleaned_keyframes]
-                        best_sub_k = min(shot_kfs, key=lambda k: abs(k - frame_idx)) if shot_kfs else None
+                            # Thử căn chỉnh trực tiếp từ keyframe sạch gần nhất trong cùng phân cảnh
+                            shot_start, shot_end = shots[cur_shot_idx]
+                            shot_kfs = [k for k in keyframe_indices if shot_start <= k <= shot_end and k in cleaned_keyframes]
+                            if not shot_kfs:
+                                shot_kfs = [k for k in keyframe_indices if k in cleaned_keyframes]
+                            best_sub_k = min(shot_kfs, key=lambda k: abs(k - frame_idx)) if shot_kfs else None
 
-                        used_sub_align = False
-                        if best_sub_k is not None and best_sub_k in cleaned_keyframes:
-                            ref_sub_clean = cleaned_keyframes[best_sub_k][sy1:sy2, sx1:sx2]
-                            try:
-                                curr_sub_gray = cv2.cvtColor(sub_roi, cv2.COLOR_BGR2GRAY)
-                                ref_sub_gray = cv2.cvtColor(ref_sub_clean, cv2.COLOR_BGR2GRAY)
-                                shift, resp = cv2.phaseCorrelate(np.float32(curr_sub_gray), np.float32(ref_sub_gray))
-                                dx, dy = -shift[0], -shift[1]
-                                aligned_sub = None
-                                if resp >= 0.20 and abs(dx) <= (sub_w // 3) and abs(dy) <= (sub_h // 3):
-                                    M = np.float32([[1, 0, dx], [0, 1, dy]])
-                                    candidate_sub = cv2.warpAffine(ref_sub_clean, M, (sub_w, sub_h), borderMode=cv2.BORDER_REFLECT)
-                                    bg_m = (mask_sub == 0)
-                                    diff_bg = float(np.mean(cv2.absdiff(sub_roi, candidate_sub)[bg_m])) if np.count_nonzero(bg_m) > 0 else 0.0
-                                    if diff_bg <= 35.0:
-                                        aligned_sub = candidate_sub
-                                        used_sub_align = True
-
-                                # DIS Optical Flow warp cho subtitle ROI qua ClassicalFallbackManager Tầng C1
-                                if not used_sub_align:
-                                    try:
-                                        from app.services.classical_fallback_manager import get_classical_fallback_manager
-                                        classical_mgr = get_classical_fallback_manager()
-                                        warped_sub, c1_sub_success = classical_mgr.reconstruct_frame_with_optical_flow(
-                                            sub_roi, ref_sub_clean, mask_sub, error_threshold=50.0
-                                        )
-                                        if c1_sub_success and warped_sub is not None:
-                                            aligned_sub = warped_sub
+                            used_sub_align = False
+                            if best_sub_k is not None and best_sub_k in cleaned_keyframes:
+                                ref_sub_clean = cleaned_keyframes[best_sub_k][sy1:sy2, sx1:sx2]
+                                try:
+                                    curr_sub_gray = cv2.cvtColor(sub_roi, cv2.COLOR_BGR2GRAY)
+                                    ref_sub_gray = cv2.cvtColor(ref_sub_clean, cv2.COLOR_BGR2GRAY)
+                                    shift, resp = cv2.phaseCorrelate(np.float32(curr_sub_gray), np.float32(ref_sub_gray))
+                                    dx, dy = -shift[0], -shift[1]
+                                    aligned_sub = None
+                                    if resp >= 0.20 and abs(dx) <= (sub_w // 3) and abs(dy) <= (sub_h // 3):
+                                        M = np.float32([[1, 0, dx], [0, 1, dy]])
+                                        candidate_sub = cv2.warpAffine(ref_sub_clean, M, (sub_w, sub_h), borderMode=cv2.BORDER_REFLECT)
+                                        bg_m = (mask_sub == 0)
+                                        diff_bg = float(np.mean(cv2.absdiff(sub_roi, candidate_sub)[bg_m])) if np.count_nonzero(bg_m) > 0 else 0.0
+                                        if diff_bg <= 35.0:
+                                            aligned_sub = candidate_sub
                                             used_sub_align = True
-                                    except Exception:
-                                        pass
 
-                                if used_sub_align and aligned_sub is not None:
-                                    feather_sub = self._feather_mask_multi_scale(mask_sub)
-                                    feather_sub = np.maximum(feather_sub, (mask_sub > 0).astype(np.float32)[:, :, np.newaxis])
-                                    out_frame[sy1:sy2, sx1:sx2] = (
-                                        aligned_sub.astype(np.float32) * feather_sub
-                                        + sub_roi.astype(np.float32) * (1.0 - feather_sub)
-                                    ).astype(np.uint8)
-                            except Exception:
-                                used_sub_align = False
+                                    # DIS Optical Flow warp cho subtitle ROI qua ClassicalFallbackManager Tầng C1
+                                    if not used_sub_align:
+                                        try:
+                                            from app.services.classical_fallback_manager import get_classical_fallback_manager
+                                            classical_mgr = get_classical_fallback_manager()
+                                            warped_sub, c1_sub_success = classical_mgr.reconstruct_frame_with_optical_flow(
+                                                sub_roi, ref_sub_clean, mask_sub, error_threshold=50.0
+                                            )
+                                            if c1_sub_success and warped_sub is not None:
+                                                aligned_sub = warped_sub
+                                                used_sub_align = True
+                                        except Exception:
+                                            pass
 
-                        if not used_sub_align:
-                            clean_sub_roi = None
-                            try:
-                                from app.services.classical_fallback_manager import get_classical_fallback_manager
-                                classical_mgr = get_classical_fallback_manager()
-                                clean_sub_roi = classical_mgr._pure_guided_filter_inpaint(sub_roi, mask_sub)
-                            except Exception:
+                                    if used_sub_align and aligned_sub is not None:
+                                        feather_sub = self._feather_mask_multi_scale(mask_sub)
+                                        feather_sub = np.maximum(feather_sub, (mask_sub > 0).astype(np.float32)[:, :, np.newaxis])
+                                        out_frame[sy1:sy2, sx1:sx2] = (
+                                            aligned_sub.astype(np.float32) * feather_sub
+                                            + sub_roi.astype(np.float32) * (1.0 - feather_sub)
+                                        ).astype(np.uint8)
+                                except Exception:
+                                    used_sub_align = False
+
+                            if not used_sub_align:
                                 clean_sub_roi = None
-                            if clean_sub_roi is None or clean_sub_roi.shape != sub_roi.shape:
-                                clean_sub_roi = self._inpaint_roi_fallback_chain(sub_roi, mask_sub, timeout_sec=15.0, use_hosted=False)
-                            feather_sub = self._feather_mask_multi_scale(mask_sub)
-                            feather_sub = np.maximum(feather_sub, (mask_sub > 0).astype(np.float32)[:, :, np.newaxis])
-                            out_frame[sy1:sy2, sx1:sx2] = (
-                                clean_sub_roi.astype(np.float32) * feather_sub
-                                + sub_roi.astype(np.float32) * (1.0 - feather_sub)
-                            ).astype(np.uint8)
-                        full_frame_mask[sy1:sy2, sx1:sx2] = np.maximum(full_frame_mask[sy1:sy2, sx1:sx2], mask_sub)
+                                try:
+                                    from app.services.classical_fallback_manager import get_classical_fallback_manager
+                                    classical_mgr = get_classical_fallback_manager()
+                                    clean_sub_roi = classical_mgr._pure_guided_filter_inpaint(sub_roi, mask_sub)
+                                except Exception:
+                                    clean_sub_roi = None
+                                if clean_sub_roi is None or clean_sub_roi.shape != sub_roi.shape:
+                                    clean_sub_roi = self._inpaint_roi_fallback_chain(sub_roi, mask_sub, timeout_sec=15.0, use_hosted=False)
+                                feather_sub = self._feather_mask_multi_scale(mask_sub)
+                                feather_sub = np.maximum(feather_sub, (mask_sub > 0).astype(np.float32)[:, :, np.newaxis])
+                                out_frame[sy1:sy2, sx1:sx2] = (
+                                    clean_sub_roi.astype(np.float32) * feather_sub
+                                    + sub_roi.astype(np.float32) * (1.0 - feather_sub)
+                                ).astype(np.uint8)
+                            full_frame_mask[sy1:sy2, sx1:sx2] = np.maximum(full_frame_mask[sy1:sy2, sx1:sx2], mask_sub)
 
             # Thêm vào buffer 3-frame cho Temporal Bilateral Filter
             frame_buffer.append((frame_idx, out_frame, full_frame_mask))
@@ -3643,7 +3665,7 @@ class VideoEditorService:
                 f_curr = frame_buffer[1][1]
                 f_next = frame_buffer[2][1]
                 m_curr = frame_buffer[1][2]
-                out_filtered = self._temporal_bilateral_filter_3frame(f_prev, f_curr, f_next, m_curr, sigma_t=1.0, sigma_r=14.0, max_fb_error=2.5)
+                out_filtered = self._temporal_bilateral_filter_3frame(f_prev, f_curr, f_next, m_curr, sigma_t=1.0, sigma_r=8.0, max_fb_error=2.5)
                 yield out_filtered
                 frame_buffer.pop(0)
 
@@ -3660,14 +3682,14 @@ class VideoEditorService:
                 f_curr = frame_buffer[1][1]
                 f_next = frame_buffer[2][1]
                 m_curr = frame_buffer[1][2]
-                out_filtered = self._temporal_bilateral_filter_3frame(f_prev, f_curr, f_next, m_curr, sigma_t=1.0, sigma_r=14.0, max_fb_error=2.5)
+                out_filtered = self._temporal_bilateral_filter_3frame(f_prev, f_curr, f_next, m_curr, sigma_t=1.0, sigma_r=8.0, max_fb_error=2.5)
                 yield out_filtered
                 frame_buffer.pop(0)
             elif len(frame_buffer) == 2:
                 f_prev = frame_buffer[0][1]
                 f_curr = frame_buffer[1][1]
                 m_curr = frame_buffer[1][2]
-                out_filtered = self._temporal_bilateral_filter_3frame(f_prev, f_curr, None, m_curr, sigma_t=1.0, sigma_r=14.0, max_fb_error=2.5)
+                out_filtered = self._temporal_bilateral_filter_3frame(f_prev, f_curr, None, m_curr, sigma_t=1.0, sigma_r=8.0, max_fb_error=2.5)
                 yield out_filtered
                 frame_buffer.pop(0)
             else:

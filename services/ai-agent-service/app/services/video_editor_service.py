@@ -3704,18 +3704,24 @@ class VideoEditorService:
                                 mask_sub = s_mask.copy()
                             mask_sub = np.where(mask_sub > 0, 255, 0).astype(np.uint8)
 
-                            # Duy trì tính liên tục của mask qua các frame kế tiếp trong cùng shot (Full-Frame Temporal Envelope)
+                            # Duy trì tính liên tục của mask qua các frame kế tiếp trong cùng shot (Block-Continuity Temporal Envelope)
                             full_sub_m = np.zeros((h, w), dtype=np.uint8)
                             full_sub_m[sy1:sy2, sx1:sx2] = mask_sub
                             if (
                                 last_sub_mask_data is not None
                                 and last_sub_mask_data.get("shot_idx") == cur_shot_idx
                             ):
-                                prev_full_m = last_sub_mask_data.get("full_mask")
-                                if prev_full_m is not None and prev_full_m.shape == (h, w):
-                                    full_sub_m = np.maximum(full_sub_m, prev_full_m)
+                                p_sy1 = last_sub_mask_data.get("sy1", 0)
+                                p_sy2 = last_sub_mask_data.get("sy2", 0)
+                                # Chỉ tích lũy envelope khi thuộc cùng một khối câu thoại theo chiều dọc
+                                if abs(sy1 - p_sy1) <= 60 and abs(sy2 - p_sy2) <= 60:
+                                    prev_full_m = last_sub_mask_data.get("full_mask")
+                                    if prev_full_m is not None and prev_full_m.shape == (h, w):
+                                        full_sub_m = np.maximum(full_sub_m, prev_full_m)
                             last_sub_mask_data = {
                                 "shot_idx": cur_shot_idx,
+                                "sy1": sy1,
+                                "sy2": sy2,
                                 "full_mask": full_sub_m.copy(),
                             }
 

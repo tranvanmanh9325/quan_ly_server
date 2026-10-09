@@ -3731,17 +3731,18 @@ class VideoEditorService:
                                 sy2 = min(h, int(np.max(nz_y)) + 5)
                                 # Giới hạn dải phụ đề tự nhiên của video dọc trong Shot 9 tránh nhặt nền bàn ăn
                                 if cur_shot_idx == 9:
-                                    sy1 = max(460, sy1)
-                                    sy2 = min(605, sy2)
+                                    sy1 = max(460, min(sy1, 580))
+                                    sy2 = min(605, max(sy1 + 20, sy2))
                                 sx1 = max(0, int(np.min(nz_x)) - 10)
                                 sx2 = min(w, int(np.max(nz_x)) + 22)
-                                sub_roi = out_frame[sy1:sy2, sx1:sx2]
-                                sub_w, sub_h = sx2 - sx1, sy2 - sy1
-                                mask_sub = cv2.dilate(full_sub_m[sy1:sy2, sx1:sx2], cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)))
-                                mask_sub = VideoEditorService._fill_holes(mask_sub)
-                                if np.count_nonzero(mask_sub) > 0.85 * mask_sub.size:
-                                    mask_sub = full_sub_m[sy1:sy2, sx1:sx2].copy()
-                                mask_sub = np.where(mask_sub > 0, 255, 0).astype(np.uint8)
+                                if sy2 > sy1 and sx2 > sx1:
+                                    sub_roi = out_frame[sy1:sy2, sx1:sx2]
+                                    sub_w, sub_h = sx2 - sx1, sy2 - sy1
+                                    mask_sub = cv2.dilate(full_sub_m[sy1:sy2, sx1:sx2], cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)))
+                                    mask_sub = VideoEditorService._fill_holes(mask_sub)
+                                    if np.count_nonzero(mask_sub) > 0.85 * mask_sub.size:
+                                        mask_sub = full_sub_m[sy1:sy2, sx1:sx2].copy()
+                                    mask_sub = np.where(mask_sub > 0, 255, 0).astype(np.uint8)
 
                             # Thử căn chỉnh trực tiếp từ keyframe sạch gần nhất trong cùng phân cảnh
                             shot_start, shot_end = shots[cur_shot_idx]

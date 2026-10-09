@@ -3878,10 +3878,10 @@ class VideoEditorService:
                 m_curr = frame_buffer[1][2]
                 out_filtered = self._temporal_bilateral_filter_3frame(f_prev, f_curr, None, m_curr, sigma_t=1.0, sigma_r=25.0, max_fb_error=3.0)
                 yield out_filtered
-                frame_buffer.pop(0)
+                frame_buffer.clear()
             else:
                 yield frame_buffer[0][1]
-                frame_buffer.pop(0)
+                frame_buffer.clear()
 
         cap.release()
         try:

@@ -2783,7 +2783,7 @@ class VideoEditorService:
                 ]
                 if title_regs:
                     title_max_y = min(h, max(int(r.get("y", 0)) + int(r.get("h", 0)) for r in title_regs) + int(0.02 * h))
-                sy1 = max(int(0.35 * h), title_max_y)
+                sy1 = max(int(0.42 * h), title_max_y + int(0.02 * h))
                 sy2 = min(h, int(0.72 * h))
             else:
                 sy1 = 0
@@ -3729,10 +3729,6 @@ class VideoEditorService:
                             if len(nz_y) > 0 and len(nz_x) > 0:
                                 sy1 = max(0, int(np.min(nz_y)) - 4)
                                 sy2 = min(h, int(np.max(nz_y)) + 5)
-                                # Giới hạn dải phụ đề tự nhiên của video dọc trong Shot 9 tránh nhặt nền bàn ăn
-                                if cur_shot_idx == 9:
-                                    sy1 = max(460, min(sy1, 580))
-                                    sy2 = min(605, max(sy1 + 20, sy2))
                                 sx1 = max(0, int(np.min(nz_x)) - 10)
                                 sx2 = min(w, int(np.max(nz_x)) + 22)
                                 if sy2 > sy1 and sx2 > sx1:

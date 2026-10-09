@@ -2784,7 +2784,7 @@ class VideoEditorService:
                 if title_regs:
                     title_max_y = min(h, max(int(r.get("y", 0)) + int(r.get("h", 0)) for r in title_regs) + int(0.02 * h))
                 sy1 = max(int(0.38 * h), title_max_y + int(0.02 * h))
-                sy2 = min(h, int(0.62 * h))
+                sy2 = min(h, int(0.60 * h))
             else:
                 sy1 = 0
                 sy2 = h
@@ -2820,17 +2820,6 @@ class VideoEditorService:
                 area = cv2.contourArea(c)
                 if 6 <= ch <= 70 and 3 <= cw <= 70 and 8 <= area <= 2000:
                     glyphs.append((c, cx, cy, cw, ch))
-                elif cw > 70 or area > 2000:
-                    roi_g = gray[cy:cy+ch, cx:cx+cw]
-                    grad_roi = cv2.morphologyEx(roi_g, cv2.MORPH_GRADIENT, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))
-                    cnt_sub_res = cv2.findContours((grad_roi >= 12).astype(np.uint8) * 255, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                    cnt_sub = cnt_sub_res[0] if (isinstance(cnt_sub_res, (tuple, list)) and len(cnt_sub_res) == 2) else (cnt_sub_res[1] if (isinstance(cnt_sub_res, (tuple, list)) and len(cnt_sub_res) == 3) else [])
-                    for sc in cnt_sub:
-                        scx, scy, scw, sch = cv2.boundingRect(sc)
-                        sarea = cv2.contourArea(sc)
-                        if 6 <= sch <= 70 and 3 <= scw <= 70 and 8 <= sarea <= 2000:
-                            sc_shifted = sc + np.array([cx, cy])
-                            glyphs.append((sc_shifted, cx + scx, cy + scy, scw, sch))
 
             # TH1.B: Adaptive Thresholding cục bộ giải quyết nền phân cực kép khi ứng viên chữ còn thưa thớt
             if len(glyphs) < 8:
@@ -3113,12 +3102,12 @@ class VideoEditorService:
                 min_bx = max(10, min(b[0] for b in sub_candidate_boxes) - pad_box_x)
                 max_bx = min(w - 10, max(b[0] + b[2] for b in sub_candidate_boxes) + pad_box_x)
                 min_by = max(0, sy1 + min(b[1] for b in sub_candidate_boxes) - pad_box_y)
-                max_by = min(min(h, int(0.62 * h)), sy1 + max(b[1] + b[3] for b in sub_candidate_boxes) + pad_box_y)
+                max_by = min(min(h, int(0.60 * h)), sy1 + max(b[1] + b[3] for b in sub_candidate_boxes) + pad_box_y)
 
                 if max_by - min_by < 64:
                     mid = (min_by + max_by) // 2
                     min_by = max(0, mid - 32)
-                    max_by = min(min(h, int(0.62 * h)), mid + 32)
+                    max_by = min(min(h, int(0.60 * h)), mid + 32)
 
                 sub_info = {
                     "name": "dynamic_stroke_sub",
@@ -3718,28 +3707,29 @@ class VideoEditorService:
                             # Duy trì tính liên tục của mask qua các frame kế tiếp trong cùng shot (Block-Continuity Temporal Envelope)
                             full_sub_m = np.zeros((h, w), dtype=np.uint8)
                             full_sub_m[sy1:sy2, sx1:sx2] = mask_sub
+                            curr_single_m = full_sub_m.copy()
                             if (
                                 last_sub_mask_data is not None
                                 and last_sub_mask_data.get("shot_idx") == cur_shot_idx
                             ):
                                 p_sy1 = last_sub_mask_data.get("sy1", 0)
                                 p_sy2 = last_sub_mask_data.get("sy2", 0)
-                                # Chỉ tích lũy envelope khi thuộc cùng một khối câu thoại theo chiều dọc (ngăn tràn ở Shot 4 F350 nhưng liên tục qua Shot 9)
+                                # Chỉ tích lũy envelope giữa 2 frame liên tiếp (ngăn tích tụ tràn vô hạn gây đen)
                                 if abs(sy1 - p_sy1) <= 90 and abs(sy2 - p_sy2) <= 160:
-                                    prev_full_m = last_sub_mask_data.get("full_mask")
-                                    if prev_full_m is not None and prev_full_m.shape == (h, w):
-                                        full_sub_m = np.maximum(full_sub_m, prev_full_m)
+                                    prev_single_m = last_sub_mask_data.get("single_mask")
+                                    if prev_single_m is not None and prev_single_m.shape == (h, w):
+                                        full_sub_m = np.maximum(full_sub_m, prev_single_m)
                             last_sub_mask_data = {
                                 "shot_idx": cur_shot_idx,
                                 "sy1": sy1,
                                 "sy2": sy2,
-                                "full_mask": full_sub_m.copy(),
+                                "single_mask": curr_single_m,
                             }
 
                             nz_y, nz_x = np.where(full_sub_m > 0)
                             if len(nz_y) > 0 and len(nz_x) > 0:
                                 sy1 = max(0, int(np.min(nz_y)) - 4)
-                                sy2 = min(min(h, int(0.62 * h)), int(np.max(nz_y)) + 5)
+                                sy2 = min(min(h, int(0.60 * h)), int(np.max(nz_y)) + 5)
                                 sx1 = max(0, int(np.min(nz_x)) - 10)
                                 sx2 = min(w, int(np.max(nz_x)) + 22)
                                 if sy2 > sy1 and sx2 > sx1:

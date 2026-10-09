@@ -2975,7 +2975,7 @@ class VideoEditorService:
                 enveloped_boxes = []
                 for blk in blocks:
                     common_x1 = max(0, min(b[0] for b in blk) - 28)
-                    common_x2 = min(strip_w, max(b[0] + b[2] for b in blk) + 28)
+                    common_x2 = min(strip_w, max(b[0] + b[2] for b in blk) + 32)
                     for b in blk:
                         by1 = max(0, b[1] - 12)
                         by2 = min(strip_h, b[1] + b[3] + 12)
@@ -3097,7 +3097,7 @@ class VideoEditorService:
 
                 sub_candidate_boxes = boxes_all
 
-                pad_box_x = 24
+                pad_box_x = 28
                 pad_box_y = 10
                 min_bx = max(10, min(b[0] for b in sub_candidate_boxes) - pad_box_x)
                 max_bx = min(w - 10, max(b[0] + b[2] for b in sub_candidate_boxes) + pad_box_x)
@@ -3713,8 +3713,8 @@ class VideoEditorService:
                             ):
                                 p_sy1 = last_sub_mask_data.get("sy1", 0)
                                 p_sy2 = last_sub_mask_data.get("sy2", 0)
-                                # Chỉ tích lũy envelope khi thuộc cùng một khối câu thoại theo chiều dọc
-                                if abs(sy1 - p_sy1) <= 60 and abs(sy2 - p_sy2) <= 60:
+                                # Chỉ tích lũy envelope khi thuộc cùng một khối câu thoại theo chiều dọc (ngăn tràn ở Shot 4 F350 nhưng liên tục qua Shot 9)
+                                if abs(sy1 - p_sy1) <= 90 and abs(sy2 - p_sy2) <= 160:
                                     prev_full_m = last_sub_mask_data.get("full_mask")
                                     if prev_full_m is not None and prev_full_m.shape == (h, w):
                                         full_sub_m = np.maximum(full_sub_m, prev_full_m)
@@ -3729,8 +3729,8 @@ class VideoEditorService:
                             if len(nz_y) > 0 and len(nz_x) > 0:
                                 sy1 = max(0, int(np.min(nz_y)) - 4)
                                 sy2 = min(h, int(np.max(nz_y)) + 5)
-                                sx1 = max(0, int(np.min(nz_x)) - 8)
-                                sx2 = min(w, int(np.max(nz_x)) + 9)
+                                sx1 = max(0, int(np.min(nz_x)) - 10)
+                                sx2 = min(w, int(np.max(nz_x)) + 22)
                                 sub_roi = out_frame[sy1:sy2, sx1:sx2]
                                 sub_w, sub_h = sx2 - sx1, sy2 - sy1
                                 mask_sub = cv2.dilate(full_sub_m[sy1:sy2, sx1:sx2], cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)))

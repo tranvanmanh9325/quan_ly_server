@@ -2820,6 +2820,17 @@ class VideoEditorService:
                 area = cv2.contourArea(c)
                 if 6 <= ch <= 70 and 3 <= cw <= 70 and 8 <= area <= 2000:
                     glyphs.append((c, cx, cy, cw, ch))
+                elif cw > 70 or area > 2000:
+                    roi_g = gray[cy:cy+ch, cx:cx+cw]
+                    grad_roi = cv2.morphologyEx(roi_g, cv2.MORPH_GRADIENT, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))
+                    cnt_sub_res = cv2.findContours((grad_roi >= 12).astype(np.uint8) * 255, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    cnt_sub = cnt_sub_res[0] if (isinstance(cnt_sub_res, (tuple, list)) and len(cnt_sub_res) == 2) else (cnt_sub_res[1] if (isinstance(cnt_sub_res, (tuple, list)) and len(cnt_sub_res) == 3) else [])
+                    for sc in cnt_sub:
+                        scx, scy, scw, sch = cv2.boundingRect(sc)
+                        sarea = cv2.contourArea(sc)
+                        if 6 <= sch <= 70 and 3 <= scw <= 70 and 8 <= sarea <= 2000:
+                            sc_shifted = sc + np.array([cx, cy])
+                            glyphs.append((sc_shifted, cx + scx, cy + scy, scw, sch))
 
             # TH1.B: Adaptive Thresholding cục bộ giải quyết nền phân cực kép khi ứng viên chữ còn thưa thớt
             if len(glyphs) < 8:

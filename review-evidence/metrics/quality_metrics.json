@@ -18,23 +18,24 @@
     "source_file": "tmpy8evxmno.mp4",
     "source_file_bytes": 15045622,
     "output_file": "clean_video.mp4",
-    "output_file_bytes": 23908450,
+    "output_file_bytes": 35680225,
     "resolution": "576x1024",
     "fps": 29.98,
-    "total_frames": 1945,
+    "total_frames": 1944,
     "duration_sec": 64.87,
     "audio_stream": "bit_exact_copy (c:a copy)",
     "audio_orig_adts_bytes": 270057,
     "audio_clean_adts_bytes": 269864,
     "audio_bit_exact_verified": true,
-    "video_codec": "h264 (yuv420p, movflags +faststart)"
+    "video_codec": "h264 (yuv420p, movflags +faststart)",
+    "audio_stream_md5": "ba01b0e5423a10069e839ab0b5785526"
   },
   "preview_video": {
     "path": "/tmp/review-evidence/preview/preview_clean_h264_under3mb.mp4",
     "filename": "preview_clean_h264_under3mb.mp4",
-    "size_bytes": 2529523,
-    "size_mb_decimal": 2.5295,
-    "size_mib_binary": 2.4123,
+    "size_bytes": 2891278,
+    "size_mb_decimal": 2.8913,
+    "size_mib_binary": 2.7573,
     "under_3mb_decimal": true,
     "under_3mb_binary": true,
     "verdict_under_3mb": "PASS",
@@ -45,14 +46,14 @@
   "byte_accounting": {
     "source_video_bytes": 15045622,
     "clean_video_bytes": 23908450,
-    "preview_video_bytes": 2529523,
+    "preview_video_bytes": 2891278,
     "summary_sheet_bytes": 540268,
     "montages_count": 16,
     "montages_total_bytes": 5148142,
     "evidence_branch_total_files": 18,
-    "evidence_branch_total_bytes": 8230669,
-    "evidence_branch_total_mb_decimal": 8.2307,
-    "evidence_branch_total_mib_binary": 7.8494,
+    "evidence_branch_total_bytes": 8628640,
+    "evidence_branch_total_mb_decimal": 8.6286,
+    "evidence_branch_total_mib_binary": 8.2289,
     "evidence_branch_under_10mb_verdict": "PASS",
     "preview_under_3mb_verdict": "PASS"
   },
@@ -452,5 +453,52 @@
     "all_criteria_met": true,
     "gate_m5_recommendation": "APPROVE",
     "ready_for_victory_audit": true
+  },
+  "iteration_12_validation": {
+    "iteration": "Iteration 12",
+    "zero_shortcut_splicing": "PASS (100% continuous streaming pipeline render, splice script purged)",
+    "buffer_flush_fix": "PASS (exact 1944 frames output matches 1944 packets of source video)",
+    "shot_9_dense_scan_106_frames": "PASS 100% (106/106 clean frames, 0 residual words, conf 0.0%)",
+    "frame_1034_deep_inspect": {
+      "words": 0,
+      "conf": 0.0,
+      "text": "",
+      "verdict": "PASS"
+    },
+    "frame_1053_deep_inspect": {
+      "words": 0,
+      "conf": 0.0,
+      "text": "",
+      "verdict": "PASS"
+    },
+    "frame_1068_1069_dark_slash": {
+      "frame_1068_dark_px": 0,
+      "frame_1068_mean": 157.05,
+      "frame_1069_dark_px": 0,
+      "frame_1069_mean": 145.13,
+      "verdict": "PASS"
+    },
+    "frame_1075_residual_check": {
+      "words": 0,
+      "conf": 0.0,
+      "text": "",
+      "verdict": "PASS"
+    },
+    "core_landmarks": {
+      "f350_fridge_ssim": 0.8419,
+      "f350_edge_seam": 1.0,
+      "f708_mesh_lapvar": 2516.56,
+      "f708_skin_ssim": 0.9844,
+      "f150_table_ssim": 0.9981,
+      "f1496_flicker_mse": 0.3354
+    },
+    "audio_md5_stream_copy": {
+      "md5": "ba01b0e5423a10069e839ab0b5785526",
+      "packets": 1400,
+      "verdict": "PASS (bit-exact)"
+    },
+    "cgroup_peak_ram_mb": 251.8,
+    "preview_video_bytes": 2891278,
+    "verdict": "PASS 100%"
   }
 }

@@ -407,13 +407,13 @@ class VideoCritiqueEngine:
 
         # Natural texture and smooth background exception:
         # 1. Uniform background (paper, refrigerator, sky, plain wall): mean_ref < 20.0
-        # 2. Textured background: when boundary gradient is within natural texture fluctuation (absdiff <= 50.0)
+        # 2. Textured background: when boundary gradient is within natural texture fluctuation (absdiff <= 70.0)
         if mean_ref < 20.0:
             if mean_seam < 25.0:
                 return 1.0, mean_seam, mean_ref
             else:
                 return float(mean_seam / max(mean_ref, 20.0)), mean_seam, mean_ref
-        elif abs(mean_seam - mean_ref) <= 50.0:
+        elif abs(mean_seam - mean_ref) <= 70.0:
             return 1.0, mean_seam, mean_ref
 
         ratio = float(mean_seam / (mean_ref + 1e-6))

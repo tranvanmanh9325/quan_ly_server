@@ -2783,8 +2783,8 @@ class VideoEditorService:
                 ]
                 if title_regs:
                     title_max_y = min(h, max(int(r.get("y", 0)) + int(r.get("h", 0)) for r in title_regs) + int(0.02 * h))
-                sy1 = max(int(0.42 * h), title_max_y + int(0.02 * h))
-                sy2 = min(h, int(0.60 * h))
+                sy1 = max(int(0.38 * h), title_max_y + int(0.02 * h))
+                sy2 = min(h, int(0.62 * h))
             else:
                 sy1 = 0
                 sy2 = h
@@ -3102,12 +3102,12 @@ class VideoEditorService:
                 min_bx = max(10, min(b[0] for b in sub_candidate_boxes) - pad_box_x)
                 max_bx = min(w - 10, max(b[0] + b[2] for b in sub_candidate_boxes) + pad_box_x)
                 min_by = max(0, sy1 + min(b[1] for b in sub_candidate_boxes) - pad_box_y)
-                max_by = min(min(h, int(0.60 * h)), sy1 + max(b[1] + b[3] for b in sub_candidate_boxes) + pad_box_y)
+                max_by = min(min(h, int(0.62 * h)), sy1 + max(b[1] + b[3] for b in sub_candidate_boxes) + pad_box_y)
 
                 if max_by - min_by < 64:
                     mid = (min_by + max_by) // 2
                     min_by = max(0, mid - 32)
-                    max_by = min(h, mid + 32)
+                    max_by = min(min(h, int(0.62 * h)), mid + 32)
 
                 sub_info = {
                     "name": "dynamic_stroke_sub",
@@ -3728,7 +3728,7 @@ class VideoEditorService:
                             nz_y, nz_x = np.where(full_sub_m > 0)
                             if len(nz_y) > 0 and len(nz_x) > 0:
                                 sy1 = max(0, int(np.min(nz_y)) - 4)
-                                sy2 = min(min(h, int(0.60 * h)), int(np.max(nz_y)) + 5)
+                                sy2 = min(min(h, int(0.62 * h)), int(np.max(nz_y)) + 5)
                                 sx1 = max(0, int(np.min(nz_x)) - 10)
                                 sx2 = min(w, int(np.max(nz_x)) + 22)
                                 if sy2 > sy1 and sx2 > sx1:

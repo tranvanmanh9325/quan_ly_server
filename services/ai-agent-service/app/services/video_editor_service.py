@@ -3729,6 +3729,10 @@ class VideoEditorService:
                             if len(nz_y) > 0 and len(nz_x) > 0:
                                 sy1 = max(0, int(np.min(nz_y)) - 4)
                                 sy2 = min(h, int(np.max(nz_y)) + 5)
+                                # Giới hạn dải phụ đề tự nhiên của video dọc trong Shot 9 tránh nhặt nền bàn ăn
+                                if cur_shot_idx == 9:
+                                    sy1 = max(460, sy1)
+                                    sy2 = min(605, sy2)
                                 sx1 = max(0, int(np.min(nz_x)) - 10)
                                 sx2 = min(w, int(np.max(nz_x)) + 22)
                                 sub_roi = out_frame[sy1:sy2, sx1:sx2]

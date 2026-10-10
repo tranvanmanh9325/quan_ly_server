@@ -15,7 +15,8 @@ services:
       - ./db/migrations:/docker-entrypoint-initdb.d
       - ./db/postgresql.conf:/etc/postgresql/postgresql.conf:ro
     networks:
-      - dashboard-network
+      dashboard-network:
+        ipv4_address: 172.18.0.10
     logging:
       driver: "json-file"
       options:
@@ -50,7 +51,8 @@ services:
     restart: unless-stopped
     stop_grace_period: 15s
     networks:
-      - dashboard-network
+      dashboard-network:
+        ipv4_address: 172.18.0.11
     logging:
       driver: "json-file"
       options:
@@ -89,7 +91,8 @@ services:
       db:
         condition: service_healthy
     networks:
-      - dashboard-network
+      dashboard-network:
+        ipv4_address: 172.18.0.12
     logging:
       driver: "json-file"
       options:
@@ -126,7 +129,8 @@ services:
       db:
         condition: service_healthy
     networks:
-      - dashboard-network
+      dashboard-network:
+        ipv4_address: 172.18.0.13
     ports:
       - "127.0.0.1:8084:8084"
       - "127.0.0.1:6080:6080"
@@ -172,7 +176,8 @@ services:
     restart: unless-stopped
     stop_grace_period: 15s
     networks:
-      - dashboard-network
+      dashboard-network:
+        ipv4_address: 172.18.0.14
     logging:
       driver: "json-file"
       options:
@@ -211,7 +216,10 @@ services:
     restart: unless-stopped
     stop_grace_period: 15s
     networks:
-      - dashboard-network
+      dashboard-network:
+        ipv4_address: 172.18.0.15
+    volumes:
+      - ./frontend/nginx.conf:/etc/nginx/conf.d/nginx.conf:ro
     logging:
       driver: "json-file"
       options:
@@ -235,6 +243,11 @@ services:
 networks:
   dashboard-network:
     driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.18.0.0/16
+          gateway: 172.18.0.1
 
 volumes:
   postgres_data:

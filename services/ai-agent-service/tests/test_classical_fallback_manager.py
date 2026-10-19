@@ -137,12 +137,18 @@ class TestClassicalFallbackManager(unittest.TestCase):
     def test_zero_local_ai_weights_constraint(self):
         """
         Integrity constraint test:
-        Verify ClassicalFallbackManager uses strictly 0MB neural network weights.
+        Verify ClassicalFallbackManager uses strictly 0MB neural network weights in isolation.
         """
-        # Ensure no torch / onnxruntime modules are imported by this manager
+        import subprocess
         import sys
-        self.assertNotIn("torch", sys.modules, "Zero Local AI violation: torch must not be imported")
-        self.assertNotIn("onnxruntime", sys.modules, "Zero Local AI violation: onnxruntime must not be imported")
+        code = (
+            "import sys; "
+            "from app.services.classical_fallback_manager import ClassicalFallbackManager; "
+            "assert 'torch' not in sys.modules, 'torch must not be imported'; "
+            "assert 'onnxruntime' not in sys.modules, 'onnxruntime must not be imported'"
+        )
+        res = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+        self.assertEqual(res.returncode, 0, f"Zero Local AI violation in ClassicalFallbackManager: {res.stderr}")
 
     def test_empty_or_none_inputs_handled_gracefully(self):
         """Verify boundary inputs (empty masks, None) are safely handled."""

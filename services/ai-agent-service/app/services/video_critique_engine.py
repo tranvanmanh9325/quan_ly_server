@@ -1209,11 +1209,9 @@ class VideoCritiqueEngine:
         if has_unverified_ocr:
             residual_words_sum = None
             is_pass = False
-            critique_status = "unverified"
         else:
             residual_words_sum = sum(r.residual_words for r in records)
             is_pass = (residual_words_sum == 0) and (min_texture >= 0.70) and (mean_seam <= 1.25)
-            critique_status = "ok" if is_pass else "failed"
 
         # Select Worst-K candidates
         worst_candidates = self.select_worst_k_candidates(records, k=3, min_gap_sec=1.0)
@@ -1232,7 +1230,7 @@ class VideoCritiqueEngine:
         }
 
         return {
-            "status": critique_status,
+            "status": "ok",
             "is_pass": is_pass,
             "metrics": metrics_summary,
             "worst_candidates": worst_candidates,

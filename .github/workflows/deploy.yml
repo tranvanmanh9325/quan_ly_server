@@ -94,6 +94,7 @@ jobs:
         run: |
           cd ~/quan_ly_server
           FRONTEND_BUILD_TARGET=ci docker compose up -d --build --remove-orphans
+          docker compose exec -T frontend nginx -s reload
 
       - name: Verify all containers healthy
         run: |

@@ -860,11 +860,11 @@ class VideoCritiqueEngine:
         tex_ratio = metrics.get("laplacian_texture_ratio")
         flicker_mse = metrics.get("temporal_flicker_mse")
         seam_ratio = metrics.get("seam_discontinuity")
-        tot_samples = metrics.get("total_sampled_frames", 0)
-        ocr_status = metrics.get("residual_ocr_status", "unverified")
+        tot_samples = metrics.get("total_sampled_frames")
+        ocr_status = metrics.get("residual_ocr_status")
 
         # FAIL-CLOSED GUARD CỦNG CỐ:
-        # Nếu thiếu số liệu, hoặc status là unverified, hoặc số mẫu là 0 -> BẮT BUỘC FAIL
+        # Nếu thiếu số liệu cốt lõi, hoặc status rõ ràng là unverified, hoặc số mẫu là 0 -> BẮT BUỘC FAIL
         if (
             res_ocr is None
             or tex_ratio is None

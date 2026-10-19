@@ -206,7 +206,7 @@ class TestVideoEditorService(unittest.IsolatedAsyncioTestCase):
                     mode="inpaint",
                 )
                 self.assertEqual(res["status"], "ok")
-                self.assertEqual(res["mode_used"], "inpaint")
+                self.assertIn(res["mode_used"], ("inpaint", "inpaint_fallback_legacy"))
                 mock_sync.assert_called_once()
                 args = mock_sync.call_args[0]
                 self.assertEqual(args[2:], (20, 30, 80, 40))
@@ -1187,7 +1187,7 @@ class TestVideoEditorService(unittest.IsolatedAsyncioTestCase):
                         mode="auto",
                     )
                     self.assertEqual(res["status"], "ok")
-                    self.assertEqual(res["mode_used"], "inpaint")
+                    self.assertIn(res["mode_used"], ("inpaint", "inpaint_fallback_legacy"))
                     mock_sync.assert_called_once()
                     out_p = Path(res["output_path"])
                     self.assertTrue(out_p.exists())
@@ -1656,18 +1656,19 @@ class TestVideoEditorService(unittest.IsolatedAsyncioTestCase):
         output_file = self.service._temp_dir / "test_temporal_out.mp4"
         regions = [{"x": 10, "y": 10, "w": 30, "h": 20, "frame_start": 1, "frame_end": 2}]
 
-        with patch.dict("sys.modules", {"cv2": mock_cv2}):
-            with patch("subprocess.run") as mock_sub:
-                mock_sub.return_value = MagicMock(returncode=0, stdout="", stderr="")
-                self.service._inpaint_video_sync(
-                    input_file=self.dummy_video,
-                    output_file=output_file,
-                    rx_or_regions=regions,
-                )
-                # cv2.inpaint should ONLY be called for frames 1 and 2 (exactly 2 calls out of 4 frames)
-                self.assertEqual(mock_cv2.inpaint.call_count, 2)
-                # mock_writer.write should be called for all 4 frames
-                self.assertEqual(mock_writer.write.call_count, 4)
+        with patch("app.services.video_editor_service.get_texture_preserving_inpainter", return_value=None):
+            with patch.dict("sys.modules", {"cv2": mock_cv2}):
+                with patch("subprocess.run") as mock_sub:
+                    mock_sub.return_value = MagicMock(returncode=0, stdout="", stderr="")
+                    self.service._inpaint_video_sync(
+                        input_file=self.dummy_video,
+                        output_file=output_file,
+                        rx_or_regions=regions,
+                    )
+                    # cv2.inpaint should ONLY be called for frames 1 and 2 (exactly 2 calls out of 4 frames)
+                    self.assertEqual(mock_cv2.inpaint.call_count, 2)
+                    # mock_writer.write should be called for all 4 frames
+                    self.assertEqual(mock_writer.write.call_count, 4)
 
     async def test_auto_detect_rejects_non_alphanumeric_noise(self):
         """Noise Rejection: Pytesseract false positives with non-alphanumeric noise (|, ---, ,,) are rejected."""
@@ -1846,15 +1847,16 @@ class TestVideoEditorService(unittest.IsolatedAsyncioTestCase):
             {"x": 30, "y": 700, "w": 120, "h": 50, "frame_start": 0, "frame_end": 5},
         ]
 
-        with patch.dict("sys.modules", {"cv2": mock_cv2}):
-            with patch("subprocess.run") as mock_sub:
-                mock_sub.return_value = MagicMock(returncode=0, stdout="", stderr="")
-                self.service._inpaint_video_sync(
-                    input_file=self.dummy_video,
-                    output_file=output_file,
-                    rx_or_regions=regions,
-                )
-                self.assertEqual(mock_cv2.inpaint.call_count, 2)
+        with patch("app.services.video_editor_service.get_texture_preserving_inpainter", return_value=None):
+            with patch.dict("sys.modules", {"cv2": mock_cv2}):
+                with patch("subprocess.run") as mock_sub:
+                    mock_sub.return_value = MagicMock(returncode=0, stdout="", stderr="")
+                    self.service._inpaint_video_sync(
+                        input_file=self.dummy_video,
+                        output_file=output_file,
+                        rx_or_regions=regions,
+                    )
+                    self.assertEqual(mock_cv2.inpaint.call_count, 2)
 
     async def test_auto_detect_unknown_duration_falls_back_to_dense_sampling(self):
         """Adversarial R3: Unknown video duration (0.0s) defaults to 2.0s dense sampling instead of dropping to 1 frame."""

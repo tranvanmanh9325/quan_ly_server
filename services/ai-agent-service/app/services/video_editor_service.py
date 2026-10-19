@@ -23,6 +23,7 @@ import urllib.parse
 import zipfile
 import base64
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, Generator, List, Optional, Tuple, Union
 
@@ -107,6 +108,50 @@ TELEGRAM_MAX_FILE_SIZE = 50 * 1024 * 1024
 SUPPORTED_VIDEO_EXTENSIONS = frozenset({
     ".mp4", ".mkv", ".mov", ".avi", ".webm", ".flv", ".wmv", ".m4v", ".ts"
 })
+
+
+@dataclass
+class VideoJobContext:
+    """
+    Per-Job Execution Context encapsulated for a single video editing operation.
+    Eliminates all shared mutable state on VideoEditorService singleton.
+    """
+    job_id: str = field(default_factory=lambda: secrets.token_hex(6))
+    input_file: Optional[Path] = None
+    output_file: Optional[Path] = None
+    mode_requested: str = "auto"
+    mode_used: str = "inpaint"
+    target_scope: str = "overlay"  # 'overlay' | 'all'
+    cancel_event: threading.Event = field(default_factory=threading.Event)
+    progress_callback: Optional[Callable[[int, str], Any]] = None
+    cache_dir: Optional[Path] = None
+    branch_counters: Dict[str, int] = field(default_factory=dict)
+    critique_result: Dict[str, Any] = field(default_factory=dict)
+    is_fallback: bool = False
+    fallback_reason: Optional[str] = None
+    fallback_events: List[Dict[str, Any]] = field(default_factory=list)
+    roi_cache: Dict[str, Any] = field(default_factory=dict)
+    start_time: float = field(default_factory=time.time)
+
+    def record_fallback(self, stage: str, from_system: str, to_system: str, reason: str, impact: str = "") -> None:
+        """Records a transparent fallback event."""
+        self.is_fallback = True
+        self.fallback_reason = reason
+        self.fallback_events.append({
+            "stage": stage,
+            "from_system": from_system,
+            "to_system": to_system,
+            "reason": reason,
+            "impact": impact,
+            "timestamp": time.time(),
+        })
+
+    def cleanup(self) -> None:
+        """Guaranteed cleanup of per-job transient memory and disk assets."""
+        self.roi_cache.clear()
+        if self.cache_dir and self.cache_dir.exists():
+            import shutil
+            shutil.rmtree(self.cache_dir, ignore_errors=True)
 
 
 class KeyframeDiskCache:
@@ -627,39 +672,59 @@ class VideoEditorService:
                 async with self._inpaint_semaphore:
                     cancel_event = threading.Event()
                     self._current_inpaint_cancel_event = cancel_event
+                    context = VideoJobContext(
+                        input_file=input_file,
+                        output_file=output_file,
+                        mode_requested=clean_mode,
+                        mode_used=mode_used,
+                        target_scope=clean_target_scope,
+                        cancel_event=cancel_event,
+                        progress_callback=progress_callback,
+                    )
+                    context.cache_dir = self._temp_dir / f"kf_cache_{context.job_id}"
                     try:
                         streaming_success = False
-                        is_mock_cv = type(cv2).__name__ in ("MagicMock", "Mock")
-                        is_mock_inpaint = (
-                            hasattr(self._inpaint_video_sync, "mock_calls")
-                            or type(self._inpaint_video_sync).__name__ in ("MagicMock", "Mock")
-                            or hasattr(self._inpaint_video_sync, "assert_called")
-                        )
-                        if not is_mock_cv and not is_mock_inpaint:
+                        try:
+                            main_loop = None
                             try:
-                                main_loop = None
-                                try:
-                                    main_loop = asyncio.get_running_loop()
-                                except RuntimeError:
-                                    pass
-                                from app.services.progress_emitter import PipelineProgressEmitter
-                                emitter = PipelineProgressEmitter(loop=main_loop, callback=progress_callback)
+                                main_loop = asyncio.get_running_loop()
+                            except RuntimeError:
+                                pass
+                            from app.services.progress_emitter import PipelineProgressEmitter
+                            emitter = PipelineProgressEmitter(loop=main_loop, callback=progress_callback)
 
-                                await asyncio.to_thread(
-                                    self._remove_text_streaming_pipeline_sync,
-                                    input_file,
-                                    output_file,
-                                    emitter,
-                                    cancel_event,
-                                    target_regions,
-                                    enable_critique=True,
-                                )
-                                streaming_success = output_file.exists() and output_file.stat().st_size > 1000
-                            except Exception as st_err:
-                                logger.warning("[VideoEditorService] Streaming pipeline exception: %s. Fallback to legacy sync worker.", st_err)
-                                streaming_success = False
+                            await asyncio.to_thread(
+                                self._remove_text_streaming_pipeline_sync,
+                                input_file,
+                                output_file,
+                                emitter,
+                                cancel_event,
+                                target_regions,
+                                enable_critique=True,
+                                context=context,
+                            )
+                            streaming_success = output_file.exists() and output_file.stat().st_size > 1000
+                        except (asyncio.CancelledError, GeneratorExit):
+                            cancel_event.set()
+                            raise
+                        except Exception as st_err:
+                            logger.warning(
+                                "[VideoEditorService] Streaming pipeline exception: %s. Engaging transparent fallback to legacy sync worker.",
+                                st_err
+                            )
+                            streaming_success = False
+                            context.record_fallback(
+                                stage="streaming_pipeline",
+                                from_system="streaming_pipeline",
+                                to_system="inpaint_fallback_legacy",
+                                reason=str(st_err),
+                                impact="Phông nền có thể bệt mờ cục bộ do dùng bộ xử lý dự phòng Telea/NS cổ điển.",
+                            )
+                            context.mode_used = "inpaint_fallback_legacy"
+                            mode_used = "inpaint_fallback_legacy"
 
                         if not streaming_success:
+                            logger.warning("[VideoEditorService] Fallback worker executing for job %s...", context.job_id)
                             if len(target_regions) == 1 and "frame_start" not in target_regions[0]:
                                 await asyncio.to_thread(
                                     self._inpaint_video_sync,
@@ -674,28 +739,74 @@ class VideoEditorService:
                                     output_file,
                                     target_regions,
                                 )
+
+                            # Đánh giá critique trung thực trên kết quả fallback
+                            try:
+                                from app.services.video_critique_engine import VideoCritiqueEngine
+                                critique_engine = VideoCritiqueEngine()
+                                fb_critique = critique_engine.evaluate_video_stream_sync(
+                                    original_path=str(input_file),
+                                    cleaned_path=str(output_file),
+                                    sample_interval=2.0,
+                                    target_scope=clean_target_scope,
+                                )
+                                context.critique_result = fb_critique
+                            except Exception as fb_critique_err:
+                                context.critique_result = {
+                                    "status": "unverified",
+                                    "is_pass": False,
+                                    "error": f"Lỗi critique trên kết quả fallback: {fb_critique_err}",
+                                    "metrics": {
+                                        "residual_ocr_words": None,
+                                        "laplacian_texture_ratio": None,
+                                        "temporal_flicker_ratio": None,
+                                        "seam_discontinuity": None,
+                                        "phash_drift": None,
+                                    },
+                                    "vision_llm_score": None,
+                                    "refinement_rounds": 0,
+                                    "reason": f"Đã chạy qua fallback do lỗi streaming; critique thất bại: {fb_critique_err}",
+                                }
                     except (asyncio.CancelledError, GeneratorExit):
                         cancel_event.set()
                         raise
                     finally:
                         self._current_inpaint_cancel_event = None
+                        self._roi_inpaint_cache.clear()
+                        context.cleanup()
+                        self._last_branch_counters = context.branch_counters
+                        self._last_critique_result = context.critique_result
 
             delivery_info = self._publish_or_direct(output_file, title="Video đã xóa text")
             region_summaries = ", ".join(f"({r['x']},{r['y']},{r['w']}x{r['h']})" for r in target_regions[:3])
             success = True
+            is_fb = getattr(context, "is_fallback", False) if 'context' in locals() else False
+            fb_reason = getattr(context, "fallback_reason", None) if 'context' in locals() else None
+            fb_events = getattr(context, "fallback_events", []) if 'context' in locals() else []
+            final_mode = context.mode_used if 'context' in locals() else mode_used
+            final_branch = context.branch_counters if 'context' in locals() else getattr(self, "_last_branch_counters", {})
+            final_critique = context.critique_result if 'context' in locals() else getattr(self, "_last_critique_result", {})
+
             return {
                 "status": "ok",
                 "tool": "remove_text_from_video",
                 "mode_requested": clean_mode,
-                "mode_used": mode_used,
+                "mode_used": final_mode,
+                "is_fallback": is_fb,
+                "fallback_reason": fb_reason,
+                "fallback_events": fb_events,
                 "target_scope": clean_target_scope,
                 "region": primary_region,
                 "regions": target_regions,
                 "output_path": str(output_file),
-                "branch_counters": getattr(self, "_last_branch_counters", {}),
-                "critique": getattr(self, "_last_critique_result", {}),
+                "branch_counters": final_branch,
+                "critique": final_critique,
                 **delivery_info,
-                "message": f"Đã xóa text/watermark thành công bằng mode '{mode_used}' tại {len(target_regions)} vùng ({region_summaries}).",
+                "message": (
+                    f"⚠️ Đã xử lý video bằng chế độ dự phòng ({final_mode}) do pipeline chính gặp lỗi: {fb_reason}."
+                    if is_fb else
+                    f"Đã xóa text/watermark thành công bằng mode '{final_mode}' tại {len(target_regions)} vùng ({region_summaries})."
+                ),
             }
 
         finally:
@@ -1753,9 +1864,6 @@ class VideoEditorService:
         if h < 4 or w < 4:
             return np.zeros((h, w), dtype=np.uint8)
 
-        if type(cv2).__name__ in ("MagicMock", "Mock"):
-            return np.ones((h, w), dtype=np.uint8) * 255
-
         # F2.1 Line-Level Spatial Confinement: prepare line bounding mask
         target_lines = lines
         if target_lines is None and region_meta is not None:
@@ -1810,8 +1918,19 @@ class VideoEditorService:
 
         gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY) if len(roi.shape) == 3 else roi.copy()
         if len(roi.shape) == 3:
-            hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
-            h_chan, s_chan, v_chan = cv2.split(hsv)
+            try:
+                hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+                split_res = cv2.split(hsv)
+                if isinstance(split_res, (list, tuple)) and len(split_res) == 3:
+                    h_chan, s_chan, v_chan = split_res
+                else:
+                    v_chan = gray
+                    s_chan = np.zeros_like(gray)
+                    h_chan = np.zeros_like(gray)
+            except Exception:
+                v_chan = gray
+                s_chan = np.zeros_like(gray)
+                h_chan = np.zeros_like(gray)
         else:
             v_chan = gray
             s_chan = np.zeros_like(gray)
@@ -2297,7 +2416,7 @@ class VideoEditorService:
                     break
 
                 # F4.1 Scene cut detection: sudden luminance jump (> 60.0) triggers temporal cache reset
-                if isinstance(frame, np.ndarray) and type(cv2).__name__ not in ("MagicMock", "Mock"):
+                if isinstance(frame, np.ndarray):
                     try:
                         curr_frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if len(frame.shape) == 3 else frame
                         if prev_frame_gray is not None and getattr(prev_frame_gray, "shape", None) == curr_frame_gray.shape:
@@ -2315,7 +2434,7 @@ class VideoEditorService:
                 ]
 
                 if active_regions:
-                    if inpainter is not None and isinstance(frame, np.ndarray) and type(cv2).__name__ not in ("MagicMock", "Mock"):
+                    if inpainter is not None and isinstance(frame, np.ndarray):
                         # F4.1: Studio-grade TexturePreservingInpainter with temporal coherence mask tracking
                         frame, current_masks = inpainter.inpaint_frame_with_regions(
                             frame=frame,
@@ -2326,7 +2445,7 @@ class VideoEditorService:
                         prev_masks = current_masks
                         out.write(frame)
                     else:
-                        # Fallback when inpainter is unavailable or running under MagicMock
+                        # Fallback when inpainter is unavailable
                         roi_margin = 6
                         active_keys = set()
                         for reg in active_regions:
@@ -2347,7 +2466,7 @@ class VideoEditorService:
 
                                 if bx2 > bx1 and by2 > by1:
                                     roi = frame[ry1:ry2, rx1:rx2]
-                                    if not isinstance(roi, np.ndarray) or type(cv2).__name__ in ("MagicMock", "Mock"):
+                                    if not isinstance(roi, np.ndarray):
                                         roi_mask = np.zeros((roi_h, roi_w), dtype=np.uint8)
                                         roi_mask[by1:by2, bx1:bx2] = 255
                                         telea_flag = getattr(cv2, "INPAINT_TELEA", 0)
@@ -2360,15 +2479,19 @@ class VideoEditorService:
                                         prev_m = prev_masks.get(reg_key)
 
                                         # R1 & M2: Extract pixel-level character stroke mask with line-level spatial confinement
-                                        stroke_sub_mask = self._generate_text_stroke_mask(
-                                            sub_roi,
-                                            prev_mask=prev_m,
-                                            lines=reg.get("lines"),
-                                            region_meta=reg,
-                                        )
+                                        try:
+                                            stroke_sub_mask = self._generate_text_stroke_mask(
+                                                sub_roi,
+                                                prev_mask=prev_m,
+                                                lines=reg.get("lines"),
+                                                region_meta=reg,
+                                            )
+                                        except Exception as mask_err:
+                                            logger.debug("[VideoEditorService] Stroke mask generation error: %s. Using rectangular fallback.", mask_err)
+                                            stroke_sub_mask = None
                                         prev_masks[reg_key] = stroke_sub_mask
 
-                                        if np.count_nonzero(stroke_sub_mask) > 0:
+                                        if stroke_sub_mask is not None and np.count_nonzero(stroke_sub_mask) > 0:
                                             roi_mask = np.zeros((roi_h, roi_w), dtype=np.uint8)
                                             roi_mask[by1:by2, bx1:bx2] = stroke_sub_mask
                                             try:
@@ -2377,6 +2500,15 @@ class VideoEditorService:
                                                 final_roi = roi.copy()
                                                 final_roi[roi_mask > 0] = inpainted_roi[roi_mask > 0]
                                                 frame[ry1:ry2, rx1:rx2] = final_roi
+                                            except Exception as inpaint_err:
+                                                logger.debug("[VideoEditorService] ROI inpaint exception: %s", inpaint_err)
+                                        else:
+                                            # Fallback to standard rectangular Telea inpaint when stroke mask is empty
+                                            roi_mask = np.zeros((roi_h, roi_w), dtype=np.uint8)
+                                            roi_mask[by1:by2, bx1:bx2] = 255
+                                            telea_flag = getattr(cv2, "INPAINT_TELEA", 0)
+                                            try:
+                                                frame[ry1:ry2, rx1:rx2] = cv2.inpaint(roi, roi_mask, 3, telea_flag)
                                             except Exception as inpaint_err:
                                                 logger.debug("[VideoEditorService] ROI inpaint exception: %s", inpaint_err)
 
@@ -3898,6 +4030,7 @@ class VideoEditorService:
         cancel_event: Optional[Any] = None,
         target_regions: Optional[List[Dict[str, Any]]] = None,
         enable_critique: bool = False,
+        context: Optional[VideoJobContext] = None,
     ) -> None:
         """
         Quy trình xử lý hoàn chỉnh toàn bộ frames video:
@@ -3966,7 +4099,11 @@ class VideoEditorService:
         import secrets
         import shutil
 
-        cache_dir = self._temp_dir / "kf_cache_m5"
+        cache_dir = (
+            context.cache_dir
+            if (context and context.cache_dir)
+            else (self._temp_dir / f"kf_cache_{secrets.token_hex(6)}")
+        )
         cache_dir.mkdir(parents=True, exist_ok=True)
 
         try:
@@ -4130,6 +4267,8 @@ class VideoEditorService:
                 err_snippet = b"".join(stderr_lines).decode(errors="replace")
                 raise RuntimeError(f"FFmpeg streaming pipe error: {pipe_err} (stderr: {err_snippet[-500:]})")
 
+            if context:
+                context.branch_counters = dict(branch_counters)
             self._last_branch_counters = dict(branch_counters)
             logger.info("[VideoEditorService] SBMW-DTI Branch Execution Counters: %s", branch_counters)
 
@@ -4151,14 +4290,17 @@ class VideoEditorService:
                             original_path=str(input_file),
                             cleaned_path=str(output_file),
                             sample_interval=2.0,
+                            target_scope=context.target_scope if context else "overlay",
                         )
 
                         report(85, "Đang đánh giá thẩm mỹ khung hình qua Vision-LLM Critic...")
+                        emitter_loop = getattr(progress_callback, "_loop", None)
                         vision_eval = critique_engine.critique_worst_crops_sync(
                             worst_candidates=critique_res.get("worst_candidates", []),
                             aggregated_cpu_metrics=critique_res.get("metrics", {}),
+                            loop=emitter_loop,
                         )
-                        critique_res["vision_llm_score"] = vision_eval.get("score", 4)
+                        critique_res["vision_llm_score"] = vision_eval.get("score")
                         critique_res["judge"] = vision_eval
 
                         # Giai đoạn 5: Refining Strategy Ladder
@@ -4170,22 +4312,29 @@ class VideoEditorService:
                         else:
                             critique_res["refinement_rounds"] = 0
 
+                        if context:
+                            context.critique_result = critique_res
                         self._last_critique_result = critique_res
                 except Exception as critique_err:
-                    logger.debug("[VideoEditorService] Critique loop exception: %s", critique_err)
-                    self._last_critique_result = {
-                        "status": "ok",
-                        "is_pass": True,
+                    logger.error("[VideoEditorService] Critique loop failed: %s", critique_err, exc_info=True)
+                    critique_res = {
+                        "status": "unverified",
+                        "is_pass": False,
+                        "error": str(critique_err),
                         "metrics": {
-                            "residual_ocr_words": 0,
-                            "laplacian_texture_ratio": 1.0,
-                            "temporal_flicker_ratio": 1.0,
-                            "seam_discontinuity": 0.0,
-                            "phash_drift": 0,
+                            "residual_ocr_words": None,
+                            "laplacian_texture_ratio": None,
+                            "temporal_flicker_ratio": None,
+                            "seam_discontinuity": None,
+                            "phash_drift": None,
                         },
-                        "vision_llm_score": 4,
+                        "vision_llm_score": None,
                         "refinement_rounds": 0,
+                        "reason": f"Kiểm định chất lượng thất bại do ngoại lệ: {critique_err}",
                     }
+                    if context:
+                        context.critique_result = critique_res
+                    self._last_critique_result = critique_res
                 finally:
                     try:
                         from app.core.memory_reclaimer import _sync_collect_and_trim

@@ -1845,9 +1845,53 @@ class TelegramBot:
         )
         return any(k in q for k in edit_keywords)
 
+    @staticmethod
+    def _extract_target_scope(instruction: str) -> str:
+        """
+        Phân tích ngôn ngữ tự nhiên để xác định phạm vi xóa chữ (target_scope):
+        - 'all': Người dùng yêu cầu xóa toàn bộ chữ, kể cả chữ trong cảnh quay thực tế.
+        - 'overlay' (mặc định): Chỉ xóa chữ chèn thêm (phụ đề, tiêu đề, watermark, sticker).
+        """
+        if not instruction:
+            return "overlay"
+
+        q = instruction.lower().strip()
+        # Fast regex match for general 'all' phrases
+        if re.search(r"x[oó]a\s+(?:h[eế]t\s+)?(?:to[aà]n\s+b[oộ]|t[aấ]t\s+c[aả]|c[aả]|m[oọ]i)\s+(?:c[aả]\s+)?(?:ch[uữ]|text)", q):
+            return "all"
+        if re.search(r"(?:ch[uữ]|text)\s+trong\s+(?:c[aả]nh|b[oố]i\s+c[aả]nh)", q):
+            return "all"
+
+        all_scope_patterns = (
+            "xóa cả chữ trong cảnh", "xoa ca chu trong canh",
+            "xóa cả text trong cảnh", "xoa ca text trong canh",
+            "xóa chữ trong cảnh", "xoa chu trong canh",
+            "xóa text trong cảnh", "xoa text trong canh",
+            "cả chữ trong cảnh", "ca chu trong canh",
+            "cả text trong cảnh", "ca text trong canh",
+            "chữ trong bối cảnh", "chu trong boi canh",
+            "text trong bối cảnh", "text trong boi canh",
+            "xóa hết chữ", "xoa het chu",
+            "xóa hết text", "xoa het text",
+            "xóa sạch chữ", "xoa sach chu",
+            "xóa sạch text", "xoa sach text",
+            "xóa toàn bộ chữ", "xoa toan bo chu",
+            "xóa toàn bộ text", "xoa toan bo text",
+            "xóa tất cả chữ", "xoa tat ca chu",
+            "xóa tất cả text", "xoa tat ca text",
+            "xóa mọi chữ", "xoa moi chu",
+            "xóa mọi text", "xoa moi text",
+            "xóa sạch sành sanh", "xoa sach sanh sanh",
+            "remove all text", "all text", "target_scope=all",
+            "xóa cả chữ trên", "xoa ca chu tren",
+        )
+        for pattern in all_scope_patterns:
+            if pattern in q:
+                return "all"
+        return "overlay"
+
     def _format_video_quality_caption(self, res: Dict[str, Any]) -> str:
-        """Định dạng caption video thành phẩm kèm bảng tóm tắt chất lượng trực quan."""
-        # Defensive Guard: Đảm bảo res, critique, metrics không bị NoneType crash
+        """Định dạng caption video thành phẩm kèm bảng tóm tắt chất lượng trực quan trung thực."""
         res_dict = res if isinstance(res, dict) else {}
         critique = (res_dict.get("critique") or {})
         if not isinstance(critique, dict):
@@ -1857,46 +1901,79 @@ class TelegramBot:
         if not isinstance(metrics, dict):
             metrics = {}
 
-        # Guard các giá trị số trong metrics, phòng ngừa NoneType gây lỗi f-string formatting
+        is_pass = critique.get("is_pass", False)
+        critique_status = critique.get("status", "unknown")
+        is_fallback = res_dict.get("is_fallback", False)
+        fallback_reason = res_dict.get("fallback_reason")
+
+        # 1. Residual OCR: Trung thực, không biến None/thiếu thành 0
         res_ocr_raw = metrics.get("residual_ocr_words")
-        res_ocr = int(res_ocr_raw) if isinstance(res_ocr_raw, (int, float)) else 0
-        res_ocr_badge = "(Sạch hoàn toàn)" if res_ocr == 0 else "(Cảnh báo: Còn dư ảnh chữ)"
+        if res_ocr_raw is None:
+            res_ocr_str = "Chưa kiểm chứng (UNVERIFIED)"
+            res_ocr_badge = "⚠️ (Chưa đo được)"
+        elif int(res_ocr_raw) == 0:
+            res_ocr_str = "0 từ tồn dư"
+            res_ocr_badge = "✅ (Sạch hoàn toàn)"
+        else:
+            res_ocr_str = f"{int(res_ocr_raw)} từ tồn dư"
+            res_ocr_badge = "❌ (Cảnh báo: Còn dư ảnh chữ)"
 
+        # 2. Laplacian Texture
         tex_raw = metrics.get("laplacian_texture_ratio")
-        texture_ratio = float(tex_raw) if isinstance(tex_raw, (int, float)) else 1.0
+        tex_str = f"{float(tex_raw):.2f}" if isinstance(tex_raw, (int, float)) else "N/A (Chưa đo)"
 
+        # 3. Temporal Flicker
         flick_raw = metrics.get("temporal_flicker_ratio")
-        flicker_ratio = float(flick_raw) if isinstance(flick_raw, (int, float)) else 1.0
+        flick_str = f"{float(flick_raw):.2f}x" if isinstance(flick_raw, (int, float)) else "N/A (Chưa đo)"
 
+        # 4. Seam Discontinuity
         seam_raw = metrics.get("seam_discontinuity")
-        seam_disc = float(seam_raw) if isinstance(seam_raw, (int, float)) else 0.0
+        seam_str = f"{float(seam_raw):.3f}" if isinstance(seam_raw, (int, float)) else "N/A (Chưa đo)"
 
+        # 5. pHash Drift
         phash_raw = metrics.get("phash_drift")
-        phash_drift = int(phash_raw) if isinstance(phash_raw, (int, float)) else 0
+        phash_str = f"{int(phash_raw)} bit" if isinstance(phash_raw, (int, float)) else "N/A (Chưa đo)"
 
+        # 6. Vision-LLM Score
         v_score = critique.get("vision_llm_score")
         if isinstance(v_score, (int, float)):
             v_score_str = f"{v_score:.1f}/5" if v_score <= 5 else f"{v_score:.1f}/10"
         else:
-            v_score_str = "Đạt chuẩn"
+            v_score_str = "Chưa đánh giá (N/A)"
 
         rounds_raw = critique.get("refinement_rounds")
         rounds = int(rounds_raw) if isinstance(rounds_raw, int) else 0
 
-        # Guard processing_time_sec phòng ngừa TypeError khi so sánh None > 0
+        # Processing time
         time_taken_raw = res_dict.get("processing_time_sec")
         time_taken = float(time_taken_raw) if isinstance(time_taken_raw, (int, float)) else 0.0
         time_str = f"{time_taken:.1f}s" if time_taken > 0 else ""
         time_prefix = f"⚡ <b>Thời gian xử lý:</b> {time_str} | " if time_str else "⚡ "
 
+        # Header thông báo trung thực
+        if is_pass:
+            header = "🎬 <b>Tiểu Bảo Bảo đã xóa sạch text trong video cho anh Mạnh!</b>"
+        elif critique_status == "unverified":
+            header = "⚠️ <b>Tiểu Bảo Bảo đã xử lý video (Chưa thể kiểm chứng độ sạch hoàn toàn)</b>"
+        else:
+            header = "⚠️ <b>Tiểu Bảo Bảo đã xử lý video (Cảnh báo: Chưa đạt chuẩn thẩm định chất lượng)</b>"
+
+        fallback_block = ""
+        if is_fallback:
+            fallback_block = (
+                f"\n⚠️ <b>CẢNH BÁO: CHẾ ĐỘ DỰ PHÒNG ({res_dict.get('mode_used', 'legacy')})</b>\n"
+                f"<i>Pipeline chính gặp sự cố: {fallback_reason or 'Lỗi xử lý'}</i>\n"
+            )
+
         caption = (
-            "🎬 <b>Tiểu Bảo Bảo đã xóa sạch text trong video cho anh Mạnh!</b>\n\n"
+            f"{header}\n"
+            f"{fallback_block}\n"
             "📊 <b>BẢNG TỔNG KẾT CHẤT LƯỢNG (AI QUALITY AUDIT):</b>\n"
-            f"├ 🔍 <b>Residual OCR:</b> <code>{res_ocr} từ tồn dư</code> {res_ocr_badge}\n"
-            f"├ 🎨 <b>Laplacian Texture:</b> <code>{texture_ratio:.2f}</code> (Bảo toàn vân nền)\n"
-            f"├ ⏱ <b>Temporal Flicker:</b> <code>{flicker_ratio:.2f}x</code> (Chuyển động mượt mà)\n"
-            f"├ 🪡 <b>Seam Discontinuity:</b> <code>{seam_disc:.3f}</code> (Mép biên liền mạch)\n"
-            f"├ 📸 <b>pHash Visual Drift:</b> <code>{phash_drift} bit</code> (Khung cảnh ổn định)\n"
+            f"├ 🔍 <b>Residual OCR:</b> <code>{res_ocr_str}</code> {res_ocr_badge}\n"
+            f"├ 🎨 <b>Laplacian Texture:</b> <code>{tex_str}</code> (Bảo toàn vân nền)\n"
+            f"├ ⏱ <b>Temporal Flicker:</b> <code>{flick_str}</code> (Chuyển động mượt mà)\n"
+            f"├ 🪡 <b>Seam Discontinuity:</b> <code>{seam_str}</code> (Mép biên liền mạch)\n"
+            f"├ 📸 <b>pHash Visual Drift:</b> <code>{phash_str}</code> (Khung cảnh ổn định)\n"
             f"├ 👁 <b>Vision-LLM Score:</b> <code>{v_score_str}</code>\n"
             f"└ 🔄 <b>Vòng tinh chỉnh:</b> <code>{rounds} vòng</code>\n\n"
             f"{time_prefix}<b>Âm thanh:</b> Bit-exact Copy | <b>Định dạng:</b> H.264 FastStart"
@@ -1955,9 +2032,11 @@ class TelegramBot:
                             status_msg_id: Optional[int] = None
                             if is_remove_text:
                                 mode = "delogo" if "delogo" in q else ("inpaint" if "inpaint" in q else "auto")
+                                target_scope = self._extract_target_scope(instruction)
+                                scope_desc = "toàn bộ chữ (bao gồm cả chữ trong bối cảnh)" if target_scope == "all" else "chữ phụ đề / watermark"
                                 status_msg = await self.send_message(
                                     chat_id,
-                                    "⚡ <b>Đang tự động xóa text/watermark khỏi video của anh Mạnh...</b>\n"
+                                    f"⚡ <b>Đang tự động xóa text/watermark ({scope_desc}) khỏi video của anh Mạnh...</b>\n"
                                     "<code>[░░░░░░░░░░] 0%</code>\n"
                                     "<i>(Tiểu Bảo Bảo đang phân tích khung hình và làm sạch video)</i>",
                                 )
@@ -1985,6 +2064,7 @@ class TelegramBot:
                                 edit_coro = self._video_editor_service.remove_text_from_video(
                                     input_path_or_url=session.video_path,
                                     mode=mode,
+                                    target_scope=target_scope,
                                     progress_callback=telegram_progress_callback,
                                 )
                                 edit_task = asyncio.create_task(edit_coro)

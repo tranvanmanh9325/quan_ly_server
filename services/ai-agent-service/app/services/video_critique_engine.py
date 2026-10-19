@@ -74,6 +74,12 @@ class CritiqueJudgeResult:
     suggested_action: str  # "expand_mask_dilation" | "borrow_flow_keyframe" | "emergency_ns_feather" | "pass_no_action"
     reason: str
     source_judge: str  # "groq_vision" | "openrouter_vision" | "pure_cpu_fallback"
+    model: str = ""
+    latency_sec: float = 0.0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+    fallback_reason: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -201,8 +207,12 @@ class VideoCritiqueEngine:
         Applies 2x zoom and CLAHE local contrast enhancement to expose faint ghosting text.
         Returns: (word_count, max_confidence, detected_text)
         """
-        if clean_roi is None or clean_roi.size == 0 or pytesseract is None:
+        if clean_roi is None or clean_roi.size == 0:
             return 0, 0.0, ""
+
+        if pytesseract is None:
+            logger.warning("[VideoCritiqueEngine] pytesseract is not installed; OCR residual is UNVERIFIED.")
+            return -1, 0.0, "[UNVERIFIED: pytesseract missing]"
 
         h, w = clean_roi.shape[:2]
         if h < 4 or w < 4:
@@ -263,8 +273,8 @@ class VideoCritiqueEngine:
             max_conf = max(confs) if confs else 0.0
             return word_count, max_conf, " ".join(words)
         except Exception as ocr_err:
-            logger.debug("[VideoCritiqueEngine] Residual OCR execution failed: %s", ocr_err)
-            return 0, 0.0, ""
+            logger.warning("[VideoCritiqueEngine] Residual OCR execution failed: %s; marked as UNVERIFIED.", ocr_err)
+            return -1, 0.0, f"[UNVERIFIED_OCR_ERROR: {ocr_err}]"
 
     @staticmethod
     def compute_texture_ratio(cleaned_frame: np.ndarray, mask: np.ndarray) -> Tuple[float, float, float]:
@@ -465,7 +475,7 @@ class VideoCritiqueEngine:
         Calculates multi-objective composite penalty score.
         High penalty indicates severe visual flaw.
         """
-        p_ocr = record.residual_words * 35.0 + record.residual_max_conf * 0.5
+        p_ocr = 50.0 if record.residual_words < 0 else (record.residual_words * 35.0 + record.residual_max_conf * 0.5)
         p_tex = max(0.0, 0.70 - record.texture_ratio) * 50.0
         p_flicker = 0.0 if record.is_shot_cut else max(0.0, record.temporal_flicker_mse - 45.0) * 0.5
         p_seam = max(0.0, record.edge_seam_ratio - 1.25) * 40.0
@@ -690,6 +700,8 @@ class VideoCritiqueEngine:
             getattr(settings, "GROQ_VISION_MODEL_FALLBACK", "qwen/qwen3.6-27b"),
         ]
 
+        last_error: Optional[Exception] = None
+
         for model_name in groq_models:
             if not self._groq_pool.has_keys():
                 break
@@ -699,7 +711,7 @@ class VideoCritiqueEngine:
                 break
 
             try:
-                raw_resp = await self._call_vision_http(
+                call_res = await self._call_vision_http(
                     endpoint="https://api.groq.com/openai/v1/chat/completions",
                     api_key=key,
                     model=model_name,
@@ -707,20 +719,43 @@ class VideoCritiqueEngine:
                     user_content=user_content,
                     timeout_sec=25.0,
                 )
+                raw_resp = call_res.get("content", "")
                 parsed = self._extract_critique_json(raw_resp)
                 if parsed:
                     await self._groq_pool.mark_success(key)
                     score = int(parsed.get("score", 3))
                     is_pass = bool(parsed.get("pass", score >= 4))
+                    usage = call_res.get("usage", {})
+                    prompt_tokens = int(usage.get("prompt_tokens", 0))
+                    completion_tokens = int(usage.get("completion_tokens", 0))
+                    total_tokens = int(usage.get("total_tokens", prompt_tokens + completion_tokens))
+                    latency = float(call_res.get("latency_sec", 0.0))
+                    action_str = str(parsed.get("suggested_action", "pass_no_action" if is_pass else "expand_mask_dilation"))
+                    reason_str = str(parsed.get("reason", "Groq Vision evaluation"))
+                    chosen_model = str(call_res.get("model", model_name))
+
+                    logger.info(
+                        "[VideoCritiqueEngine] [AUDIT] Vision-LLM Judge SUCCESS | Provider: Groq | Model: %s | "
+                        "Latency: %.2fs | Tokens: %d (in: %d, out: %d) | Score: %d/5 | Pass: %s | Action: %s | Reason: %s",
+                        chosen_model, latency, total_tokens, prompt_tokens, completion_tokens,
+                        score, is_pass, action_str, reason_str
+                    )
+
                     return CritiqueJudgeResult(
                         score=score,
                         artifacts=list(parsed.get("artifacts", [])),
                         is_pass=is_pass,
-                        suggested_action=str(parsed.get("suggested_action", "pass_no_action" if is_pass else "expand_mask_dilation")),
-                        reason=str(parsed.get("reason", "Groq Vision evaluation")),
+                        suggested_action=action_str,
+                        reason=reason_str,
                         source_judge="groq_vision",
+                        model=chosen_model,
+                        latency_sec=latency,
+                        prompt_tokens=prompt_tokens,
+                        completion_tokens=completion_tokens,
+                        total_tokens=total_tokens,
                     )
             except Exception as g_err:
+                last_error = g_err
                 if "429" in str(g_err):
                     await self._groq_pool.mark_rate_limited(key)
                 logger.debug("[VideoCritiqueEngine] Groq Vision (%s) call failed: %s", model_name, g_err)
@@ -741,7 +776,7 @@ class VideoCritiqueEngine:
                 break
 
             try:
-                raw_resp = await self._call_vision_http(
+                call_res = await self._call_vision_http(
                     endpoint="https://openrouter.ai/api/v1/chat/completions",
                     api_key=key,
                     model=model_name,
@@ -749,27 +784,55 @@ class VideoCritiqueEngine:
                     user_content=user_content,
                     timeout_sec=25.0,
                 )
+                raw_resp = call_res.get("content", "")
                 parsed = self._extract_critique_json(raw_resp)
                 if parsed:
                     await self._openrouter_pool.mark_success(key)
                     score = int(parsed.get("score", 3))
                     is_pass = bool(parsed.get("pass", score >= 4))
+                    usage = call_res.get("usage", {})
+                    prompt_tokens = int(usage.get("prompt_tokens", 0))
+                    completion_tokens = int(usage.get("completion_tokens", 0))
+                    total_tokens = int(usage.get("total_tokens", prompt_tokens + completion_tokens))
+                    latency = float(call_res.get("latency_sec", 0.0))
+                    action_str = str(parsed.get("suggested_action", "pass_no_action" if is_pass else "expand_mask_dilation"))
+                    reason_str = str(parsed.get("reason", "OpenRouter Vision evaluation"))
+                    chosen_model = str(call_res.get("model", model_name))
+
+                    logger.info(
+                        "[VideoCritiqueEngine] [AUDIT] Vision-LLM Judge SUCCESS | Provider: OpenRouter | Model: %s | "
+                        "Latency: %.2fs | Tokens: %d (in: %d, out: %d) | Score: %d/5 | Pass: %s | Action: %s | Reason: %s",
+                        chosen_model, latency, total_tokens, prompt_tokens, completion_tokens,
+                        score, is_pass, action_str, reason_str
+                    )
+
                     return CritiqueJudgeResult(
                         score=score,
                         artifacts=list(parsed.get("artifacts", [])),
                         is_pass=is_pass,
-                        suggested_action=str(parsed.get("suggested_action", "pass_no_action" if is_pass else "expand_mask_dilation")),
-                        reason=str(parsed.get("reason", "OpenRouter Vision evaluation")),
+                        suggested_action=action_str,
+                        reason=reason_str,
                         source_judge="openrouter_vision",
+                        model=chosen_model,
+                        latency_sec=latency,
+                        prompt_tokens=prompt_tokens,
+                        completion_tokens=completion_tokens,
+                        total_tokens=total_tokens,
                     )
             except Exception as o_err:
+                last_error = o_err
                 if "429" in str(o_err):
                     await self._openrouter_pool.mark_rate_limited(key)
                 logger.debug("[VideoCritiqueEngine] OpenRouter Vision (%s) call failed: %s", model_name, o_err)
 
         # Tier 3: Pure CPU Fallback Judge (Zero Crash Guarantee)
-        logger.info("[VideoCritiqueEngine] All Vision-LLM calls exhausted or offline. Gracefully falling back to Pure CPU Judge.")
-        return self.pure_cpu_fallback_judge(candidates, aggregated_cpu_metrics)
+        logger.warning(
+            "[VideoCritiqueEngine] [AUDIT] All Vision-LLM calls exhausted or offline (last error: %s). Falling back to Pure CPU Judge.",
+            last_error
+        )
+        fallback_res = self.pure_cpu_fallback_judge(candidates, aggregated_cpu_metrics)
+        fallback_res.fallback_reason = f"All remote Vision APIs exhausted/offline: {last_error}"
+        return fallback_res
 
     @classmethod
     def pure_cpu_fallback_judge(
@@ -779,12 +842,24 @@ class VideoCritiqueEngine:
     ) -> CritiqueJudgeResult:
         """
         Pure CPU Decision Logic based on 5 objective metrics when all remote Vision APIs are unavailable.
+        Fail-closed architecture: returns is_pass=False if metrics are missing or None.
         """
         metrics = aggregated_cpu_metrics or {}
-        res_ocr = metrics.get("residual_ocr_words", 0)
-        tex_ratio = metrics.get("laplacian_texture_ratio", 1.0)
-        flicker_mse = metrics.get("temporal_flicker_mse", 0.0)
-        seam_ratio = metrics.get("seam_discontinuity", 1.0)
+        res_ocr = metrics.get("residual_ocr_words")
+        tex_ratio = metrics.get("laplacian_texture_ratio")
+        flicker_mse = metrics.get("temporal_flicker_mse")
+        seam_ratio = metrics.get("seam_discontinuity")
+
+        # FAIL-CLOSED GUARD: Thiếu số liệu CPU hoặc rỗng -> UNVERIFIED / is_pass=False
+        if res_ocr is None or tex_ratio is None:
+            return CritiqueJudgeResult(
+                score=1,
+                artifacts=["unverified_missing_metrics"],
+                is_pass=False,
+                suggested_action="unverified_diagnostic",
+                reason="Thiếu số liệu đo lường CPU metrics (UNVERIFIED) — không tự chứng nhận đạt.",
+                source_judge="pure_cpu_fallback_unverified",
+            )
 
         # Check candidate penalties as well
         worst_penalty = max([c.penalty_score for c in candidates], default=0.0)
@@ -794,12 +869,12 @@ class VideoCritiqueEngine:
             artifacts.append("text_residue")
         if tex_ratio < 0.70:
             artifacts.append("blur_smear")
-        if seam_ratio > 1.25:
+        if seam_ratio is not None and seam_ratio > 1.25:
             artifacts.append("seam_edge_artifact")
-        if flicker_mse > 45.0:
+        if flicker_mse is not None and flicker_mse > 45.0:
             artifacts.append("patch_misalignment")
 
-        is_pass = (res_ocr == 0) and (tex_ratio >= 0.70) and (seam_ratio <= 1.25) and (worst_penalty <= 15.0)
+        is_pass = (res_ocr == 0) and (tex_ratio >= 0.70) and (seam_ratio is None or seam_ratio <= 1.25) and (worst_penalty <= 15.0)
 
         if is_pass:
             score = 4
@@ -832,9 +907,10 @@ class VideoCritiqueEngine:
         system_prompt: str,
         user_content: List[Dict[str, Any]],
         timeout_sec: float = 25.0,
-    ) -> str:
+    ) -> Dict[str, Any]:
         """Asynchronous HTTP POST request via urllib/asyncio.to_thread with zero external dependency."""
         import json
+        import time
         import urllib.request
 
         payload = {
@@ -851,16 +927,29 @@ class VideoCritiqueEngine:
             "Content-Type": "application/json",
             "Authorization": f"Bearer {api_key}",
             "User-Agent": "TieuBaoBao-Critic/1.0",
+            "HTTP-Referer": "https://github.com/tranvanmanh9325/quan_ly_server",
+            "X-Title": "TieuBaoBao-VFX-Auditor",
         }
         req = urllib.request.Request(endpoint, data=data_bytes, headers=headers, method="POST")
+
+        t0 = time.monotonic()
 
         def _fetch() -> str:
             with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
                 return resp.read().decode("utf-8", errors="replace")
 
         resp_text = await asyncio.to_thread(_fetch)
+        latency_sec = time.monotonic() - t0
         data = json.loads(resp_text)
-        return data["choices"][0]["message"]["content"]
+        content = data["choices"][0]["message"]["content"]
+        usage = data.get("usage") or {}
+        resp_model = data.get("model", model)
+        return {
+            "content": content,
+            "model": resp_model,
+            "usage": usage,
+            "latency_sec": latency_sec,
+        }
 
     @staticmethod
     def _extract_critique_json(raw_text: str) -> Optional[Dict[str, Any]]:
@@ -985,6 +1074,7 @@ class VideoCritiqueEngine:
         original_path: str,
         cleaned_path: str,
         sample_interval: float = 0.25,
+        target_scope: str = "overlay",
     ) -> Dict[str, Any]:
         """
         Streaming evaluation comparing original and cleaned videos with 2-frame sliding window.
@@ -997,6 +1087,7 @@ class VideoCritiqueEngine:
                 "status": "error",
                 "message": f"Input files not found: {orig_p} or {clean_p}",
                 "is_pass": False,
+                "target_scope": target_scope,
             }
 
         cap_orig = cv2.VideoCapture(str(orig_p))
@@ -1005,7 +1096,7 @@ class VideoCritiqueEngine:
         if not cap_orig.isOpened() or not cap_clean.isOpened():
             cap_orig.release()
             cap_clean.release()
-            return {"status": "error", "message": "Cannot open video capture.", "is_pass": False}
+            return {"status": "error", "message": "Cannot open video capture.", "is_pass": False, "target_scope": target_scope}
 
         fps = cap_clean.get(cv2.CAP_PROP_FPS) or 29.98
         total_frames = int(cap_clean.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -1107,22 +1198,29 @@ class VideoCritiqueEngine:
 
         # Aggregate Metrics Summary
         total_samples = max(1, len(records))
-        residual_words_sum = sum(r.residual_words for r in records)
-        max_residual_conf = max([r.residual_max_conf for r in records], default=0.0)
+        has_unverified_ocr = any(r.residual_words < 0 for r in records)
         mean_texture = float(np.mean([r.texture_ratio for r in records])) if records else 1.0
         min_texture = float(np.min([r.texture_ratio for r in records])) if records else 1.0
         mean_flicker = float(np.mean([r.temporal_flicker_mse for r in records if not r.is_shot_cut])) if records else 0.0
         mean_seam = float(np.mean([r.edge_seam_ratio for r in records])) if records else 1.0
         max_drift = max([r.dhash_drift for r in records if not r.is_shot_cut], default=0)
+        max_residual_conf = max([r.residual_max_conf for r in records], default=0.0)
+
+        if has_unverified_ocr:
+            residual_words_sum = None
+            is_pass = False
+            critique_status = "unverified"
+        else:
+            residual_words_sum = sum(r.residual_words for r in records)
+            is_pass = (residual_words_sum == 0) and (min_texture >= 0.70) and (mean_seam <= 1.25)
+            critique_status = "ok" if is_pass else "failed"
 
         # Select Worst-K candidates
         worst_candidates = self.select_worst_k_candidates(records, k=3, min_gap_sec=1.0)
 
-        # Pass condition: 0 residual text words, acceptable texture and seam
-        is_pass = (residual_words_sum == 0) and (min_texture >= 0.70) and (mean_seam <= 1.25)
-
         metrics_summary = {
             "residual_ocr_words": residual_words_sum,
+            "residual_ocr_status": "unverified" if has_unverified_ocr else "measured",
             "residual_max_conf": max_residual_conf,
             "laplacian_texture_ratio": mean_texture,
             "laplacian_texture_min": min_texture,
@@ -1134,11 +1232,12 @@ class VideoCritiqueEngine:
         }
 
         return {
-            "status": "ok",
+            "status": critique_status,
             "is_pass": is_pass,
             "metrics": metrics_summary,
             "worst_candidates": worst_candidates,
             "records_count": len(records),
+            "target_scope": target_scope,
         }
 
     async def evaluate_video_stream(
@@ -1146,6 +1245,7 @@ class VideoCritiqueEngine:
         original_path: str,
         cleaned_path: str,
         sample_interval: float = 0.25,
+        target_scope: str = "overlay",
     ) -> Dict[str, Any]:
         """Asynchronous wrapper for evaluate_video_stream_sync."""
         return await asyncio.to_thread(
@@ -1153,25 +1253,73 @@ class VideoCritiqueEngine:
             original_path,
             cleaned_path,
             sample_interval,
+            target_scope,
         )
 
     def critique_worst_crops_sync(
         self,
         worst_candidates: List[WorstCandidateRecord],
         aggregated_cpu_metrics: Optional[Dict[str, Any]] = None,
+        loop: Optional[asyncio.AbstractEventLoop] = None,
     ) -> Dict[str, Any]:
         """
-        Synchronous evaluation of worst crops.
-        If an event loop is running, dispatches to loop; otherwise executes pure CPU fallback.
+        Synchronous evaluation of worst crops using Vision-LLM critic.
+        Executes robustly across worker threads, dedicated event loops, or external loops.
+        Falls back to pure CPU heuristic ONLY when remote APIs truly fail (quota/network),
+        with full audit logging (provider, model, latency, tokens).
         """
+        # Tier 1: Caller provided external running loop (e.g., from PipelineProgressEmitter)
+        if loop is not None and loop.is_running():
+            try:
+                future = asyncio.run_coroutine_threadsafe(
+                    self.judge_with_vision_llm(worst_candidates, aggregated_cpu_metrics),
+                    loop,
+                )
+                res = future.result(timeout=60.0)
+                return res.to_dict()
+            except Exception as loop_err:
+                logger.warning(
+                    "[VideoCritiqueEngine] External event loop dispatch failed: %s. Falling back to in-thread runner.",
+                    loop_err,
+                )
+
+        # Tier 2: Inspect running loop in current thread
         try:
-            loop = asyncio.get_running_loop()
+            current_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            current_loop = None
+
+        if current_loop is None:
+            # Worker Thread (from asyncio.to_thread) has no event loop -> run directly with asyncio.run
+            try:
+                res = asyncio.run(self.judge_with_vision_llm(worst_candidates, aggregated_cpu_metrics))
+                return res.to_dict()
+            except Exception as run_err:
+                logger.error(
+                    "[VideoCritiqueEngine] Error in asyncio.run(judge_with_vision_llm): %s. Executing fail-closed Pure CPU Judge.",
+                    run_err,
+                    exc_info=True,
+                )
+                fallback_res = self.pure_cpu_fallback_judge(worst_candidates, aggregated_cpu_metrics)
+                fallback_res.fallback_reason = f"asyncio.run error: {run_err}"
+                return fallback_res.to_dict()
+        else:
+            # Tier 3: Edge case where function is called inside an existing running event loop thread
             import concurrent.futures
-            future = asyncio.run_coroutine_threadsafe(
-                self.judge_with_vision_llm(worst_candidates, aggregated_cpu_metrics),
-                loop
-            )
-            res = future.result(timeout=30.0)
-            return res.to_dict()
-        except Exception:
-            return self.pure_cpu_fallback_judge(worst_candidates, aggregated_cpu_metrics).to_dict()
+            try:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(
+                        asyncio.run,
+                        self.judge_with_vision_llm(worst_candidates, aggregated_cpu_metrics),
+                    )
+                    res = future.result(timeout=60.0)
+                    return res.to_dict()
+            except Exception as pool_err:
+                logger.error(
+                    "[VideoCritiqueEngine] ThreadPoolExecutor vision execution failed: %s.",
+                    pool_err,
+                    exc_info=True,
+                )
+                fallback_res = self.pure_cpu_fallback_judge(worst_candidates, aggregated_cpu_metrics)
+                fallback_res.fallback_reason = f"ThreadPool error: {pool_err}"
+                return fallback_res.to_dict()

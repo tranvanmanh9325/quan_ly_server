@@ -4315,6 +4315,30 @@ class VideoEditorService:
                         if context:
                             context.critique_result = critique_res
                         self._last_critique_result = critique_res
+                    else:
+                        critique_res = {
+                            "status": "unverified",
+                            "is_pass": False,
+                            "error": "Tệp video đầu ra rỗng hoặc kích thước quá nhỏ (<= 1000 bytes)",
+                            "metrics": {
+                                "residual_ocr_words": None,
+                                "residual_ocr_status": "unverified",
+                                "residual_max_conf": 0.0,
+                                "laplacian_texture_ratio": None,
+                                "laplacian_texture_min": None,
+                                "temporal_flicker_mse": None,
+                                "temporal_flicker_ratio": None,
+                                "seam_discontinuity": None,
+                                "phash_drift": None,
+                                "total_sampled_frames": 0,
+                            },
+                            "vision_llm_score": None,
+                            "refinement_rounds": 0,
+                            "reason": "Tệp video đầu ra rỗng hoặc lỗi render (UNVERIFIED)",
+                        }
+                        if context:
+                            context.critique_result = critique_res
+                        self._last_critique_result = critique_res
                 except Exception as critique_err:
                     logger.error("[VideoEditorService] Critique loop failed: %s", critique_err, exc_info=True)
                     critique_res = {
@@ -4323,10 +4347,15 @@ class VideoEditorService:
                         "error": str(critique_err),
                         "metrics": {
                             "residual_ocr_words": None,
+                            "residual_ocr_status": "unverified",
+                            "residual_max_conf": 0.0,
                             "laplacian_texture_ratio": None,
+                            "laplacian_texture_min": None,
+                            "temporal_flicker_mse": None,
                             "temporal_flicker_ratio": None,
                             "seam_discontinuity": None,
                             "phash_drift": None,
+                            "total_sampled_frames": 0,
                         },
                         "vision_llm_score": None,
                         "refinement_rounds": 0,

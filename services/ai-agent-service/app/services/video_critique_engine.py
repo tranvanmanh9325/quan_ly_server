@@ -665,6 +665,11 @@ class VideoCritiqueEngine:
         Vision-LLM Judge (Groq Vision pool -> OpenRouter Vision pool -> Pure CPU Fallback).
         Evaluates visual inpainting quality and returns strict CritiqueJudgeResult.
         """
+        # Avoid sending blank/black placeholder image if no candidates or 0-sample video
+        total_samples = aggregated_cpu_metrics.get("total_sampled_frames") if aggregated_cpu_metrics else None
+        if not candidates or total_samples == 0:
+            return self.pure_cpu_fallback_judge(candidates, aggregated_cpu_metrics)
+
         _, b64_contact_sheet = self.build_contact_sheet(candidates)
 
         system_prompt = (
@@ -844,20 +849,34 @@ class VideoCritiqueEngine:
         Pure CPU Decision Logic based on 5 objective metrics when all remote Vision APIs are unavailable.
         Fail-closed architecture: returns is_pass=False if metrics are missing or None.
         """
+        if isinstance(candidates, dict) and aggregated_cpu_metrics is None:
+            aggregated_cpu_metrics = candidates
+            candidates = []
+        elif candidates is None:
+            candidates = []
+
         metrics = aggregated_cpu_metrics or {}
         res_ocr = metrics.get("residual_ocr_words")
         tex_ratio = metrics.get("laplacian_texture_ratio")
         flicker_mse = metrics.get("temporal_flicker_mse")
         seam_ratio = metrics.get("seam_discontinuity")
+        tot_samples = metrics.get("total_sampled_frames", 0)
+        ocr_status = metrics.get("residual_ocr_status", "unverified")
 
-        # FAIL-CLOSED GUARD: Thiếu số liệu CPU hoặc rỗng -> UNVERIFIED / is_pass=False
-        if res_ocr is None or tex_ratio is None:
+        # FAIL-CLOSED GUARD CỦNG CỐ:
+        # Nếu thiếu số liệu, hoặc status là unverified, hoặc số mẫu là 0 -> BẮT BUỘC FAIL
+        if (
+            res_ocr is None
+            or tex_ratio is None
+            or tot_samples == 0
+            or ocr_status == "unverified"
+        ):
             return CritiqueJudgeResult(
                 score=1,
                 artifacts=["unverified_missing_metrics"],
                 is_pass=False,
                 suggested_action="unverified_diagnostic",
-                reason="Thiếu số liệu đo lường CPU metrics (UNVERIFIED) — không tự chứng nhận đạt.",
+                reason="Thiếu số liệu đo lường CPU metrics hoặc video 0-sample (UNVERIFIED) — không tự chứng nhận đạt.",
                 source_judge="pure_cpu_fallback_unverified",
             )
 
@@ -1084,9 +1103,24 @@ class VideoCritiqueEngine:
         clean_p = Path(cleaned_path)
         if not orig_p.exists() or not clean_p.exists():
             return {
-                "status": "error",
+                "status": "unverified",
                 "message": f"Input files not found: {orig_p} or {clean_p}",
                 "is_pass": False,
+                "reason": f"Tệp video không tồn tại: {orig_p} hoặc {clean_p} (UNVERIFIED)",
+                "metrics": {
+                    "residual_ocr_words": None,
+                    "residual_ocr_status": "unverified",
+                    "residual_max_conf": 0.0,
+                    "laplacian_texture_ratio": None,
+                    "laplacian_texture_min": None,
+                    "temporal_flicker_mse": None,
+                    "temporal_flicker_ratio": None,
+                    "seam_discontinuity": None,
+                    "phash_drift": None,
+                    "total_sampled_frames": 0,
+                },
+                "worst_candidates": [],
+                "records_count": 0,
                 "target_scope": target_scope,
             }
 
@@ -1096,7 +1130,27 @@ class VideoCritiqueEngine:
         if not cap_orig.isOpened() or not cap_clean.isOpened():
             cap_orig.release()
             cap_clean.release()
-            return {"status": "error", "message": "Cannot open video capture.", "is_pass": False, "target_scope": target_scope}
+            return {
+                "status": "unverified",
+                "message": "Cannot open video capture.",
+                "is_pass": False,
+                "reason": "Cannot open video capture (UNVERIFIED)",
+                "metrics": {
+                    "residual_ocr_words": None,
+                    "residual_ocr_status": "unverified",
+                    "residual_max_conf": 0.0,
+                    "laplacian_texture_ratio": None,
+                    "laplacian_texture_min": None,
+                    "temporal_flicker_mse": None,
+                    "temporal_flicker_ratio": None,
+                    "seam_discontinuity": None,
+                    "phash_drift": None,
+                    "total_sampled_frames": 0,
+                },
+                "worst_candidates": [],
+                "records_count": 0,
+                "target_scope": target_scope,
+            }
 
         fps = cap_clean.get(cv2.CAP_PROP_FPS) or 29.98
         total_frames = int(cap_clean.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -1113,6 +1167,32 @@ class VideoCritiqueEngine:
 
                 if not ret_o or not ret_c or fr_orig is None or fr_clean is None:
                     break
+
+                if fr_orig.shape != fr_clean.shape:
+                    logger.error(
+                        "[VideoCritiqueEngine] [FAIL-CLOSED] Frame resolution mismatch: orig=%s vs clean=%s.",
+                        fr_orig.shape, fr_clean.shape,
+                    )
+                    return {
+                        "status": "unverified",
+                        "is_pass": False,
+                        "reason": f"Kích thước khung hình không khớp: gốc={fr_orig.shape} vs làm sạch={fr_clean.shape}",
+                        "metrics": {
+                            "residual_ocr_words": None,
+                            "residual_ocr_status": "unverified",
+                            "residual_max_conf": 0.0,
+                            "laplacian_texture_ratio": None,
+                            "laplacian_texture_min": None,
+                            "temporal_flicker_mse": None,
+                            "temporal_flicker_ratio": None,
+                            "seam_discontinuity": None,
+                            "phash_drift": None,
+                            "total_sampled_frames": 0,
+                        },
+                        "worst_candidates": [],
+                        "records_count": 0,
+                        "target_scope": target_scope,
+                    }
 
                 if frame_idx % frame_step == 0:
                     timestamp = float(frame_idx / fps)
@@ -1196,13 +1276,42 @@ class VideoCritiqueEngine:
             except Exception:
                 pass
 
+        # GUARD 1: FAIL-CLOSED TUYỆT ĐỐI TRÊN TẬP RỖNG (0-Sample / Decode Failed)
+        if not records or len(records) == 0:
+            logger.warning(
+                "[VideoCritiqueEngine] [FAIL-CLOSED] Zero frames were sampled or decoded. "
+                "orig_path=%s, clean_path=%s, processed_frames=%d.",
+                orig_p, clean_p, frame_idx,
+            )
+            metrics_summary = {
+                "residual_ocr_words": None,
+                "residual_ocr_status": "unverified",
+                "residual_max_conf": 0.0,
+                "laplacian_texture_ratio": None,
+                "laplacian_texture_min": None,
+                "temporal_flicker_mse": None,
+                "temporal_flicker_ratio": None,
+                "seam_discontinuity": None,
+                "phash_drift": None,
+                "total_sampled_frames": 0,
+            }
+            return {
+                "status": "unverified",
+                "is_pass": False,
+                "reason": "Không có frame nào được trích xuất thành công để đánh giá (0-sample / decode failed)",
+                "metrics": metrics_summary,
+                "worst_candidates": [],
+                "records_count": 0,
+                "target_scope": target_scope,
+            }
+
         # Aggregate Metrics Summary
-        total_samples = max(1, len(records))
+        total_samples = len(records)
         has_unverified_ocr = any(r.residual_words < 0 for r in records)
-        mean_texture = float(np.mean([r.texture_ratio for r in records])) if records else 1.0
-        min_texture = float(np.min([r.texture_ratio for r in records])) if records else 1.0
-        mean_flicker = float(np.mean([r.temporal_flicker_mse for r in records if not r.is_shot_cut])) if records else 0.0
-        mean_seam = float(np.mean([r.edge_seam_ratio for r in records])) if records else 1.0
+        mean_texture = float(np.mean([r.texture_ratio for r in records]))
+        min_texture = float(np.min([r.texture_ratio for r in records]))
+        mean_flicker = float(np.mean([r.temporal_flicker_mse for r in records if not r.is_shot_cut])) if any(not r.is_shot_cut for r in records) else 0.0
+        mean_seam = float(np.mean([r.edge_seam_ratio for r in records]))
         max_drift = max([r.dhash_drift for r in records if not r.is_shot_cut], default=0)
         max_residual_conf = max([r.residual_max_conf for r in records], default=0.0)
 
@@ -1267,7 +1376,13 @@ class VideoCritiqueEngine:
         with full audit logging (provider, model, latency, tokens).
         """
         # Tier 1: Caller provided external running loop (e.g., from PipelineProgressEmitter)
-        if loop is not None and loop.is_running():
+        # Deadlock guard: verify that loop is distinct from current running loop
+        try:
+            current_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            current_loop = None
+
+        if loop is not None and loop.is_running() and (current_loop is None or loop is not current_loop):
             try:
                 future = asyncio.run_coroutine_threadsafe(
                     self.judge_with_vision_llm(worst_candidates, aggregated_cpu_metrics),
@@ -1282,10 +1397,6 @@ class VideoCritiqueEngine:
                 )
 
         # Tier 2: Inspect running loop in current thread
-        try:
-            current_loop = asyncio.get_running_loop()
-        except RuntimeError:
-            current_loop = None
 
         if current_loop is None:
             # Worker Thread (from asyncio.to_thread) has no event loop -> run directly with asyncio.run

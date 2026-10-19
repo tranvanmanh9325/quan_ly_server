@@ -100,6 +100,45 @@ class TestPhase2FailClosedCritique(unittest.TestCase):
         self.assertEqual(res.score, 1)
         self.assertTrue(any("unverified" in a for a in res.artifacts))
 
+    def test_evaluate_video_stream_sync_empty_records_fails_closed(self):
+        """
+        Finding 1 Adversarial Test:
+        When evaluate_video_stream_sync processes a video with 0 extractable frames
+        (corrupted stream, 0 duration, or read() returning False immediately),
+        records list is empty ([]).
+        The engine must fail-closed:
+        - is_pass == False (NEVER True!)
+        - metrics["residual_ocr_status"] == "unverified"
+        - metrics["residual_ocr_words"] is None
+        - result["status"] == "unverified"
+        - records_count == 0
+        """
+        mock_cap_orig = MagicMock()
+        mock_cap_clean = MagicMock()
+        mock_cap_orig.isOpened.return_value = True
+        mock_cap_clean.isOpened.return_value = True
+        mock_cap_orig.get.return_value = 0.0
+        mock_cap_clean.get.return_value = 0.0
+        # Immediately returns (False, None) to simulate 0 frames read
+        mock_cap_orig.read.return_value = (False, None)
+        mock_cap_clean.read.return_value = (False, None)
+
+        with patch.object(Path, "exists", return_value=True):
+            with patch("cv2.VideoCapture", side_effect=[mock_cap_orig, mock_cap_clean]):
+                res = self.engine.evaluate_video_stream_sync("empty_orig.mp4", "empty_clean.mp4")
+
+        self.assertFalse(res["is_pass"], "Empty video must NEVER pass quality audit")
+        self.assertEqual(res["status"], "unverified", "Status must be unverified for empty frames")
+        self.assertEqual(res["records_count"], 0)
+        self.assertIsNone(res["metrics"]["residual_ocr_words"])
+        self.assertEqual(res["metrics"]["residual_ocr_status"], "unverified")
+
+        # Downstream Pure CPU Judge must also fail closed with these unverified metrics
+        cpu_judge = self.engine.pure_cpu_fallback_judge(res["metrics"])
+        self.assertFalse(cpu_judge.is_pass)
+        self.assertEqual(cpu_judge.score, 1)
+        self.assertTrue(any("unverified" in a for a in cpu_judge.artifacts))
+
 
 class TestPhase2EventLoopAndAuditLogging(unittest.TestCase):
     """Item 2: Khắc phục Event Loop / Thread & Thêm Logging [AUDIT]."""
@@ -171,6 +210,68 @@ class TestPhase2EventLoopAndAuditLogging(unittest.TestCase):
                                 self.assertTrue(len(audit_logs) >= 1)
                                 self.assertIn("Tokens: 150", audit_logs[0])
                                 self.assertIn("Latency: 0.45s", audit_logs[0])
+
+    def test_critique_worst_crops_sync_loop_guard_prevents_same_thread_deadlock(self):
+        """
+        Finding 3 Adversarial Test:
+        When critique_worst_crops_sync is called with an external `loop` that is
+        IDENTICAL to the current thread's running event loop,
+        calling asyncio.run_coroutine_threadsafe(...).result() would DEADLOCK
+        because the current thread is blocked waiting for the event loop on the same thread.
+
+        The Tier 1 dispatcher MUST verify `loop is not current_running_loop`.
+        If loop IS the current running loop, Tier 1 must be safely bypassed
+        without freezing/deadlocking.
+        """
+        async def run_test_in_loop():
+            current_loop = asyncio.get_running_loop()
+            t0 = time.monotonic()
+            res = self.engine.critique_worst_crops_sync(
+                worst_candidates=[],
+                aggregated_cpu_metrics={"residual_ocr_words": 0, "total_sampled_frames": 1, "laplacian_texture_ratio": 1.0},
+                loop=current_loop,
+            )
+            elapsed = time.monotonic() - t0
+            self.assertLess(elapsed, 2.0, "Function took too long, possible deadlock or timeout wait!")
+            self.assertIsInstance(res, dict)
+            self.assertIn("is_pass", res)
+
+        asyncio.run(run_test_in_loop())
+
+    def test_critique_worst_crops_sync_cross_thread_tier1_dispatches_cleanly(self):
+        """
+        Finding 3 Verification Test:
+        When called from a worker thread with a distinct background event loop,
+        Tier 1 safely dispatches via run_coroutine_threadsafe and retrieves the result.
+        """
+        bg_loop = asyncio.new_event_loop()
+        bg_thread = threading.Thread(target=bg_loop.run_forever, daemon=True)
+        bg_thread.start()
+
+        try:
+            with patch.object(self.engine, "judge_with_vision_llm", new_callable=AsyncMock) as mock_judge:
+                mock_judge.return_value = CritiqueJudgeResult(
+                    score=5,
+                    artifacts=[],
+                    is_pass=True,
+                    suggested_action="pass_no_action",
+                    reason="clean cross-thread execution",
+                    source_judge="vision_llm_tier1",
+                )
+
+                res = self.engine.critique_worst_crops_sync(
+                    worst_candidates=[],
+                    aggregated_cpu_metrics={"residual_ocr_words": 0},
+                    loop=bg_loop,
+                )
+
+                self.assertTrue(res["is_pass"])
+                self.assertEqual(res["score"], 5)
+                self.assertEqual(res["source_judge"], "vision_llm_tier1")
+        finally:
+            bg_loop.call_soon_threadsafe(bg_loop.stop)
+            bg_thread.join(timeout=2.0)
+            bg_loop.close()
 
 
 class TestPhase2VideoJobContextAndNoSharedState(unittest.IsolatedAsyncioTestCase):
@@ -254,18 +355,155 @@ class TestPhase2TelegramTargetScopeAndQualityCaption(unittest.TestCase):
         """_extract_target_scope parses Vietnamese instructions accurately."""
         bot = TelegramBot.__new__(TelegramBot)
 
-        # Cases that trigger 'all' scope
+        # 1. Cases that trigger 'all' scope (Chỉ khi có từ khóa rõ ràng về bối cảnh/cảnh)
         self.assertEqual(bot._extract_target_scope("xóa cả chữ trong cảnh giúp em"), "all")
-        self.assertEqual(bot._extract_target_scope("xóa hết toàn bộ chữ trên video"), "all")
+        self.assertEqual(bot._extract_target_scope("xoa ca chu trong canh giup em"), "all")
         self.assertEqual(bot._extract_target_scope("xóa tất cả text trong bối cảnh"), "all")
-        self.assertEqual(bot._extract_target_scope("xóa toàn bộ chữ"), "all")
-        self.assertEqual(bot._extract_target_scope("remove all text"), "all")
+        self.assertEqual(bot._extract_target_scope("toàn bộ chữ trong cảnh"), "all")
+        self.assertEqual(bot._extract_target_scope("cả chữ trên biển hiệu"), "all")
+        self.assertEqual(bot._extract_target_scope("xóa cả cảnh"), "all")
+        self.assertEqual(bot._extract_target_scope("remove text in scene"), "all")
+        self.assertEqual(bot._extract_target_scope("target_scope=all"), "all")
 
-        # Cases that retain default 'overlay' scope
+        # 2. Cases that retain default 'overlay' scope (Mọi câu lệnh chung chung / tăng từ)
+        self.assertEqual(bot._extract_target_scope("xóa sạch text trong video này giúp tôi"), "overlay")
+        self.assertEqual(bot._extract_target_scope("xoa sach text trong video nay giup toi"), "overlay")
+        self.assertEqual(bot._extract_target_scope("xóa sạch text"), "overlay")
+        self.assertEqual(bot._extract_target_scope("xóa sạch chữ"), "overlay")
+        self.assertEqual(bot._extract_target_scope("xóa hết text"), "overlay")
+        self.assertEqual(bot._extract_target_scope("xóa hết chữ"), "overlay")
+        self.assertEqual(bot._extract_target_scope("xóa toàn bộ chữ"), "overlay")
+        self.assertEqual(bot._extract_target_scope("xóa hết toàn bộ chữ trên video"), "overlay")
+        self.assertEqual(bot._extract_target_scope("xóa tất cả text"), "overlay")
+        self.assertEqual(bot._extract_target_scope("remove all text"), "overlay")
         self.assertEqual(bot._extract_target_scope("xóa phụ đề video này"), "overlay")
         self.assertEqual(bot._extract_target_scope("xóa watermark góc phải"), "overlay")
         self.assertEqual(bot._extract_target_scope("xóa logo giúp anh"), "overlay")
         self.assertEqual(bot._extract_target_scope("làm sạch text phụ đề"), "overlay")
+
+    def test_extract_target_scope_parameterized_adversarial(self):
+        """
+        Finding 2 Adversarial Test:
+        Accurately distinguish between default 'overlay' scope vs explicit 'all' scope.
+        User commands like 'xóa sạch text trong video này giúp tôi' must retain
+        default 'overlay' scope to preserve scene text (Anti-Gaming Rule 4 & R2).
+        Only commands explicitly targeting scene text switch to 'all'.
+        """
+        bot = TelegramBot.__new__(TelegramBot)
+
+        overlay_cases = [
+            "xóa sạch text trong video này giúp tôi",
+            "xóa text",
+            "xóa sạch chữ trong video",
+            "xóa phụ đề trên video",
+            "xóa watermark",
+            "xóa logo ở góc",
+            "xóa chữ phụ đề giúp em",
+            "xóa sạch phụ đề tiếng việt",
+            "nhờ bot xóa text video",
+            "làm sạch text",
+            "xóa watermark mờ",
+        ]
+
+        all_cases = [
+            "xóa cả chữ trong cảnh",
+            "xóa chữ trong cảnh",
+            "xóa cả cảnh",
+            "xóa toàn bộ chữ trong cảnh",
+            "xóa cả text trong cảnh",
+            "chữ trong bối cảnh",
+            "xóa toàn bộ text trong bối cảnh",
+            "xóa sạch chữ trong cảnh",
+            "xoa ca chu trong canh",
+            "xoa chu trong canh",
+            "remove text in scene",
+            "target_scope=all",
+        ]
+
+        for phrase in overlay_cases:
+            with self.subTest(phrase=phrase, expected="overlay"):
+                actual = bot._extract_target_scope(phrase)
+                self.assertEqual(
+                    actual,
+                    "overlay",
+                    f"User phrase '{phrase}' must be classified as 'overlay', got '{actual}'",
+                )
+
+        for phrase in all_cases:
+            with self.subTest(phrase=phrase, expected="all"):
+                actual = bot._extract_target_scope(phrase)
+                self.assertEqual(
+                    actual,
+                    "all",
+                    f"Explicit scene phrase '{phrase}' must be classified as 'all', got '{actual}'",
+                )
+
+    def test_format_video_quality_caption_fallback_never_congratulates(self):
+        """
+        Finding 4 Adversarial Test:
+        When is_fallback is True, the caption header must be a Fallback Warning.
+        It must NEVER display fake congratulatory headlines like 'đã xóa sạch text',
+        even if critique metrics happen to have is_pass=True.
+        """
+        bot = TelegramBot.__new__(TelegramBot)
+
+        # Sub-case A: Fallback mode with is_pass = True (must NOT congratulate)
+        res_fallback_pass = {
+            "status": "ok",
+            "processing_time_sec": 15.2,
+            "is_fallback": True,
+            "mode_used": "inpaint_fallback_legacy",
+            "fallback_reason": "Neural streaming pipeline out of memory",
+            "critique": {
+                "status": "ok",
+                "is_pass": True,  # even if fallback passes critique!
+                "metrics": {
+                    "residual_ocr_words": 0,
+                    "laplacian_texture_ratio": 0.92,
+                    "temporal_flicker_ratio": 1.02,
+                    "seam_discontinuity": 0.75,
+                    "phash_drift": 1,
+                },
+                "vision_llm_score": 4.5,
+                "refinement_rounds": 1,
+            },
+        }
+
+        caption_a = bot._format_video_quality_caption(res_fallback_pass)
+        header_a = caption_a.strip().split("\n")[0]
+
+        self.assertIn("Chế độ Dự phòng", header_a, "Header must explicitly state Fallback Mode")
+        self.assertIn("⚠️", header_a, "Header must contain warning icon ⚠️")
+        self.assertNotIn("đã xóa sạch text", header_a, "Header must NEVER falsely congratulate")
+        self.assertNotIn("xóa sạch text trong video cho anh Mạnh", header_a)
+        self.assertIn("CẢNH BÁO: CHẾ ĐỘ DỰ PHÒNG", caption_a)
+        self.assertIn("Neural streaming pipeline out of memory", caption_a)
+
+        # Sub-case B: Standard non-fallback mode with is_pass = True (allowed to congratulate)
+        res_standard_pass = {
+            "status": "ok",
+            "processing_time_sec": 22.0,
+            "is_fallback": False,
+            "mode_used": "streaming_pipeline",
+            "critique": {
+                "status": "ok",
+                "is_pass": True,
+                "metrics": {
+                    "residual_ocr_words": 0,
+                    "laplacian_texture_ratio": 0.98,
+                    "temporal_flicker_ratio": 1.01,
+                    "seam_discontinuity": 0.65,
+                    "phash_drift": 0,
+                },
+                "vision_llm_score": 5.0,
+                "refinement_rounds": 0,
+            },
+        }
+
+        caption_b = bot._format_video_quality_caption(res_standard_pass)
+        header_b = caption_b.strip().split("\n")[0]
+        self.assertIn("xóa sạch text trong video cho anh Mạnh", header_b)
+        self.assertNotIn("CẢNH BÁO: CHẾ ĐỘ DỰ PHÒNG", caption_b)
 
     def test_format_video_quality_caption_unverified_fail_closed(self):
         """When metrics are empty, None, or unverified, caption displays 'Chưa kiểm chứng (UNVERIFIED)'."""

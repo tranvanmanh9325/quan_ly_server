@@ -1849,45 +1849,78 @@ class TelegramBot:
     def _extract_target_scope(instruction: str) -> str:
         """
         Phân tích ngôn ngữ tự nhiên để xác định phạm vi xóa chữ (target_scope):
-        - 'all': Người dùng yêu cầu xóa toàn bộ chữ, kể cả chữ trong cảnh quay thực tế.
-        - 'overlay' (mặc định): Chỉ xóa chữ chèn thêm (phụ đề, tiêu đề, watermark, sticker).
+        - 'overlay' (MẶC ĐỊNH TUYỆT ĐỐI): Chỉ xóa chữ chèn thêm (phụ đề, tiêu đề, watermark, sticker, logo).
+          Bảo tồn nguyên vẹn chữ trong bối cảnh thực tế (biển hiệu, văn bản hợp đồng, đồng hồ taplo, áo, tường).
+          Áp dụng cho mọi câu lệnh chung chung ("xóa sạch text trong video này giúp tôi", "xóa text", "xóa phụ đề",
+          "xóa toàn bộ chữ", "xóa hết text", "làm sạch video").
+        - 'all' (CHỈ KHI YÊU CẦU RÕ RÀNG): Chỉ kích hoạt khi người dùng chỉ định rõ ràng muốn xóa cả chữ
+          trong cảnh/bối cảnh thực tế ("xóa cả chữ trong cảnh", "chữ trong bối cảnh", "xóa cả cảnh",
+          "toàn bộ chữ trong cảnh", "cả chữ trên biển hiệu", "remove text in scene", "target_scope=all").
         """
         if not instruction:
             return "overlay"
 
         q = instruction.lower().strip()
-        # Fast regex match for general 'all' phrases
-        if re.search(r"x[oó]a\s+(?:h[eế]t\s+)?(?:to[aà]n\s+b[oộ]|t[aấ]t\s+c[aả]|c[aả]|m[oọ]i)\s+(?:c[aả]\s+)?(?:ch[uữ]|text)", q):
-            return "all"
-        if re.search(r"(?:ch[uữ]|text)\s+trong\s+(?:c[aả]nh|b[oố]i\s+c[aả]nh)", q):
-            return "all"
 
-        all_scope_patterns = (
-            "xóa cả chữ trong cảnh", "xoa ca chu trong canh",
-            "xóa cả text trong cảnh", "xoa ca text trong canh",
-            "xóa chữ trong cảnh", "xoa chu trong canh",
-            "xóa text trong cảnh", "xoa text trong canh",
+        # 1. Regex nhận diện tường minh các cụm từ chỉ chữ trong bối cảnh thực tế (Hỗ trợ cả có dấu và không dấu)
+        scene_regexes = (
+            # Chữ / text trong cảnh, bối cảnh, ngoại cảnh, môi trường
+            r"(?:ch[uữ]|text)\s+(?:ở|o|trong|ngo[aà]i|tr[eê]n)\s+(?:c[aả]nh|b[oố]i\s*c[aả]nh|ngo[aà]i\s*c[aả]nh|m[oô]i\s*tr[uườ]ng)\b",
+            r"(?:chu|text)\s+(?:o|trong|ngoai|tren)\s+(?:canh|boi\s*canh|ngoai\s*canh|moi\s*truong)\b",
+            # Xóa cả cảnh, xóa luôn cả cảnh
+            r"x[oó]a\s+(?:lu[oô]n\s+)?c[aả]\s+c[aả]nh\b",
+            r"xoa\s+(?:luon\s+)?ca\s+canh\b",
+            # Cả / Toàn bộ / Tất cả / Hết + chữ / text + trong / trên cảnh
+            r"(?:c[aả]|lu[oô]n|to[aà]n\s*b[oộ]|t[aấ]t\s*c[aả]|h[eế]t)\s+(?:ch[uữ]|text)\s+(?:ở|o|trong|ngo[aà]i|tr[eê]n)\s+(?:c[aả]nh|b[oố]i\s*c[aả]nh)\b",
+            r"(?:ca|luon|toan\s*bo|tat\s*ca|het)\s+(?:chu|text)\s+(?:o|trong|ngoai|tren)\s+(?:canh|boi\s*canh)\b",
+            # Chữ thực tế, chữ ngoài đời
+            r"(?:ch[uữ]|text)\s+(?:th[uự]c\s*t[eế]|ngo[aà]i\s*\u0111[oờ]i)\b",
+            r"(?:chu|text)\s+(?:thuc\s*te|ngoai\s*doi)\b",
+            # Chữ trên vật thể thực trong cảnh (biển hiệu, bảng hiệu, biển quảng cáo, biển số xe, tường, áo, giấy, hợp đồng)
+            r"(?:c[aả]\s+)?(?:ch[uữ]|text)\s+(?:in\s+)?tr[eê]n\s+(?:bi[eể]n|b[aả]ng)(?:\s+(?:hi[eệ]u|qu[aả]ng\s*c[aáo]|t[eên]))?\b",
+            r"(?:ca\s+)?(?:chu|text)\s+(?:in\s+)?tren\s+(?:bien|bang)(?:\s+(?:hieu|quang\s*cao|ten))?\b",
+            r"(?:c[aả]\s+)?(?:ch[uữ]|text)\s+(?:in\s+)?tr[eê]n\s+(?:h[oợ]p\s*\u0111[oồ]ng|gi[aấ]y\s*t[oờ]|gi[aấ]y|t[uườ]ng|xe|áo|m[aà]n\s*h[iì]nh)\b",
+            r"(?:ca\s+)?(?:chu|text)\s+(?:in\s+)?tren\s+(?:hop\s*dong|giay\s*to|giay|tuong|xe|ao|man\s*hinh)\b",
+            r"x[oó]a\s+(?:c[aả]\s+)?(?:ch[uữ]\s+)?bi[eể]n\s*s[oố](?:\s*xe)?\b",
+            r"xoa\s+(?:ca\s+)?(?:chu\s+)?bien\s*so(?:\s*xe)?\b",
+            # Cờ tường minh tiếng Anh / Developer flags
+            r"\btarget_scope\s*[:=]\s*[\"']?all[\"']?\b",
+            r"\b(?:include|remove)\s+(?:all\s+)?(?:in-?scene|scene)\s*text\b",
+            r"\b(?:all\s+text|text)\s+in\s+(?:the\s+)?(?:scene|background)\b",
+            r"\bscene[_\s]text\b",
+        )
+
+        for pat in scene_regexes:
+            if re.search(pat, q, re.IGNORECASE):
+                return "all"
+
+        # 2. Danh sách từ khóa trực tiếp tường minh (Fast string lookup)
+        explicit_all_keywords = (
             "cả chữ trong cảnh", "ca chu trong canh",
             "cả text trong cảnh", "ca text trong canh",
+            "chữ trong cảnh", "chu trong canh",
+            "text trong cảnh", "text trong canh",
             "chữ trong bối cảnh", "chu trong boi canh",
             "text trong bối cảnh", "text trong boi canh",
-            "xóa hết chữ", "xoa het chu",
-            "xóa hết text", "xoa het text",
-            "xóa sạch chữ", "xoa sach chu",
-            "xóa sạch text", "xoa sach text",
-            "xóa toàn bộ chữ", "xoa toan bo chu",
-            "xóa toàn bộ text", "xoa toan bo text",
-            "xóa tất cả chữ", "xoa tat ca chu",
-            "xóa tất cả text", "xoa tat ca text",
-            "xóa mọi chữ", "xoa moi chu",
-            "xóa mọi text", "xoa moi text",
-            "xóa sạch sành sanh", "xoa sach sanh sanh",
-            "remove all text", "all text", "target_scope=all",
-            "xóa cả chữ trên", "xoa ca chu tren",
+            "toàn bộ chữ trong cảnh", "toan bo chu trong canh",
+            "toàn bộ text trong cảnh", "toan bo text trong canh",
+            "tất cả chữ trong cảnh", "tat ca chu trong canh",
+            "tất cả text trong cảnh", "tat ca text trong canh",
+            "xóa cả cảnh", "xoa ca canh",
+            "xóa cả bối cảnh", "xoa ca boi canh",
+            "cả chữ trên biển hiệu", "ca chu tren bien hieu",
+            "chữ trên biển hiệu", "chu tren bien hieu",
+            "chữ trên bảng hiệu", "chu tren bang hieu",
+            "chữ trên biển quảng cáo", "chu tren bien quang cao",
+            "cả chữ trong video lẫn ngoài cảnh", "ca chu trong video lan ngoai canh",
+            "target_scope=all",
+            "include_scene_text",
         )
-        for pattern in all_scope_patterns:
-            if pattern in q:
+        for kw in explicit_all_keywords:
+            if kw in q:
                 return "all"
+
+        # Mặc định an toàn tuyệt đối: chỉ xóa overlay
         return "overlay"
 
     def _format_video_quality_caption(self, res: Dict[str, Any]) -> str:
@@ -1950,8 +1983,10 @@ class TelegramBot:
         time_str = f"{time_taken:.1f}s" if time_taken > 0 else ""
         time_prefix = f"⚡ <b>Thời gian xử lý:</b> {time_str} | " if time_str else "⚡ "
 
-        # Header thông báo trung thực
-        if is_pass:
+        # Header thông báo trung thực (Ưu tiên cảnh báo Chế độ Dự phòng nếu is_fallback == True)
+        if is_fallback:
+            header = f"⚠️ <b>Tiểu Bảo Bảo đã xử lý video bằng Chế độ Dự phòng ({res_dict.get('mode_used', 'legacy')})</b>"
+        elif is_pass:
             header = "🎬 <b>Tiểu Bảo Bảo đã xóa sạch text trong video cho anh Mạnh!</b>"
         elif critique_status == "unverified":
             header = "⚠️ <b>Tiểu Bảo Bảo đã xử lý video (Chưa thể kiểm chứng độ sạch hoàn toàn)</b>"

@@ -1933,6 +1933,8 @@ class VideoEditorService:
             s_chan = np.zeros_like(gray)
             h_chan = np.zeros_like(gray)
 
+        s_res = np.sqrt(h**2 + w**2) / 1175.49
+
         # 1. Background luminance and BGR estimation from ROI perimeter
         pad = max(1, min(3, h // 4, w // 4))
         border_mask = np.zeros((h, w), dtype=bool)
@@ -1947,6 +1949,12 @@ class VideoEditorService:
             if (len(roi.shape) == 3 and np.count_nonzero(border_mask) > 0)
             else np.median(roi, axis=(0, 1))
         )
+
+        # Check background texture variance for high-frequency periodic lattices on background perimeter
+        lap_bg = cv2.Laplacian(gray, cv2.CV_32F)
+        local_var = float(np.var(lap_bg))
+        border_var = float(np.var(lap_bg[border_mask])) if np.count_nonzero(border_mask) > 0 else local_var
+        is_high_texture_mesh = (local_var >= 1500.0) and (border_var >= 300.0) and (min(h, w) >= 30)
 
         # Check border luminance across individual edges to avoid false positives on natural gradient backgrounds
         top_med = float(np.median(v_chan[:pad, :])) if h > 0 else 0.0
@@ -1968,7 +1976,8 @@ class VideoEditorService:
         else:
             shadow_thresh = max(75, int(bg_lum - 25)) if bg_lum >= 75 else 75
         dark_pixels = (v_chan <= shadow_thresh).astype(np.uint8) * 255
-        bright_pixels = ((v_chan >= 170) & (s_chan <= 80)).astype(np.uint8) * 255
+        bright_thresh = max(200, min(230, int(bg_lum + 40))) if is_high_texture_mesh else 170
+        bright_pixels = ((v_chan >= bright_thresh) & (s_chan <= 80)).astype(np.uint8) * 255
         vivid_colored = ((s_chan >= 60) & (v_chan >= 100)).astype(np.uint8) * 255
 
         has_dark_stroke = np.count_nonzero(dark_pixels) > 15
@@ -2109,19 +2118,57 @@ class VideoEditorService:
         min_area = 2
         max_char_h = max(4, int(h * 0.98))
 
-        for i in range(1, num_labels):
-            area = stats[i, cv2.CC_STAT_AREA]
-            cw = stats[i, cv2.CC_STAT_WIDTH]
-            ch = stats[i, cv2.CC_STAT_HEIGHT]
-            if area >= min_area and min_char_h <= ch <= max_char_h and cw >= min_char_w:
-                if is_bright_bg and is_stroke_hull_separated and "adjoining_bright" in locals():
-                    # Scale-Separation: Protect printed document text and structural table borders on light surfaces
-                    # Only accept components with sufficient height or direct contact with bright text core
-                    comp_mask = (labels == i)
-                    has_bright_core = (np.count_nonzero(comp_mask & (adjoining_bright > 0)) > 0)
-                    if not has_bright_core and (ch < 18 or cw < 18):
-                        continue
-                clean_core[labels == i] = 255
+        if is_high_texture_mesh:
+            primary_mask = np.zeros_like(text_core)
+            min_primary_h = max(8, int(round(10 * s_res)))
+            min_primary_area = max(25, int(round(35 * s_res)))
+
+            for i in range(1, num_labels):
+                area_i = stats[i, cv2.CC_STAT_AREA]
+                cw_i = stats[i, cv2.CC_STAT_WIDTH]
+                ch_i = stats[i, cv2.CC_STAT_HEIGHT]
+                if ch_i >= min_primary_h or area_i >= min_primary_area:
+                    primary_mask[labels == i] = 255
+
+            if np.count_nonzero(primary_mask) > 0:
+                vicinity_h = max(7, int(round(15 * s_res)))
+                vicinity_w = max(7, int(round(25 * s_res)))
+                primary_env = cv2.dilate(
+                    primary_mask,
+                    cv2.getStructuringElement(cv2.MORPH_RECT, (vicinity_w | 1, vicinity_h | 1)),
+                )
+                clean_core = primary_mask.copy()
+                for i in range(1, num_labels):
+                    if np.count_nonzero(primary_mask & (labels == i)) == 0:
+                        comp_mask = (labels == i)
+                        if np.count_nonzero(comp_mask & (primary_env > 0)) > 0:
+                            cw_i = stats[i, cv2.CC_STAT_WIDTH]
+                            ch_i = stats[i, cv2.CC_STAT_HEIGHT]
+                            aspect_ratio = max(cw_i, ch_i) / max(1, min(cw_i, ch_i))
+                            # Reject center-symmetric circular dot artifacts from perforated mesh
+                            if stats[i, cv2.CC_STAT_AREA] > 30 or aspect_ratio >= 1.3:
+                                clean_core[comp_mask] = 255
+            else:
+                for i in range(1, num_labels):
+                    area = stats[i, cv2.CC_STAT_AREA]
+                    cw = stats[i, cv2.CC_STAT_WIDTH]
+                    ch = stats[i, cv2.CC_STAT_HEIGHT]
+                    if area >= min_area and min_char_h <= ch <= max_char_h and cw >= min_char_w:
+                        clean_core[labels == i] = 255
+        else:
+            for i in range(1, num_labels):
+                area = stats[i, cv2.CC_STAT_AREA]
+                cw = stats[i, cv2.CC_STAT_WIDTH]
+                ch = stats[i, cv2.CC_STAT_HEIGHT]
+                if area >= min_area and min_char_h <= ch <= max_char_h and cw >= min_char_w:
+                    if is_bright_bg and is_stroke_hull_separated and "adjoining_bright" in locals():
+                        # Scale-Separation: Protect printed document text and structural table borders on light surfaces
+                        # Only accept components with sufficient height or direct contact with bright text core
+                        comp_mask = (labels == i)
+                        has_bright_core = (np.count_nonzero(comp_mask & (adjoining_bright > 0)) > 0)
+                        if not has_bright_core and (ch < 18 or cw < 18):
+                            continue
+                    clean_core[labels == i] = 255
 
         if np.count_nonzero(clean_core) == 0:
             num_c, labels_c, stats_c, _ = cv2.connectedComponentsWithStats(core_opened, connectivity=8)
@@ -2138,30 +2185,20 @@ class VideoEditorService:
         # 100% Solid Glyph Filling: apply _fill_holes to all subtitle styles
         clean_core = VideoEditorService._fill_holes(clean_core)
 
-        # Check background texture variance for high-frequency periodic lattices
-        lap_bg = cv2.Laplacian(gray, cv2.CV_32F)
-        local_var = float(np.var(lap_bg))
-        is_high_texture_mesh = (local_var >= 1500.0)
-
         # 4. Character-Level Tight Stroke Dilation (Resolution-scaled)
-        s_res = np.sqrt(h**2 + w**2) / 1175.49
-        dist = cv2.distanceTransform(clean_core, cv2.DIST_L2, 5)
-        core_pts = dist[clean_core > 0]
-        stroke_rad = float(np.percentile(core_pts, 80)) if len(core_pts) > 0 else 2.5
         if is_high_texture_mesh:
-            adapt_rad = max(2, int(round(2 * s_res)))
+            # On high-texture mesh: avoid unconstrained gradient expansion
+            # Controlled 100% solid glyph filling preserves lattice outside text
+            stroke_mask = clean_core
         else:
+            dist = cv2.distanceTransform(clean_core, cv2.DIST_L2, 5)
+            core_pts = dist[clean_core > 0]
+            stroke_rad = float(np.percentile(core_pts, 80)) if len(core_pts) > 0 else 2.5
             adapt_rad = int(np.clip(round(0.40 * (stroke_rad * 2.0) + 1.5 * s_res), 2, round(8 * s_res)))
-        k_adapt = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * adapt_rad + 1, 2 * adapt_rad + 1))
+            k_adapt = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * adapt_rad + 1, 2 * adapt_rad + 1))
 
-        # Gom sạch quầng chuyển tiếp anti-aliasing và viền đen ôm sát nét ký tự
-        proximity = cv2.dilate(clean_core, k_adapt)
-        if is_high_texture_mesh:
-            # On high-texture mesh: disable dark_in_prox heuristic to avoid treating speaker holes as text shadows
-            grad_roi = cv2.morphologyEx(gray, cv2.MORPH_GRADIENT, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))
-            grad_in_prox = (grad_roi >= 25) & (proximity > 0)
-            stroke_mask = cv2.bitwise_or(clean_core, grad_in_prox.astype(np.uint8) * 255)
-        else:
+            # Gom sạch quầng chuyển tiếp anti-aliasing và viền đen ôm sát nét ký tự
+            proximity = cv2.dilate(clean_core, k_adapt)
             dark_in_prox = (v_chan <= 85) & (proximity > 0)
             grad_roi = cv2.morphologyEx(gray, cv2.MORPH_GRADIENT, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))
             grad_in_prox = (grad_roi >= 18) & (proximity > 0)

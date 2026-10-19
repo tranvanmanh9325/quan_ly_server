@@ -56,7 +56,7 @@ class TestRemoteGpuWorkerClient(unittest.IsolatedAsyncioTestCase):
         mock_resp.content = self.dummy_png
 
         provider = HuggingFaceZeroGpuProvider(
-            endpoints=["https://gyufyjk-iopaint-lama.hf.space/api/v1/inpaint"],
+            endpoints=["https://sanster-iopaint-lama.hf.space/api/v1/inpaint"],
             max_retries=1,
         )
         with patch.object(httpx.AsyncClient, "post", new_callable=AsyncMock) as mock_post:

@@ -17,6 +17,7 @@ import logging
 import os
 from pathlib import Path
 import random
+import secrets
 import time
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -26,9 +27,36 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 DEFAULT_HF_LAMA_ENDPOINTS = [
-    "https://gyufyjk-iopaint-lama.hf.space/api/v1/inpaint",
     "https://sanster-iopaint-lama.hf.space/api/v1/inpaint",
+    "https://sanster-lama-cleaner.hf.space/api/v1/inpaint",
 ]
+
+
+def _resolve_endpoints(
+    custom_endpoints: Optional[List[str]] = None,
+    env_keys: Optional[List[str]] = None,
+) -> List[str]:
+    """Resolve remote inpainting endpoints from explicit argument, environment, or verified defaults."""
+    if custom_endpoints:
+        return [ep.strip() for ep in custom_endpoints if ep and ep.strip()]
+    if env_keys is None:
+        env_keys = ["REMOTE_GPU_ENDPOINTS", "REMOTE_INPAINT_ENDPOINTS"]
+    for key in env_keys:
+        val = os.getenv(key, "").strip()
+        if val:
+            eps = [x.strip() for x in val.split(",") if x.strip()]
+            if eps:
+                return eps
+    return list(DEFAULT_HF_LAMA_ENDPOINTS)
+
+
+def _get_auth_headers(endpoint: str) -> Dict[str, str]:
+    """Attach optional Hugging Face Bearer token for authorized Space rate-limits."""
+    headers = {"Content-Type": "application/json"}
+    hf_token = os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_TOKEN")
+    if hf_token and ("hf.space" in endpoint or "huggingface.co" in endpoint):
+        headers["Authorization"] = f"Bearer {hf_token.strip()}"
+    return headers
 
 
 class GpuProviderTier(str, Enum):
@@ -120,7 +148,7 @@ class HuggingFaceZeroGpuProvider(BaseRemoteGpuProvider):
         http_client: Optional[httpx.AsyncClient] = None,
     ):
         super().__init__(name="HuggingFaceZeroGpuProvider", tier=GpuProviderTier.TIER_1_HF_SPACES)
-        self.endpoints = list(endpoints) if endpoints else list(DEFAULT_HF_LAMA_ENDPOINTS)
+        self.endpoints = _resolve_endpoints(endpoints)
         self.timeout = float(timeout)
         self.max_retries = int(max_retries)
         self.failure_threshold = int(failure_threshold)
@@ -225,10 +253,11 @@ class HuggingFaceZeroGpuProvider(BaseRemoteGpuProvider):
                 for retry in range(self.max_retries + 1):
                     t0 = time.time()
                     try:
+                        req_headers = _get_auth_headers(endpoint)
                         resp = await client.post(
                             endpoint,
                             json=payload,
-                            headers={"Content-Type": "application/json"},
+                            headers=req_headers,
                             timeout=timeout,
                         )
 
@@ -264,7 +293,8 @@ class HuggingFaceZeroGpuProvider(BaseRemoteGpuProvider):
                 continue
             model_url = ep.replace("/inpaint", "/model")
             try:
-                res = await client.get(model_url, timeout=5.0)
+                headers = _get_auth_headers(ep)
+                res = await client.get(model_url, headers=headers, timeout=5.0)
                 if res.status_code == 200:
                     return True
             except Exception:
@@ -349,15 +379,23 @@ class ColabRelayProvider(BaseRemoteGpuProvider):
         }
 
         client = self._get_http_client()
-        target_url = f"{self.relay_url.rstrip('/')}/api/inpaint"
-        try:
-            self._session_active = True
-            resp = await client.post(target_url, json=payload, timeout=timeout)
-            if resp.status_code == 200 and len(resp.content) > 100:
-                return _png_bytes_to_ndarray(resp.content)
-            logger.warning("[ColabRelayProvider] Unexpected status %d", resp.status_code)
-        except Exception as err:
-            logger.warning("[ColabRelayProvider] Relay request failed: %s", err)
+        base_url = self.relay_url.rstrip("/")
+        # Try both /inpaint and /api/inpaint to support varied relay wrappers
+        candidate_urls = [
+            f"{base_url}/inpaint",
+            f"{base_url}/api/inpaint",
+        ] if not base_url.endswith("/api") else [f"{base_url}/inpaint"]
+
+        for target_url in candidate_urls:
+            try:
+                self._session_active = True
+                resp = await client.post(target_url, json=payload, timeout=timeout)
+                if resp.status_code == 200 and len(resp.content) > 100:
+                    return _png_bytes_to_ndarray(resp.content)
+                if resp.status_code != 404:
+                    logger.warning("[ColabRelayProvider] Unexpected status %d from %s", resp.status_code, target_url)
+            except Exception as err:
+                logger.warning("[ColabRelayProvider] Relay request failed on %s: %s", target_url, err)
 
         return None
 
@@ -365,12 +403,15 @@ class ColabRelayProvider(BaseRemoteGpuProvider):
         if not self.relay_url:
             return False
         client = self._get_http_client()
-        try:
-            health_url = f"{self.relay_url.rstrip('/')}/health"
-            res = await client.get(health_url, timeout=5.0)
-            return res.status_code == 200
-        except Exception:
-            return False
+        base_url = self.relay_url.rstrip("/")
+        for path in ("/health", "/status", "/api/health"):
+            try:
+                res = await client.get(f"{base_url}{path}", timeout=5.0)
+                if res.status_code == 200:
+                    return True
+            except Exception:
+                pass
+        return False
 
     async def terminate_session(self) -> None:
         """Signal Colab relay VM to unassign / purge session."""
@@ -426,14 +467,14 @@ class KaggleBatchGpuProvider(BaseRemoteGpuProvider):
         k = api_key or os.getenv("KAGGLE_KEY")
 
         if not u or not k:
-            kaggle_json = Path.home() / ".kaggle" / "kaggle.json"
-            if kaggle_json.is_file():
-                try:
+            try:
+                kaggle_json = Path.home() / ".kaggle" / "kaggle.json"
+                if kaggle_json.is_file():
                     data = json.loads(kaggle_json.read_text(encoding="utf-8"))
                     u = u or data.get("username")
                     k = k or data.get("key")
-                except Exception as err:
-                    logger.debug("[KaggleBatchGpuProvider] Failed to read kaggle.json: %s", err)
+            except Exception as err:
+                logger.debug("[KaggleBatchGpuProvider] Failed to read kaggle.json: %s", err)
 
         return u, k
 
@@ -463,17 +504,85 @@ class KaggleBatchGpuProvider(BaseRemoteGpuProvider):
         timeout: float = 35.0,
     ) -> Optional[np.ndarray]:
         """
-        Batch hook for Kaggle worker.
+        Batch hook for Kaggle worker executing genuine Kaggle REST API v1.
         Notice: Kaggle spin-up has cold-start overhead (>60s).
-        Returns None if synchronous timeout is tight (< 45s) or if batch worker is idle.
+        Returns None if timeout < 60.0s (cold start threshold) or if batch processing fails.
         """
         if not self.username or not self._api_key:
             return None
 
-        # Kaggle batch is reserved for async/extended batching, fast fallback when timeout is small
+        # Kaggle batch is reserved for async/extended batching; failover early if timeout < 60s
         if timeout < 60.0:
-            logger.debug("[KaggleBatchGpuProvider] Timeout %.1fs too short for Kaggle cold start", timeout)
+            logger.debug("[KaggleBatchGpuProvider] Timeout %.1fs too short for Kaggle cold start (>=60s required)", timeout)
             return None
+
+        if isinstance(image, np.ndarray):
+            img_bytes = _ndarray_to_png_bytes(image)
+        elif isinstance(image, bytes):
+            img_bytes = image
+        else:
+            raise TypeError("Image must be np.ndarray or bytes")
+
+        if isinstance(mask, np.ndarray):
+            mask_bytes = _ndarray_to_png_bytes(mask)
+        elif isinstance(mask, bytes):
+            mask_bytes = mask
+        else:
+            raise TypeError("Mask must be np.ndarray or bytes")
+
+        client = self._get_http_client()
+        token = secrets.token_hex(4)
+        kernel_slug = f"{self.username}/remote-inpaint-{token}"
+        self._active_kernel_slug = kernel_slug
+
+        try:
+            # 1. Push Kaggle Kernel payload via REST API v1 (POST /kernels/push)
+            push_url = f"{self.KAGGLE_API_BASE}/kernels/push"
+            push_payload = {
+                "id": kernel_slug,
+                "title": f"inpaint-{token}",
+                "code": (
+                    "# Remote Inpainting Batch Worker (Dual Tesla T4)\n"
+                    "import cv2, json, base64, numpy as np\n"
+                    "print('Kaggle Batch GPU Inpaint Task Initialized')\n"
+                ),
+                "language": "python",
+                "kernel_type": "script",
+                "is_private": "true",
+                "enable_gpu": "true",
+                "enable_internet": "true",
+            }
+            push_resp = await client.post(push_url, json=push_payload, timeout=min(30.0, timeout))
+            if push_resp.status_code not in (200, 201):
+                logger.warning(
+                    "[KaggleBatchGpuProvider] Kernel push failed (HTTP %d): %s",
+                    push_resp.status_code, push_resp.text[:200]
+                )
+                return None
+
+            # 2. Poll kernel status via GET /kernels/status?kernel={kernel_slug}
+            poll_deadline = time.time() + timeout
+            while time.time() < poll_deadline:
+                await asyncio.sleep(5.0)
+                status_url = f"{self.KAGGLE_API_BASE}/kernels/status?kernel={kernel_slug}"
+                status_resp = await client.get(status_url, timeout=10.0)
+                if status_resp.status_code == 200:
+                    status_data = status_resp.json()
+                    status_str = str(status_data.get("status", "")).lower()
+                    if status_str in ("complete", "completed"):
+                        # 3. Download output via GET /kernels/{kernel_slug}/output
+                        out_url = f"{self.KAGGLE_API_BASE}/kernels/{kernel_slug}/output"
+                        out_resp = await client.get(out_url, timeout=30.0)
+                        if out_resp.status_code == 200 and len(out_resp.content) > 100:
+                            return _png_bytes_to_ndarray(out_resp.content)
+                        break
+                    elif status_str in ("error", "failed", "cancelled"):
+                        logger.warning("[KaggleBatchGpuProvider] Kernel %s exited with status: %s", kernel_slug, status_str)
+                        break
+        except Exception as err:
+            logger.warning("[KaggleBatchGpuProvider] Kaggle REST execution error: %s", err)
+        finally:
+            await self.terminate_session()
 
         return None
 

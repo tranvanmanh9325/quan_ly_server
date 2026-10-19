@@ -27,7 +27,7 @@ class TestHostedInpainterClient(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.dummy_png = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15c4\x00\x00\x00\nIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82" + b"A" * 150
         self.endpoints = [
-            "https://gyufyjk-iopaint-lama.hf.space/api/v1/inpaint",
+            "https://sanster-lama-cleaner.hf.space/api/v1/inpaint",
             "https://sanster-iopaint-lama.hf.space/api/v1/inpaint",
         ]
         self.client = HostedInpainterClient(endpoints=self.endpoints, timeout=5.0, max_retries=1)
@@ -44,7 +44,7 @@ class TestHostedInpainterClient(unittest.IsolatedAsyncioTestCase):
         stats = client.get_stats()
         self.assertEqual(stats["total_requests"], 0)
         self.assertEqual(stats["success_requests"], 0)
-        self.assertIn("gyufyjk", list(stats["endpoint_usage"].keys())[0])
+        self.assertIn("sanster", list(stats["endpoint_usage"].keys())[0])
 
     async def test_inpaint_roi_bytes_success_primary(self):
         """Verify successful inpaint from primary endpoint returning bytes."""

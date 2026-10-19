@@ -13,6 +13,7 @@ import asyncio
 import base64
 import io
 import logging
+import os
 from pathlib import Path
 import time
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -22,9 +23,36 @@ import httpx
 logger = logging.getLogger(__name__)
 
 DEFAULT_ENDPOINTS = [
-    "https://gyufyjk-iopaint-lama.hf.space/api/v1/inpaint",
     "https://sanster-iopaint-lama.hf.space/api/v1/inpaint",
+    "https://sanster-lama-cleaner.hf.space/api/v1/inpaint",
 ]
+
+
+def _resolve_endpoints(
+    custom_endpoints: Optional[List[str]] = None,
+    env_keys: Optional[List[str]] = None,
+) -> List[str]:
+    """Resolve inpainting endpoints from explicit list, environment variables, or defaults."""
+    if custom_endpoints:
+        return [ep.strip() for ep in custom_endpoints if ep and ep.strip()]
+    if env_keys is None:
+        env_keys = ["REMOTE_INPAINT_ENDPOINTS", "REMOTE_GPU_ENDPOINTS"]
+    for key in env_keys:
+        val = os.getenv(key, "").strip()
+        if val:
+            eps = [x.strip() for x in val.split(",") if x.strip()]
+            if eps:
+                return eps
+    return list(DEFAULT_ENDPOINTS)
+
+
+def _get_auth_headers(endpoint: str) -> Dict[str, str]:
+    """Generate request headers with optional Hugging Face Bearer token authentication."""
+    headers = {"Content-Type": "application/json"}
+    hf_token = os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_TOKEN")
+    if hf_token and ("hf.space" in endpoint or "huggingface.co" in endpoint):
+        headers["Authorization"] = f"Bearer {hf_token.strip()}"
+    return headers
 
 
 class HostedInpainterError(Exception):
@@ -46,7 +74,7 @@ class HostedInpainterClient:
         concurrency_limit: int = 4,
         http_client: Optional[httpx.AsyncClient] = None,
     ):
-        self.endpoints = list(endpoints) if endpoints else list(DEFAULT_ENDPOINTS)
+        self.endpoints = _resolve_endpoints(endpoints)
         self.timeout = float(timeout)
         self.max_retries = int(max_retries)
         self._semaphore = asyncio.Semaphore(max(1, concurrency_limit))
@@ -174,10 +202,11 @@ class HostedInpainterClient:
                 for retry in range(self.max_retries + 1):
                     t0 = time.time()
                     try:
+                        req_headers = _get_auth_headers(endpoint)
                         resp = await client.post(
                             endpoint,
                             json=payload,
-                            headers={"Content-Type": "application/json"},
+                            headers=req_headers,
                             timeout=req_timeout,
                         )
 
@@ -280,11 +309,12 @@ class HostedInpainterClient:
             endpoint = self.endpoints[ep_idx]
             for retry in range(retries + 1):
                 try:
+                    req_headers = _get_auth_headers(endpoint)
                     with httpx.Client(timeout=req_timeout) as client:
                         resp = client.post(
                             endpoint,
                             json=payload,
-                            headers={"Content-Type": "application/json"},
+                            headers=req_headers,
                         )
                         if resp.status_code == 200 and len(resp.content) > 100:
                             res_bytes = resp.content
@@ -382,7 +412,8 @@ class HostedInpainterClient:
             # Model info route is typically /api/v1/model
             model_url = ep.replace("/inpaint", "/model")
             try:
-                res = await client.get(model_url, timeout=5.0)
+                headers = _get_auth_headers(ep)
+                res = await client.get(model_url, headers=headers, timeout=5.0)
                 results[ep] = (res.status_code == 200)
             except Exception:
                 results[ep] = False

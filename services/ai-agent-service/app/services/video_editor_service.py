@@ -133,25 +133,67 @@ class VideoJobContext:
     roi_cache: Dict[str, Any] = field(default_factory=dict)
     start_time: float = field(default_factory=time.time)
 
-    def record_fallback(self, stage: str, from_system: str, to_system: str, reason: str, impact: str = "") -> None:
-        """Records a transparent fallback event."""
+    def __post_init__(self) -> None:
+        try:
+            from app.services.session_lifecycle_manager import get_session_registry
+            registry = get_session_registry()
+            registry.get_or_create(self.job_id)
+            if self.cache_dir:
+                registry.register_temp_path(self.job_id, self.cache_dir, is_dir=True)
+            if self.output_file:
+                registry.register_temp_path(self.job_id, self.output_file, is_dir=False)
+        except Exception as err:
+            logger.debug("[VideoJobContext] Registry init warning: %s", err)
+
+    def record_fallback(
+        self,
+        stage: str = "roi_inpainting",
+        from_system: str = "",
+        to_system: str = "",
+        reason: str = "",
+        impact: str = "",
+        **kwargs: Any,
+    ) -> None:
+        """Records a transparent fallback event with flexible argument signatures."""
+        if not to_system and from_system:
+            # Invoked positionally as: record_fallback("RemoteGpuWorker", "ClassicalFallbackManager", reason=...)
+            stg = "roi_inpainting"
+            from_sys = stage
+            to_sys = from_system
+        else:
+            stg = stage
+            from_sys = from_system
+            to_sys = to_system
+
         self.is_fallback = True
-        self.fallback_reason = reason
+        self.fallback_reason = reason or "Fallback triggered"
         self.fallback_events.append({
-            "stage": stage,
-            "from_system": from_system,
-            "to_system": to_system,
-            "reason": reason,
-            "impact": impact,
+            "stage": stg,
+            "from_system": from_sys,
+            "to_system": to_sys,
+            "reason": self.fallback_reason,
+            "impact": impact or "Chuyển tầng sang thuật toán dự phòng",
             "timestamp": time.time(),
         })
 
     def cleanup(self) -> None:
-        """Guaranteed cleanup of per-job transient memory and disk assets."""
+        """Guaranteed cleanup of per-job transient memory, disk assets, and remote GPU sessions."""
         self.roi_cache.clear()
         if self.cache_dir and self.cache_dir.exists():
             import shutil
             shutil.rmtree(self.cache_dir, ignore_errors=True)
+        # Terminate remote GPU sessions and registered assets via central registry
+        try:
+            from app.services.session_lifecycle_manager import get_session_registry
+            get_session_registry().terminate_session_sync(self.job_id)
+        except Exception as err:
+            logger.debug("[VideoJobContext] Remote session registry cleanup warning: %s", err)
+
+        try:
+            from app.core.memory_reclaimer import _sync_collect_and_trim
+            _sync_collect_and_trim()
+        except Exception:
+            pass
 
 
 class KeyframeDiskCache:
@@ -2729,13 +2771,14 @@ class VideoEditorService:
         roi_img: Any,
         roi_mask: Any,
         timeout_sec: float = 3.5,
-        use_hosted: bool = False,
+        use_hosted: Optional[bool] = None,
+        context: Optional[VideoJobContext] = None,
     ) -> Any:
         """
         Chuỗi dự phòng chuẩn Studio tích hợp Hosted Specialist AI:
-        - Cấp 1 (Hosted Specialist AI): Hosted LaMa Inpainter Client (Hugging Face Spaces pool)
-        - Cấp 2 (Primary Studio Texture): TexturePreservingInpainter (Pure Guided Filter Structure-Texture Synthesis)
-        - Cấp 3 (Emergency Fallback): cv2.inpaint TELEA/NS
+        - Cấp 1 (Remote GPU Worker): HuggingFaceZeroGpuProvider / Colab / Kaggle
+        - Cấp 2 (Tier C2 Classical): ClassicalFallbackManager Guided Filter Structure-Texture Synthesis
+        - Cấp 3 (Tier C3 Emergency): ClassicalFallbackManager Emergency Telea/NS with Gaussian Feathering
         """
         import cv2
         import numpy as np
@@ -2747,7 +2790,14 @@ class VideoEditorService:
         if cache_key and cache_key in self._roi_inpaint_cache:
             return self._roi_inpaint_cache[cache_key].copy()
 
+        # Dynamic resolution of remote GPU usage based on config and environment
+        if use_hosted is None:
+            use_hosted = getattr(self, "use_hosted_gpu", True)
+            if os.getenv("ENABLE_REMOTE_GPU", "true").lower() in ("false", "0", "no"):
+                use_hosted = False
+
         # --- Cấp 1: RemoteGpuWorkerClient (Multi-tier GPU Acceleration) ---
+        res_gpu = None
         if use_hosted:
             try:
                 from app.services.remote_gpu_worker_client import get_remote_gpu_worker_client
@@ -2759,6 +2809,17 @@ class VideoEditorService:
                     return res_gpu
             except Exception as exc:
                 logger.info("[VideoEditorService] RemoteGpuWorkerClient unavailable/timeout (%s). Failing over to ClassicalFallbackManager.", exc)
+
+        # Standardized diagnostic log and transparent transition to Classical Fallback
+        if res_gpu is None and use_hosted:
+            logger.warning("[RemoteGpuWorker] Quota exhausted or provider unreachable; switching cleanly to Classical Fallback C1/C2/C3")
+            if context:
+                context.record_fallback(
+                    "RemoteGpuWorker",
+                    "ClassicalFallbackManager",
+                    reason="Remote GPU provider quota exhausted or unreachable",
+                    impact="Chuyển sang bộ tái tạo phông nền CPU cổ điển (DIS Optical Flow + Guided Filter)."
+                )
 
         # --- Cấp 2 (Tier C2 Classical): ClassicalFallbackManager Guided Filter Structure-Texture Decomposition ---
         try:
@@ -3261,6 +3322,8 @@ class VideoEditorService:
         frame: Any,
         frame_idx: int,
         target_regions: Optional[List[Dict[str, Any]]] = None,
+        use_hosted: Optional[bool] = None,
+        context: Optional[VideoJobContext] = None,
     ) -> Any:
         """Inpaint toàn bộ text trên 1 keyframe độc lập."""
         import cv2
@@ -3294,7 +3357,7 @@ class VideoEditorService:
                             t_m = VideoEditorService._fill_holes(t_m)
                             dil_m = cv2.dilate(t_m, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15)))
                             dil_m = VideoEditorService._fill_holes(dil_m)
-                            clean_t = self._inpaint_roi_fallback_chain(t_roi, dil_m, timeout_sec=2.0, use_hosted=False)
+                            clean_t = self._inpaint_roi_fallback_chain(t_roi, dil_m, timeout_sec=2.0, use_hosted=use_hosted, context=context)
 
                             # Nếu fallback chain trả về kết cấu bị mờ phẳng trên vùng siêu kết cấu (LapVar < 1800)
                             lap_clean_t = float(cv2.Laplacian(cv2.cvtColor(clean_t, cv2.COLOR_BGR2GRAY), cv2.CV_64F).var()) if clean_t is not None else 0.0
@@ -3372,7 +3435,7 @@ class VideoEditorService:
                                 clean_s = None
                                 feather_s = None
                             if clean_s is None or clean_s.shape != sub_roi.shape:
-                                clean_s = self._inpaint_roi_fallback_chain(sub_roi, dil_sub_m, timeout_sec=2.0, use_hosted=False)
+                                clean_s = self._inpaint_roi_fallback_chain(sub_roi, dil_sub_m, timeout_sec=2.0, use_hosted=use_hosted, context=context)
                                 feather_soft = cv2.GaussianBlur(dil_sub_m.astype(np.float32) / 255.0, (9, 9), 2.5)
                                 feather_s = np.maximum(feather_soft, (dil_sub_m > 0).astype(np.float32))[:, :, np.newaxis]
                         if clean_s is not None and clean_s.shape == sub_roi.shape:
@@ -3401,7 +3464,7 @@ class VideoEditorService:
                     x2 = min(out_f.shape[1], bx + bw + margin)
                     roi = out_f[y1:y2, x1:x2]
                     m_roi = full_mask[y1:y2, x1:x2]
-                    clean_roi = self._inpaint_roi_fallback_chain(roi, m_roi, timeout_sec=5.0, use_hosted=False)
+                    clean_roi = self._inpaint_roi_fallback_chain(roi, m_roi, timeout_sec=5.0, use_hosted=use_hosted, context=context)
                     if clean_roi is not None and clean_roi.shape == roi.shape:
                         dst = out_f[y1:y2, x1:x2]
                         dst[m_roi > 0] = clean_roi[m_roi > 0]
@@ -3511,6 +3574,8 @@ class VideoEditorService:
         target_regions: Optional[List[Dict[str, Any]]] = None,
         shot_cuts: Optional[List[int]] = None,
         branch_counters: Optional[Dict[str, int]] = None,
+        use_hosted: Optional[bool] = None,
+        context: Optional[VideoJobContext] = None,
     ) -> Generator[Any, None, None]:
         """
         Streaming Generator Direct ROI Inpainting (Milestone 2.4):
@@ -3721,7 +3786,7 @@ class VideoEditorService:
                         except Exception:
                             clean_hdr = None
                         if clean_hdr is None or clean_hdr.shape != hdr_part.shape:
-                            clean_hdr = self._inpaint_roi_fallback_chain(curr_roi, mask_blend_hdr, timeout_sec=15.0, use_hosted=False)
+                            clean_hdr = self._inpaint_roi_fallback_chain(curr_roi, mask_blend_hdr, timeout_sec=15.0, use_hosted=use_hosted, context=context)
                         if clean_hdr is None or clean_hdr.shape != hdr_part.shape:
                             inpainter = get_texture_preserving_inpainter()
                             if inpainter is not None:
@@ -3887,7 +3952,7 @@ class VideoEditorService:
                                     feather_sub = None
                                     m_active = None
                                 if clean_sub_roi is None or clean_sub_roi.shape != sub_roi.shape:
-                                    clean_sub_roi = self._inpaint_roi_fallback_chain(sub_roi, mask_sub, timeout_sec=15.0, use_hosted=False)
+                                    clean_sub_roi = self._inpaint_roi_fallback_chain(sub_roi, mask_sub, timeout_sec=15.0, use_hosted=use_hosted, context=context)
                             else:
                                 clean_sub_roi = aligned_sub
 
@@ -4018,7 +4083,13 @@ class VideoEditorService:
             raise RuntimeError(f"Không thể mở video: {input_file}")
 
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        fps = cap.get(cv2.CAP_PROP_FPS) or 29.98
+        fps_raw = cap.get(cv2.CAP_PROP_FPS) or 29.98
+        try:
+            fps = float(fps_raw)
+        except Exception:
+            fps = 29.98
+        if fps <= 0:
+            fps = 29.98
         w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
@@ -4069,7 +4140,7 @@ class VideoEditorService:
                 if cache_file.exists():
                     return kidx
                 frame = raw_kfs[kidx]
-                clean = self._inpaint_keyframe_full(frame, kidx, target_regions=target_regions)
+                clean = self._inpaint_keyframe_full(frame, kidx, target_regions=target_regions, context=context)
                 try:
                     cv2.imwrite(str(cache_file), clean)
                 except Exception:
@@ -4140,7 +4211,7 @@ class VideoEditorService:
                 "-vcodec", "rawvideo",
                 "-s", f"{w}x{h}",
                 "-pix_fmt", "bgr24",
-                "-r", f"{fps:.5f}",
+                "-r", f"{float(fps):.5f}" if isinstance(fps, (int, float)) else "29.98000",
                 "-i", "-",
                 "-i", str(input_file),
                 "-map", "0:v:0",
@@ -4191,6 +4262,7 @@ class VideoEditorService:
                 target_regions=target_regions,
                 shot_cuts=shot_cuts,
                 branch_counters=branch_counters,
+                context=context,
             )
 
             pipe_broken = False
@@ -4344,6 +4416,8 @@ class VideoEditorService:
             report(100, "Hoàn tất xử lý video 100%!")
         finally:
             shutil.rmtree(cache_dir, ignore_errors=True)
+            if context:
+                context.cleanup()
             try:
                 from app.core.memory_reclaimer import _sync_collect_and_trim
                 _sync_collect_and_trim()
@@ -5217,7 +5291,7 @@ class VideoEditorService:
             except Exception as h_err:
                 logger.info("[VideoEditorService] Hosted LaMa image inpaint failed (%s). Fallback to guided filter.", h_err)
                 tier_used = "guided_filter"
-                clean_arr = await asyncio.to_thread(self._inpaint_roi_fallback_chain, img_arr, mask_arr, timeout_sec=15.0, use_hosted=False)
+                clean_arr = await asyncio.to_thread(self._inpaint_roi_fallback_chain, img_arr, mask_arr, timeout_sec=15.0, use_hosted=None)
 
             await asyncio.to_thread(cv2.imwrite, str(out_p), clean_arr)
             success = True
@@ -5232,6 +5306,11 @@ class VideoEditorService:
                 "message": f"Inpaint ảnh thành công bằng {tier_used}.",
             }
         finally:
+            try:
+                from app.services.remote_gpu_worker_client import get_remote_gpu_worker_client
+                await get_remote_gpu_worker_client().terminate_all_sessions()
+            except Exception:
+                pass
             if not success and output_path is None and 'out_p' in locals() and out_p.exists():
                 out_p.unlink(missing_ok=True)
             if is_img_trans and img_p.exists():

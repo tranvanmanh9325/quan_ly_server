@@ -1910,13 +1910,13 @@ class TelegramBot:
         res_ocr_raw = metrics.get("residual_ocr_words")
         if res_ocr_raw is None:
             res_ocr_str = "Chưa kiểm chứng (UNVERIFIED)"
-            res_ocr_badge = "⚠️ (Chưa đo được)"
+            res_ocr_badge = "(Chưa đo được)"
         elif int(res_ocr_raw) == 0:
             res_ocr_str = "0 từ tồn dư"
-            res_ocr_badge = "✅ (Sạch hoàn toàn)"
+            res_ocr_badge = "(Sạch hoàn toàn)"
         else:
             res_ocr_str = f"{int(res_ocr_raw)} từ tồn dư"
-            res_ocr_badge = "❌ (Cảnh báo: Còn dư ảnh chữ)"
+            res_ocr_badge = "(Cảnh báo: Còn dư ảnh chữ)"
 
         # 2. Laplacian Texture
         tex_raw = metrics.get("laplacian_texture_ratio")

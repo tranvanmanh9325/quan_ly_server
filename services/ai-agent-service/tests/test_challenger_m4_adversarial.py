@@ -613,7 +613,8 @@ class TestChallengerZeroDiskLeak(unittest.TestCase):
         input_vid = self._create_minimal_video("e2e_fail_in.mp4")
 
         async def run_failing_e2e():
-            with patch.object(self.service, "_inpaint_video_sync", side_effect=RuntimeError("Worker panic")):
+            with patch.object(self.service, "_inpaint_video_sync", side_effect=RuntimeError("Worker panic")), \
+                 patch.object(self.service, "_remove_text_streaming_pipeline_sync", side_effect=RuntimeError("Worker panic")):
                 with self.assertRaises(RuntimeError):
                     await self.service.remove_text_from_video(
                         input_path_or_url=str(input_vid),

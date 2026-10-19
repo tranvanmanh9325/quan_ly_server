@@ -47,10 +47,10 @@ jobs:
           cache: 'pip'
           cache-dependency-path: services/ai-agent-service/requirements.txt
 
-      - name: Install System Dependencies (ffmpeg)
+      - name: Install System Dependencies (ffmpeg, tesseract-ocr)
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends ffmpeg
+          sudo apt-get install -y --no-install-recommends ffmpeg tesseract-ocr tesseract-ocr-vie
 
       - name: Install Dependencies
         run: |

@@ -64,7 +64,7 @@ class TestStudioTextDetector(unittest.TestCase):
         boxes = custom_detector.detect_regions(test_img)
 
         self.assertEqual(len(boxes), 1)
-        self.assertEqual(boxes[0]["type"], "title")
+        self.assertEqual(boxes[0]["type"], "text")
         self.assertGreaterEqual(boxes[0]["score"], 0.90)
 
     def test_unclip_ratio_and_padding_expansion(self):

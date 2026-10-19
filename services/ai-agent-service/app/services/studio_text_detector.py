@@ -153,9 +153,12 @@ class StudioTextDetector:
 
         detected_boxes: List[Dict[str, Any]] = []
 
+        effective_min_h = min_height if (min_height is not None and min_height > 0) else max(3, int(np.round(0.008 * orig_h)))
+        min_contour_area = max(4.0, 16.0 * (min(orig_h, orig_w) / 720.0))
+
         for c in contours:
             area = cv2.contourArea(c)
-            if area < 16:
+            if area < min_contour_area:
                 continue
 
             peri = cv2.arcLength(c, True)
@@ -173,7 +176,7 @@ class StudioTextDetector:
             box_w = max(1, x2 - x1)
             box_h = max(1, y2 - y1)
 
-            if box_h < min_height:
+            if box_h < effective_min_h:
                 continue
 
             c_mask = np.zeros_like(bitmap)
@@ -183,8 +186,7 @@ class StudioTextDetector:
             if score < self._box_thresh:
                 continue
 
-            is_top = (y1 / float(orig_h)) < 0.38 if orig_h > 0 else False
-            region_type = "title" if is_top else "subtitle"
+            region_type = "text"
 
             detected_boxes.append({
                 "x": x1,

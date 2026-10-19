@@ -98,8 +98,9 @@ class ClassicalFallbackManager:
         gray_curr = cv2.cvtColor(current_frame, cv2.COLOR_BGR2GRAY) if current_frame.ndim == 3 else current_frame
         gray_key = cv2.cvtColor(clean_keyframe, cv2.COLOR_BGR2GRAY) if clean_keyframe.ndim == 3 else clean_keyframe
 
-        # Compute optical flow from current_frame to clean_keyframe
-        flow = self._dis_flow.calc(gray_curr, gray_key, None)
+        # Compute bidirectional optical flow (Forward: curr -> key; Backward: key -> curr)
+        fwd_flow = self._dis_flow.calc(gray_curr, gray_key, None)
+        bwd_flow = self._dis_flow.calc(gray_key, gray_curr, None)
 
         # Coordinate remap grid (cached by resolution (h, w) to eliminate per-frame meshgrid overhead)
         if self._grid_h != h or self._grid_w != w or self._grid_map_x is None or self._grid_map_y is None:
@@ -110,8 +111,17 @@ class ClassicalFallbackManager:
             self._grid_h = h
             self._grid_w = w
 
-        map_x = self._grid_map_x + flow[:, :, 0]
-        map_y = self._grid_map_y + flow[:, :, 1]
+        map_x = self._grid_map_x + fwd_flow[:, :, 0]
+        map_y = self._grid_map_y + fwd_flow[:, :, 1]
+
+        # Remap backward flow to current frame coordinates to verify loop consistency
+        bwd_warped_x = cv2.remap(bwd_flow[:, :, 0], map_x, map_y, cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=999.0)
+        bwd_warped_y = cv2.remap(bwd_flow[:, :, 1], map_x, map_y, cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=999.0)
+
+        # Forward-Backward loop consistency error ||F_fwd + bwd_warped||_2
+        fb_err = np.sqrt((fwd_flow[:, :, 0] + bwd_warped_x) ** 2 + (fwd_flow[:, :, 1] + bwd_warped_y) ** 2)
+        in_bounds = (map_x >= 0.0) & (map_x <= (w - 1.0)) & (map_y >= 0.0) & (map_y <= (h - 1.0))
+        valid_motion_mask = (fb_err <= 1.5) & in_bounds
 
         # Warp clean background pixels into current frame coordinate space
         warped_bg = cv2.remap(
@@ -123,16 +133,32 @@ class ClassicalFallbackManager:
         )
 
         # Evaluate photometric error strictly OUTSIDE the text mask
-        outside_mask = cv2.bitwise_not(mask_2d)
+        outside_mask = (mask_2d == 0)
 
         diff = cv2.absdiff(current_frame, warped_bg)
         gray_diff = cv2.cvtColor(diff, cv2.COLOR_BGR2GRAY) if diff.ndim == 3 else diff
-        if np.count_nonzero(outside_mask) > 0:
-            mean_error = cv2.mean(gray_diff, mask=outside_mask)[0]
-        else:
-            mean_error = 999.0
+        
+        # Dense Local Photometric Gating on Collar (11x11 collar around text mask)
+        k_collar = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11))
+        dilated_mask = cv2.dilate((mask_2d > 0).astype(np.uint8), k_collar)
+        collar = (dilated_mask > 0) & outside_mask
 
-        if mean_error < error_threshold:
+        if np.count_nonzero(collar) > 0:
+            collar_error = float(np.mean(gray_diff[collar]))
+        elif np.count_nonzero(outside_mask) > 0:
+            collar_error = float(np.mean(gray_diff[outside_mask]))
+        else:
+            collar_error = 999.0
+
+        mean_error = float(np.mean(gray_diff[outside_mask])) if np.count_nonzero(outside_mask) > 0 else 999.0
+
+        # Require both local collar error and global outside mask error to be within threshold
+        gating_error = max(collar_error, mean_error)
+        motion_valid_ratio = (
+            float(np.count_nonzero(valid_motion_mask & outside_mask)) / max(1, np.count_nonzero(outside_mask))
+        )
+
+        if gating_error < error_threshold and motion_valid_ratio >= 0.25:
             # High-confidence warp: blend warped background onto text mask using local bounding box alpha feathering
             pad = 16
             bx1 = max(0, tx - pad)
@@ -156,13 +182,20 @@ class ClassicalFallbackManager:
             curr_f += diff_f
 
             result = current_frame.copy()
-            result[by1:by2, bx1:bx2] = curr_f.astype(np.uint8)
+            result[by1:by2, bx1:bx2] = np.clip(np.round(curr_f), 0, 255).astype(np.uint8)
+
+            # Strict Non-Mask Invariance: outside dilated mask (5x5 guard), keep 100% bit-exact original pixels
+            k_guard = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+            m_guard = cv2.dilate((mask_2d > 0).astype(np.uint8), k_guard)
+            outside_guard = (m_guard == 0)
+            result[outside_guard] = current_frame[outside_guard]
+
             self._stats["c1_flow_successes"] += 1
             return result, True
 
         logger.debug(
-            "[ClassicalFallbackManager] C1 Optical Flow error %.2f exceeded threshold %.2f",
-            mean_error, error_threshold
+            "[ClassicalFallbackManager] C1 Optical Flow error %.2f (collar %.2f, motion_ratio %.2f) exceeded threshold %.2f",
+            mean_error, collar_error, motion_valid_ratio, error_threshold
         )
         return current_frame.copy(), False
 
@@ -179,7 +212,7 @@ class ClassicalFallbackManager:
         """
         Tier C2: Structure-Texture Decomposition Engine.
         Uses Guided Filter + Navier-Stokes to preserve micro-textures without blur.
-        Supports Expanded Spatial Context for Periodic Lattice Synthesis (e.g. Burmester speaker mesh).
+        Supports Expanded Spatial Context for Periodic Lattice Synthesis (e.g. metallic speaker mesh or perforated lattices).
         """
         self._stats["c2_guided_filter_invocations"] += 1
 
@@ -243,7 +276,8 @@ class ClassicalFallbackManager:
         roi_mask: np.ndarray,
     ) -> np.ndarray:
         """
-        Tier C3: Emergency Stroke Inpainting using cv2.INPAINT_NS with feathering.
+        Tier C3: Structure-Texture Preserving Fallback Inpainting using Guided Filter.
+        Preserves micro-texture sharp detail rather than flattening with pure Telea/NS.
         """
         self._stats["c3_emergency_invocations"] += 1
 
@@ -251,7 +285,12 @@ class ClassicalFallbackManager:
             return roi_img.copy() if roi_img is not None else None
 
         mask_u8 = roi_mask if roi_mask.ndim == 2 else roi_mask[:, :, 0]
-        inpainted = cv2.inpaint(roi_img, mask_u8, inpaintRadius=3, flags=cv2.INPAINT_NS)
+        try:
+            inpainted = self._pure_guided_filter_inpaint(roi_img, mask_u8)
+        except Exception:
+            inpainted = None
+        if inpainted is None or inpainted.shape != roi_img.shape:
+            inpainted = cv2.inpaint(roi_img, mask_u8, inpaintRadius=3, flags=cv2.INPAINT_NS)
 
         alpha = self.feather_mask(mask_u8, radius=2, sigma=1.0)
         if roi_img.ndim == 3 and alpha.ndim == 2:
@@ -261,7 +300,7 @@ class ClassicalFallbackManager:
             roi_img.astype(np.float32) * (1.0 - alpha)
             + inpainted.astype(np.float32) * alpha
         )
-        return np.clip(blended, 0, 255).astype(np.uint8)
+        return np.clip(np.round(blended), 0, 255).astype(np.uint8)
 
     @staticmethod
     def synthesize_periodic_exemplar_texture(
@@ -277,7 +316,7 @@ class ClassicalFallbackManager:
     ) -> np.ndarray:
         """
         Spatial Exemplar Micro-Lattice Texture Synthesis:
-        Preserves high-frequency periodic micro-patterns (e.g. Burmester speaker mesh on Porsche door).
+        Preserves high-frequency periodic micro-patterns (e.g. metallic speaker mesh or perforated lattices).
         1. Decomposes structural illumination base using Navier-Stokes.
         2. Scans context ring or expanded spatial neighborhood for highest Laplacian variance exemplar patch.
         3. Isolates micro-perforation detail via Scale-Separation (Gaussian detail extraction).

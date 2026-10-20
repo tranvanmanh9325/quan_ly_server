@@ -893,7 +893,7 @@ class VideoQualityMeasurementEngine:
         montages_dir = self.crops_dir / "montages"
         montages_dir.mkdir(parents=True, exist_ok=True)
 
-        for f_idx, (f_orig, f_clean, f_mask, rec) in sorted(montages.items()):
+        for idx, (f_idx, (f_orig, f_clean, f_mask, rec)) in enumerate(sorted(montages.items(), key=lambda x: x[1][3].timestamp_sec), start=1):
             h, w = f_orig.shape[:2]
             # Overlay mask in red on clean frame
             mask_overlay = f_clean.copy()
@@ -932,7 +932,7 @@ class VideoQualityMeasurementEngine:
             cv2.putText(header, info_str, (15, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
 
             montage = np.vstack([header, top_row, bottom_row])
-            save_path = montages_dir / f"montage_{f_idx:04d}_ts_{rec.timestamp_sec:05.2f}s.png"
+            save_path = montages_dir / f"montage_{idx:02d}_ts_{rec.timestamp_sec:05.2f}s_f{f_idx:04d}.png"
             cv2.imwrite(str(save_path), montage)
 
     def _export_worst_k(self, worst_heap: List[Tuple[float, int, FrameMetricsRecord, np.ndarray, np.ndarray, np.ndarray]]) -> List[Dict[str, Any]]:

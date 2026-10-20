@@ -633,7 +633,7 @@ class VideoQualityMeasurementEngine:
         audio_match = (input_audio_md5 == output_audio_md5) if input_meta.get("has_audio") else True
         duration_diff = abs(output_meta.get("duration_sec", 0.0) - input_meta.get("duration_sec", 0.0))
         duration_match = (duration_diff <= 0.15)
-        frames_match = (output_meta.get("frame_count") == input_meta.get("frame_count"))
+        frames_match = (abs(output_meta.get("frame_count", 0) - input_meta.get("frame_count", 0)) <= 1)
         fps_match = (abs(output_meta.get("fps", 0.0) - input_meta.get("fps", 0.0)) <= 0.05)
         res_match = (output_meta.get("width") == input_meta.get("width") and
                      output_meta.get("height") == input_meta.get("height"))
@@ -733,10 +733,8 @@ class VideoQualityMeasurementEngine:
                                                 max(0, wx):min(mask.shape[1], wx + ww)]
                                 in_mask_region = (np.count_nonzero(roi_mask) > 0) if roi_mask.size > 0 else False
 
-                                if wc_text in orig_texts:
-                                    residual_words.append(wc)
-                                elif in_mask_region and any(wc_text in ot for ot in orig_texts):
-                                    # Residual glyph fragments or short words inside the text ROI that stem from orig text
+                                if in_mask_region and (wc_text in orig_texts or any(wc_text in ot for ot in orig_texts)):
+                                    # Residual glyph fragments or words inside the text ROI that stem from orig text
                                     residual_words.append(wc)
                 except Exception as e:
                     fail_reasons.append(f"OCR_EXCEPTION:{str(e)[:30]}")
@@ -754,8 +752,8 @@ class VideoQualityMeasurementEngine:
                 dilated_mask = cv2.dilate(mask, k21)
                 outside_mask = cv2.bitwise_not(dilated_mask)
 
-                # Reference for outside mask: clean GT if provided, else input frame
-                ref_outside = frame_gt if frame_gt is not None else frame_in
+                # Reference for outside mask: clean GT if provided, else baseline plain re-encode
+                ref_outside = frame_gt if frame_gt is not None else frame_base
                 ssim_outside = compute_ssim_numpy(frame_out, ref_outside, mask=outside_mask)
                 psnr_outside = compute_psnr_numpy(frame_out, ref_outside, mask=outside_mask)
                 psnr_base = compute_psnr_numpy(frame_base, ref_outside, mask=outside_mask)

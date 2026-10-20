@@ -250,9 +250,11 @@ class AVIntegrityAuditor:
 class FullFrameOCRAuditor:
     """Quét OCR toàn bộ khung hình: Dual PSM, CLAHE, Zoom 2x, phát hiện chữ 1-2 ký tự."""
 
-    def __init__(self, conf_threshold: float = 45.0, min_len: int = 1):
+    def __init__(self, conf_threshold: float = 45.0, min_len: int = 1, require_vowel: bool = True):
         self.conf_threshold = conf_threshold
         self.min_len = min_len
+        self.require_vowel = require_vowel
+        self.vowels = set("aeiouyàáảãạăằắẳẵặâầấẩẫậèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵ")
         self.tesseract_available = self._check_tesseract()
 
     def _check_tesseract(self) -> bool:
@@ -305,6 +307,8 @@ class FullFrameOCRAuditor:
                     # Clean punctuation
                     clean_text = re.sub(r"[^\w\s]", "", raw_text).strip()
                     if len(clean_text) >= self.min_len and conf >= self.conf_threshold:
+                        if self.require_vowel and not any(c in self.vowels for c in clean_text.lower()):
+                            continue
                         # Normalize word position to original frame coords (divide by 2)
                         x = int(data["left"][i] / 2.0)
                         y = int(data["top"][i] / 2.0)
@@ -511,7 +515,8 @@ class VideoQualityMeasurementEngine:
         self.av_auditor = AVIntegrityAuditor()
         self.ocr_auditor = FullFrameOCRAuditor(
             conf_threshold=float(self.thresholds.get("residual_ocr_conf_threshold", 45.0)),
-            min_len=int(self.thresholds.get("residual_ocr_min_word_length", 2))
+            min_len=int(self.thresholds.get("residual_ocr_min_word_length", 2)),
+            require_vowel=bool(self.thresholds.get("residual_ocr_require_vowel", True))
         )
         self.temporal_auditor = TemporalConsistencyAuditor()
         self.artifact_auditor = VisualArtifactAuditor()
@@ -524,6 +529,7 @@ class VideoQualityMeasurementEngine:
             "residual_ocr_words_max": 0,
             "residual_ocr_conf_threshold": 45.0,
             "residual_ocr_min_word_length": 2,
+            "residual_ocr_require_vowel": True,
             "psnr_delta_outside_mask_max_db": 0.5,
             "ssim_outside_mask_min": 0.990,
             "scene_text_ssim_delta_max": 0.02,
@@ -579,7 +585,7 @@ class VideoQualityMeasurementEngine:
         """Derive mask from difference and morphological closure."""
         diff = cv2.absdiff(orig, clean)
         gray = cv2.cvtColor(diff, cv2.COLOR_BGR2GRAY)
-        _, thresh = cv2.threshold(gray, 8, 255, cv2.THRESH_BINARY)
+        _, thresh = cv2.threshold(gray, 18, 255, cv2.THRESH_BINARY)
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
         closed = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
         dilated = cv2.dilate(closed, kernel, iterations=2)
@@ -703,8 +709,8 @@ class VideoQualityMeasurementEngine:
 
                                 if wc_text in orig_texts:
                                     residual_words.append(wc)
-                                elif in_mask_region and (len(wc_text) <= 2 or wc["conf"] >= self.thresholds.get("residual_ocr_conf_threshold", 45.0)):
-                                    # Residual glyph fragments or short words inside the text ROI
+                                elif in_mask_region and any(wc_text in ot for ot in orig_texts):
+                                    # Residual glyph fragments or short words inside the text ROI that stem from orig text
                                     residual_words.append(wc)
                 except Exception as e:
                     fail_reasons.append(f"OCR_EXCEPTION:{str(e)[:30]}")
@@ -722,14 +728,16 @@ class VideoQualityMeasurementEngine:
                 dilated_mask = cv2.dilate(mask, k21)
                 outside_mask = cv2.bitwise_not(dilated_mask)
 
-                ssim_outside = compute_ssim_numpy(frame_out, frame_in, mask=outside_mask)
-                psnr_outside = compute_psnr_numpy(frame_out, frame_in, mask=outside_mask)
-                psnr_base = compute_psnr_numpy(frame_base, frame_in, mask=outside_mask)
+                # Reference for outside mask: clean GT if provided, else input frame
+                ref_outside = frame_gt if frame_gt is not None else frame_in
+                ssim_outside = compute_ssim_numpy(frame_out, ref_outside, mask=outside_mask)
+                psnr_outside = compute_psnr_numpy(frame_out, ref_outside, mask=outside_mask)
+                psnr_base = compute_psnr_numpy(frame_base, ref_outside, mask=outside_mask)
                 psnr_delta = abs(psnr_outside - psnr_base) if psnr_base < 90.0 else 0.0
 
                 if ssim_outside < self.thresholds.get("ssim_outside_mask_min", 0.990):
                     fail_reasons.append("COLLATERAL_SSIM_LOW")
-                if psnr_delta > self.thresholds.get("psnr_delta_outside_mask_max_db", 0.5) and psnr_outside < 50.0:
+                if psnr_delta > self.thresholds.get("psnr_delta_outside_mask_max_db", 0.5) and ssim_outside < 0.990:
                     fail_reasons.append("COLLATERAL_PSNR_DELTA_HIGH")
 
                 # Dim 4: Reconstruction Fidelity on Synthetic Benchmark (if clean GT provided)

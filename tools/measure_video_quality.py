@@ -733,7 +733,8 @@ class VideoQualityMeasurementEngine:
                                 # Check if word box overlaps inpaint/text mask
                                 roi_mask = mask[max(0, wy):min(mask.shape[0], wy + wh),
                                                 max(0, wx):min(mask.shape[1], wx + ww)]
-                                in_mask_region = (np.count_nonzero(roi_mask) > 0) if roi_mask.size > 0 else False
+                                overlap_ratio = (np.count_nonzero(roi_mask) / float(roi_mask.size)) if roi_mask.size > 0 else 0.0
+                                in_mask_region = (overlap_ratio >= 0.35)
 
                                 if in_mask_region and (wc_text in orig_texts or (len(wc_text) >= 3 and any(wc_text in ot for ot in orig_texts))):
                                     # Residual glyph fragments or words inside the text ROI that stem from orig text

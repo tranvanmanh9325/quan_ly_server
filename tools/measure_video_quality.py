@@ -327,6 +327,8 @@ class FullFrameOCRAuditor:
                         y = int(data["top"][i] / scale)
                         bw = int(data["width"][i] / scale)
                         bh = int(data["height"][i] / scale)
+                        if bw < 8 or bh < 8:
+                            continue
                         word_key = (clean_text.lower(), x // 15, y // 15)
                         if word_key not in seen_words:
                             seen_words.add(word_key)
@@ -733,7 +735,7 @@ class VideoQualityMeasurementEngine:
                                                 max(0, wx):min(mask.shape[1], wx + ww)]
                                 in_mask_region = (np.count_nonzero(roi_mask) > 0) if roi_mask.size > 0 else False
 
-                                if in_mask_region and (wc_text in orig_texts or any(wc_text in ot for ot in orig_texts)):
+                                if in_mask_region and (wc_text in orig_texts or (len(wc_text) >= 3 and any(wc_text in ot for ot in orig_texts))):
                                     # Residual glyph fragments or words inside the text ROI that stem from orig text
                                     residual_words.append(wc)
                 except Exception as e:

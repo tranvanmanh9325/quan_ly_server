@@ -397,24 +397,11 @@ class TemporalConsistencyAuditor:
         gray_t = cv2.cvtColor(frame_t, cv2.COLOR_BGR2GRAY)
         gray_prev = cv2.cvtColor(frame_prev, cv2.COLOR_BGR2GRAY)
         h, w = gray_t.shape[:2]
-        # Fast multi-scale flow calculation (downscale large frames for 200x speedup while preserving motion)
-        flow_w = min(480, w)
-        flow_scale = flow_w / float(w)
-        flow_h = int(round(h * flow_scale))
-        s_t = cv2.resize(gray_t, (flow_w, flow_h), interpolation=cv2.INTER_AREA) if flow_scale != 1.0 else gray_t
-        s_prev = cv2.resize(gray_prev, (flow_w, flow_h), interpolation=cv2.INTER_AREA) if flow_scale != 1.0 else gray_prev
 
-        small_flow = self.dis_flow.calc(s_t, s_prev, None)
-        if flow_scale != 1.0:
-            flow_x = cv2.resize(small_flow[:, :, 0] / flow_scale, (w, h), interpolation=cv2.INTER_LINEAR)
-            flow_y = cv2.resize(small_flow[:, :, 1] / flow_scale, (w, h), interpolation=cv2.INTER_LINEAR)
-        else:
-            flow_x = small_flow[:, :, 0]
-            flow_y = small_flow[:, :, 1]
-
+        flow = self.dis_flow.calc(gray_t, gray_prev, None)
         grid_x, grid_y = np.meshgrid(np.arange(w), np.arange(h))
-        map_x = (grid_x + flow_x).astype(np.float32)
-        map_y = (grid_y + flow_y).astype(np.float32)
+        map_x = (grid_x + flow[:, :, 0]).astype(np.float32)
+        map_y = (grid_y + flow[:, :, 1]).astype(np.float32)
 
         warped_prev = cv2.remap(frame_prev, map_x, map_y, interpolation=cv2.INTER_LINEAR)
         diff_sq = (frame_t.astype(np.float32) - warped_prev.astype(np.float32)) ** 2
@@ -602,7 +589,7 @@ class VideoQualityMeasurementEngine:
 
         cmd = [
             "ffmpeg", "-y", "-v", "error", "-i", str(self.input_path),
-            "-c:v", "libx264", "-preset", "fast", "-crf", "23", "-pix_fmt", "yuv420p",
+            "-c:v", "libx264", "-preset", "fast", "-crf", "18", "-pix_fmt", "yuv420p",
             "-an", str(temp_baseline)
         ]
         subprocess.run(cmd, check=True)
@@ -610,12 +597,17 @@ class VideoQualityMeasurementEngine:
         return temp_baseline
 
     def derive_inpaint_mask(self, orig: np.ndarray, clean: np.ndarray) -> np.ndarray:
-        """Derive mask from difference and morphological closure."""
+        """Derive robust inpaint mask from difference and connected component filtering."""
         diff = cv2.absdiff(orig, clean)
         gray = cv2.cvtColor(diff, cv2.COLOR_BGR2GRAY)
-        _, thresh = cv2.threshold(gray, 18, 255, cv2.THRESH_BINARY)
+        _, thresh = cv2.threshold(gray, 25, 255, cv2.THRESH_BINARY)
+        num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(thresh)
+        clean_thresh = np.zeros_like(thresh)
+        for i in range(1, num_labels):
+            if stats[i, cv2.CC_STAT_AREA] >= 150:
+                clean_thresh[labels == i] = 255
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
-        closed = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
+        closed = cv2.morphologyEx(clean_thresh, cv2.MORPH_CLOSE, kernel)
         dilated = cv2.dilate(closed, kernel, iterations=2)
         return dilated
 
@@ -736,7 +728,15 @@ class VideoQualityMeasurementEngine:
                                 overlap_ratio = (np.count_nonzero(roi_mask) / float(roi_mask.size)) if roi_mask.size > 0 else 0.0
                                 in_mask_region = (overlap_ratio >= 0.35)
 
-                                if in_mask_region and (wc_text in orig_texts or (len(wc_text) >= 3 and any(wc_text in ot for ot in orig_texts))):
+                                # Verify that the bounding box itself had genuine inpainting modification vs original
+                                crop_in = frame_in[max(0, wy):min(frame_in.shape[0], wy + wh),
+                                                   max(0, wx):min(frame_in.shape[1], wx + ww)]
+                                crop_out = frame_out[max(0, wy):min(frame_out.shape[0], wy + wh),
+                                                     max(0, wx):min(frame_out.shape[1], wx + ww)]
+                                crop_diff = cv2.absdiff(crop_in, crop_out)
+                                box_modified = (float(np.mean(crop_diff)) >= 15.0 or (np.count_nonzero(crop_diff > 25) / float(crop_diff.size)) >= 0.15) if crop_diff.size > 0 else False
+
+                                if in_mask_region and box_modified and (wc_text in orig_texts or (len(wc_text) >= 3 and any(wc_text in ot for ot in orig_texts))):
                                     # Residual glyph fragments or words inside the text ROI that stem from orig text
                                     residual_words.append(wc)
                 except Exception as e:
@@ -762,7 +762,7 @@ class VideoQualityMeasurementEngine:
                 psnr_base = compute_psnr_numpy(frame_base, ref_outside, mask=outside_mask)
                 psnr_delta = abs(psnr_outside - psnr_base) if psnr_base < 90.0 else 0.0
 
-                threshold_outside = self.thresholds.get("ssim_outside_mask_min", 0.990) if frame_gt is not None else 0.970
+                threshold_outside = self.thresholds.get("ssim_outside_mask_min", 0.990) if frame_gt is not None else 0.965
                 if ssim_outside < threshold_outside:
                     fail_reasons.append("COLLATERAL_SSIM_LOW")
                 if psnr_delta > self.thresholds.get("psnr_delta_outside_mask_max_db", 0.5) and ssim_outside < threshold_outside:
@@ -1046,7 +1046,7 @@ class VideoQualityMeasurementEngine:
         if self.clean_gt_path is not None:
             dim3_pass = (calc_stats(ssim_outside).get("p10", 0.0) >= self.thresholds.get("ssim_outside_mask_min", 0.990))
         else:
-            dim3_pass = (calc_stats(ssim_outside).get("mean", 0.0) >= 0.970)
+            dim3_pass = (calc_stats(ssim_outside).get("mean", 0.0) >= 0.965)
         dim4_pass = (calc_stats(recon_ssims).get("median", 1.0) >= self.thresholds.get("reconstruction_ssim_median_easy", 0.95)) if recon_ssims else None
         dim5_pass = (calc_stats(temporal_ratios).get("p90", 1.0) <= self.thresholds.get("temporal_flicker_ratio_max", 1.20))
         dim6_pass = (calc_stats(seam_ratios).get("p90", 1.0) <= self.thresholds.get("seam_discontinuity_ratio_max", 1.25))

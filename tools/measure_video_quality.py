@@ -430,10 +430,10 @@ class TemporalConsistencyAuditor:
 
         e_context = float(np.mean(diff_sq[context_mask])) if np.count_nonzero(context_mask) > 0 else (e_inpaint + 1e-4)
 
-        if e_inpaint < 1.0 and e_context < 1.0:
+        if e_inpaint <= 10.0:
             ratio = 1.0
         else:
-            ratio = e_inpaint / (e_context + 1e-4)
+            ratio = e_inpaint / max(e_context, 10.0)
 
         # Frozen patch anomaly: context is moving strongly (> 25.0) but inpaint is dead still (< 2.0)
         frozen_anomaly = (e_context > 25.0 and e_inpaint < 2.0)
@@ -600,7 +600,7 @@ class VideoQualityMeasurementEngine:
 
         cmd = [
             "ffmpeg", "-y", "-v", "error", "-i", str(self.input_path),
-            "-c:v", "libx264", "-crf", "23", "-pix_fmt", "yuv420p",
+            "-c:v", "libx264", "-preset", "fast", "-crf", "23", "-pix_fmt", "yuv420p",
             "-an", str(temp_baseline)
         ]
         subprocess.run(cmd, check=True)

@@ -3,6 +3,7 @@ import heapq
 import logging
 import random
 import time
+import threading
 from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -47,8 +48,35 @@ class GroqKeyPool:
                 self._entries_map[clean_key] = entry
                 self._heap.append(entry)
         heapq.heapify(self._heap)
-        self._lock = asyncio.Lock()
+        self._loop_locks: Dict[asyncio.AbstractEventLoop, asyncio.Lock] = {}
+        self._init_thread_lock = threading.Lock()
         logger.info("[GroqKeyPool] Initialized with %d API key(s) (Min-Heap Scheduler).", len(self._heap))
+
+    def _get_lock(self) -> asyncio.Lock:
+        """
+        Lazily initialize asyncio.Lock() bound to the current running event loop.
+        Prevents 'RuntimeError: Task got Future attached to a different loop'
+        when called from worker threads via asyncio.run().
+        """
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop is None:
+            return asyncio.Lock()
+
+        with self._init_thread_lock:
+            lock = self._loop_locks.get(loop)
+            if lock is None:
+                lock = asyncio.Lock()
+                self._loop_locks[loop] = lock
+            return lock
+
+    @property
+    def _lock(self) -> asyncio.Lock:
+        """Backward compatibility property returning the loop-bound lock."""
+        return self._get_lock()
 
     @property
     def key_count(self) -> int:
@@ -61,7 +89,7 @@ class GroqKeyPool:
         if not self._heap:
             return None
 
-        async with self._lock:
+        async with self._get_lock():
             now = time.monotonic()
             available = [e for e in self._heap if e.available_at <= now]
             if available:
@@ -73,7 +101,7 @@ class GroqKeyPool:
 
     async def mark_rate_limited(self, key: str) -> None:
         clean = key.strip() if key else ""
-        async with self._lock:
+        async with self._get_lock():
             entry = self._entries_map.get(clean)
             if not entry:
                 return
@@ -91,7 +119,7 @@ class GroqKeyPool:
 
     async def mark_success(self, key: str) -> None:
         clean = key.strip() if key else ""
-        async with self._lock:
+        async with self._get_lock():
             entry = self._entries_map.get(clean)
             if entry:
                 if entry.fail_count > 0:

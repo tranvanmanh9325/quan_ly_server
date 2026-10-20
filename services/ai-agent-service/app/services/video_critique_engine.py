@@ -14,6 +14,7 @@ import math
 import os
 import random
 import re
+import threading
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -121,8 +122,34 @@ class OpenRouterKeyPool:
                 self._entries_map[clean_key] = entry
                 self._heap.append(entry)
         heapq.heapify(self._heap)
-        self._lock = asyncio.Lock()
+        self._loop_locks: Dict[asyncio.AbstractEventLoop, asyncio.Lock] = {}
+        self._init_thread_lock = threading.Lock()
         logger.info("[OpenRouterKeyPool] Initialized with %d API key(s).", len(self._heap))
+
+    def _get_lock(self) -> asyncio.Lock:
+        """
+        Lazily initialize asyncio.Lock() bound to current running event loop.
+        Prevents loop mismatch when invoked across worker threads.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop is None:
+            return asyncio.Lock()
+
+        with self._init_thread_lock:
+            lock = self._loop_locks.get(loop)
+            if lock is None:
+                lock = asyncio.Lock()
+                self._loop_locks[loop] = lock
+            return lock
+
+    @property
+    def _lock(self) -> asyncio.Lock:
+        """Backward compatibility property returning the loop-bound lock."""
+        return self._get_lock()
 
     @property
     def key_count(self) -> int:
@@ -135,7 +162,7 @@ class OpenRouterKeyPool:
         if not self._heap:
             return None
 
-        async with self._lock:
+        async with self._get_lock():
             now = time.monotonic()
             available = [e for e in self._heap if e.available_at <= now]
             if available:
@@ -147,7 +174,7 @@ class OpenRouterKeyPool:
 
     async def mark_rate_limited(self, key: str) -> None:
         clean = key.strip() if key else ""
-        async with self._lock:
+        async with self._get_lock():
             entry = self._entries_map.get(clean)
             if not entry:
                 return
@@ -163,7 +190,7 @@ class OpenRouterKeyPool:
 
     async def mark_success(self, key: str) -> None:
         clean = key.strip() if key else ""
-        async with self._lock:
+        async with self._get_lock():
             entry = self._entries_map.get(clean)
             if entry:
                 if entry.fail_count > 0:
@@ -1041,13 +1068,16 @@ class VideoCritiqueEngine:
         if is_pass or action == "pass_no_action":
             return None
 
-        # Bounded iteration: Max rounds reached
-        if round_num > self.max_refinement_rounds:
-            logger.info("[VideoCritiqueEngine] Maximum refinement rounds (%d) reached.", self.max_refinement_rounds)
+        is_legacy_judge = isinstance(critique_result, CritiqueJudgeResult)
+
+        # Bounded iteration: Legacy judge capped at 2, Phase 5 Strategy Ladder supports up to tier 3
+        max_allowed_rounds = 2 if is_legacy_judge else max(self.max_refinement_rounds, 3)
+        if round_num > max_allowed_rounds:
+            logger.info("[VideoCritiqueEngine] Maximum refinement rounds (%d) reached.", max_allowed_rounds)
             return None
 
         if round_num == 1:
-            if action == "expand_mask_dilation" or "text_residue" in artifacts or "seam_edge_artifact" in artifacts:
+            if is_legacy_judge:
                 return {
                     "round_num": 1,
                     "action": "expand_mask_dilation",
@@ -1056,32 +1086,48 @@ class VideoCritiqueEngine:
                     "bottom_margin_px": 4,
                     "description": "Thang 1: Mở rộng dilation (+4px) và tăng lề trên (+8px) cho dấu phụ tiếng Việt",
                 }
-            elif action == "borrow_flow_keyframe" or "blur_smear" in artifacts:
-                return {
-                    "round_num": 1,
-                    "action": "borrow_flow_keyframe",
-                    "use_flow_borrowing": True,
-                    "description": "Thang 2: Kích hoạt mượn pixel thật từ keyframe sạch qua DIS Optical Flow",
-                }
-            else:
-                return {
-                    "round_num": 1,
-                    "action": "emergency_ns_feather",
-                    "feather_radius_px": 5,
-                    "description": "Thang 3: Áp dụng Navier-Stokes kết hợp Gaussian Alpha Feathering 5px",
-                }
-
+            return {
+                "round_num": 1,
+                "action": "expand_mask_dilation",
+                "tier": 1,
+                "dilation_extra_px": 6,
+                "top_margin_px": 12,  # Asymmetric collar dilation (+12px for VN diacritics)
+                "bottom_margin_px": 6,
+                "description": "Nấc 1: Mở rộng mask thích ứng (+12px trên cho dấu tiếng Việt, +6px viền ngoài)",
+            }
         elif round_num == 2:
-            # Round 2: Multi-tier combined deep refinement
+            if is_legacy_judge:
+                return {
+                    "round_num": 2,
+                    "action": "combined_deep_refine",
+                    "dilation_extra_px": 8,
+                    "top_margin_px": 10,
+                    "bottom_margin_px": 4,
+                    "use_flow_borrowing": True,
+                    "feather_radius_px": 5,
+                    "description": "Thang 4: Tinh chỉnh sâu kết hợp Dilation +8px, Flow borrowing và Feathering",
+                }
             return {
                 "round_num": 2,
-                "action": "combined_deep_refine",
-                "dilation_extra_px": 8,
-                "top_margin_px": 10,
-                "bottom_margin_px": 4,
+                "action": "aggressive_flow_borrowing",
+                "tier": 2,
+                "keyframe_search_window": 60,  # Expand clean keyframe search window to 60 frames
+                "max_temporal_window_frames": 60,
+                "max_fb_error": 2.5,  # Relaxed forward-backward optical flow consistency threshold
                 "use_flow_borrowing": True,
-                "feather_radius_px": 5,
-                "description": "Thang 4: Tinh chỉnh sâu kết hợp Dilation +8px, Flow borrowing và Feathering",
+                "dilation_extra_px": 8,
+                "top_margin_px": 12,
+                "bottom_margin_px": 6,
+                "description": "Nấc 2: Mở rộng cửa sổ tìm kiếm keyframe sạch (60 frames), nới lỏng forward-backward flow consistency (2.5px)",
+            }
+        elif round_num == 3:
+            return {
+                "round_num": 3,
+                "action": "structure_texture_synthesis",
+                "tier": 3,
+                "use_guided_filter": True,
+                "use_remote_gpu": True,
+                "description": "Nấc 3: Kích hoạt Guided Filter Structure-Texture Decomposition bảo toàn vi kết cấu hoặc Remote GPU LaMa",
             }
 
         return None
@@ -1217,7 +1263,31 @@ class VideoCritiqueEngine:
                         orig_roi = fr_orig.copy()
                         mask_roi = mask.copy()
 
-                    words_count, max_conf, words_str = self.compute_residual_ocr(clean_roi)
+                    words_count_roi, max_conf_roi, words_str_roi = self.compute_residual_ocr(clean_roi)
+                    # Finding D Remediation: Also inspect full frame to catch residual text bypassed by inpainter
+                    if np.any(m_idx) and (clean_roi.shape[0] < fr_clean.shape[0] or clean_roi.shape[1] < fr_clean.shape[1]):
+                        words_count_full, max_conf_full, words_str_full = self.compute_residual_ocr(fr_clean)
+                    else:
+                        words_count_full, max_conf_full, words_str_full = 0, 0.0, ""
+
+                    if words_count_full > 0 or words_count_roi > 0:
+                        words_count = max(words_count_roi, words_count_full)
+                        max_conf = max(max_conf_roi, max_conf_full)
+                        all_words = set((words_str_roi + " " + words_str_full).strip().split())
+                        words_str = " ".join(sorted(w for w in all_words if w))
+                        if words_count_full > words_count_roi:
+                            roi_rect = (0, 0, fr_clean.shape[1], fr_clean.shape[0])
+                            clean_roi = fr_clean.copy()
+                            orig_roi = fr_orig.copy()
+                            mask_roi = mask.copy()
+                    elif words_count_roi < 0 or words_count_full < 0:
+                        words_count = -1
+                        max_conf = 0.0
+                        words_str = "[UNVERIFIED_OCR_ERROR]"
+                    else:
+                        words_count = 0
+                        max_conf = 0.0
+                        words_str = ""
                     tex_ratio, var_inp, var_ctx = self.compute_texture_ratio(fr_clean, mask)
                     flicker_mse, is_shot_flicker = self.compute_temporal_flicker(fr_clean, prev_clean_frame, mask)
                     seam_ratio, seam_g, ref_g = self.compute_edge_seam_ratio(fr_clean, mask)

@@ -131,6 +131,104 @@ class _AudioFileStream:
         return getattr(self._raw, name)
 
 
+class MonotonicProgressTracker:
+    """
+    Strictly Monotonic Telegram Progress Tracker (Finding G remediation):
+    - Clamps progress percentage: p = max(last_p, min(100, max(0, new_p))).
+    - "Send New, Delete Old" pattern: sends a new progress message and deletes the previous one
+      to eliminate Telegram 400 'message is not modified', 429 rate limits, and broken message IDs.
+    - Rate limiting / Throttling: optional min_interval_sec between Telegram API calls (unless 100% or min_interval <= 0).
+    - Content De-duplication: suppresses calls if text hasn't changed.
+    - Safe auto-cleanup when video processing completes.
+    """
+    def __init__(
+        self,
+        bot: Any,
+        chat_id: Any,
+        initial_message_id: Optional[int] = None,
+        min_interval_sec: float = 0.0,
+        mode: str = "send_delete",
+    ):
+        self.bot = bot
+        self.chat_id = chat_id
+        self.last_msg_id = initial_message_id
+        self.min_interval = min_interval_sec
+        self.mode = mode
+        self.current_percent = 0
+        self.last_send_time = 0.0
+        self.last_rendered_text = ""
+        self._lock = asyncio.Lock()
+
+    @property
+    def status_msg_id(self) -> Optional[int]:
+        return self.last_msg_id
+
+    @status_msg_id.setter
+    def status_msg_id(self, val: Optional[int]) -> None:
+        self.last_msg_id = val
+
+    async def report(self, percent: int, stage_text: str) -> None:
+        async with self._lock:
+            clamped_p = max(self.current_percent, min(100, max(0, int(percent))))
+            self.current_percent = clamped_p
+
+            now = time.time()
+            if self.min_interval > 0 and clamped_p < 100 and (now - self.last_send_time < self.min_interval):
+                return
+
+            p_filled = min(10, max(0, clamped_p // 10))
+            progress_bar = "▓" * p_filled + "░" * (10 - p_filled)
+            text = (
+                f"⚡ <b>Đang làm sạch video ({clamped_p}%):</b>\n"
+                f"<code>[{progress_bar}]</code>\n"
+                f"<i>{stage_text}</i>"
+            )
+
+            if text == self.last_rendered_text:
+                return
+
+            self.last_rendered_text = text
+            self.last_send_time = now
+
+            if self.mode == "edit" and self.last_msg_id is not None and hasattr(self.bot, "edit_message_text"):
+                try:
+                    await self.bot.edit_message_text(self.chat_id, self.last_msg_id, text)
+                    return
+                except Exception as edit_err:
+                    err_str = str(edit_err).lower()
+                    if "message is not modified" in err_str:
+                        return
+                    logger.debug("[MonotonicProgressTracker] edit failed, falling back to send new: %s", edit_err)
+
+            try:
+                new_msg = await self.bot.send_message(self.chat_id, text)
+                new_id = new_msg.get("message_id") if isinstance(new_msg, dict) else None
+                old_id = self.last_msg_id
+                self.last_msg_id = new_id
+
+                if old_id:
+                    try:
+                        await self.bot.delete_message(self.chat_id, old_id)
+                    except Exception as del_err:
+                        logger.debug("[MonotonicProgressTracker] Delete old msg error: %s", del_err)
+            except Exception as send_err:
+                logger.debug("[MonotonicProgressTracker] Send progress error: %s", send_err)
+
+    async def finish(self) -> None:
+        async with self._lock:
+            if self.last_msg_id:
+                try:
+                    await self.bot.delete_message(self.chat_id, self.last_msg_id)
+                except Exception as del_err:
+                    logger.debug("[MonotonicProgressTracker] Cleanup delete error: %s", del_err)
+                finally:
+                    self.last_msg_id = None
+
+    async def cleanup(self) -> None:
+        await self.finish()
+
+
+
 class TelegramBot:
     def __init__(self, ai_agent: AiAgentService, ssh_client: SshClient):
         self.ai_agent = ai_agent
@@ -2076,24 +2174,16 @@ class TelegramBot:
                                     "<i>(Tiểu Bảo Bảo đang phân tích khung hình và làm sạch video)</i>",
                                 )
                                 status_msg_id = status_msg.get("message_id") if isinstance(status_msg, dict) else None
-                                last_edit_time = 0.0
+                                progress_tracker = MonotonicProgressTracker(
+                                    bot=self,
+                                    chat_id=chat_id,
+                                    initial_message_id=status_msg_id,
+                                    min_interval_sec=1.5,
+                                    mode="edit" if (status_msg_id and hasattr(self, "edit_message_text")) else "send_delete",
+                                )
 
                                 async def telegram_progress_callback(percent: int, stage_text: str) -> None:
-                                    nonlocal last_edit_time
-                                    now = time.time()
-                                    if status_msg_id and (now - last_edit_time >= 3.0 or percent >= 100):
-                                        last_edit_time = now
-                                        p_filled = min(10, max(0, percent // 10))
-                                        progress_bar = "▓" * p_filled + "░" * (10 - p_filled)
-                                        text = (
-                                            f"⚡ <b>Đang làm sạch video ({percent}%):</b>\n"
-                                            f"<code>[{progress_bar}]</code>\n"
-                                            f"<i>{stage_text}</i>"
-                                        )
-                                        try:
-                                            await self.edit_message_text(chat_id, status_msg_id, text)
-                                        except Exception as edit_err:
-                                            logger.debug("[TelegramBot] Error updating progress: %s", edit_err)
+                                    await progress_tracker.report(percent, stage_text)
 
                                 v_timeout = float(getattr(settings, "VIDEO_PROCESS_TIMEOUT_SEC", 600.0))
                                 edit_coro = self._video_editor_service.remove_text_from_video(
@@ -2152,7 +2242,9 @@ class TelegramBot:
 
                                 if res_status == "ok":
                                     # Auto-cleanup progress message
-                                    if status_msg_id:
+                                    if 'progress_tracker' in locals():
+                                        await progress_tracker.cleanup()
+                                    elif status_msg_id:
                                         try:
                                             await self.delete_message(chat_id, status_msg_id)
                                         except Exception as del_err:
@@ -2188,7 +2280,9 @@ class TelegramBot:
                                             await self.send_message(chat_id, "❌ Không tìm thấy tệp video kết quả sau khi biên tập.")
                                     return
                                 elif res_status == "error":
-                                    if status_msg_id:
+                                    if 'progress_tracker' in locals():
+                                        await progress_tracker.cleanup()
+                                    elif status_msg_id:
                                         try:
                                             await self.delete_message(chat_id, status_msg_id)
                                         except Exception as del_err:
@@ -2197,7 +2291,9 @@ class TelegramBot:
                                     await self.send_message(chat_id, f"❌ Không thể hoàn thành biên tập video: {err_msg}")
                                     return
                         except asyncio.TimeoutError as t_err:
-                            if status_msg_id:
+                            if 'progress_tracker' in locals():
+                                await progress_tracker.cleanup()
+                            elif status_msg_id:
                                 try:
                                     await self.delete_message(chat_id, status_msg_id)
                                 except Exception as del_err:
@@ -2219,7 +2315,9 @@ class TelegramBot:
                                 )
                             return
                         except Exception as edit_err:
-                            if status_msg_id:
+                            if 'progress_tracker' in locals():
+                                await progress_tracker.cleanup()
+                            elif status_msg_id:
                                 try:
                                     await self.delete_message(chat_id, status_msg_id)
                                 except Exception as del_err:

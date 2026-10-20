@@ -4014,7 +4014,7 @@ class VideoEditorService:
             frame_idx += 1
 
             if progress_fn and frame_idx % 100 == 0:
-                pct = 60 + int(30 * frame_idx / max(1, total_frames))
+                pct = 45 + int(25 * frame_idx / max(1, total_frames))
                 progress_fn(pct, f"Direct ROI Inpainting: {frame_idx}/{total_frames} frames...")
 
         # Flush hết các frames còn lại trong buffer khi cap kết thúc
@@ -4040,6 +4040,371 @@ class VideoEditorService:
             _sync_collect_and_trim()
         except Exception:
             pass
+
+    def _calculate_convergence_penalty(
+        self,
+        critique_res: Dict[str, Any],
+        vision_eval: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[float, int, float, float, int]:
+        """
+        Calculate convergence penalty Phi according to the formula:
+        Phi = 100 * words_count + 50 * max(0.0, 0.70 - tex_ratio) + 30 * max(0.0, seam_ratio - 1.25) + 20 * (5 - vision_score)
+        """
+        metrics = critique_res.get("metrics", {}) or {}
+        raw_words = metrics.get("residual_ocr_words")
+        if raw_words is None or int(raw_words) < 0:
+            words_count = 1  # Unverified or error treated as defect
+        else:
+            words_count = int(raw_words)
+
+        tex_val = metrics.get("laplacian_texture_ratio")
+        tex_ratio = 1.0 if tex_val is None else float(tex_val)
+        seam_val = metrics.get("seam_discontinuity")
+        seam_ratio = 1.0 if seam_val is None else float(seam_val)
+
+        v_score = 4
+        if vision_eval and isinstance(vision_eval, dict):
+            v_score = int(vision_eval.get("score") or 4)
+
+        penalty = (
+            100.0 * float(words_count)
+            + 50.0 * max(0.0, 0.70 - tex_ratio)
+            + 30.0 * max(0.0, seam_ratio - 1.25)
+            + 20.0 * float(max(0, 5 - v_score))
+        )
+        return penalty, words_count, tex_ratio, seam_ratio, v_score
+
+    def _apply_targeted_refinement(
+        self,
+        input_video: Path,
+        source_cleaned_video: Path,
+        target_output_video: Path,
+        strategy: Dict[str, Any],
+        worst_candidates: List[Any],
+        target_regions: Optional[List[Dict[str, Any]]] = None,
+        context: Optional[VideoJobContext] = None,
+    ) -> None:
+        """
+        Targeted refinement applying 3-tier strategy ladder to candidate video frames:
+        - Tier 1: Asymmetric mask dilation (+12px top for VN diacritics, +6px border).
+        - Tier 2: Flow borrowing with relaxed 2.5px consistency across 60 frames.
+        - Tier 3: Micro-lattice synthesis via Guided Filter or Remote GPU LaMa inpaint.
+        """
+        import cv2
+        import numpy as np
+        import subprocess
+        import threading
+
+        cap_clean = cv2.VideoCapture(str(source_cleaned_video))
+        cap_orig = cv2.VideoCapture(str(input_video))
+
+        tot_frames = int(cap_clean.get(cv2.CAP_PROP_FRAME_COUNT)) or 1
+        fps = cap_clean.get(cv2.CAP_PROP_FPS) or 29.98
+        w = int(cap_clean.get(cv2.CAP_PROP_FRAME_WIDTH)) or 576
+        h = int(cap_clean.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 1024
+
+        defect_map: Dict[int, List[Tuple[int, int, int, int]]] = {}
+        for cand in worst_candidates:
+            f_idx = getattr(cand, "frame_idx", None) if not isinstance(cand, dict) else cand.get("frame_idx")
+            roi = getattr(cand, "roi_rect", None) if not isinstance(cand, dict) else cand.get("roi_rect")
+            if f_idx is not None and roi:
+                for offset in range(-5, 6):
+                    target_idx = f_idx + offset
+                    if 0 <= target_idx < tot_frames:
+                        defect_map.setdefault(target_idx, []).append(roi)
+
+        tier = strategy.get("tier", 1)
+        dilation_extra = int(strategy.get("dilation_extra_px", 6))
+        top_margin = int(strategy.get("top_margin_px", 12))
+        bottom_margin = int(strategy.get("bottom_margin_px", 6))
+
+        ffmpeg_bin = self._find_ffmpeg_binary()
+        raw_cmd = [
+            ffmpeg_bin, "-y",
+            "-loglevel", "error", "-nostats",
+            "-f", "rawvideo",
+            "-vcodec", "rawvideo",
+            "-s", f"{w}x{h}",
+            "-pix_fmt", "bgr24",
+            "-r", f"{float(fps):.5f}",
+            "-i", "-",
+            "-i", str(input_video),
+            "-map", "0:v:0",
+            "-map", "1:a?",
+            "-c:v", "libx264",
+            "-preset", "fast",
+            "-crf", "23",
+            "-pix_fmt", "yuv420p",
+            "-c:a", "copy",
+            "-shortest",
+            "-movflags", "+faststart",
+            str(target_output_video),
+        ]
+
+        proc = subprocess.Popen(raw_cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+        stderr_lines = []
+
+        def drain_err():
+            try:
+                for line in iter(proc.stderr.readline, b""):
+                    stderr_lines.append(line)
+            except Exception:
+                pass
+
+        t_err = threading.Thread(target=drain_err, daemon=True)
+        t_err.start()
+
+        try:
+            curr_f_idx = 0
+            while cap_clean.isOpened():
+                ret_c, fr_clean = cap_clean.read()
+                ret_o, fr_orig = cap_orig.read()
+                if not ret_c or fr_clean is None:
+                    break
+                if not ret_o or fr_orig is None:
+                    fr_orig = fr_clean
+
+                out_fr = fr_clean.copy()
+                if curr_f_idx in defect_map:
+                    rois = defect_map[curr_f_idx]
+                    for rx, ry, rw, rh in rois:
+                        ex1 = max(0, rx - dilation_extra)
+                        ey1 = max(0, ry - top_margin)
+                        ex2 = min(w, rx + rw + dilation_extra)
+                        ey2 = min(h, ry + rh + bottom_margin)
+
+                        if ey2 > ey1 and ex2 > ex1:
+                            patch_orig = fr_orig[ey1:ey2, ex1:ex2]
+                            patch_clean = fr_clean[ey1:ey2, ex1:ex2]
+
+                            diff = cv2.absdiff(patch_orig, patch_clean)
+                            diff_gray = cv2.cvtColor(diff, cv2.COLOR_BGR2GRAY) if diff.ndim == 3 else diff
+                            mask_patch = (diff_gray > 15).astype(np.uint8) * 255
+
+                            if np.count_nonzero(mask_patch) == 0:
+                                mask_patch = np.zeros((ey2 - ey1, ex2 - ex1), dtype=np.uint8)
+                                cx1 = max(0, rx - ex1)
+                                cy1 = max(0, ry - ey1)
+                                cx2 = min(ex2 - ex1, cx1 + rw)
+                                cy2 = min(ey2 - ey1, cy1 + rh)
+                                mask_patch[cy1:cy2, cx1:cx2] = 255
+
+                            k_dil = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (max(3, dilation_extra), max(3, dilation_extra)))
+                            mask_patch = cv2.dilate(mask_patch, k_dil)
+                            mask_patch = cv2.morphologyEx(mask_patch, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5)))
+
+                            repaired_patch = None
+                            if tier >= 3 or strategy.get("use_guided_filter", False):
+                                try:
+                                    from app.services.classical_fallback_manager import get_classical_fallback_manager
+                                    cm = get_classical_fallback_manager()
+                                    repaired_patch = cm.reconstruct_roi_guided_filter(
+                                        patch_orig, mask_patch, full_frame=fr_orig, roi_bbox=(ey1, ey2, ex1, ex2)
+                                    )
+                                except Exception:
+                                    repaired_patch = cv2.inpaint(patch_orig, mask_patch, 3, cv2.INPAINT_TELEA)
+                            elif tier == 2 or strategy.get("use_flow_borrowing", False):
+                                try:
+                                    from app.services.classical_fallback_manager import get_classical_fallback_manager
+                                    cm = get_classical_fallback_manager()
+                                    repaired_patch, c1_ok = cm.reconstruct_frame_with_optical_flow(
+                                        patch_orig, patch_clean, mask_patch, error_threshold=float(strategy.get("max_fb_error", 2.5)) * 10.0
+                                    )
+                                    if not c1_ok or repaired_patch is None:
+                                        repaired_patch = cv2.inpaint(patch_orig, mask_patch, 3, cv2.INPAINT_TELEA)
+                                except Exception:
+                                    repaired_patch = cv2.inpaint(patch_orig, mask_patch, 3, cv2.INPAINT_TELEA)
+                            else:
+                                repaired_patch = cv2.inpaint(patch_orig, mask_patch, 3, cv2.INPAINT_TELEA)
+
+                            if repaired_patch is not None and repaired_patch.shape == patch_orig.shape:
+                                out_fr[ey1:ey2, ex1:ex2] = repaired_patch
+
+                proc.stdin.write(out_fr.tobytes())
+                curr_f_idx += 1
+
+            if proc.stdin and not proc.stdin.closed:
+                proc.stdin.close()
+            proc.wait(timeout=180)
+        finally:
+            cap_clean.release()
+            cap_orig.release()
+            try:
+                proc.kill()
+            except Exception:
+                pass
+
+    def _execute_iterative_self_critique_loop(
+        self,
+        input_file: Path,
+        initial_candidate_video: Path,
+        final_output_file: Path,
+        report: Callable[[int, str], None],
+        context: Optional[VideoJobContext] = None,
+        target_regions: Optional[List[Dict[str, Any]]] = None,
+        cancel_event: Optional[Any] = None,
+        max_refinement_rounds: int = 2,
+        progress_callback: Optional[Any] = None,
+    ) -> Dict[str, Any]:
+        """
+        Real Iterative Self-Critique Loop & 3-Tier Repair Strategy Ladder:
+        - Bounded by max_refinement_rounds (N_max = 2).
+        - Strictly monotonic convergence check on penalty Phi:
+          Phi = 100*words + 50*max(0, 0.70-tex) + 30*max(0, seam-1.25) + 20*(5-vision)
+        - Immediate rollback to best candidate if quality stagnates or degrades (Phi_new > Phi_prev).
+        - Invariant Fail-Closed contract: If residual text remains, report is_pass=False / status="unverified".
+        """
+        import shutil
+        import tempfile
+        from app.services.video_critique_engine import VideoCritiqueEngine
+
+        critique_engine = VideoCritiqueEngine()
+        temp_dir = Path(tempfile.mkdtemp(prefix="critique_loop_"))
+
+        current_candidate_video = temp_dir / "candidate_round_0.mp4"
+        shutil.copyfile(str(initial_candidate_video), str(current_candidate_video))
+
+        best_candidate_video = current_candidate_video
+        best_critique_res: Optional[Dict[str, Any]] = None
+        best_phi = float("inf")
+        best_words = 999999
+
+        applied_strategies = []
+        completed_rounds = 0
+
+        try:
+            for round_num in range(max_refinement_rounds + 1):
+                if cancel_event is not None and getattr(cancel_event, "is_set", lambda: False)():
+                    raise RuntimeError("Self-critique loop cancelled.")
+
+                base_pct = 70 + int(round_num * 10 / max(1, max_refinement_rounds))
+                report(min(89, base_pct), f"Đang kiểm định chất lượng video (Vòng {round_num}/{max_refinement_rounds})...")
+
+                critique_res = critique_engine.evaluate_video_stream_sync(
+                    original_path=str(input_file),
+                    cleaned_path=str(current_candidate_video),
+                    sample_interval=1.0,
+                    target_scope=context.target_scope if context else "overlay",
+                )
+
+                worst_candidates = critique_res.get("worst_candidates", [])
+                emitter_loop = getattr(progress_callback, "_loop", None)
+                report(min(89, base_pct + 3), "Đang đánh giá thẩm mỹ khung hình qua Vision-LLM Critic...")
+                vision_eval = critique_engine.critique_worst_crops_sync(
+                    worst_candidates=worst_candidates,
+                    aggregated_cpu_metrics=critique_res.get("metrics", {}),
+                    loop=emitter_loop,
+                )
+                critique_res["vision_llm_score"] = vision_eval.get("score")
+                critique_res["judge"] = vision_eval
+
+                phi, words_cnt, tex_ratio, seam_ratio, v_score = self._calculate_convergence_penalty(
+                    critique_res, vision_eval
+                )
+
+                logger.info(
+                    "[SelfCritiqueLoop] Round %d | Phi: %.2f | Residual Words: %d | Texture: %.2f | Seam: %.2f | Vision: %d/5",
+                    round_num, phi, words_cnt, tex_ratio, seam_ratio, v_score
+                )
+
+                if round_num == 0:
+                    best_phi = phi
+                    best_words = words_cnt
+                    best_candidate_video = current_candidate_video
+                    best_critique_res = critique_res
+                else:
+                    if phi <= best_phi and words_cnt <= best_words:
+                        best_phi = phi
+                        best_words = words_cnt
+                        best_candidate_video = current_candidate_video
+                        best_critique_res = critique_res
+                        completed_rounds = round_num
+                    else:
+                        logger.warning(
+                            "[SelfCritiqueLoop] Regression detected at Round %d (Phi %.2f > Best %.2f or Words %d > Best %d). "
+                            "Rolling back to best candidate.",
+                            round_num, phi, best_phi, words_cnt, best_words
+                        )
+                        break
+
+                is_clean_pass = (
+                    words_cnt == 0
+                    and tex_ratio >= 0.70
+                    and seam_ratio <= 1.25
+                    and v_score >= 4
+                )
+                if is_clean_pass:
+                    logger.info("[SelfCritiqueLoop] Clean PASS achieved at Round %d. Exiting loop early.", round_num)
+                    critique_res["is_pass"] = True
+                    critique_res["status"] = "ok"
+                    best_critique_res = critique_res
+                    break
+
+                if round_num >= max_refinement_rounds:
+                    logger.info("[SelfCritiqueLoop] Maximum refinement rounds (%d) reached.", max_refinement_rounds)
+                    break
+
+                next_round = round_num + 1
+                strategy = critique_engine.recommend_refinement_strategy(critique_res, round_num=next_round)
+                if not strategy:
+                    logger.info("[SelfCritiqueLoop] No refinement strategy recommended for round %d. Stopping.", next_round)
+                    break
+
+                applied_strategies.append(strategy)
+                report(
+                    min(89, base_pct + 5),
+                    f"Kích hoạt Bậc thang Sửa đổi Vòng {next_round}: {strategy.get('description', '')}..."
+                )
+
+                next_candidate_video = temp_dir / f"candidate_round_{next_round}.mp4"
+                self._apply_targeted_refinement(
+                    input_video=input_file,
+                    source_cleaned_video=current_candidate_video,
+                    target_output_video=next_candidate_video,
+                    strategy=strategy,
+                    worst_candidates=worst_candidates,
+                    target_regions=target_regions,
+                    context=context,
+                )
+
+                current_candidate_video = next_candidate_video
+
+            shutil.copyfile(str(best_candidate_video), str(final_output_file))
+
+            final_critique = dict(best_critique_res or {})
+            final_critique["refinement_rounds"] = len(applied_strategies)
+            final_critique["applied_strategies"] = applied_strategies
+
+            final_metrics = final_critique.get("metrics", {}) or {}
+            final_words = final_metrics.get("residual_ocr_words")
+
+            if final_words is None or final_words > 0 or not final_critique.get("is_pass", False):
+                final_critique["is_pass"] = False
+                final_critique["status"] = "unverified"
+                final_critique["verdict"] = "FAIL_CLOSED_DEFECTS_REMAINING"
+                final_critique["residual_words"] = final_words if final_words is not None else -1
+                final_critique["uncleaned_regions"] = [
+                    {
+                        "frame_idx": getattr(c, "frame_idx", None) if not isinstance(c, dict) else c.get("frame_idx"),
+                        "timestamp_sec": getattr(c, "timestamp_sec", None) if not isinstance(c, dict) else c.get("timestamp_sec"),
+                        "bbox": getattr(c, "roi_rect", None) if not isinstance(c, dict) else c.get("roi_rect"),
+                        "residual_text": getattr(c, "residual_text", "") if not isinstance(c, dict) else c.get("residual_text", ""),
+                        "violated_metrics": getattr(c, "violated_metrics", []) if not isinstance(c, dict) else c.get("violated_metrics", []),
+                    }
+                    for c in final_critique.get("worst_candidates", [])
+                ]
+                final_critique["reason"] = (
+                    f"Video sau {len(applied_strategies)} vòng tinh chỉnh vẫn còn {final_words} từ tồn dư chưa thể làm sạch hoàn hảo."
+                )
+
+            if context:
+                context.critique_result = final_critique
+            self._last_critique_result = final_critique
+
+            return final_critique
+
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
 
     def _remove_text_streaming_pipeline_sync(
         self,
@@ -4155,7 +4520,7 @@ class VideoEditorService:
                     fut.result()
                     done_count += 1
                     if done_count % 8 == 0 or done_count == len(raw_kfs):
-                        pct = 25 + int(35 * done_count / max(1, len(raw_kfs)))
+                        pct = 25 + int(20 * done_count / max(1, len(raw_kfs)))
                         report(pct, f"Inpaint keyframes: {done_count}/{len(raw_kfs)} frames...")
 
             # Giải phóng bộ nhớ thô raw_kfs ngay sau khi inpaint xong để duy trì RAM < 35MB
@@ -4166,7 +4531,7 @@ class VideoEditorService:
             except Exception as trim_err:
                 logger.debug("[VideoEditorService] Keyframes memory reclamation error: %s", trim_err)
 
-            report(60, "Bắt đầu streaming lan truyền DIS Optical Flow và encode video...")
+            report(45, "Bắt đầu streaming lan truyền DIS Optical Flow và encode video...")
 
             ffmpeg_bin = self._find_ffmpeg_binary()
 
@@ -4306,41 +4671,20 @@ class VideoEditorService:
                 pass
 
             if enable_critique:
-                # Giai đoạn 4: Self-Critique (75% -> 90%) & Giai đoạn 5: Refining (90% -> 95%)
+                # Giai đoạn 3: Real Iterative Self-Critique Loop (70% -> 90%)
                 try:
                     if output_file.exists() and output_file.stat().st_size > 1000:
-                        report(75, "Đang kiểm định chất lượng video (5 CPU Quality Metrics)...")
-                        from app.services.video_critique_engine import VideoCritiqueEngine
-                        critique_engine = VideoCritiqueEngine()
-                        critique_res = critique_engine.evaluate_video_stream_sync(
-                            original_path=str(input_file),
-                            cleaned_path=str(output_file),
-                            sample_interval=2.0,
-                            target_scope=context.target_scope if context else "overlay",
+                        critique_res = self._execute_iterative_self_critique_loop(
+                            input_file=input_file,
+                            initial_candidate_video=output_file,
+                            final_output_file=output_file,
+                            report=report,
+                            context=context,
+                            target_regions=target_regions,
+                            cancel_event=cancel_event,
+                            max_refinement_rounds=2,
+                            progress_callback=progress_callback,
                         )
-
-                        report(85, "Đang đánh giá thẩm mỹ khung hình qua Vision-LLM Critic...")
-                        emitter_loop = getattr(progress_callback, "_loop", None)
-                        vision_eval = critique_engine.critique_worst_crops_sync(
-                            worst_candidates=critique_res.get("worst_candidates", []),
-                            aggregated_cpu_metrics=critique_res.get("metrics", {}),
-                            loop=emitter_loop,
-                        )
-                        critique_res["vision_llm_score"] = vision_eval.get("score")
-                        critique_res["judge"] = vision_eval
-
-                        # Giai đoạn 5: Refining Strategy Ladder
-                        refine_strat = critique_engine.recommend_refinement_strategy(critique_res, round_num=1)
-                        if refine_strat:
-                            report(90, f"Đang áp dụng tinh chỉnh Strategy Ladder ({refine_strat.get('action')})...")
-                            critique_res["refinement_rounds"] = 1
-                            critique_res["applied_strategy"] = refine_strat
-                        else:
-                            critique_res["refinement_rounds"] = 0
-
-                        if context:
-                            context.critique_result = critique_res
-                        self._last_critique_result = critique_res
                     else:
                         critique_res = {
                             "status": "unverified",
@@ -4403,7 +4747,7 @@ class VideoEditorService:
                         cap_verify = cv2.VideoCapture(str(output_file))
                         v_tot = int(cap_verify.get(cv2.CAP_PROP_FRAME_COUNT))
                         if v_tot > 0:
-                            report(95, "Đang tự động kiểm định video đầu ra (Self-Verification Loop)...")
+                            report(85, "Đang tự động kiểm định video đầu ra (Self-Verification Loop)...")
                             for pct in [0.1, 0.3, 0.5, 0.7, 0.9]:
                                 cap_verify.set(cv2.CAP_PROP_POS_FRAMES, int(v_tot * pct))
                                 ret_v, fr_v = cap_verify.read()
@@ -4413,6 +4757,8 @@ class VideoEditorService:
                 except Exception as v_err:
                     logger.debug("[VideoEditorService] Self-verification exception: %s", v_err)
 
+            # Giai đoạn 4: Finalize & Delivery (90% -> 100%)
+            report(95, "Đang hoàn tất đóng gói và tối ưu tệp video (faststart)...")
             report(100, "Hoàn tất xử lý video 100%!")
         finally:
             shutil.rmtree(cache_dir, ignore_errors=True)

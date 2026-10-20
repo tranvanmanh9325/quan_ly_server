@@ -41,6 +41,11 @@ class Settings(BaseSettings):
     TELEGRAM_POLLING_ENABLED: bool = Field(default=True, alias="TELEGRAM_POLLING_ENABLED")
     ENABLE_TELEGRAM_TEST_HARNESS: bool = Field(default=False, alias="ENABLE_TELEGRAM_TEST_HARNESS")
     TEST_HARNESS_SECRET_KEY: str = Field(default="", alias="TEST_HARNESS_SECRET_KEY")
+    TELEGRAM_TEST_HARNESS_SECRET: str = Field(default="", alias="TELEGRAM_TEST_HARNESS_SECRET")
+    TELEGRAM_TEST_HARNESS_SANDBOX_DIR: str = Field(
+        default="/tmp/sandboxed_harness",
+        alias="TELEGRAM_TEST_HARNESS_SANDBOX_DIR",
+    )
     TEST_HARNESS_ALLOWED_IPS: List[str] = Field(
         default=["127.0.0.1", "::1", "localhost", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"],
         alias="TEST_HARNESS_ALLOWED_IPS",

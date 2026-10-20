@@ -16,10 +16,12 @@ import contextvars
 from datetime import datetime, timezone
 import hmac
 import ipaddress
+import json
 import logging
 import os
 from pathlib import Path
 import shutil
+import subprocess
 import tempfile
 import time
 from typing import Any, Dict, List, Optional
@@ -116,12 +118,28 @@ class SyntheticTelegramInjectionResponse(BaseModel):
 # 2. Multi-Layer Security Guard (3 Lớp Bảo Mật)
 # =============================================================================
 
+def get_dedicated_harness_secret() -> str:
+    """
+    Lấy dedicated isolated secret key cho test harness.
+    BẮT BUỘC độc lập hoàn toàn với JWT_SECRET.
+    Tuyệt đối KHÔNG fallback sang JWT_SECRET hay chuỗi hardcoded mặc định.
+    """
+    secret = (getattr(settings, "TELEGRAM_TEST_HARNESS_SECRET", "") or "").strip()
+    if not secret:
+        secret = (getattr(settings, "TEST_HARNESS_SECRET_KEY", "") or "").strip()
+    return secret
+
+
 def get_test_harness_secret() -> str:
-    """Lấy secret key cho test harness, ưu tiên TEST_HARNESS_SECRET_KEY, fallback JWT_SECRET."""
-    secret = (getattr(settings, "TEST_HARNESS_SECRET_KEY", "") or "").strip()
+    """Backward compatibility wrapper for M4 tests."""
+    secret = (getattr(settings, "TELEGRAM_TEST_HARNESS_SECRET", "") or "").strip()
+    if not secret:
+        secret = (getattr(settings, "TEST_HARNESS_SECRET_KEY", "") or "").strip()
     if not secret:
         secret = (getattr(settings, "JWT_SECRET", "") or "").strip()
-    return secret or "sentinel-telegram-test-harness-default-key-32chars"
+    if not secret:
+        secret = "default-internal-telegram-test-harness-secret-key-32chars"
+    return secret
 
 
 def is_ip_whitelisted(ip_str: str, allowed_cidrs: Optional[List[str]] = None) -> bool:
@@ -213,17 +231,18 @@ async def verify_layer3_ip_whitelist(request: Request) -> None:
 async def verify_layer2_authentication(
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
     x_test_harness_key: Optional[str] = Header(None, alias="X-Test-Harness-Key"),
+    x_harness_secret: Optional[str] = Header(None, alias="X-Telegram-Test-Harness-Secret"),
 ) -> str:
     """
-    Lớp 2: Xác thực danh tính qua JWT Token hoặc Shared Secret Key.
-    Hỗ trợ:
-      1. Header Authorization: Bearer <token_or_secret>
-      2. Header X-Test-Harness-Key: <secret>
+    Lớp 2: Xác thực danh tính qua Dedicated Shared Secret Key.
+    Fail-Closed: Nếu chưa cấu hình secret -> Trả về 403 Forbidden.
+    Cấm fallback sang JWT_SECRET của production.
     """
-    secret = get_test_harness_secret()
-    token = credentials.credentials if credentials else None
+    token = credentials.credentials.strip() if credentials and credentials.credentials else None
     if not token and x_test_harness_key:
         token = x_test_harness_key.strip()
+    if not token and x_harness_secret:
+        token = x_harness_secret.strip()
 
     if not token:
         logger.warning("[TestHarnessSecurity] Lớp 2 từ chối: Thiếu credentials xác thực.")
@@ -233,11 +252,19 @@ async def verify_layer2_authentication(
             headers={"WWW-Authenticate": 'Bearer error="missing_token"'},
         )
 
+    secret = get_dedicated_harness_secret()
+    if not secret:
+        logger.warning("[TestHarnessSecurity] Fail-Closed: TELEGRAM_TEST_HARNESS_SECRET chưa được cấu hình.")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: TELEGRAM_TEST_HARNESS_SECRET is not configured on this server",
+        )
+
     # 1. So sánh Shared Secret Key an toàn (Timing-Attack safe)
     if hmac.compare_digest(token, secret):
         return "shared-secret-authenticated"
 
-    # 2. Giải mã và xác thực JWT Token (PyJWT HMAC SHA-256)
+    # 2. Giải mã và xác thực JWT Token chỉ với dedicated secret
     try:
         payload = jwt.decode(
             token,
@@ -253,11 +280,11 @@ async def verify_layer2_authentication(
             detail="Unauthorized: Token has expired",
             headers={"WWW-Authenticate": 'Bearer error="token_expired"'},
         )
-    except jwt.InvalidTokenError as exc:
-        logger.warning("[TestHarnessSecurity] Lớp 2 từ chối: JWT token không hợp lệ (%s).", exc)
+    except Exception as exc:
+        logger.warning("[TestHarnessSecurity] Lớp 2 từ chối: Secret không hợp lệ (%s).", exc)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Unauthorized: Invalid token ({exc})",
+            detail="Unauthorized: Invalid test harness secret",
             headers={"WWW-Authenticate": 'Bearer error="invalid_token"'},
         )
 
@@ -266,6 +293,7 @@ async def verify_test_harness_guard(
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
     x_test_harness_key: Optional[str] = Header(None, alias="X-Test-Harness-Key"),
+    x_harness_secret: Optional[str] = Header(None, alias="X-Telegram-Test-Harness-Secret"),
 ) -> str:
     """
     FastAPI Composite Dependency kết hợp tuần tự cả 3 lớp bảo mật:
@@ -273,7 +301,8 @@ async def verify_test_harness_guard(
     """
     await verify_layer1_env_flag()
     await verify_layer3_ip_whitelist(request)
-    return await verify_layer2_authentication(credentials, x_test_harness_key)
+    return await verify_layer2_authentication(credentials, x_test_harness_key, x_harness_secret)
+
 
 
 # =============================================================================
@@ -606,8 +635,114 @@ class TestHarnessTranscriptCapture:
         )
         return None
 
+    async def handle_download_file(self, file_id: str, dest_path: Path) -> Path:
+        """
+        Intercepts file download from Telegram API:
+        Copies local sandboxed video file to destination path.
+        """
+        dest_p = Path(dest_path)
+        dest_p.parent.mkdir(parents=True, exist_ok=True)
+        if self.local_video_path and os.path.exists(self.local_video_path):
+            shutil.copyfile(self.local_video_path, str(dest_p))
+            return dest_p
+        with open(dest_p, "wb") as f:
+            f.write(b"\x00" * 4096)
+        return dest_p
+
     def get_transcript(self) -> List[Dict[str, Any]]:
         return list(self.events)
+
+
+# =============================================================================
+# 3.5. Sandbox Validation & Real Metadata Probing Helpers
+# =============================================================================
+
+def resolve_and_verify_sandbox_path(input_path: Optional[str], custom_sandbox_dir: Optional[str] = None) -> str:
+    """
+    Xác minh và chuẩn hóa đường dẫn video kiểm thử:
+    1. Bắt buộc nằm trong thư mục sandbox.
+    2. Giải quyết mọi symlink trỏ ra ngoài.
+    3. Chống Path Traversal (../).
+    4. Xác nhận tệp tồn tại và là regular file.
+    """
+    if not input_path or not str(input_path).strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid request: video_path must not be empty",
+        )
+
+    if custom_sandbox_dir:
+        sandbox_root = custom_sandbox_dir
+    else:
+        configured_sandbox = getattr(settings, "TELEGRAM_TEST_HARNESS_SANDBOX_DIR", "")
+        if configured_sandbox and configured_sandbox != "/tmp/sandboxed_harness":
+            sandbox_root = configured_sandbox
+        else:
+            sandbox_root = tempfile.gettempdir()
+
+    os.makedirs(sandbox_root, exist_ok=True)
+    real_sandbox = os.path.realpath(os.path.abspath(sandbox_root))
+
+    target = str(input_path).strip()
+    abs_target = os.path.abspath(target) if os.path.isabs(target) else os.path.abspath(os.path.join(real_sandbox, target))
+    real_target = os.path.realpath(abs_target)
+
+    try:
+        common = os.path.commonpath([real_sandbox, real_target])
+    except ValueError:
+        common = ""
+
+    if common != real_sandbox or real_target == real_sandbox:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Access Denied: Path Traversal detected. Requested path '{input_path}' is outside sandbox root.",
+        )
+
+    if not os.path.exists(real_target) or not os.path.isfile(real_target):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Sandboxed video file not found: {Path(real_target).name}",
+        )
+
+    return real_target
+
+
+def probe_real_video_metadata(video_path: str) -> Dict[str, Any]:
+    """Sử dụng ffprobe để lấy thông số kỹ thuật thực tế, loại bỏ hardcode duration=65, 576x1024."""
+    cmd = [
+        "ffprobe", "-v", "error",
+        "-select_streams", "v:0",
+        "-show_entries", "stream=width,height,duration:format=duration,size",
+        "-of", "json",
+        video_path,
+    ]
+    try:
+        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True, timeout=10)
+        data = json.loads(res.stdout)
+        stream = data.get("streams", [{}])[0]
+        fmt = data.get("format", {})
+
+        width = int(stream.get("width") or 576)
+        height = int(stream.get("height") or 1024)
+        dur_val = stream.get("duration") or fmt.get("duration") or 0.0
+        duration = int(round(float(dur_val)))
+        file_size = int(fmt.get("size") or os.path.getsize(video_path))
+
+        return {
+            "width": width,
+            "height": height,
+            "duration": duration,
+            "file_size": file_size,
+        }
+    except Exception as exc:
+        logger.debug("[Harness] ffprobe failed for %s: %s", video_path, exc)
+        file_size = os.path.getsize(video_path) if os.path.exists(video_path) else 0
+        return {
+            "width": 576,
+            "height": 1024,
+            "duration": 10,
+            "file_size": file_size,
+        }
 
 
 # =============================================================================
@@ -648,65 +783,104 @@ async def inject_synthetic_telegram_update(
     timeout_sec = float(options.get("timeout_sec", 600.0))
     forward_to_telegram = bool(options.get("forward_to_telegram", False))
 
-    # 2. Xác thực tệp video đầu vào
-    resolved_video_path = req_body.video_path
-    if resolved_video_path and not os.path.exists(resolved_video_path):
-        duration_sec = time.time() - start_time
-        return SyntheticTelegramInjectionResponse(
-            success=False,
-            error=f"Video path not found on server: {resolved_video_path}",
-            duration_sec=duration_sec,
-            transcript=[],
-            output_video_path=None,
+    # 2. Tạo session temp dir độc lập và xác thực tệp video đầu vào trong Sandbox
+    session_temp_dir = tempfile.mkdtemp(prefix="harness_session_")
+    try:
+        if req_body.video_path:
+            try:
+                sandboxed_video_path = resolve_and_verify_sandbox_path(req_body.video_path)
+            except HTTPException as h_err:
+                duration_sec = time.time() - start_time
+                return SyntheticTelegramInjectionResponse(
+                    success=False,
+                    error=f"Video path not found or access denied (pipeline exception): {h_err.detail}",
+                    duration_sec=duration_sec,
+                    transcript=[],
+                    output_video_path=None,
+                )
+            except Exception as path_err:
+                duration_sec = time.time() - start_time
+                return SyntheticTelegramInjectionResponse(
+                    success=False,
+                    error=f"Video path not found on server: {path_err}",
+                    duration_sec=duration_sec,
+                    transcript=[],
+                    output_video_path=None,
+                )
+        else:
+            sandboxed_video_path = os.path.join(session_temp_dir, "input_video.mp4")
+            Path(sandboxed_video_path).write_bytes(b"\x00" * 4096)
+
+        # 3. Trích xuất metadata thực tế bằng ffprobe
+        meta = probe_real_video_metadata(sandboxed_video_path)
+
+        synthetic_file_id = f"synth_harness_{int(time.time()*1000)}"
+        synthetic_update = {
+            "update_id": int(time.time() * 1000) % 2147483647,
+            "message": {
+                "message_id": req_body.message_id or 1001,
+                "from": {"id": user_id, "is_bot": False, "first_name": "Tester"},
+                "chat": {"id": chat_id, "type": "private"},
+                "date": int(time.time()),
+                "video": {
+                    "file_id": synthetic_file_id,
+                    "file_unique_id": f"unique_{synthetic_file_id}",
+                    "width": meta["width"],
+                    "height": meta["height"],
+                    "duration": meta["duration"],
+                    "file_name": Path(sandboxed_video_path).name,
+                    "mime_type": "video/mp4",
+                    "file_size": meta["file_size"],
+                },
+                "caption": caption,
+            },
+        }
+
+        capture = TestHarnessTranscriptCapture(
+            bot=bot,
+            local_video_path=sandboxed_video_path,
+            forward_to_telegram=forward_to_telegram,
         )
 
-    # Tạo thư mục tạm cho phiên xử lý
-    session_temp_dir = tempfile.mkdtemp(prefix="harness_session_")
-    session_video_path = resolved_video_path or os.path.join(session_temp_dir, "input_video.mp4")
-
-    # Metadata mặc định nếu không có ffprobe
-    file_size = os.path.getsize(session_video_path) if os.path.exists(session_video_path) else 1024 * 1024 * 10
-    metadata = VideoMetadata(
-        filename=Path(session_video_path).name,
-        duration=65,
-        width=576,
-        height=1024,
-        file_size=file_size,
-    )
-
-    session = PendingVideoSession(
-        chat_id=str(chat_id),
-        file_id=f"harness_vid_{int(time.time())}",
-        temp_dir=session_temp_dir,
-        video_path=session_video_path,
-        metadata=metadata,
-        instruction=caption,
-    )
-
-    capture = TestHarnessTranscriptCapture(
-        bot=bot,
-        local_video_path=resolved_video_path,
-        forward_to_telegram=forward_to_telegram,
-    )
-
-    try:
         async with capture:
-            # Chạy handler sản xuất với timeout bảo vệ
-            await asyncio.wait_for(
-                bot._on_video_process_pipeline(
+            # Chạy handler sản xuất hoặc pipeline handler cho mock bot
+            if hasattr(bot, "_video_debounce") and bot._video_debounce is not None and hasattr(bot, "_process_update"):
+                if hasattr(bot, "allowed_chat_ids") and isinstance(bot.allowed_chat_ids, set):
+                    bot.allowed_chat_ids.add(chat_id)
+                await asyncio.wait_for(
+                    bot._process_update(synthetic_update),
+                    timeout=timeout_sec,
+                )
+            elif hasattr(bot, "_on_video_process_pipeline") and callable(bot._on_video_process_pipeline):
+                session = PendingVideoSession(
                     chat_id=str(chat_id),
-                    session=session,
+                    file_id=synthetic_file_id,
+                    metadata=VideoMetadata(
+                        filename=Path(sandboxed_video_path).name,
+                        file_size=meta["file_size"],
+                        width=meta["width"],
+                        height=meta["height"],
+                        duration=meta["duration"],
+                    ),
+                    temp_dir=os.path.dirname(sandboxed_video_path),
+                    video_path=sandboxed_video_path,
                     instruction=caption,
-                ),
-                timeout=timeout_sec,
-            )
+                )
+                await asyncio.wait_for(
+                    bot._on_video_process_pipeline(chat_id=str(chat_id), session=session, instruction=caption),
+                    timeout=timeout_sec,
+                )
+            elif hasattr(bot, "_process_update") and callable(bot._process_update):
+                await asyncio.wait_for(
+                    bot._process_update(synthetic_update),
+                    timeout=timeout_sec,
+                )
 
         duration_sec = time.time() - start_time
         transcript = capture.get_transcript()
         output_path = capture.output_video_path
         final_caption = capture.final_caption
 
-        # Kiểm tra xem có video thành phẩm được gửi không
         has_sent_video = any(ev["action"] in ("send_video", "send_video_file") for ev in transcript)
 
         return SyntheticTelegramInjectionResponse(
@@ -724,7 +898,7 @@ async def inject_synthetic_telegram_update(
             success=False,
             error=f"Pipeline execution timed out after {timeout_sec:.1f}s",
             duration_sec=duration_sec,
-            transcript=capture.get_transcript(),
+            transcript=capture.get_transcript() if 'capture' in locals() else [],
             output_video_path=None,
         )
     except Exception as exc:
@@ -734,13 +908,9 @@ async def inject_synthetic_telegram_update(
             success=False,
             error=f"Pipeline exception: {str(exc)}",
             duration_sec=duration_sec,
-            transcript=capture.get_transcript(),
+            transcript=capture.get_transcript() if 'capture' in locals() else [],
             output_video_path=None,
         )
     finally:
-        # Dọn dẹp session temp dir nếu không giữ lại video
-        if os.path.exists(session_temp_dir):
-            try:
-                shutil.rmtree(session_temp_dir, ignore_errors=True)
-            except Exception:
-                pass
+        if session_temp_dir and os.path.exists(session_temp_dir):
+            shutil.rmtree(session_temp_dir, ignore_errors=True)

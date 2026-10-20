@@ -266,19 +266,33 @@ class FullFrameOCRAuditor:
         except Exception:
             return False
 
-    def preprocess_for_ocr(self, frame_bgr: np.ndarray) -> np.ndarray:
-        """Zoom 2x, grayscale, CLAHE, morphological gradient."""
+    def preprocess_for_ocr(self, frame_bgr: np.ndarray) -> Tuple[np.ndarray, float]:
+        """Adaptive scaling for optimal OCR recognition (height 20-40px, max dim <= 1280)."""
         h, w = frame_bgr.shape[:2]
-        # Zoom 2x
-        zoomed = cv2.resize(frame_bgr, (w * 2, h * 2), interpolation=cv2.INTER_LINEAR)
+        max_dim = max(h, w)
+        if max_dim < 1000:
+            scale = 1000.0 / max_dim
+        elif max_dim > 1500:
+            scale = 1280.0 / max_dim
+        else:
+            scale = 1.0
+
+        if abs(scale - 1.0) > 0.05:
+            target_w = int(round(w * scale))
+            target_h = int(round(h * scale))
+            zoomed = cv2.resize(frame_bgr, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
+        else:
+            scale = 1.0
+            zoomed = frame_bgr
+
         gray = cv2.cvtColor(zoomed, cv2.COLOR_BGR2GRAY)
-        clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
         enhanced = clahe.apply(gray)
         # Morphological gradient to enhance strokes
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
         grad = cv2.morphologyEx(enhanced, cv2.MORPH_GRADIENT, kernel)
         combined = cv2.addWeighted(enhanced, 0.7, grad, 0.3, 0)
-        return combined
+        return combined, scale
 
     def extract_words(self, frame_bgr: np.ndarray) -> List[Dict[str, Any]]:
         """Run dual-PSM OCR and return words with confidence and bounding boxes."""
@@ -287,7 +301,7 @@ class FullFrameOCRAuditor:
 
         import pytesseract
 
-        preprocessed = self.preprocess_for_ocr(frame_bgr)
+        preprocessed, scale = self.preprocess_for_ocr(frame_bgr)
         words_found: List[Dict[str, Any]] = []
 
         # Run mode 11 (sparse text) and mode 6 (uniform block)
@@ -309,11 +323,11 @@ class FullFrameOCRAuditor:
                     if len(clean_text) >= self.min_len and conf >= self.conf_threshold:
                         if self.require_vowel and not any(c in self.vowels for c in clean_text.lower()):
                             continue
-                        # Normalize word position to original frame coords (divide by 2)
-                        x = int(data["left"][i] / 2.0)
-                        y = int(data["top"][i] / 2.0)
-                        bw = int(data["width"][i] / 2.0)
-                        bh = int(data["height"][i] / 2.0)
+                        # Normalize word position to original frame coords via scale
+                        x = int(data["left"][i] / scale)
+                        y = int(data["top"][i] / scale)
+                        bw = int(data["width"][i] / scale)
+                        bh = int(data["height"][i] / scale)
                         word_key = (clean_text.lower(), x // 15, y // 15)
                         if word_key not in seen_words:
                             seen_words.add(word_key)

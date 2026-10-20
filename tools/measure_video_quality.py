@@ -392,6 +392,8 @@ class TemporalConsistencyAuditor:
         if mask is None or np.count_nonzero(mask) == 0:
             return 0.0, 1.0, False
 
+        gray_t = cv2.cvtColor(frame_t, cv2.COLOR_BGR2GRAY)
+        gray_prev = cv2.cvtColor(frame_prev, cv2.COLOR_BGR2GRAY)
         h, w = gray_t.shape[:2]
         # Fast multi-scale flow calculation (downscale large frames for 200x speedup while preserving motion)
         flow_w = min(480, w)

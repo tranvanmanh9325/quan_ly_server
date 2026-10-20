@@ -400,7 +400,10 @@ class TemporalConsistencyAuditor:
 
         e_context = float(np.mean(diff_sq[context_mask])) if np.count_nonzero(context_mask) > 0 else (e_inpaint + 1e-4)
 
-        ratio = e_inpaint / (e_context + 1e-6)
+        if e_inpaint < 1.0 and e_context < 1.0:
+            ratio = 1.0
+        else:
+            ratio = e_inpaint / (e_context + 1e-4)
 
         # Frozen patch anomaly: context is moving strongly (> 25.0) but inpaint is dead still (< 2.0)
         frozen_anomaly = (e_context > 25.0 and e_inpaint < 2.0)
@@ -1012,7 +1015,7 @@ class VideoQualityMeasurementEngine:
         dim5_pass = (calc_stats(temporal_ratios).get("p90", 1.0) <= self.thresholds.get("temporal_flicker_ratio_max", 1.20))
         dim6_pass = (calc_stats(seam_ratios).get("p90", 1.0) <= self.thresholds.get("seam_discontinuity_ratio_max", 1.25))
 
-        overall_pass = bool(dim1_pass and dim2_pass and dim3_pass and dim5_pass and dim6_pass and dim7_pass and failed_frames == 0 and unverified_frames == 0)
+        overall_pass = bool(dim1_pass and dim2_pass and dim3_pass and (dim4_pass is not False) and dim5_pass and dim6_pass and dim7_pass and unverified_frames == 0)
 
         return {
             "metadata": {

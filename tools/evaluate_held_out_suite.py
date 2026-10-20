@@ -84,6 +84,7 @@ def evaluate_held_out(benchmark_dir: Path,
             output_video=clean_mp4,
             clean_gt=clean_mp4,
             gt_mask_dir=mask_dir,
+            baseline_video=clean_mp4,
             target_scope=target_scope,
             thresholds_path=thresholds_file,
             worst_k=1

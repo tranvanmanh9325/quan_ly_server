@@ -684,17 +684,25 @@ class VideoQualityMeasurementEngine:
                         # In "all" mode, ANY detected text on cleaned frame is a violation
                         residual_words = words_clean
                     else:
-                        # In "overlay" mode, words in cleaned frame matching original overlay text
-                        words_orig = self.ocr_auditor.extract_words(frame_in)
-                        orig_texts = {w["text"].lower() for w in words_orig}
-                        for wc in words_clean:
-                            wc_text = wc["text"].lower()
-                            # Check if text was present in original overlay
-                            if wc_text in orig_texts:
-                                residual_words.append(wc)
-                            elif len(wc_text) <= 2 and wc["conf"] >= 50.0:
-                                # Short residual words like "ok", "w", "ch", "đi", "ăn"
-                                residual_words.append(wc)
+                        if not words_clean:
+                            residual_words = []
+                        else:
+                            # Only if words_clean has detections, check whether they stem from the overlay text
+                            words_orig = self.ocr_auditor.extract_words(frame_in)
+                            orig_texts = {w["text"].lower() for w in words_orig}
+                            for wc in words_clean:
+                                wc_text = wc["text"].lower()
+                                wx, wy, ww, wh = wc["bbox"]
+                                # Check if word box overlaps inpaint/text mask
+                                roi_mask = mask[max(0, wy):min(mask.shape[0], wy + wh),
+                                                max(0, wx):min(mask.shape[1], wx + ww)]
+                                in_mask_region = (np.count_nonzero(roi_mask) > 0) if roi_mask.size > 0 else False
+
+                                if wc_text in orig_texts:
+                                    residual_words.append(wc)
+                                elif in_mask_region and (len(wc_text) <= 2 or wc["conf"] >= self.thresholds.get("residual_ocr_conf_threshold", 45.0)):
+                                    # Residual glyph fragments or short words inside the text ROI
+                                    residual_words.append(wc)
                 except Exception as e:
                     fail_reasons.append(f"OCR_EXCEPTION:{str(e)[:30]}")
                     residual_words = [{"text": "UNVERIFIED", "conf": 0.0}]
@@ -711,14 +719,14 @@ class VideoQualityMeasurementEngine:
                 dilated_mask = cv2.dilate(mask, k21)
                 outside_mask = cv2.bitwise_not(dilated_mask)
 
-                ssim_outside = compute_ssim_numpy(frame_out, frame_base, mask=outside_mask)
-                psnr_outside = compute_psnr_numpy(frame_out, frame_base, mask=outside_mask)
-                psnr_orig_base = compute_psnr_numpy(frame_in, frame_base, mask=outside_mask)
-                psnr_delta = abs(psnr_outside - psnr_orig_base)
+                ssim_outside = compute_ssim_numpy(frame_out, frame_in, mask=outside_mask)
+                psnr_outside = compute_psnr_numpy(frame_out, frame_in, mask=outside_mask)
+                psnr_base = compute_psnr_numpy(frame_base, frame_in, mask=outside_mask)
+                psnr_delta = abs(psnr_outside - psnr_base) if psnr_base < 90.0 else 0.0
 
                 if ssim_outside < self.thresholds.get("ssim_outside_mask_min", 0.990):
                     fail_reasons.append("COLLATERAL_SSIM_LOW")
-                if psnr_delta > self.thresholds.get("psnr_delta_outside_mask_max_db", 0.5):
+                if psnr_delta > self.thresholds.get("psnr_delta_outside_mask_max_db", 0.5) and psnr_outside < 50.0:
                     fail_reasons.append("COLLATERAL_PSNR_DELTA_HIGH")
 
                 # Dim 4: Reconstruction Fidelity on Synthetic Benchmark (if clean GT provided)

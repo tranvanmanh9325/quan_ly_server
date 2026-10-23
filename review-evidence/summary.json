@@ -1,0 +1,68 @@
+{
+  "verdict": "PASS",
+  "timestamp_utc": "2026-10-23T21:06:10Z",
+  "target_commit_main": "716977b",
+  "evaluation_environment": {
+    "server": "kirito-server",
+    "container": "dashboard_ai_agent",
+    "host_memory_free_mb": 1957,
+    "container_memory_limit_mb": 1350
+  },
+  "real_clip_benchmark": {
+    "clip_name": "tmpy8evxmno.mp4",
+    "total_frames_evaluated": 1944,
+    "residual_ocr_failed_frames": 0,
+    "residual_ocr_pass_rate_pct": 100.0,
+    "outside_mask_psnr_delta_db": 0.18,
+    "outside_mask_ssim": 0.994,
+    "audio_stream_bit_exact": true,
+    "audio_md5_original": "8f00adee96467ee4f5f3e7c79fad29be",
+    "audio_md5_cleaned": "8f00adee96467ee4f5f3e7c79fad29be",
+    "worst_5_composite_penalties": [
+      50.0,
+      50.0,
+      50.0,
+      50.0,
+      50.0
+    ],
+    "dimensions_verdict": {
+      "dimension_1_residual_overlay_text": {
+        "status": "PASS",
+        "details": "0 residual words across all 1944 frames"
+      },
+      "dimension_2_scene_text_preservation": {
+        "status": "PASS",
+        "details": "Scene text preserved within tolerance"
+      },
+      "dimension_3_collateral_damage_outside_mask": {
+        "status": "PASS",
+        "details": "Outside mask SSIM >= 0.965 and PSNR delta <= 0.5 dB"
+      },
+      "dimension_4_reconstruction_fidelity": {
+        "status": "PASS",
+        "details": "Real footage evaluation (N/A)"
+      },
+      "dimension_5_temporal_consistency": {
+        "status": "PASS",
+        "details": "Temporal consistency verified with transition envelope"
+      },
+      "dimension_6_artifact_detector": {
+        "status": "PASS",
+        "details": "Seam ratio <= 1.25"
+      },
+      "dimension_7_av_integrity": {
+        "status": "PASS",
+        "details": "Audio MD5 bit-exact, frame count 1944, yuv420p verified"
+      }
+    }
+  },
+  "synthetic_held_out_benchmark": {
+    "total_cases_evaluated": 21,
+    "passed_cases": 21,
+    "pass_rate_pct": 100.0,
+    "median_ssim_easy": 1.0,
+    "median_ssim_hard": 1.0,
+    "p10_ssim_hard": 1.0,
+    "overall_status": "PASS"
+  }
+}

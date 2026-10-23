@@ -1,0 +1,241 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "FrozenQualityThresholdsConfiguration",
+  "description": "Standard frozen thresholds configuration strictly calibrated on the Tuning dataset under Anti-Gaming Rule 2.",
+  "type": "object",
+  "metadata": {
+    "schema_version": "2.0.0",
+    "status": "FROZEN_LOCKED",
+    "calibration_dataset": "synthetic_tuning_set_v2",
+    "calibration_cases_count": 21,
+    "calibration_timestamp": "2026-10-21T00:00:00Z",
+    "rationale": "Empirical percentiles derived strictly on Tuning set to prevent data snooping."
+  },
+  "required": [
+    "residual_text_removal",
+    "outside_mask_preservation",
+    "reconstruction_fidelity",
+    "temporal_consistency",
+    "boundary_discontinuity",
+    "media_container_integrity",
+    "vision_critic_evaluation"
+  ],
+  "properties": {
+    "residual_text_removal": {
+      "type": "object",
+      "required": [
+        "residual_ocr_words_max",
+        "residual_ocr_conf_threshold",
+        "residual_ocr_min_word_length",
+        "residual_ocr_require_vowel",
+        "evaluation_scope"
+      ],
+      "properties": {
+        "residual_ocr_words_max": {
+          "type": "integer",
+          "const": 0,
+          "description": "Zero tolerance (0 words) across 100% evaluated frames."
+        },
+        "residual_ocr_conf_threshold": {
+          "type": "number",
+          "default": 45.0,
+          "description": "Standard Tesseract OCR confidence cutoff (no 86% widening)."
+        },
+        "residual_ocr_min_word_length": {
+          "type": "integer",
+          "default": 2,
+          "description": "Minimum characters to constitute an intelligible word syllable."
+        },
+        "residual_ocr_require_vowel": {
+          "type": "boolean",
+          "default": true,
+          "description": "Requires Vietnamese or Latin vowel to prevent high-frequency noise hallucination."
+        },
+        "evaluation_scope": {
+          "type": "string",
+          "const": "full_frame",
+          "description": "Exhaustive full frame OCR scan, NEVER restricted to diff ROI."
+        }
+      }
+    },
+    "outside_mask_preservation": {
+      "type": "object",
+      "required": [
+        "psnr_delta_outside_mask_max_db",
+        "ssim_outside_mask_min",
+        "scene_text_ssim_delta_max"
+      ],
+      "properties": {
+        "psnr_delta_outside_mask_max_db": {
+          "type": "number",
+          "maximum": 0.5,
+          "default": 0.5,
+          "description": "Collateral damage outside dilated mask must be <= 0.5 dB vs plain re-encode baseline."
+        },
+        "ssim_outside_mask_min": {
+          "type": "number",
+          "minimum": 0.990,
+          "default": 0.990,
+          "description": "Structural similarity outside mask must be >= 0.990 vs plain re-encode baseline."
+        },
+        "scene_text_ssim_delta_max": {
+          "type": "number",
+          "maximum": 0.02,
+          "default": 0.02,
+          "description": "Scene text SSIM degradation must not exceed 0.02 in overlay mode."
+        }
+      }
+    },
+    "reconstruction_fidelity": {
+      "type": "object",
+      "required": [
+        "reconstruction_ssim_median_easy",
+        "reconstruction_ssim_median_hard",
+        "reconstruction_ssim_p10_hard",
+        "reconstruction_psnr_median_easy_db",
+        "reconstruction_psnr_median_hard_db"
+      ],
+      "properties": {
+        "reconstruction_ssim_median_easy": {
+          "type": "number",
+          "minimum": 0.950,
+          "default": 0.950,
+          "description": "Median SSIM inside inpaint mask on easy synthetic set (static camera, smooth bg)."
+        },
+        "reconstruction_ssim_median_hard": {
+          "type": "number",
+          "minimum": 0.920,
+          "default": 0.920,
+          "description": "Median SSIM inside inpaint mask on hard synthetic set (moving camera, complex textures)."
+        },
+        "reconstruction_ssim_p10_hard": {
+          "type": "number",
+          "minimum": 0.850,
+          "default": 0.850,
+          "description": "10th percentile SSIM on hard cases (no severe collapse below 0.85)."
+        },
+        "reconstruction_psnr_median_easy_db": {
+          "type": "number",
+          "minimum": 34.0,
+          "default": 34.0
+        },
+        "reconstruction_psnr_median_hard_db": {
+          "type": "number",
+          "minimum": 30.0,
+          "default": 30.0
+        }
+      }
+    },
+    "temporal_consistency": {
+      "type": "object",
+      "required": [
+        "temporal_flicker_ratio_max",
+        "scene_cut_detector",
+        "max_exempted_cut_frames_pct"
+      ],
+      "properties": {
+        "temporal_flicker_ratio_max": {
+          "type": "number",
+          "maximum": 1.20,
+          "default": 1.20,
+          "description": "MSE of flow-warped diff in inpaint region <= 1.20x of surrounding untouched background."
+        },
+        "scene_cut_detector": {
+          "type": "string",
+          "default": "independent_hsv_histogram_diff"
+        },
+        "max_exempted_cut_frames_pct": {
+          "type": "number",
+          "maximum": 5.0,
+          "default": 5.0,
+          "description": "Maximum percentage of frames that can be exempted due to scene cuts."
+        }
+      }
+    },
+    "boundary_discontinuity": {
+      "type": "object",
+      "required": [
+        "seam_discontinuity_ratio_max",
+        "laplacian_texture_ratio_min"
+      ],
+      "properties": {
+        "seam_discontinuity_ratio_max": {
+          "type": "number",
+          "maximum": 1.25,
+          "default": 1.25,
+          "description": "Sobel gradient ratio across boundary band <= 1.25."
+        },
+        "laplacian_texture_ratio_min": {
+          "type": "number",
+          "minimum": 0.70,
+          "default": 0.70,
+          "description": "Texture variance ratio inside mask vs context >= 0.70."
+        }
+      }
+    },
+    "media_container_integrity": {
+      "type": "object",
+      "required": [
+        "audio_stream_md5_match",
+        "video_resolution_exact_match",
+        "video_fps_exact_match",
+        "video_frame_count_exact_match",
+        "video_pixel_format",
+        "faststart_flag_present"
+      ],
+      "properties": {
+        "audio_stream_md5_match": {
+          "type": "boolean",
+          "const": true,
+          "default": true,
+          "description": "Bit-exact stream copy verified via ffmpeg -c:a copy md5 hash."
+        },
+        "video_resolution_exact_match": {
+          "type": "boolean",
+          "const": true,
+          "default": true
+        },
+        "video_fps_exact_match": {
+          "type": "boolean",
+          "const": true,
+          "default": true
+        },
+        "video_frame_count_exact_match": {
+          "type": "boolean",
+          "const": true,
+          "default": true
+        },
+        "video_pixel_format": {
+          "type": "string",
+          "const": "yuv420p",
+          "default": "yuv420p"
+        },
+        "faststart_flag_present": {
+          "type": "boolean",
+          "const": true,
+          "default": true
+        }
+      }
+    },
+    "vision_critic_evaluation": {
+      "type": "object",
+      "required": [
+        "vision_llm_score_min",
+        "vision_llm_disallowed_artifacts"
+      ],
+      "properties": {
+        "vision_llm_score_min": {
+          "type": "integer",
+          "minimum": 4,
+          "maximum": 5,
+          "default": 4
+        },
+        "vision_llm_disallowed_artifacts": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": ["text_residue", "blur_smear", "warp", "seam_edge"]
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "frame_idx": 688,
+  "timestamp_sec": 22.933,
+  "is_scene_cut": false,
+  "residual_words_count": 1,
+  "residual_max_conf": 46.0,
+  "residual_text": "if",
+  "ssim_outside_mask": 0.9594,
+  "psnr_outside_mask": 32.62,
+  "ssim_scene_text": 1.0,
+  "reconstruction_ssim": null,
+  "reconstruction_psnr": null,
+  "temporal_flicker_mse": 351.76,
+  "temporal_inconsistency_ratio": 1.439,
+  "seam_discontinuity_ratio": 0.859,
+  "laplacian_texture_ratio": 2.221,
+  "penalty_score": 130.0,
+  "frame_status": "FAIL",
+  "fail_reasons": "RESIDUAL_TEXT_DETECTED;COLLATERAL_SSIM_LOW;TEMPORAL_FLICKER_HIGH",
+  "rank": 5
+}

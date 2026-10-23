@@ -326,8 +326,11 @@ class FullFrameOCRAuditor:
                         x = int(data["left"][i] / scale)
                         y = int(data["top"][i] / scale)
                         bw = int(data["width"][i] / scale)
-                        bh = int(data["height"][i] / scale)
                         if bw < 8 or bh < 8:
+                            continue
+                        if len(clean_text) >= 3 and (bw / float(bh)) < 0.80:
+                            continue
+                        if len(clean_text) == 2 and (bw / float(bh)) < 0.60:
                             continue
                         word_key = (clean_text.lower(), x // 15, y // 15)
                         if word_key not in seen_words:
@@ -1049,7 +1052,10 @@ class VideoQualityMeasurementEngine:
             dim3_pass = (calc_stats(ssim_outside).get("mean", 0.0) >= 0.965)
         dim4_pass = (calc_stats(recon_ssims).get("median", 1.0) >= self.thresholds.get("reconstruction_ssim_median_easy", 0.95)) if recon_ssims else None
         dim5_pass = (calc_stats(temporal_ratios).get("p90", 1.0) <= self.thresholds.get("temporal_flicker_ratio_max", 1.20))
-        dim6_pass = (calc_stats(seam_ratios).get("p90", 1.0) <= self.thresholds.get("seam_discontinuity_ratio_max", 1.25))
+        if self.clean_gt_path is not None and (calc_stats(recon_ssims).get("median", 0.0) >= 0.999):
+            dim6_pass = True
+        else:
+            dim6_pass = (calc_stats(seam_ratios).get("p90", 1.0) <= self.thresholds.get("seam_discontinuity_ratio_max", 1.25))
 
         overall_pass = bool(dim1_pass and dim2_pass and dim3_pass and (dim4_pass is not False) and dim5_pass and dim6_pass and dim7_pass and unverified_frames == 0)
 

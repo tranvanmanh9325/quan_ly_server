@@ -89,7 +89,7 @@ def render_preview(
             output_file=output_path,
             progress_callback=progress,
             target_regions=target_regions,
-            target_scope="overlay_only",
+            target_scope="overlay",
         )
     except Exception as e:
         print(f"[ERROR] Pipeline rendering failed: {e}", file=sys.stderr, flush=True)

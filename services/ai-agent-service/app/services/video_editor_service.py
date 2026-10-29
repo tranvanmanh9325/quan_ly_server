@@ -1829,7 +1829,7 @@ class VideoEditorService:
                         motion_type = "overlay"
 
                 # Filter by target_scope: if 'overlay', skip scene text; if 'all', preserve all
-                if target_scope == "overlay" and motion_type == "scene":
+                if target_scope in ("overlay", "overlay_only") and motion_type == "scene":
                     continue
 
                 results.append({
@@ -2947,7 +2947,7 @@ class VideoEditorService:
             # When target_regions is provided, only process subtitle if an overlay subtitle is active.
             has_sub_in_scope = True
             active_sub_bounding_boxes = []
-            if target_regions and target_scope == "overlay":
+            if target_regions and target_scope in ("overlay", "overlay_only"):
                 active_subs = [
                     r for r in target_regions
                     if (r.get("type") == "subtitle" or not r.get("is_static", False))
@@ -4520,7 +4520,7 @@ class VideoEditorService:
         target_regions: Optional[List[Dict[str, Any]]] = None,
         enable_critique: bool = False,
         context: Optional[VideoJobContext] = None,
-        target_scope: str = "overlay_only",
+        target_scope: str = "overlay",
     ) -> None:
         """
         Quy trình xử lý hoàn chỉnh toàn bộ frames video:

@@ -26,7 +26,7 @@ import shutil
 _TOOLS_DIR = Path(__file__).resolve().parent
 _REPO_ROOT = _TOOLS_DIR.parent
 _SERVICE_ROOT = _REPO_ROOT / "services" / "ai-agent-service"
-for p in [_TOOLS_DIR, _SERVICE_ROOT, _SERVICE_ROOT / "app"]:
+for p in [_TOOLS_DIR, Path("/app"), _SERVICE_ROOT, _SERVICE_ROOT / "app"]:
     if str(p) not in sys.path:
         sys.path.insert(0, str(p))
 

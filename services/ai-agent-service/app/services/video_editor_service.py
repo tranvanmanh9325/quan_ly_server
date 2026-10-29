@@ -4620,7 +4620,7 @@ class VideoEditorService:
                     pass
                 return kidx
 
-            with ThreadPoolExecutor(max_workers=4) as pool:
+            with ThreadPoolExecutor(max_workers=2) as pool:
                 futures = [pool.submit(inpaint_worker, kidx) for kidx in raw_kfs.keys()]
                 for fut in futures:
                     if cancel_event is not None and getattr(cancel_event, "is_set", lambda: False)():

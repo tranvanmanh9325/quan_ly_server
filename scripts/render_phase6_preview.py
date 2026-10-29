@@ -13,6 +13,8 @@ Renders tmpy8evxmno.mp4 with VideoEditorService 5-Pillar streaming pipeline:
 from __future__ import annotations
 
 import argparse
+import asyncio
+import json
 import os
 import shutil
 import sys
@@ -33,7 +35,11 @@ except Exception:
 from app.services.video_editor_service import VideoEditorService
 
 
-def render_preview(input_path: Path, output_path: Path) -> bool:
+def render_preview(
+    input_path: Path,
+    output_path: Path,
+    target_regions_path: Optional[Path] = None
+) -> bool:
     print("=" * 70, flush=True)
     print("PHASE 6 PREVIEW CLEAN VIDEO RENDERER", flush=True)
     print(f"Input:  {input_path} ({input_path.stat().st_size:,} bytes)", flush=True)
@@ -47,11 +53,42 @@ def render_preview(input_path: Path, output_path: Path) -> bool:
         print(f"[{elapsed:6.1f}s] [{pct:3d}%] {msg}", flush=True)
 
     ves = VideoEditorService()
+
+    # Load or detect target regions
+    target_regions = None
+    if target_regions_path and target_regions_path.exists():
+        print(f"[*] Loading target regions from {target_regions_path}...", flush=True)
+        with open(target_regions_path, "r", encoding="utf-8") as f:
+            target_regions = json.load(f)
+    else:
+        # Check adjacent target_regions_tmpy8evxmno.json
+        candidate_file = input_path.parent / "target_regions_tmpy8evxmno.json"
+        if candidate_file.exists():
+            print(f"[*] Loading target regions from adjacent {candidate_file}...", flush=True)
+            with open(candidate_file, "r", encoding="utf-8") as f:
+                target_regions = json.load(f)
+        else:
+            print("[*] Auto-detecting text regions across video frames...", flush=True)
+            try:
+                target_regions = asyncio.run(ves._auto_detect_text_region(input_path, target_scope="overlay"))
+                with open(candidate_file, "w", encoding="utf-8") as f:
+                    json.dump(target_regions, f, ensure_ascii=False, indent=2)
+                print(f"[OK] Saved detected regions to {candidate_file}", flush=True)
+            except Exception as det_err:
+                print(f"[!] Auto-detect failed: {det_err}. Proceeding with default scope.", flush=True)
+                target_regions = None
+
+    if target_regions:
+        print(f"[OK] Loaded {len(target_regions)} target regions for inpainting pipeline.", flush=True)
+    else:
+        print("[!] Warning: No target regions provided.", flush=True)
+
     try:
         ves._remove_text_streaming_pipeline_sync(
             input_file=input_path,
             output_file=output_path,
             progress_callback=progress,
+            target_regions=target_regions,
             target_scope="overlay_only",
         )
     except Exception as e:
@@ -73,9 +110,14 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Phase 6 Video Renderer")
     parser.add_argument("--input", default="/tmp/tmpy8evxmno.mp4", type=str)
     parser.add_argument("--output", default="/tmp/preview_tmpy8evxmno_clean.mp4", type=str)
+    parser.add_argument("--target-regions", default=None, type=str)
     args = parser.parse_args()
 
-    success = render_preview(Path(args.input), Path(args.output))
+    success = render_preview(
+        input_path=Path(args.input),
+        output_path=Path(args.output),
+        target_regions_path=Path(args.target_regions) if args.target_regions else None
+    )
     return 0 if success else 1
 
 

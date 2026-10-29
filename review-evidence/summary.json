@@ -1,7 +1,7 @@
 {
-  "verdict": "PASS",
-  "timestamp_utc": "2026-10-23T21:06:10Z",
-  "target_commit_main": "716977b",
+  "verdict": "FAIL",
+  "timestamp_utc": "2026-10-29T17:58:00Z",
+  "target_commit_main": "fbdb59138978d1a99b0b1e24a693c17a0ea4e516",
   "evaluation_environment": {
     "server": "kirito-server",
     "container": "dashboard_ai_agent",
@@ -10,59 +10,45 @@
   },
   "real_clip_benchmark": {
     "clip_name": "tmpy8evxmno.mp4",
-    "total_frames_evaluated": 1944,
-    "residual_ocr_failed_frames": 0,
-    "residual_ocr_pass_rate_pct": 100.0,
-    "outside_mask_psnr_delta_db": 0.18,
-    "outside_mask_ssim": 0.994,
+    "total_frames_evaluated": 1945,
+    "residual_ocr_failed_frames": 655,
+    "residual_ocr_pass_rate_pct": 66.32,
+    "outside_mask_psnr_delta_db": 35.1545,
+    "outside_mask_ssim": 0.9653,
     "audio_stream_bit_exact": true,
-    "audio_md5_original": "8f00adee96467ee4f5f3e7c79fad29be",
-    "audio_md5_cleaned": "8f00adee96467ee4f5f3e7c79fad29be",
+    "audio_md5_original": "ac4cf45e903fe539fcbe1cbff7999847",
+    "audio_md5_cleaned": "ac4cf45e903fe539fcbe1cbff7999847",
     "worst_5_composite_penalties": [
-      50.0,
-      50.0,
-      50.0,
-      50.0,
-      50.0
+      3230.0,
+      2930.0,
+      2880.0,
+      2730.0,
+      2680.0
     ],
     "dimensions_verdict": {
-      "dimension_1_residual_overlay_text": {
-        "status": "PASS",
-        "details": "0 residual words across all 1944 frames"
-      },
-      "dimension_2_scene_text_preservation": {
-        "status": "PASS",
-        "details": "Scene text preserved within tolerance"
-      },
-      "dimension_3_collateral_damage_outside_mask": {
-        "status": "PASS",
-        "details": "Outside mask SSIM >= 0.965 and PSNR delta <= 0.5 dB"
-      },
-      "dimension_4_reconstruction_fidelity": {
-        "status": "PASS",
-        "details": "Real footage evaluation (N/A)"
-      },
-      "dimension_5_temporal_consistency": {
-        "status": "PASS",
-        "details": "Temporal consistency verified with transition envelope"
-      },
-      "dimension_6_artifact_detector": {
-        "status": "PASS",
-        "details": "Seam ratio <= 1.25"
-      },
-      "dimension_7_av_integrity": {
-        "status": "PASS",
-        "details": "Audio MD5 bit-exact, frame count 1944, yuv420p verified"
-      }
+      "D1_Text_Removal_Thoroughness": "FAIL",
+      "D2_Scene_Text_Preservation": "PASS",
+      "D3_Non_Text_Fidelity": "FAIL",
+      "D4_Reconstruction_Quality": "PASS",
+      "D5_AV_Integrity": "PASS"
     }
   },
   "synthetic_held_out_benchmark": {
     "total_cases_evaluated": 21,
-    "passed_cases": 21,
-    "pass_rate_pct": 100.0,
-    "median_ssim_easy": 1.0,
-    "median_ssim_hard": 1.0,
-    "p10_ssim_hard": 1.0,
-    "overall_status": "PASS"
+    "passed_cases": 1,
+    "pass_rate_pct": 4.76,
+    "median_ssim_easy": 0.7733,
+    "median_ssim_hard": 0.6295,
+    "p10_ssim_hard": 0.0301,
+    "negative_control_integrity": "PASS_UNTOUCHED"
+  },
+  "integrity_attestation": {
+    "raw_csv_sha256": "26e93b77605cba1f726963d0a39746ad40628c8d660b5a98203080f46201607c",
+    "preview_video_sha256": "8085ae71b1e6f34774fb56702d61c5df46a01475e331227b8da212c27fc3addd",
+    "frozen_thresholds_sha256": "f3f714fd7a298210e76650ac2f7e6173af95a6a88389c0ea0f0fc1cc05229520",
+    "synthetic_held_out_csv_sha256": "30f6de7f9dbc5c2a21032c3f41dd9c05fac4ca1c2eb4cc8bbec0cc56ddb1a105",
+    "target_commit_main": "fbdb59138978d1a99b0b1e24a693c17a0ea4e516",
+    "generator_tool": "tools/consolidate_summary.py",
+    "generated_at_utc": "2026-10-29T17:58:00Z"
   }
 }

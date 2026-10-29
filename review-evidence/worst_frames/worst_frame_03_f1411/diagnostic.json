@@ -1,0 +1,21 @@
+{
+  "frame_idx": 1411,
+  "timestamp_sec": 47.033,
+  "is_scene_cut": false,
+  "residual_words_count": 28,
+  "residual_max_conf": 92.0,
+  "residual_text": "eo;releteon;fonts;ob;ag;car;font;packegelockjson;card;packagejson;READMEmd;btnsecondary;vereeljson;b",
+  "ssim_outside_mask": 0.9645,
+  "psnr_outside_mask": 36.23,
+  "ssim_scene_text": 1.0,
+  "reconstruction_ssim": null,
+  "reconstruction_psnr": null,
+  "temporal_flicker_mse": 113.98,
+  "temporal_inconsistency_ratio": 8.373,
+  "seam_discontinuity_ratio": 0.892,
+  "laplacian_texture_ratio": 0.296,
+  "penalty_score": 2880.0,
+  "frame_status": "FAIL",
+  "fail_reasons": "RESIDUAL_TEXT_DETECTED;COLLATERAL_SSIM_LOW;TEMPORAL_FLICKER_HIGH;TEXTURE_SMEAR_LOW",
+  "rank": 3
+}

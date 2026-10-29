@@ -1,0 +1,21 @@
+{
+  "frame_idx": 1426,
+  "timestamp_sec": 47.533,
+  "is_scene_cut": false,
+  "residual_words_count": 27,
+  "residual_max_conf": 96.0,
+  "residual_text": "Window;Help;eo;assets;tý;số;font;an;websit;card;backgrounds;card;packagejson;backgroun;READMEmd;ba;b",
+  "ssim_outside_mask": 0.951,
+  "psnr_outside_mask": 34.04,
+  "ssim_scene_text": 1.0,
+  "reconstruction_ssim": null,
+  "reconstruction_psnr": null,
+  "temporal_flicker_mse": 12004.17,
+  "temporal_inconsistency_ratio": 9.402,
+  "seam_discontinuity_ratio": 1.142,
+  "laplacian_texture_ratio": 3.609,
+  "penalty_score": 2730.0,
+  "frame_status": "FAIL",
+  "fail_reasons": "RESIDUAL_TEXT_DETECTED;COLLATERAL_SSIM_LOW;TEMPORAL_FLICKER_HIGH",
+  "rank": 4
+}

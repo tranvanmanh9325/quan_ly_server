@@ -89,15 +89,42 @@ def evaluate_held_out(benchmark_dir: Path,
         "reconstruction_psnr_median", "audio_match", "case_status", "fail_reasons"
     ]
 
-    csv_f = open(output_csv, "w", newline="", encoding="utf-8")
-    writer = csv.DictWriter(csv_f, fieldnames=fieldnames)
-    writer.writeheader()
-
     all_passed = True
     easy_ssims: List[float] = []
     hard_ssims: List[float] = []
+    evaluated_cases = set()
+
+    if output_csv.exists() and output_csv.stat().st_size > 50:
+        with open(output_csv, "r", encoding="utf-8") as existing_f:
+            reader = csv.DictReader(existing_f)
+            for r in reader:
+                results.append(r)
+                evaluated_cases.add(r["case_id"])
+                if r.get("case_status") != "PASS":
+                    all_passed = False
+                recon_raw = r.get("reconstruction_ssim_median")
+                if recon_raw:
+                    try:
+                        recon_val = float(recon_raw)
+                        cat = r.get("category", "")
+                        if "camera" in cat or "temporal" in cat:
+                            hard_ssims.append(recon_val)
+                        else:
+                            easy_ssims.append(recon_val)
+                    except ValueError:
+                        pass
+        csv_f = open(output_csv, "a", newline="", encoding="utf-8")
+        writer = csv.DictWriter(csv_f, fieldnames=fieldnames)
+        print(f"[*] Resuming evaluation. {len(evaluated_cases)} cases already evaluated: {sorted(evaluated_cases)}")
+    else:
+        csv_f = open(output_csv, "w", newline="", encoding="utf-8")
+        writer = csv.DictWriter(csv_f, fieldnames=fieldnames)
+        writer.writeheader()
 
     for idx, case_id in enumerate(cases, start=1):
+        if case_id in evaluated_cases:
+            print(f"[{idx}/{len(cases)}] [SKIP] Already evaluated: {case_id}")
+            continue
         case_path = held_out_dir / case_id
         clean_mp4 = case_path / "clean.mp4"
         text_mp4 = case_path / "text.mp4"

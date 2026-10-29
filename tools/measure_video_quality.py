@@ -1060,13 +1060,18 @@ class VideoQualityMeasurementEngine:
 
         dim1_pass = (max(res_counts, default=0) <= self.thresholds.get("residual_ocr_words_max", 0))
         dim2_pass = True  # Scene text preservation
+        p10_ssim_out = calc_stats(ssim_outside).get("p10")
+        mean_ssim_out = calc_stats(ssim_outside).get("mean")
         if self.clean_gt_path is not None:
-            dim3_pass = (calc_stats(ssim_outside).get("p10", 0.0) >= self.thresholds.get("ssim_outside_mask_min", 0.990))
+            dim3_pass = (p10_ssim_out is not None and p10_ssim_out >= self.thresholds.get("ssim_outside_mask_min", 0.990))
         else:
-            dim3_pass = (calc_stats(ssim_outside).get("mean", 0.0) >= 0.965)
-        dim4_pass = (calc_stats(recon_ssims).get("median", 1.0) >= self.thresholds.get("reconstruction_ssim_median_easy", 0.95)) if recon_ssims else None
-        dim5_pass = (calc_stats(temporal_ratios).get("p90", 1.0) <= self.thresholds.get("temporal_flicker_ratio_max", 1.20))
-        dim6_pass = (calc_stats(seam_ratios).get("p90", 1.0) <= self.thresholds.get("seam_discontinuity_ratio_max", 1.25))
+            dim3_pass = (mean_ssim_out is not None and mean_ssim_out >= 0.965)
+        med_recon = calc_stats(recon_ssims).get("median")
+        dim4_pass = (med_recon is not None and med_recon >= self.thresholds.get("reconstruction_ssim_median_easy", 0.95)) if recon_ssims else None
+        p90_temp = calc_stats(temporal_ratios).get("p90")
+        dim5_pass = (p90_temp is not None and p90_temp <= self.thresholds.get("temporal_flicker_ratio_max", 1.20))
+        p90_seam = calc_stats(seam_ratios).get("p90")
+        dim6_pass = (p90_seam is not None and p90_seam <= self.thresholds.get("seam_discontinuity_ratio_max", 1.25))
 
         overall_pass = bool(dim1_pass and dim2_pass and dim3_pass and (dim4_pass is not False) and dim5_pass and dim6_pass and dim7_pass and unverified_frames == 0)
 

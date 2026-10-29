@@ -209,12 +209,12 @@ def verify_evidence_package(
     preview_mp4 = evidence_dir / "preview_tmpy8evxmno_clean.mp4"
     real_bench = summary_data.get("real_clip_benchmark", {})
     expected_bit_exact = real_bench.get("audio_stream_bit_exact")
-    expected_clean_md5 = real_bench.get("audio_md5_cleaned")
-    expected_orig_md5 = real_bench.get("audio_md5_original")
+    expected_clean_audio_md5 = real_bench.get("audio_md5_cleaned")
+    expected_orig_audio_md5 = real_bench.get("audio_md5_original")
 
     if preview_mp4.is_file():
         actual_clean_audio_md5 = get_audio_stream_md5(preview_mp4)
-        if actual_clean_audio_md5 and expected_clean_md5:
+        if actual_clean_audio_md5 and expected_clean_audio_md5:
             if actual_clean_audio_md5.lower() != expected_clean_audio_md5.lower():
                 errors.append(f"Clean audio MD5 mismatch: actual stream={actual_clean_audio_md5} != summary.json={expected_clean_audio_md5}")
 
@@ -233,9 +233,9 @@ def verify_evidence_package(
 
     if orig_vid and orig_vid.is_file():
         actual_orig_audio_md5 = get_audio_stream_md5(orig_vid)
-        if actual_orig_audio_md5 and expected_orig_md5:
+        if actual_orig_audio_md5 and expected_orig_audio_md5:
             if actual_orig_audio_md5.lower() != expected_orig_audio_md5.lower():
-                errors.append(f"Original audio MD5 mismatch: actual stream={actual_orig_audio_md5} != summary.json={expected_orig_md5}")
+                errors.append(f"Original audio MD5 mismatch: actual stream={actual_orig_audio_md5} != summary.json={expected_orig_audio_md5}")
 
         if preview_mp4.is_file():
             actual_clean_audio_md5 = get_audio_stream_md5(preview_mp4)

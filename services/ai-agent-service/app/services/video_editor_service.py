@@ -1797,9 +1797,7 @@ class VideoEditorService:
                 # Objective Dual-Tier Text Classification (Temporal Persistence Ratio)
                 hits = s.get("hits", 1)
                 persistence_ratio = (hits / total_sample_count) if total_sample_count > 0 else 1.0
-                is_persistent = persistence_ratio >= 0.70
-                is_in_title_zone = (s["y"] + s["h"] / 2.0) <= 0.45 * frame_h
-                is_persistent_title = is_persistent and is_in_title_zone
+                is_persistent_title = persistence_ratio >= 0.70
 
                 seg_type = "title" if is_persistent_title else "subtitle"
                 is_static = bool(is_persistent_title)
@@ -2913,7 +2911,6 @@ class VideoEditorService:
             title_regions = [
                 r for r in target_regions
                 if (r.get("type") == "title" or r.get("is_static", False))
-                and (int(r.get("y", 0)) + int(r.get("h", 0)) / 2.0) <= 0.45 * h
             ]
             for tr in title_regions:
                 tx = max(0, int(tr.get("x", 0)))
@@ -2944,10 +2941,9 @@ class VideoEditorService:
                 title_regs = [
                     r for r in target_regions
                     if (r.get("type") == "title" or r.get("is_static", False))
-                    and (int(r.get("y", 0)) + int(r.get("h", 0)) / 2.0) <= 0.45 * h
                 ]
                 if title_regs:
-                    title_max_y = min(int(0.48 * h), max(int(r.get("y", 0)) + int(r.get("h", 0)) for r in title_regs) + int(0.02 * h))
+                    title_max_y = max(int(r.get("y", 0)) + int(r.get("h", 0)) for r in title_regs) + max(4, int(0.02 * h))
 
             # Pillar 1 (Scene Text Guard): In 'overlay' mode, protect scene text (e.g. laptop code text F1400-F1422).
             # When target_regions is provided, only process subtitle if an overlay subtitle is active.
@@ -2956,7 +2952,7 @@ class VideoEditorService:
             if target_regions and target_scope in ("overlay", "overlay_only"):
                 active_subs = [
                     r for r in target_regions
-                    if (r.get("type") == "subtitle" or not r.get("is_static", False) or (int(r.get("y", 0)) + int(r.get("h", 0)) / 2.0) > 0.45 * h)
+                    if (r.get("type") == "subtitle" or not r.get("is_static", False))
                     and r.get("frame_start", 0) <= frame_idx <= r.get("frame_end", 0)
                 ]
                 has_sub_in_scope = (len(active_subs) > 0)
@@ -3698,15 +3694,30 @@ class VideoEditorService:
             title_regions = [
                 r for r in target_regions
                 if (r.get("type") == "title" or r.get("is_static", False))
-                and (int(r.get("y", 0)) + int(r.get("h", 0)) / 2.0) <= 0.45 * h
             ]
             if title_regions:
+                # Phân cụm động các dòng tiêu đề liên tục theo khoảng cách dọc để cô lập khối tiêu đề chính
+                sorted_titles = sorted(title_regions, key=lambda r: int(r.get("y", 0)))
+                primary_cluster = [sorted_titles[0]]
+                for tr in sorted_titles[1:]:
+                    prev = primary_cluster[-1]
+                    gap = int(tr.get("y", 0)) - (int(prev.get("y", 0)) + int(prev.get("h", 0)))
+                    max_gap = max(24, int(1.5 * max(int(prev.get("h", 0)), int(tr.get("h", 0)))))
+                    if gap <= max_gap:
+                        primary_cluster.append(tr)
+                    else:
+                        break  # Tách biệt khỏi cụm tiêu đề chính
+
                 pad_x = max(16, int(0.02 * w))
                 pad_y = max(16, int(0.02 * h))
-                hx1 = max(0, min(int(r.get("x", 0)) for r in title_regions) - pad_x)
-                hy1 = max(0, min(int(r.get("y", 0)) for r in title_regions) - pad_y)
-                hx2 = min(w, max(int(r.get("x", 0)) + int(r.get("w", 0)) for r in title_regions) + pad_x)
-                hy2 = min(int(0.48 * h), max(int(r.get("y", 0)) + int(r.get("h", 0)) for r in title_regions) + pad_y)
+                hx1 = max(0, min(int(r.get("x", 0)) for r in primary_cluster) - pad_x)
+                hy1 = max(0, min(int(r.get("y", 0)) for r in primary_cluster) - pad_y)
+                hx2 = min(w, max(int(r.get("x", 0)) + int(r.get("w", 0)) for r in primary_cluster) + pad_x)
+                hy2 = min(h, max(int(r.get("y", 0)) + int(r.get("h", 0)) for r in primary_cluster) + pad_y)
+
+                # Trần bảo vệ an toàn bộ nhớ: diện tích Title ROI không vượt quá 30% diện tích khung hình
+                if (hx2 - hx1) * (hy2 - hy1) > 0.30 * (w * h):
+                    hy2 = min(h, hy1 + int(0.30 * h))
 
         if hy2 <= hy1 or hx2 <= hx1:
             hy1, hy2, hx1, hx2 = 0, 1, 0, 1
@@ -4255,7 +4266,6 @@ class VideoEditorService:
             "-crf", "23",
             "-pix_fmt", "yuv420p",
             "-c:a", "copy",
-            "-shortest",
             "-movflags", "+faststart",
             str(target_output_video),
         ]
@@ -4707,7 +4717,6 @@ class VideoEditorService:
                 *v_opts,
                 "-pix_fmt", "yuv420p",
                 *audio_opts,
-                "-shortest",
                 "-movflags", "+faststart",
                 str(output_file),
             ]

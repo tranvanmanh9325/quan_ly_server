@@ -17,9 +17,32 @@ import asyncio
 import json
 import os
 import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+
+def get_audio_stream_md5(video_path: Path) -> Optional[str]:
+    """Trích xuất MD5 của audio stream 0:a:0 bằng FFmpeg."""
+    if not video_path.is_file():
+        return None
+    try:
+        cmd = [
+            "ffmpeg", "-v", "error",
+            "-i", str(video_path),
+            "-map", "0:a:0?",
+            "-c", "copy",
+            "-f", "md5", "-"
+        ]
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        out = res.stdout.strip()
+        if "MD5=" in out:
+            return out.split("MD5=")[-1].strip().lower()
+        return out.lower() if len(out) == 32 else None
+    except Exception:
+        return None
 
 # Add paths
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -97,6 +120,18 @@ def render_preview(
 
     elapsed_total = time.time() - start_t
     if output_path.exists() and output_path.stat().st_size > 1000:
+        # Kiểm tra tính toàn vẹn Bit-Exact Audio Stream
+        orig_audio_md5 = get_audio_stream_md5(input_path)
+        clean_audio_md5 = get_audio_stream_md5(output_path)
+        print(f"[*] Audio Integrity Audit:", flush=True)
+        print(f"    - Original Audio MD5: {orig_audio_md5}", flush=True)
+        print(f"    - Cleaned Audio MD5:  {clean_audio_md5}", flush=True)
+        if orig_audio_md5 and clean_audio_md5:
+            if orig_audio_md5 != clean_audio_md5:
+                print(f"[ERROR] Audio stream MD5 mismatch! Preservation failed ({orig_audio_md5} != {clean_audio_md5})", file=sys.stderr, flush=True)
+                return False
+            print(f"[OK] Audio stream bit-exact verified (100% match)!", flush=True)
+
         print("=" * 70, flush=True)
         print(f"[OK] Render completed in {elapsed_total:.1f}s! Size: {output_path.stat().st_size:,} bytes", flush=True)
         print("=" * 70, flush=True)

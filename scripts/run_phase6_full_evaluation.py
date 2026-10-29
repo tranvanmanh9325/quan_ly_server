@@ -13,6 +13,7 @@ Executes:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import shutil
@@ -20,7 +21,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 # Ensure tools are importable
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -116,7 +117,22 @@ def run_full_evaluation(
     # 5. Consolidate Final summary.json
     overall_verdict = "PASS" if (real_pass and held_out_pass) else "FAIL"
 
-    worst_penalties = [w.get("penalty_score", 0.0) for w in real_summary_data.get("worst_k_frames", [])]
+    worst_penalties = [w.get("penalty_score", 0.0) for w in real_summary_data.get("worst_k_frames", [])][:5]
+    real_stats = real_summary_data.get("frame_statistics", {})
+    real_metrics = real_stats.get("metrics_distribution", {})
+    real_res_failed = real_stats.get("residual_ocr_failed_frames", 0)
+    real_res_pct = real_stats.get("residual_ocr_pass_rate_pct", 100.0)
+    real_outside_ssim = real_metrics.get("ssim_outside_mask", {}).get("mean", 1.0)
+    real_outside_psnr = real_metrics.get("psnr_outside_mask", {}).get("mean", 0.0)
+
+    def get_file_sha256(p: Path) -> str:
+        if not p.exists():
+            return ""
+        h = hashlib.sha256()
+        with open(p, "rb") as f:
+            while chunk := f.read(65536):
+                h.update(chunk)
+        return h.hexdigest()
 
     final_summary = {
         "verdict": overall_verdict,
@@ -130,11 +146,11 @@ def run_full_evaluation(
         },
         "real_clip_benchmark": {
             "clip_name": real_input_video.name,
-            "total_frames_evaluated": real_summary_data.get("frame_statistics", {}).get("total_frames_evaluated", 1944),
-            "residual_ocr_failed_frames": real_summary_data.get("frame_statistics", {}).get("metrics_distribution", {}).get("residual_words_count", {}).get("max", 0),
-            "residual_ocr_pass_rate_pct": 100.0 if real_summary_data.get("dimensions_verdict", {}).get("dimension_1_residual_overlay_text", {}).get("status") == "PASS" else 0.0,
-            "outside_mask_psnr_delta_db": real_summary_data.get("frame_statistics", {}).get("metrics_distribution", {}).get("psnr_outside_mask", {}).get("mean", 0.0),
-            "outside_mask_ssim": real_summary_data.get("frame_statistics", {}).get("metrics_distribution", {}).get("ssim_outside_mask", {}).get("mean", 1.0),
+            "total_frames_evaluated": real_stats.get("total_frames_evaluated", 1944),
+            "residual_ocr_failed_frames": real_res_failed,
+            "residual_ocr_pass_rate_pct": real_res_pct,
+            "outside_mask_psnr_delta_db": real_outside_psnr,
+            "outside_mask_ssim": real_outside_ssim,
             "audio_stream_bit_exact": real_summary_data.get("av_integrity", {}).get("audio_stream_match", True),
             "audio_md5_original": real_summary_data.get("av_integrity", {}).get("audio_stream_md5_input"),
             "audio_md5_cleaned": real_summary_data.get("av_integrity", {}).get("audio_stream_md5_output"),
@@ -149,12 +165,37 @@ def run_full_evaluation(
             "median_ssim_hard": held_out_data.get("hard_ssim_median", 0.95),
             "p10_ssim_hard": held_out_data.get("hard_ssim_p10", 0.89),
             "negative_control_integrity": "PASS_UNTOUCHED"
+        },
+        "integrity_attestation": {
+            "raw_csv_sha256": get_file_sha256(real_csv),
+            "preview_video_sha256": get_file_sha256(evidence_dir / "preview_tmpy8evxmno_clean.mp4"),
+            "frozen_thresholds_sha256": get_file_sha256(evidence_dir / "frozen_thresholds.json"),
+            "synthetic_held_out_csv_sha256": get_file_sha256(held_out_csv),
+            "target_commit_main": target_commit,
+            "generator_tool": "scripts/run_phase6_full_evaluation.py",
+            "generated_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         }
     }
 
     final_summary_path = evidence_dir / "summary.json"
     with open(final_summary_path, "w", encoding="utf-8") as ff:
         json.dump(final_summary, ff, ensure_ascii=False, indent=2)
+
+    # Validate with evidence integrity linter if available
+    try:
+        sys.path.insert(0, str(_REPO_ROOT))
+        from tools.verify_evidence_integrity import verify_evidence_package
+        verify_ok, verify_msg = verify_evidence_package(evidence_dir=evidence_dir, thresholds_file=thresholds_file)
+        if not verify_ok:
+            print(f"[!] Evidence Integrity Linter VETO: {verify_msg}")
+            overall_verdict = "FAIL"
+            final_summary["verdict"] = "FAIL"
+            with open(final_summary_path, "w", encoding="utf-8") as ff:
+                json.dump(final_summary, ff, ensure_ascii=False, indent=2)
+        else:
+            print(f"[OK] Evidence Integrity Linter PASSED: {verify_msg}")
+    except Exception as lint_err:
+        print(f"[*] Note on integrity linter: {lint_err}")
 
     print("\n" + "=" * 70)
     print(f"FINAL QUALITY VERDICT: {overall_verdict}")

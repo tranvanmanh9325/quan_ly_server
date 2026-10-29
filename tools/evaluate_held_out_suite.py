@@ -18,12 +18,49 @@ from typing import Any, Dict, List
 
 import numpy as np
 
-# Add tools to sys.path
+import asyncio
+import gc
+import shutil
+
+# Add services and tools to sys.path
 _TOOLS_DIR = Path(__file__).resolve().parent
-if str(_TOOLS_DIR) not in sys.path:
-    sys.path.insert(0, str(_TOOLS_DIR))
+_REPO_ROOT = _TOOLS_DIR.parent
+_SERVICE_ROOT = _REPO_ROOT / "services" / "ai-agent-service"
+for p in [_TOOLS_DIR, _SERVICE_ROOT, _SERVICE_ROOT / "app"]:
+    if str(p) not in sys.path:
+        sys.path.insert(0, str(p))
 
 from measure_video_quality import VideoQualityMeasurementEngine
+
+try:
+    from app.services.video_editor_service import VideoEditorService
+except ImportError:
+    try:
+        from services.video_editor_service import VideoEditorService
+    except ImportError:
+        VideoEditorService = None
+
+
+async def inpaint_held_out_case(
+    service: VideoEditorService,
+    text_mp4: Path,
+    target_scope: str,
+    output_mp4: Path,
+    temp_dir: Path
+) -> Path:
+    """Run genuine inpainting on text.mp4 to produce authentic cleaned_synth.mp4."""
+    res = await service.remove_text_from_video(
+        input_path_or_url=str(text_mp4),
+        mode="auto",
+        target_scope=target_scope,
+        output_format="mp4"
+    )
+    raw_out = Path(res["output_path"])
+    if raw_out.resolve() != output_mp4.resolve():
+        if output_mp4.exists():
+            output_mp4.unlink()
+        shutil.move(str(raw_out), str(output_mp4))
+    return output_mp4
 
 
 def evaluate_held_out(benchmark_dir: Path,
@@ -78,12 +115,29 @@ def evaluate_held_out(benchmark_dir: Path,
         case_csv = temp_dir / f"{case_id}_frames.csv"
         case_summary = temp_dir / f"{case_id}_summary.json"
 
-        print(f"[{idx}/{len(cases)}] Evaluating {case_id} ({res_str}, {frames} frames, scope={target_scope})...")
+        # 1. Genuine inpainting execution: text.mp4 -> cleaned_synth.mp4
+        cleaned_synth_mp4 = temp_dir / f"{case_id}_cleaned.mp4"
+        print(f"[{idx}/{len(cases)}] [INPAINTING] Processing {case_id} ({res_str}, {frames} frames, scope={target_scope})...")
 
-        # In benchmark evaluation, clean ground-truth is evaluated against input text video
+        t0 = time.time()
+        if not cleaned_synth_mp4.exists():
+            if VideoEditorService is None:
+                raise RuntimeError("VideoEditorService is unavailable in Python path.")
+            service = VideoEditorService(temp_dir=temp_dir)
+            loop = asyncio.new_event_loop()
+            try:
+                loop.run_until_complete(
+                    inpaint_held_out_case(service, text_mp4, target_scope, cleaned_synth_mp4, temp_dir)
+                )
+            finally:
+                loop.close()
+        inpaint_time = round(time.time() - t0, 2)
+        print(f"[{idx}/{len(cases)}] [INPAINTING DONE] Generated in {inpaint_time}s -> {cleaned_synth_mp4}")
+
+        # 2. Independent frozen measurement suite on authentic inpaint output
         engine = VideoQualityMeasurementEngine(
             input_video=text_mp4,
-            output_video=clean_mp4,
+            output_video=cleaned_synth_mp4,
             clean_gt=clean_mp4,
             gt_mask_dir=mask_dir,
             baseline_video=clean_mp4,
@@ -93,6 +147,14 @@ def evaluate_held_out(benchmark_dir: Path,
         )
 
         passed = engine.run_measurement(output_csv=case_csv, output_json=case_summary)
+
+        # 3. Clean RAM to protect container limit
+        gc.collect()
+        try:
+            import ctypes
+            ctypes.CDLL("libc.so.6").malloc_trim(0)
+        except Exception:
+            pass
 
         with open(case_summary, "r", encoding="utf-8") as sf:
             s_data = json.load(sf)
@@ -111,23 +173,23 @@ def evaluate_held_out(benchmark_dir: Path,
         recon_psnr_med = f_stats.get("reconstruction_psnr", {}).get("median", 100.0)
         audio_ok = av_stat.get("audio_stream_match", True)
 
-        if "pan" in meta.get("background", {}).get("camera_motion", "") or "diagonal" in meta.get("background", {}).get("camera_motion", ""):
+        is_hard = ("pan" in meta.get("background", {}).get("camera_motion", "") or
+                   "diagonal" in meta.get("background", {}).get("camera_motion", ""))
+        if is_hard:
             if recon_med is not None:
                 hard_ssims.append(recon_med)
         else:
             if recon_med is not None:
                 easy_ssims.append(recon_med)
 
-        # Acceptance Criteria alignment:
-        # On synthetic benchmark evaluation where output_video is pristine clean ground-truth (recon_med >= 0.999),
-        # Dim 4 Reconstruction Fidelity is the primary fidelity validator (SSIM >= 0.95 easy, >= 0.92 hard).
-        # Natural scene texture gradient across synthetic mask boundary is not an inpainting seam artifact.
-        is_clean_gt = (recon_med is not None and recon_med >= 0.999)
-        dim1_ok = (res_max is None or int(res_max) == 0)
+        # Full 5 Dimensions evaluation on genuine inpaint output:
+        dim1_ok = (res_max is None or int(res_max) <= 0)
         dim3_ok = (ssim_out_p10 is None or ssim_out_p10 >= 0.990)
-        dim4_ok = (recon_med is not None and recon_med >= 0.920)
-        dim6_ok = True if is_clean_gt else (seam_p90 is not None and seam_p90 <= 1.25)
-        case_passed = bool(dim1_ok and dim3_ok and dim4_ok and dim6_ok and audio_ok)
+        recon_thresh = 0.920 if is_hard else 0.950
+        dim4_ok = (recon_med is not None and recon_med >= recon_thresh)
+        dim5_ok = (temp_p90 is None or temp_p90 <= 1.20)
+        dim6_ok = (seam_p90 is None or seam_p90 <= 1.25)
+        case_passed = bool(dim1_ok and dim3_ok and dim4_ok and dim5_ok and dim6_ok and audio_ok)
 
         case_status = "PASS" if case_passed else "FAIL"
         if not case_passed:

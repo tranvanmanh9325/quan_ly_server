@@ -744,6 +744,7 @@ class VideoEditorService:
                                 target_regions,
                                 enable_critique=True,
                                 context=context,
+                                target_scope=clean_target_scope,
                             )
                             streaming_success = output_file.exists() and output_file.stat().st_size > 1000
                         except (asyncio.CancelledError, GeneratorExit):
@@ -2891,6 +2892,7 @@ class VideoEditorService:
         frame_shape: Tuple[int, int, int],
         frame_img: Optional[Any] = None,
         target_regions: Optional[List[Dict[str, Any]]] = None,
+        target_scope: str = "overlay",
     ) -> Tuple[Any, Optional[Dict[str, Any]]]:
         """
         Sinh mặt nạ nét chữ động chuẩn xác theo thời gian (Dynamic Stroke Mask):
@@ -2941,10 +2943,39 @@ class VideoEditorService:
                 if title_regs:
                     title_max_y = min(h, max(int(r.get("y", 0)) + int(r.get("h", 0)) for r in title_regs) + int(0.02 * h))
 
-            # Full-frame candidate extraction [0:h, 0:w]
-            sy1 = 0
-            sy2 = h
-            sx1, sx2 = 0, w
+            # Pillar 1 (Scene Text Guard): In 'overlay' mode, protect scene text (e.g. laptop code text F1400-F1422).
+            # When target_regions is provided, only process subtitle if an overlay subtitle is active.
+            has_sub_in_scope = True
+            active_sub_bounding_boxes = []
+            if target_regions and target_scope == "overlay":
+                active_subs = [
+                    r for r in target_regions
+                    if (r.get("type") == "subtitle" or not r.get("is_static", False))
+                    and r.get("frame_start", 0) <= frame_idx <= r.get("frame_end", 0)
+                ]
+                has_sub_in_scope = (len(active_subs) > 0)
+                for s in active_subs:
+                    sx = max(0, int(s.get("x", 0)) - 35)
+                    sy = max(0, int(s.get("y", 0)) - 25)
+                    sw = int(s.get("w", 0)) + 70
+                    sh = int(s.get("h", 0)) + 50
+                    active_sub_bounding_boxes.append((sx, sy, sw, sh))
+
+            if not has_sub_in_scope:
+                if full_mask is not None:
+                    full_mask = np.where(full_mask > 0, 255, 0).astype(np.uint8)
+                return full_mask, None
+
+            # Candidate extraction focused around active subtitles if in overlay scope
+            if active_sub_bounding_boxes:
+                sy1 = max(0, min(b[1] for b in active_sub_bounding_boxes))
+                sy2 = min(h, max(b[1] + b[3] for b in active_sub_bounding_boxes))
+                sx1 = max(0, min(b[0] for b in active_sub_bounding_boxes))
+                sx2 = min(w, max(b[0] + b[2] for b in active_sub_bounding_boxes))
+            else:
+                sy1 = 0
+                sy2 = h
+                sx1, sx2 = 0, w
             strip = frame_img[sy1:sy2, sx1:sx2]
             gray = cv2.cvtColor(strip, cv2.COLOR_BGR2GRAY)
             hsv = cv2.cvtColor(strip, cv2.COLOR_BGR2HSV)
@@ -3225,9 +3256,9 @@ class VideoEditorService:
                 if np.count_nonzero(v_seam_protect) > 0:
                     sub_mask_strip = sub_mask_strip & (~v_seam_protect)
 
-            # Structure-aware stroke dilation
+            # Structure-aware stroke dilation (Pillar 3: Adaptive dilation)
             if np.count_nonzero(sub_mask_strip) > 0:
-                k_sub_size = max(3, int(round(7 * S_res)) | 1)
+                k_sub_size = max(9, int(round(13 * S_res)) | 1)
                 k_sub_dil = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k_sub_size, k_sub_size))
                 if has_table_structure:
                     sub_mask_strip = cv2.dilate(sub_mask_strip, k_sub_dil)
@@ -3265,18 +3296,55 @@ class VideoEditorService:
                 sub_mask_strip = filtered_mask
                 boxes_all = valid_boxes
 
-            # Update full_mask and sub_info
+            # Update full_mask and sub_info (Pillar 2: Line Clustering to kill Mega-Box)
             if np.count_nonzero(sub_mask_strip) > 0 and boxes_all:
                 full_mask[sy1:sy2, sx1:sx2] = np.maximum(full_mask[sy1:sy2, sx1:sx2], sub_mask_strip)
 
                 sub_candidate_boxes = boxes_all
 
+                # Group candidate boxes into vertical line clusters
+                sorted_cands = sorted(sub_candidate_boxes, key=lambda b: b[1])
+                line_clusters = []
+                cur_clust = [sorted_cands[0]]
+                max_line_gap = max(18, int(round(35 * scale_geom)))
+
+                for b in sorted_cands[1:]:
+                    prev_b = cur_clust[-1]
+                    gap = b[1] - (prev_b[1] + prev_b[3])
+                    if gap <= max_line_gap:
+                        cur_clust.append(b)
+                    else:
+                        line_clusters.append(cur_clust)
+                        cur_clust = [b]
+                if cur_clust:
+                    line_clusters.append(cur_clust)
+
+                # Select best cluster matching active subtitle envelope or with highest density
+                best_cluster = line_clusters[0]
+                if len(line_clusters) > 1:
+                    def score_cluster(cl):
+                        cl_y = min(b[1] for b in cl)
+                        cl_h = max(b[1] + b[3] for b in cl) - cl_y
+                        score = len(cl)
+                        for ab in active_sub_bounding_boxes:
+                            if not (cl_y + cl_h < ab[1] or cl_y > ab[1] + ab[3]):
+                                score += 20
+                        return score
+                    best_cluster = max(line_clusters, key=score_cluster)
+
                 pad_box_x = max(16, int(round(24 * scale_geom)))
                 pad_box_y = max(8, int(round(10 * scale_geom)))
-                min_bx = max(4, min(b[0] for b in sub_candidate_boxes) - pad_box_x)
-                max_bx = min(w - 4, max(b[0] + b[2] for b in sub_candidate_boxes) + pad_box_x)
-                min_by = max(0, sy1 + min(b[1] for b in sub_candidate_boxes) - pad_box_y)
-                max_by = min(h, sy1 + max(b[1] + b[3] for b in sub_candidate_boxes) + pad_box_y)
+                min_bx = max(4, min(b[0] for b in best_cluster) - pad_box_x)
+                max_bx = min(w - 4, max(b[0] + b[2] for b in best_cluster) + pad_box_x)
+                min_by = max(0, sy1 + min(b[1] for b in best_cluster) - pad_box_y)
+                max_by = min(h, sy1 + max(b[1] + b[3] for b in best_cluster) + pad_box_y)
+
+                # Clamp max subtitle cluster height to prevent vertical bloat (max 180px for 576x1024)
+                max_allowed_sub_h = max(80, int(round(180 * scale_geom)))
+                if (max_by - min_by) > max_allowed_sub_h:
+                    mid_y = (min_by + max_by) // 2
+                    min_by = max(0, mid_y - max_allowed_sub_h // 2)
+                    max_by = min(h, mid_y + max_allowed_sub_h // 2)
 
                 min_sub_h = max(32, int(round(50 * scale_geom)))
                 if max_by - min_by < min_sub_h:
@@ -3324,6 +3392,7 @@ class VideoEditorService:
         target_regions: Optional[List[Dict[str, Any]]] = None,
         use_hosted: Optional[bool] = None,
         context: Optional[VideoJobContext] = None,
+        target_scope: str = "overlay",
     ) -> Any:
         """Inpaint toàn bộ text trên 1 keyframe độc lập."""
         import cv2
@@ -3331,8 +3400,9 @@ class VideoEditorService:
 
         out_f = frame.copy()
         full_mask, sub_info = self._build_inpaint_mask_for_frame(
-            frame_idx, frame.shape, frame_img=frame, target_regions=target_regions
+            frame_idx, frame.shape, frame_img=frame, target_regions=target_regions, target_scope=target_scope
         )
+        orig_full_mask = full_mask.copy() if full_mask is not None else np.zeros((frame.shape[0], frame.shape[1]), dtype=np.uint8)
 
         if full_mask is not None and np.count_nonzero(full_mask) > 0:
             # 1. Inpaint Title ROI nguyên khối để lấy toàn bộ texture nền xung quanh
@@ -3374,7 +3444,8 @@ class VideoEditorService:
                                 )
 
                             if clean_t is not None and clean_t.shape == t_roi.shape:
-                                out_f[thy1:thy2, thx1:thx2] = clean_t
+                                t_mask_3d = (dil_m > 0)[:, :, np.newaxis]
+                                out_f[thy1:thy2, thx1:thx2] = np.where(t_mask_3d, clean_t, t_roi)
                                 full_mask[thy1:thy2, thx1:thx2] = 0
 
             # 2. Inpaint Subtitle ROI (Dynamic Spoken Subtitles) ôm sát nét chữ
@@ -3400,9 +3471,13 @@ class VideoEditorService:
 
                         clean_s = None
                         feather_s = None
+                        # Pillar 3: Adaptive Dilation 8-12px for Subtitle in Keyframe
+                        s_res_kf = np.sqrt(frame.shape[0] ** 2 + frame.shape[1] ** 2) / np.sqrt(1024 ** 2 + 576 ** 2)
+                        r_dil_kf = max(8, min(14, int(round(10 * s_res_kf))))
+                        k_dil_kf = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * r_dil_kf + 1, 2 * r_dil_kf + 1))
                         if has_local_table:
                             # Dilate to envelop dark stroke outline on structured document
-                            dil_sub_m = cv2.dilate(sub_m, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)))
+                            dil_sub_m = cv2.dilate(sub_m, k_dil_kf)
                             dil_sub_m = VideoEditorService._fill_holes(dil_sub_m)
                             dil_sub_m = (dil_sub_m & (~local_table)).astype(np.uint8)
                             paper_pixels = sub_roi[(sub_gray >= 180) & (dil_sub_m == 0)]
@@ -3416,7 +3491,7 @@ class VideoEditorService:
                             clean_s = (np.full_like(filled_paper, paper_bgr) * feather_paper + filled_paper * (1.0 - feather_paper)).astype(np.uint8)
                             clean_s[local_table > 0] = sub_roi[local_table > 0]
                         else:
-                            dil_sub_m = cv2.dilate(sub_m, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)))
+                            dil_sub_m = cv2.dilate(sub_m, k_dil_kf)
                             dil_sub_m = VideoEditorService._fill_holes(dil_sub_m)
                             if np.count_nonzero(dil_sub_m) > 0.85 * dil_sub_m.size:
                                 dil_sub_m = sub_m.copy()
@@ -3469,6 +3544,11 @@ class VideoEditorService:
                         dst = out_f[y1:y2, x1:x2]
                         dst[m_roi > 0] = clean_roi[m_roi > 0]
                         out_f[y1:y2, x1:x2] = dst
+
+        # Pillar 4: Strict Non-Mask Invariance on Keyframe
+        if orig_full_mask is not None and np.count_nonzero(orig_full_mask) > 0:
+            active_kf_mask = cv2.dilate(orig_full_mask, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))
+            out_f[active_kf_mask == 0] = frame[active_kf_mask == 0]
 
         return out_f
 
@@ -3576,6 +3656,7 @@ class VideoEditorService:
         branch_counters: Optional[Dict[str, int]] = None,
         use_hosted: Optional[bool] = None,
         context: Optional[VideoJobContext] = None,
+        target_scope: str = "overlay",
     ) -> Generator[Any, None, None]:
         """
         Streaming Generator Direct ROI Inpainting (Milestone 2.4):
@@ -3647,7 +3728,7 @@ class VideoEditorService:
                 return res
 
             m_f, _ = self._build_inpaint_mask_for_frame(
-                shots[shot_i][0], (h, w, 3), frame_img=ref_frame, target_regions=target_regions
+                shots[shot_i][0], (h, w, 3), frame_img=ref_frame, target_regions=target_regions, target_scope=target_scope
             )
             t_mask = m_f[hy1:hy2, hx1:hx2] if m_f is not None else np.zeros((roi_h, roi_w), dtype=np.uint8)
             t_mask = VideoEditorService._fill_holes(t_mask)
@@ -3725,7 +3806,7 @@ class VideoEditorService:
                                 M = np.float32([[1, 0, dx], [0, 1, dy]])
                                 candidate_hdr = cv2.warpAffine(ref_clean_roi, M, (roi_w, roi_h), borderMode=cv2.BORDER_REFLECT)
                                 diff_bg = float(np.mean(cv2.absdiff(curr_roi, candidate_hdr)[bg_mask]))
-                                diff_bg_thresh = 28.0
+                                diff_bg_thresh = 12.0
                                 if diff_bg <= diff_bg_thresh:
                                     aligned_hdr = candidate_hdr
                                     used_align = True
@@ -3736,7 +3817,7 @@ class VideoEditorService:
                                     from app.services.classical_fallback_manager import get_classical_fallback_manager
                                     classical_mgr = get_classical_fallback_manager()
                                     warped_hdr, c1_success = classical_mgr.reconstruct_frame_with_optical_flow(
-                                        curr_roi, ref_clean_roi, mask_blend_hdr, error_threshold=24.0
+                                        curr_roi, ref_clean_roi, mask_blend_hdr, error_threshold=12.0
                                     )
                                     if c1_success and warped_hdr is not None:
                                         aligned_hdr = warped_hdr
@@ -3812,7 +3893,7 @@ class VideoEditorService:
 
                 # 2. Xử lý Subtitle ROI (Dynamic Spoken Subtitles)
                 full_m, sub_info = self._build_inpaint_mask_for_frame(
-                    frame_idx, frame.shape, frame_img=frame, target_regions=target_regions
+                    frame_idx, frame.shape, frame_img=frame, target_regions=target_regions, target_scope=target_scope
                 )
 
                 if sub_info is not None:
@@ -3834,8 +3915,13 @@ class VideoEditorService:
                             and (np.count_nonzero(local_table) >= 30)
                         )
 
+                        # Pillar 3: Adaptive Dilation 8-12px for Subtitle in Streaming
+                        s_res_stream = np.sqrt(h ** 2 + w ** 2) / np.sqrt(1024 ** 2 + 576 ** 2)
+                        r_dil_stream = max(8, min(14, int(round(10 * s_res_stream))))
+                        k_sub_stream = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * r_dil_stream + 1, 2 * r_dil_stream + 1))
+
                         if has_local_table:
-                            dil_sub_m = cv2.dilate(s_mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)))
+                            dil_sub_m = cv2.dilate(s_mask, k_sub_stream)
                             dil_sub_m = VideoEditorService._fill_holes(dil_sub_m)
                             mask_sub = (dil_sub_m & (~local_table)).astype(np.uint8)
                             paper_pixels = sub_roi[(sub_gray >= 180) & (mask_sub == 0)]
@@ -3851,7 +3937,7 @@ class VideoEditorService:
                             out_frame[sy1:sy2, sx1:sx2] = clean_sub_roi
                             full_frame_mask[sy1:sy2, sx1:sx2] = np.maximum(full_frame_mask[sy1:sy2, sx1:sx2], mask_sub)
                         else:
-                            mask_sub = cv2.dilate(s_mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)))
+                            mask_sub = cv2.dilate(s_mask, k_sub_stream)
                             mask_sub = VideoEditorService._fill_holes(mask_sub)
                             if np.count_nonzero(mask_sub) > 0.85 * mask_sub.size:
                                 mask_sub = s_mask.copy()
@@ -3888,7 +3974,7 @@ class VideoEditorService:
                                 if sy2 > sy1 and sx2 > sx1:
                                     sub_roi = out_frame[sy1:sy2, sx1:sx2]
                                     sub_w, sub_h = sx2 - sx1, sy2 - sy1
-                                    mask_sub = cv2.dilate(full_sub_m[sy1:sy2, sx1:sx2], cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)))
+                                    mask_sub = cv2.dilate(full_sub_m[sy1:sy2, sx1:sx2], k_sub_stream)
                                     mask_sub = VideoEditorService._fill_holes(mask_sub)
                                     if np.count_nonzero(mask_sub) > 0.85 * mask_sub.size:
                                         mask_sub = full_sub_m[sy1:sy2, sx1:sx2].copy()
@@ -3913,7 +3999,7 @@ class VideoEditorService:
                                         candidate_sub = cv2.warpAffine(ref_sub_clean, M, (sub_w, sub_h), borderMode=cv2.BORDER_REFLECT)
                                         bg_m = (mask_sub == 0)
                                         diff_bg = float(np.mean(cv2.absdiff(sub_roi, candidate_sub)[bg_m])) if np.count_nonzero(bg_m) > 0 else 0.0
-                                        if diff_bg <= 22.0:
+                                        if diff_bg <= 12.0:
                                             aligned_sub = candidate_sub
                                             used_sub_align = True
 
@@ -3923,7 +4009,7 @@ class VideoEditorService:
                                             from app.services.classical_fallback_manager import get_classical_fallback_manager
                                             classical_mgr = get_classical_fallback_manager()
                                             warped_sub, c1_sub_success = classical_mgr.reconstruct_frame_with_optical_flow(
-                                                sub_roi, ref_sub_clean, mask_sub, error_threshold=22.0
+                                                sub_roi, ref_sub_clean, mask_sub, error_threshold=12.0
                                             )
                                             if c1_sub_success and warped_sub is not None:
                                                 aligned_sub = warped_sub
@@ -3991,8 +4077,13 @@ class VideoEditorService:
                     last_clean_sub_data = None
                     last_sub_mask_data = None
 
-            # Thêm vào buffer 3-frame cho Temporal Bilateral Filter
-            frame_buffer.append((frame_idx, out_frame, full_frame_mask))
+            # Pillar 4: Strict Non-Mask Invariance
+            # Ensure 100% bit-exact invariance for pixels outside active dilated mask
+            active_frame_mask = cv2.dilate(full_frame_mask, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))
+            out_frame[active_frame_mask == 0] = frame[active_frame_mask == 0]
+
+            # Thêm vào buffer 3-frame cho Temporal Bilateral Filter kèm frame gốc
+            frame_buffer.append((frame_idx, out_frame, full_frame_mask, frame))
 
             if len(frame_buffer) >= 3:
                 if not has_yielded_f0:
@@ -4000,6 +4091,8 @@ class VideoEditorService:
                         None, frame_buffer[0][1], frame_buffer[1][1], frame_buffer[0][2],
                         sigma_t=1.0, sigma_r=25.0, max_fb_error=3.0
                     )
+                    act_m0 = cv2.dilate(frame_buffer[0][2], cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))
+                    out_f0[act_m0 == 0] = frame_buffer[0][3][act_m0 == 0]
                     yield out_f0
                     has_yielded_f0 = True
 
@@ -4007,7 +4100,10 @@ class VideoEditorService:
                 f_curr = frame_buffer[1][1]
                 f_next = frame_buffer[2][1]
                 m_curr = frame_buffer[1][2]
+                orig_curr = frame_buffer[1][3]
                 out_filtered = self._temporal_bilateral_filter_3frame(f_prev, f_curr, f_next, m_curr, sigma_t=1.0, sigma_r=25.0, max_fb_error=3.0)
+                act_m = cv2.dilate(m_curr, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))
+                out_filtered[act_m == 0] = orig_curr[act_m == 0]
                 yield out_filtered
                 frame_buffer.pop(0)
 
@@ -4019,7 +4115,10 @@ class VideoEditorService:
 
         # Flush hết các frames còn lại trong buffer khi cap kết thúc
         if not has_yielded_f0 and len(frame_buffer) > 0:
-            yield frame_buffer[0][1]
+            act_m = cv2.dilate(frame_buffer[0][2], cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))
+            f_out = frame_buffer[0][1]
+            f_out[act_m == 0] = frame_buffer[0][3][act_m == 0]
+            yield f_out
             frame_buffer.pop(0)
 
         while frame_buffer:
@@ -4027,11 +4126,17 @@ class VideoEditorService:
                 f_prev = frame_buffer[0][1]
                 f_curr = frame_buffer[1][1]
                 m_curr = frame_buffer[1][2]
+                orig_curr = frame_buffer[1][3]
                 out_filtered = self._temporal_bilateral_filter_3frame(f_prev, f_curr, None, m_curr, sigma_t=1.0, sigma_r=25.0, max_fb_error=3.0)
+                act_m = cv2.dilate(m_curr, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))
+                out_filtered[act_m == 0] = orig_curr[act_m == 0]
                 yield out_filtered
                 frame_buffer.clear()
             else:
-                yield frame_buffer[0][1]
+                act_m = cv2.dilate(frame_buffer[0][2], cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))
+                f_out = frame_buffer[0][1]
+                f_out[act_m == 0] = frame_buffer[0][3][act_m == 0]
+                yield f_out
                 frame_buffer.clear()
 
         cap.release()
@@ -4415,6 +4520,7 @@ class VideoEditorService:
         target_regions: Optional[List[Dict[str, Any]]] = None,
         enable_critique: bool = False,
         context: Optional[VideoJobContext] = None,
+        target_scope: str = "overlay_only",
     ) -> None:
         """
         Quy trình xử lý hoàn chỉnh toàn bộ frames video:
@@ -4505,7 +4611,9 @@ class VideoEditorService:
                 if cache_file.exists():
                     return kidx
                 frame = raw_kfs[kidx]
-                clean = self._inpaint_keyframe_full(frame, kidx, target_regions=target_regions, context=context)
+                clean = self._inpaint_keyframe_full(
+                    frame, kidx, target_regions=target_regions, target_scope=target_scope, context=context
+                )
                 try:
                     cv2.imwrite(str(cache_file), clean)
                 except Exception:
@@ -4535,18 +4643,18 @@ class VideoEditorService:
 
             ffmpeg_bin = self._find_ffmpeg_binary()
 
-            # Determine best available H.264 video encoder (Studio Grade với GOP size = 30 chuẩn broadcast)
+            # Determine best available H.264 video encoder (Pillar 5: CRF 18 Studio Grade Encoding, unconstrained bitrate)
             v_encoder = "libx264"
-            v_opts = ["-preset", "fast", "-crf", "23", "-g", "30", "-b:v", "3.5M", "-maxrate", "5M", "-bufsize", "8M"]
+            v_opts = ["-preset", "fast", "-crf", "18", "-g", "30"]
             try:
                 p_enc = subprocess.run([ffmpeg_bin, "-encoders"], capture_output=True, text=True, timeout=5)
                 enc_out = p_enc.stdout or ""
                 if "libx264" not in enc_out and "h264_nvenc" in enc_out:
                     v_encoder = "h264_nvenc"
-                    v_opts = ["-preset", "p7", "-cq", "23", "-g", "30", "-b:v", "3.5M", "-maxrate", "5M"]
+                    v_opts = ["-preset", "p7", "-cq", "18", "-g", "30"]
                 elif "libx264" not in enc_out and "h264_qsv" in enc_out:
                     v_encoder = "h264_qsv"
-                    v_opts = ["-global_quality", "23", "-g", "30"]
+                    v_opts = ["-global_quality", "18", "-g", "30"]
             except Exception:
                 pass
 
@@ -4625,6 +4733,7 @@ class VideoEditorService:
                 total_frames=total_frames,
                 progress_fn=flow_progress,
                 target_regions=target_regions,
+                target_scope=target_scope,
                 shot_cuts=shot_cuts,
                 branch_counters=branch_counters,
                 context=context,

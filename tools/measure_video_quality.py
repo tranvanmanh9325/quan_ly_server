@@ -326,6 +326,7 @@ class FullFrameOCRAuditor:
                         x = int(data["left"][i] / scale)
                         y = int(data["top"][i] / scale)
                         bw = int(data["width"][i] / scale)
+                        bh = int(data["height"][i] / scale)
                         if bw < 8 or bh < 8:
                             continue
                         if len(clean_text) >= 3 and (bw / float(bh)) < 0.80:
@@ -731,15 +732,28 @@ class VideoQualityMeasurementEngine:
                                 overlap_ratio = (np.count_nonzero(roi_mask) / float(roi_mask.size)) if roi_mask.size > 0 else 0.0
                                 in_mask_region = (overlap_ratio >= 0.35)
 
-                                # Verify that the bounding box itself had genuine inpainting modification vs original
-                                crop_in = frame_in[max(0, wy):min(frame_in.shape[0], wy + wh),
-                                                   max(0, wx):min(frame_in.shape[1], wx + ww)]
-                                crop_out = frame_out[max(0, wy):min(frame_out.shape[0], wy + wh),
-                                                     max(0, wx):min(frame_out.shape[1], wx + ww)]
-                                crop_diff = cv2.absdiff(crop_in, crop_out)
-                                box_modified = (float(np.mean(crop_diff)) >= 15.0 or (np.count_nonzero(crop_diff > 25) / float(crop_diff.size)) >= 0.15) if crop_diff.size > 0 else False
+                                # Spatial co-location with any word in words_orig
+                                is_co_located = False
+                                for wo in words_orig:
+                                    ox, oy, ow, oh = wo["bbox"]
+                                    ix1 = max(wx, ox)
+                                    iy1 = max(wy, oy)
+                                    ix2 = min(wx + ww, ox + ow)
+                                    iy2 = min(wy + wh, oy + oh)
+                                    inter_area = max(0, ix2 - ix1) * max(0, iy2 - iy1)
+                                    min_box_area = min(ww * wh, ow * oh)
+                                    spatial_overlap = (inter_area / float(min_box_area)) if min_box_area > 0 else 0.0
+                                    centers_dist = math.hypot((wx + ww / 2.0) - (ox + ow / 2.0), (wy + wh / 2.0) - (oy + oh / 2.0))
+                                    if spatial_overlap >= 0.30 or centers_dist <= 25.0:
+                                        is_co_located = True
+                                        break
 
-                                if in_mask_region and box_modified and (wc_text in orig_texts or (len(wc_text) >= 3 and any(wc_text in ot for ot in orig_texts))):
+                                is_text_match = (
+                                    wc_text in orig_texts or
+                                    (len(wc_text) >= 2 and any(wc_text in ot or ot in wc_text for ot in orig_texts))
+                                )
+
+                                if (in_mask_region or is_co_located) and is_text_match:
                                     # Residual glyph fragments or words inside the text ROI that stem from orig text
                                     residual_words.append(wc)
                 except Exception as e:
@@ -1052,12 +1066,12 @@ class VideoQualityMeasurementEngine:
             dim3_pass = (calc_stats(ssim_outside).get("mean", 0.0) >= 0.965)
         dim4_pass = (calc_stats(recon_ssims).get("median", 1.0) >= self.thresholds.get("reconstruction_ssim_median_easy", 0.95)) if recon_ssims else None
         dim5_pass = (calc_stats(temporal_ratios).get("p90", 1.0) <= self.thresholds.get("temporal_flicker_ratio_max", 1.20))
-        if self.clean_gt_path is not None and (calc_stats(recon_ssims).get("median", 0.0) >= 0.999):
-            dim6_pass = True
-        else:
-            dim6_pass = (calc_stats(seam_ratios).get("p90", 1.0) <= self.thresholds.get("seam_discontinuity_ratio_max", 1.25))
+        dim6_pass = (calc_stats(seam_ratios).get("p90", 1.0) <= self.thresholds.get("seam_discontinuity_ratio_max", 1.25))
 
         overall_pass = bool(dim1_pass and dim2_pass and dim3_pass and (dim4_pass is not False) and dim5_pass and dim6_pass and dim7_pass and unverified_frames == 0)
+
+        res_failed_frames = sum(1 for r in stat_records if r.residual_words_count > 0)
+        res_pass_pct = round((total_frames - res_failed_frames) / max(1, total_frames) * 100.0, 2) if total_frames > 0 else 100.0
 
         return {
             "metadata": {
@@ -1093,6 +1107,9 @@ class VideoQualityMeasurementEngine:
                 "total_frames_failed": failed_frames,
                 "total_frames_unverified": unverified_frames,
                 "excluded_shot_cuts_count": excluded_cuts,
+                "residual_ocr_failed_frames": res_failed_frames,
+                "residual_ocr_pass_rate_pct": res_pass_pct,
+                "worst_5_composite_penalties": [r.get("penalty_score", 0.0) for r in worst_records[:5]],
                 "metrics_distribution": {
                     "residual_words_count": calc_stats([float(x) for x in res_counts]),
                     "ssim_outside_mask": calc_stats(ssim_outside),

@@ -1798,7 +1798,8 @@ class VideoEditorService:
                 hits = s.get("hits", 1)
                 persistence_ratio = (hits / total_sample_count) if total_sample_count > 0 else 1.0
                 is_persistent = persistence_ratio >= 0.70
-                is_persistent_title = is_persistent
+                is_in_title_zone = (s["y"] + s["h"] / 2.0) <= 0.45 * frame_h
+                is_persistent_title = is_persistent and is_in_title_zone
 
                 seg_type = "title" if is_persistent_title else "subtitle"
                 is_static = bool(is_persistent_title)
@@ -2909,7 +2910,11 @@ class VideoEditorService:
 
         # 1. Header/Title Stroke Mask (sinh động từ target_regions nếu có)
         if target_regions:
-            title_regions = [r for r in target_regions if r.get("type") == "title" or r.get("is_static", False)]
+            title_regions = [
+                r for r in target_regions
+                if (r.get("type") == "title" or r.get("is_static", False))
+                and (int(r.get("y", 0)) + int(r.get("h", 0)) / 2.0) <= 0.45 * h
+            ]
             for tr in title_regions:
                 tx = max(0, int(tr.get("x", 0)))
                 ty = max(0, int(tr.get("y", 0)))
@@ -2939,9 +2944,10 @@ class VideoEditorService:
                 title_regs = [
                     r for r in target_regions
                     if (r.get("type") == "title" or r.get("is_static", False))
+                    and (int(r.get("y", 0)) + int(r.get("h", 0)) / 2.0) <= 0.45 * h
                 ]
                 if title_regs:
-                    title_max_y = min(h, max(int(r.get("y", 0)) + int(r.get("h", 0)) for r in title_regs) + int(0.02 * h))
+                    title_max_y = min(int(0.48 * h), max(int(r.get("y", 0)) + int(r.get("h", 0)) for r in title_regs) + int(0.02 * h))
 
             # Pillar 1 (Scene Text Guard): In 'overlay' mode, protect scene text (e.g. laptop code text F1400-F1422).
             # When target_regions is provided, only process subtitle if an overlay subtitle is active.
@@ -2950,7 +2956,7 @@ class VideoEditorService:
             if target_regions and target_scope in ("overlay", "overlay_only"):
                 active_subs = [
                     r for r in target_regions
-                    if (r.get("type") == "subtitle" or not r.get("is_static", False))
+                    if (r.get("type") == "subtitle" or not r.get("is_static", False) or (int(r.get("y", 0)) + int(r.get("h", 0)) / 2.0) > 0.45 * h)
                     and r.get("frame_start", 0) <= frame_idx <= r.get("frame_end", 0)
                 ]
                 has_sub_in_scope = (len(active_subs) > 0)
@@ -3692,6 +3698,7 @@ class VideoEditorService:
             title_regions = [
                 r for r in target_regions
                 if (r.get("type") == "title" or r.get("is_static", False))
+                and (int(r.get("y", 0)) + int(r.get("h", 0)) / 2.0) <= 0.45 * h
             ]
             if title_regions:
                 pad_x = max(16, int(0.02 * w))
@@ -3699,7 +3706,7 @@ class VideoEditorService:
                 hx1 = max(0, min(int(r.get("x", 0)) for r in title_regions) - pad_x)
                 hy1 = max(0, min(int(r.get("y", 0)) for r in title_regions) - pad_y)
                 hx2 = min(w, max(int(r.get("x", 0)) + int(r.get("w", 0)) for r in title_regions) + pad_x)
-                hy2 = min(h, max(int(r.get("y", 0)) + int(r.get("h", 0)) for r in title_regions) + pad_y)
+                hy2 = min(int(0.48 * h), max(int(r.get("y", 0)) + int(r.get("h", 0)) for r in title_regions) + pad_y)
 
         if hy2 <= hy1 or hx2 <= hx1:
             hy1, hy2, hx1, hx2 = 0, 1, 0, 1
@@ -4108,6 +4115,13 @@ class VideoEditorService:
                 frame_buffer.pop(0)
 
             frame_idx += 1
+
+            if frame_idx % 25 == 0:
+                try:
+                    from app.core.memory_reclaimer import _sync_collect_and_trim
+                    _sync_collect_and_trim()
+                except Exception:
+                    pass
 
             if progress_fn and frame_idx % 100 == 0:
                 pct = 45 + int(25 * frame_idx / max(1, total_frames))

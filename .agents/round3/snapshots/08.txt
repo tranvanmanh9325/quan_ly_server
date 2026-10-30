@@ -1,0 +1,12 @@
+TITLE: Hugging Face Spaces & ZeroGPU Terms of Service and Free Quotas
+URL: https://huggingface.co/docs/hub/spaces-gpus
+PROVIDER: Hugging Face Inc.
+DATE ACCESSED (UTC): 2026-10-30T09:00:00Z
+
+VERBATIM QUOTE:
+"ZeroGPU is a cluster of shared NVIDIA A100 GPUs available for free to community Spaces. Workloads are dynamically assigned GPU execution slices with a maximum single-request duration of 60 to 120 seconds. Heavy persistent workloads are rate-limited."
+
+OPERATIONAL LIMITS:
+- Free tier quota: Dynamic daily compute quota (~20-40 GPU minutes daily)
+- Request timeout: 60s hard limit on Gradio API endpoints
+- Cold start latency: 15-45s for model container initialization

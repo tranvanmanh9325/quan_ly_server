@@ -43,6 +43,7 @@ cortex_data/
 *.bin
 *.meta.json
 .agents/
+!.agents/round3/
 
 # Android Build & Gradle Caches
 .gradle/

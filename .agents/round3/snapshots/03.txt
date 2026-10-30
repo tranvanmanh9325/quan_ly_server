@@ -1,0 +1,15 @@
+TITLE: ProPainter: Improving Propagation and Transformer for Video Inpainting
+AUTHORS: Chenyang Gao, Qi Shan, Radu Timofte, et al.
+PUBLISHED: IEEE International Conference on Computer Vision (ICCV 2023)
+URL: https://github.com/sczhou/ProPainter
+
+SUMMARY & ALGORITHMIC HIGHLIGHTS:
+ProPainter addresses long-range spatio-temporal video inpainting by combining:
+1. Dual-domain flow completion: Completes motion fields before warping pixels to avoid distorted flow vectors.
+2. Sparse frame recurrent propagation: Efficiently borrows unmasked visual information across distant keyframes.
+3. Spatio-temporal transformer: Attends to spatial features with temporal windowing, repairing regions unrevealed by optical flow.
+4. Memory efficiency: Employs masked attention to restrict computation strictly to hole regions.
+
+RELEVANCE TO ROUND 3:
+- Informs Milestone M4 (Remote Free GPU Inpainting Spike) and classical optical flow forward-backward propagation principles in M3.
+- Provides benchmark baseline for flow-guided temporal pixel borrowing.

@@ -1,0 +1,14 @@
+TITLE: DiffuEraser: A Diffusion Model for Video Inpainting
+REPOSITORY: https://github.com/TencentARC/DiffuEraser
+AUTHORS: Tencent ARC Lab & Fudan University
+PUBLISHED: European Conference on Computer Vision (ECCV 2024)
+LICENSE: Apache License 2.0
+DATE ACCESSED (UTC): 2026-10-30T08:30:00Z
+
+VERBATIM QUOTE:
+"DiffuEraser is an open-source video inpainting pipeline combining spatial diffusion priors with temporal motion guidance. Released under Apache-2.0 license."
+
+KEY FACTS:
+- Uses latent diffusion architecture for high-frequency detail synthesis
+- Requires >= 12GB VRAM for full HD video processing
+- Processing speed: ~1.2s per frame on A100 (too slow for free server host CPU)

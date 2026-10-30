@@ -1,0 +1,16 @@
+TITLE: Fast Optical Flow using Dense Inverse Search (DIS)
+AUTHORS: Till Kroeger, Radu Timofte, Dengxin Dai, Luc Van Gool
+PUBLISHED: European Conference on Computer Vision (ECCV 2016)
+URL: https://doi.org/10.1007/978-3-319-46478-7_29
+
+OVERVIEW & ARCHITECTURE:
+Dense Inverse Search (DIS) provides state-of-the-art optical flow with ultra-low latency, running at 10-300 Hz on single-core CPU. It utilizes an inverse compositional formulation:
+1. Multi-scale patch aggregation and spatial pyramid search.
+2. Gradient descent on the template patch rather than target image.
+3. Fast pre-computed Hessian matrix inversion across spatial neighborhoods.
+4. Variational refinement layer for edge preservation and boundary smoothing.
+
+RELEVANCE TO ROUND 3 JUDGE:
+- Implemented in OpenCV as cv2.DISOpticalFlow_create(cv2.DISOPTICAL_FLOW_PRESET_FAST).
+- Metric C4 (Temporal Consistency): Calculates backward optical flow between consecutive frames t and t-1, warps frame t-1, and measures photometric error ratio inside inpaint mask vs natural context ring.
+- Guarantees streaming performance on 2 CPU cores without GPU requirement.

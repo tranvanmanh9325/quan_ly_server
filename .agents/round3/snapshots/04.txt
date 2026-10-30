@@ -1,0 +1,16 @@
+TITLE: Tesseract OCR Engine Architecture and Page Segmentation Modes
+AUTHOR: Ray Smith (Google Inc.)
+PUBLISHED: ICDAR / Google Research Documentation
+URL: https://tesseract-ocr.github.io/tessdoc/
+
+KEY SPECIFICATIONS:
+- Line & Word Recognition: Utilizes neural LSTM character line recognizers trained on multi-lingual datasets (vie, eng).
+- Page Segmentation Modes (PSM):
+  * PSM 3: Fully automatic page segmentation (default).
+  * PSM 6: Single uniform block of text.
+  * PSM 11: Sparse text: Find as much text as possible in no particular order.
+- Stroke & Contrast Enhancement: Tesseract accuracy on degraded or video overlay text improves drastically with CLAHE (Contrast Limited Adaptive Histogram Equalization) and morphological gradient pre-processing.
+
+RELEVANCE TO ROUND 3:
+- Powers C1 Residual Overlay Text detector in `tools/acceptance/metrics.py`.
+- Uses `--psm 11 --oem 1 -l vie+eng` combined with CLAHE and vowel filters to detect residual characters while suppressing noise.

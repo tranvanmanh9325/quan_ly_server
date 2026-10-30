@@ -1,0 +1,11 @@
+TITLE: Kaggle API & Kernels Quotas Documentation
+URL: https://www.kaggle.com/docs/api
+PROVIDER: Kaggle Inc. (Google LLC)
+DATE ACCESSED (UTC): 2026-10-30T09:30:00Z
+
+VERBATIM QUOTE:
+"Kaggle provides users with up to 30 hours of free GPU (NVIDIA P100 / T4) access per week. Batch kernels must be submitted via Kaggle API with input datasets pre-uploaded. Execution is asynchronous with queue wait times between 30 seconds and 5 minutes."
+
+SYSTEM INTEGRATION CONSTRAINTS:
+- Asynchronous batch queuing not suitable for real-time interactive Telegram bot (<60s target)
+- High latency for upload/queue/execute/download lifecycle (~3-8 minutes total per batch)

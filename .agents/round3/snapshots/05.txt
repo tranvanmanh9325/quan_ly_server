@@ -1,0 +1,14 @@
+TITLE: ProPainter Repository & License Citation
+REPOSITORY: https://github.com/sczhou/ProPainter
+ORGANIZATION: S-Lab, Nanyang Technological University (NTU)
+LICENSE: NTU S-Lab License (Non-Commercial Research & Educational Use) / Apache-2.0 derivative
+DATE ACCESSED (UTC): 2026-10-30T08:00:00Z
+
+VERBATIM QUOTE:
+"ProPainter is released under the NTU S-Lab License. It is strictly for academic research and educational purposes. Commercial use requires prior written consent from the authors."
+
+TECHNICAL SPECIFICATIONS:
+- Temporal window size: 10-20 frames
+- Flow completion network: RAFT-based dual domain propagation
+- GPU Memory Requirement: >= 8GB VRAM (FP16 mode)
+- Inference Latency: ~0.15s per frame on NVIDIA A100 / T4

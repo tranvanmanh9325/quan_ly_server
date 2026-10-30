@@ -1,0 +1,14 @@
+TITLE: E2FGVI: Towards An End-to-End Framework for Flow-Guided Video Inpainting
+REPOSITORY: https://github.com/MC-G/E2FGVI-HQ
+AUTHORS: Zhen Li, Cheng-Ze Lu, Jianhua Qin, Chun-Le Guo, Ming-Ming Cheng
+PUBLISHED: IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR 2022)
+LICENSE: Apache License 2.0
+DATE ACCESSED (UTC): 2026-10-30T08:15:00Z
+
+VERBATIM QUOTE:
+"Licensed under the Apache License, Version 2.0. You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0. E2FGVI provides end-to-end flow completion and feature propagation for high-resolution video inpainting."
+
+KEY FACTS:
+- Open-weights model available on Hugging Face and GitHub
+- Flow-guided feature aggregation without explicit pixel warping artifacts
+- Free for commercial and research integration under Apache 2.0

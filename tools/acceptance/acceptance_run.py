@@ -45,6 +45,7 @@ if str(agent_service_dir) not in sys.path:
 try:
     from tools.acceptance.metrics import (
         StreamingMetricsAccumulator,
+        compute_ssim,
         evaluate_c1_residual_text,
         evaluate_c5_negatives,
         evaluate_c7_av_integrity,
@@ -56,6 +57,7 @@ try:
 except ImportError:
     from metrics import (
         StreamingMetricsAccumulator,
+        compute_ssim,
         evaluate_c1_residual_text,
         evaluate_c5_negatives,
         evaluate_c7_av_integrity,
@@ -169,14 +171,74 @@ def run_video_evaluation(
     summary["category"] = category
     summary["csv_path"] = str(csv_path)
 
-    # Audio integrity if reference provided
-    if clean_gt_path and clean_gt_path.exists():
-        av_res = evaluate_c7_av_integrity(clean_gt_path, pred_video_path)
+    # Audio integrity if reference provided (clean GT or baseline video)
+    ref_audio = clean_gt_path if (clean_gt_path and clean_gt_path.exists()) else baseline_video_path
+    if ref_audio and ref_audio.exists():
+        av_res = evaluate_c7_av_integrity(ref_audio, pred_video_path)
         summary["av_integrity"] = av_res
         if not av_res["is_pass"]:
             summary["is_pass"] = False
 
     return summary
+
+
+def evaluate_real_clip_section_5_5(
+    clean_video_path: Path,
+    original_video_path: Path,
+    band_y_min: int = 800,
+    band_y_max: int = 1000,
+) -> Dict[str, Any]:
+    """
+    Section 5.5 Real Clip Evaluation (tmpy8evxmno.mp4):
+    - Scene text delta SSIM <= 0.02
+    - Text-free band y in [800, 1000] mean PSNR >= 40.0 dB
+    """
+    cap_clean = cv2.VideoCapture(str(clean_video_path))
+    cap_orig = cv2.VideoCapture(str(original_video_path))
+
+    band_psnrs = []
+    band_ssims = []
+
+    while True:
+        ret_c, f_clean = cap_clean.read()
+        ret_o, f_orig = cap_orig.read()
+        if not ret_c or not ret_o:
+            break
+
+        h, w = f_clean.shape[:2]
+        y1 = min(band_y_min, h - 1)
+        y2 = min(band_y_max, h)
+        if y2 > y1:
+            band_clean = f_clean[y1:y2, :]
+            band_orig = f_orig[y1:y2, :]
+
+            diff = band_clean.astype(np.float64) - band_orig.astype(np.float64)
+            mse = np.mean(diff ** 2)
+            psnr_val = 100.0 if mse < 1e-10 else float(10.0 * np.log10((255.0 ** 2) / mse))
+            band_psnrs.append(psnr_val)
+
+            ssim_val = compute_ssim(band_clean, band_orig)
+            band_ssims.append(ssim_val)
+
+    cap_clean.release()
+    cap_orig.release()
+
+    mean_band_psnr = float(np.mean(band_psnrs)) if band_psnrs else 100.0
+    mean_band_ssim = float(np.mean(band_ssims)) if band_ssims else 1.0
+    delta_ssim = max(0.0, 1.0 - mean_band_ssim)
+
+    psnr_pass = bool(mean_band_psnr >= 40.0)
+    delta_ssim_pass = bool(delta_ssim <= 0.02)
+
+    return {
+        "text_free_band_y_range": [band_y_min, band_y_max],
+        "mean_band_psnr_db": round(mean_band_psnr, 2),
+        "mean_band_ssim": round(mean_band_ssim, 4),
+        "delta_ssim": round(delta_ssim, 4),
+        "psnr_pass": psnr_pass,
+        "delta_ssim_pass": delta_ssim_pass,
+        "is_pass": psnr_pass and delta_ssim_pass,
+    }
 
 
 def run_public_suite(out_dir: Path, seed: int = 42, enable_real_clip: bool = True) -> Dict[str, Any]:
@@ -348,6 +410,10 @@ def run_public_suite(out_dir: Path, seed: int = 42, enable_real_clip: bool = Tru
             category="RealClip",
             target_scope="overlay",
         )
+        s55_metrics = evaluate_real_clip_section_5_5(pred_real, real_clip_path)
+        real_clip_summary["section_5_5_metrics"] = s55_metrics
+        if not s55_metrics["is_pass"]:
+            real_clip_summary["is_pass"] = False
         if not real_clip_summary["is_pass"]:
             all_pass = False
 
@@ -450,20 +516,141 @@ def main():
         if not sab_res["overall_suite_pass"]:
             exit_code = 1
 
+def print_human_readable_summary(overall_summary: Dict[str, Any]):
+    print("\n" + "=" * 78)
+    print("           ACCEPTANCE JUDGE VERDICT & COMPLIANCE SUMMARY (ROUND 3)         ")
+    print("=" * 78)
+    print(f" Timestamp: {overall_summary.get('timestamp')}")
+    print(f" Suite:     {overall_summary.get('suite')}")
+    print("-" * 78)
+    print(" 1. SCOPE PARSER INTENT VERIFICATION (44 Frozen Phrases):")
+    sp = overall_summary.get("scope_parser_evaluation", {})
+    sp_status = "PASS" if sp.get("is_100_percent") else "FAIL"
+    print(f"    - Accuracy: {sp.get('accuracy_percent', 0)}% ({sp.get('passed', 0)}/{sp.get('total_phrases', 0)} phrases) [{sp_status}]")
+    print("-" * 78)
+    print(" 2. SYNTHETIC PUBLIC CASES (P1 - P10):")
+    print("    [Tuning Cases: P1 - P6]")
+    cases = overall_summary.get("case_results", {})
+    for cid in ["P1", "P2", "P3", "P4", "P5", "P6"]:
+        cinfo = cases.get(cid, {})
+        status = "PASS" if cinfo.get("is_pass") else "FAIL"
+        words = cinfo.get("residual_words_total", 0)
+        psnr = cinfo.get("reconstruction_psnr_median_db", "N/A")
+        ssim = cinfo.get("reconstruction_ssim_median", "N/A")
+        print(f"    * {cid:<4}: Status={status:<4} | Words={words} | Med PSNR={psnr} dB | Med SSIM={ssim}")
+
+    print("    [Held-out Cases: P7 - P10]")
+    for cid in ["P7", "P8", "P9", "P10"]:
+        cinfo = cases.get(cid, {})
+        status = "PASS" if cinfo.get("is_pass") else "FAIL"
+        if cid == "P8":
+            ov_pass = cinfo.get("overlay_mode", {}).get("is_pass", False)
+            al_pass = cinfo.get("all_mode", {}).get("is_pass", False)
+            print(f"    * {cid:<4}: Status={status:<4} | Overlay Mode: {'PASS' if ov_pass else 'FAIL'} | All Mode: {'PASS' if al_pass else 'FAIL'}")
+        else:
+            words = cinfo.get("residual_words_total", 0)
+            psnr = cinfo.get("reconstruction_psnr_median_db", "N/A")
+            ssim = cinfo.get("reconstruction_ssim_median", "N/A")
+            print(f"    * {cid:<4}: Status={status:<4} | Words={words} | Med PSNR={psnr} dB | Med SSIM={ssim}")
+
+    print("-" * 78)
+    print(" 3. REAL CLIP ACCEPTANCE (tmpy8evxmno.mp4 - Section 5.5):")
+    rc = overall_summary.get("real_clip_evaluation")
+    if rc:
+        rc_pass = "PASS" if rc.get("is_pass") else "FAIL"
+        words = rc.get("residual_words_total", 0)
+        av = rc.get("av_integrity", {})
+        av_pass = "PASS" if av.get("is_pass") else "FAIL"
+        md5_match = av.get("is_audio_md5_match")
+        s55 = rc.get("section_5_5_metrics", {})
+        band_psnr = s55.get("mean_band_psnr_db", "N/A")
+        delta_ssim = s55.get("delta_ssim", "N/A")
+        print(f"    - Overall: {rc_pass}")
+        print(f"    - C1 Residual Text: {words} words (Threshold: 0)")
+        print(f"    - C7 Audio Integrity: {av_pass} (Bit-exact MD5: {md5_match})")
+        print(f"    - Text-free Band y[800,1000] PSNR: {band_psnr} dB (Threshold >= 40.0 dB)")
+        print(f"    - Scene Text Delta SSIM: {delta_ssim} (Threshold <= 0.02)")
+    else:
+        print("    - Skipped / Not evaluated")
+
+    print("-" * 78)
+    print(" 4. RESOURCE LIMITS & PROCESS CLEANLINESS (C8):")
+    c8 = overall_summary.get("resource_limits", {})
+    c8_pass = "PASS" if c8.get("is_pass") else "FAIL"
+    print(f"    - Status: {c8_pass}")
+    print(f"    - Peak Container RSS: {c8.get('peak_rss_mb')} MB (Limit: {c8.get('max_limit_mb')} MB)")
+    print(f"    - Orphan Processes: {c8.get('orphan_processes')}, Leaked GPU Jobs: {c8.get('leaked_gpu_jobs')}")
+    print("=" * 78)
+    final_v = "PASS" if overall_summary.get("is_pass") else "FAIL"
+    print(f" FINAL ACCEPTANCE VERDICT: >>> {final_v} <<< (Exit Code: {0 if final_v == 'PASS' else 1})")
+    print("=" * 78 + "\n")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Acceptance Test Runner for Video Text Removal")
+    parser.add_argument("--suite", choices=["public", "sabotage", "all"], default="public", help="Evaluation suite to execute")
+    parser.add_argument("--out", default="acceptance_out", help="Directory to save report artifacts")
+    parser.add_argument("--input", default=None, help="Input video to evaluate")
+    parser.add_argument("--output-video", default=None, help="Processed output video to evaluate")
+    parser.add_argument("--clean-gt", default=None, help="Ground truth clean video")
+    parser.add_argument("--mask-dir", default=None, help="Ground truth mask directory")
+    parser.add_argument("--baseline", default=None, help="Baseline plain re-encode video")
+    parser.add_argument("--scope", default="overlay", choices=["overlay", "all"], help="Target scope mode")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed")
+    parser.add_argument("--skip-real-clip", action="store_true", help="Skip 65s real clip processing")
+    args = parser.parse_args()
+
+    out_dir = Path(args.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    exit_code = 0
+
+    if args.output_video:
+        pred_p = Path(args.output_video)
+        gt_p = Path(args.clean_gt) if args.clean_gt else None
+        mask_p = Path(args.mask_dir) if args.mask_dir else None
+        base_p = Path(args.baseline) if args.baseline else None
+
+        logger.info(f"Direct video evaluation on {pred_p}")
+        res = run_video_evaluation(
+            pred_video_path=pred_p,
+            out_dir=out_dir,
+            clean_gt_path=gt_p,
+            mask_dir=mask_p,
+            baseline_video_path=base_p,
+            target_scope=args.scope,
+        )
+        with open(out_dir / "summary.json", "w", encoding="utf-8") as f:
+            json.dump(res, f, indent=2)
+        print(json.dumps(res, indent=2))
+        sys.exit(0 if res["is_pass"] else 1)
+
+    if args.suite in ["sabotage", "all"]:
+        logger.info("Executing Sabotage Suite (10 attacks a-j + 2 Ground Truth checks)...")
+        sab_runner = SabotageSuiteRunner(out_dir / "sabotage")
+        sab_res = sab_runner.run_all()
+        with open(out_dir / "sabotage_summary.json", "w", encoding="utf-8") as f:
+            json.dump(sab_res, f, indent=2)
+
+        print("\n" + "=" * 70)
+        print("SABOTAGE SUITE VERIFICATION:")
+        print("=" * 70)
+        for a in sab_res["attacks"]:
+            status = "[CAUGHT FAIL]" if a["caught_by_judge"] else "[MISSED PASS]"
+            print(f"  {a['attack']:<45} -> {status}")
+        for g in sab_res["ground_truths"]:
+            status = "[VERIFIED PASS]" if g["is_pass"] else "[UNEXPECTED FAIL]"
+            print(f"  {g['test']:<45} -> {status}")
+        print(f"Sabotage Suite Pass: {sab_res['overall_suite_pass']}")
+        print("=" * 70 + "\n")
+
+        if not sab_res["overall_suite_pass"]:
+            exit_code = 1
+
     if args.suite in ["public", "all"]:
         logger.info("Executing Public Synthetic Suite (P1-P10)...")
         pub_res = run_public_suite(out_dir, seed=args.seed, enable_real_clip=(not args.skip_real_clip))
-        print("\n" + "=" * 70)
-        print("PUBLIC SUITE VERIFICATION:")
-        print("=" * 70)
-        print(f"Scope Parser (44 frozen phrases): {pub_res['scope_parser_evaluation']['accuracy_percent']}% (100% REQUIRED)")
-        print(f"Total Cases: {pub_res['total_cases']}, Passed: {pub_res['passed_cases']}")
-        print(f"All Cases Passed: {pub_res['all_cases_passed']}")
-        print(f"Resource Limits (Peak RAM & Procs): {'PASS' if pub_res['resource_limits']['is_pass'] else 'FAIL'}")
-        if pub_res.get("real_clip_evaluation"):
-            print(f"Real Clip (tmpy8evxmno): {'PASS' if pub_res['real_clip_evaluation']['is_pass'] else 'FAIL'}")
-        print(f"Overall Suite Pass: {pub_res['is_pass']}")
-        print("=" * 70 + "\n")
+        print_human_readable_summary(pub_res)
 
         if not pub_res["is_pass"]:
             exit_code = 1

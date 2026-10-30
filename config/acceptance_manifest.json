@@ -2,17 +2,18 @@
   "schema_version": "3.0.0",
   "status": "FROZEN_LOCKED",
   "algorithm": "SHA-256",
-  "created_at": "2026-10-30T20:23:00Z",
-  "description": "Frozen Acceptance Judge and Anti-Gaming Framework file integrity manifest (Milestone M0 Iteration 2 Remediation).",
+  "created_at": "2026-10-30T20:40:00Z",
+  "description": "Frozen Acceptance Judge and Anti-Gaming Framework file integrity manifest (Milestone M0 Iteration 2 Remediation - 10 Files Full Coverage).",
   "files": {
     "tools/acceptance/__init__.py": "e970f4fb598877ba0d1a87e1a05fdbae8bfc748417aa3ccf81c0571705e16261",
-    "tools/acceptance/thresholds.py": "41b425b1d6b519b7c9b49cfea2ae4c12003ab2c0825e68aedca1c3f3b17639f3",
-    "tools/acceptance/phrase_lists.py": "124989badece66569ae6b2b6ba5b5e867279a33edac334c5bcc8ff15d013831c",
+    "tools/acceptance/acceptance_run.py": "9fda2c6cc5b6cc0dbac5a72507a20ace09a1c6e04a88c20f46ce17ab3075f4db",
     "tools/acceptance/metrics.py": "a50ec1a2a199b997890e3ad9d6d1a624c0aa4d311f11db29e7512802a3163828",
-    "tools/acceptance/synthetic_generator.py": "fe53780a5019561d5a216befdb76e64239ded616ab9ca506109057f04c61aa89",
+    "tools/acceptance/phrase_lists.py": "124989badece66569ae6b2b6ba5b5e867279a33edac334c5bcc8ff15d013831c",
     "tools/acceptance/sabotage_suite.py": "800cc937f464c1e77f8a46946f6988148e5122901a33a820e04f38544cb1bea8",
-    "tools/acceptance/acceptance_run.py": "b648c9df7317e90948a4e9084c2772212ec31ba1f48b2748cde74e9892e8ff27",
+    "tools/acceptance/synthetic_generator.py": "fe53780a5019561d5a216befdb76e64239ded616ab9ca506109057f04c61aa89",
+    "tools/acceptance/thresholds.py": "41b425b1d6b519b7c9b49cfea2ae4c12003ab2c0825e68aedca1c3f3b17639f3",
+    "tools/acceptance_run.py": "6fdb9f7abb45774f415598672190c4ae606341956388a168e9462cd9d5850601",
     "tools/lint_no_overfit.py": "7c15d77ecdc3d7dab53af57b9a3de444109ee91cd08d90559ca25cbbeb4e5c9a",
-    "tools/verify_report_claims.py": "5ddd30100ba1a64615bfd84839c2e90ed1c8cd80cf85564d3d1d9274b6769ca3"
+    "tools/verify_report_claims.py": "02c31ecb973b807bfe7f250ebeb9152fb3a1d99cc8fbeac4d7ebab6dbe92d3ed"
   }
 }

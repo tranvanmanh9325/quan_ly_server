@@ -1,14 +1,64 @@
-TITLE: DiffuEraser: A Diffusion Model for Video Inpainting
-REPOSITORY: https://github.com/TencentARC/DiffuEraser
-AUTHORS: Tencent ARC Lab & Fudan University
-PUBLISHED: European Conference on Computer Vision (ECCV 2024)
-LICENSE: Apache License 2.0
-DATE ACCESSED (UTC): 2026-10-30T08:30:00Z
+<div align="center">
 
-VERBATIM QUOTE:
-"DiffuEraser is an open-source video inpainting pipeline combining spatial diffusion priors with temporal motion guidance. Released under Apache-2.0 license."
+<h1>DiffuEraser: A Diffusion Model for Video Inpainting</h1>
 
-KEY FACTS:
-- Uses latent diffusion architecture for high-frequency detail synthesis
-- Requires >= 12GB VRAM for full HD video processing
-- Processing speed: ~1.2s per frame on A100 (too slow for free server host CPU)
+<div>
+    Xiaowen Li&emsp;
+    Haolan Xue&emsp;
+    Peiran Ren&emsp;
+    Liefeng Bo
+</div>
+<div>
+    Tongyi Lab, Alibaba Group&emsp; 
+</div>
+
+<div>
+    <strong>TECHNICAL REPORT</strong>
+</div>
+
+<div>
+    <h4 align="center">
+        <a href="https://lixiaowen-xw.github.io/DiffuEraser-page" target='_blank'><img src="https://img.shields.io/badge/%F0%9F%8C%B1-Project%20Page-blue"></a>
+        <a href="https://arxiv.org/abs/2501.10018" target='_blank'><img src="https://img.shields.io/badge/arXiv-2501.10018-B31B1B.svg"></a>
+        <a href="https://huggingface.co/lixiaowen/diffuEraser"><img src="https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Model-blue"></a>
+        <a href="https://www.modelscope.cn/xingzi/diffuEraser"><img src="https://img.shields.io/badge/%20Modelscope-Model-orange"></a>
+        <a href="https://www.modelscope.cn/studios/iic/DiffuEraser"><img src="https://img.shields.io/badge/%20Modelscope-Demo-purple"></a>
+    </h4>
+</div>
+
+
+
+
+</div>
+
+DiffuEraser is a diffusion model for video inpainting, which outperforms state-of-the-art model Propainter in both content completeness and temporal consistency while maintaining acceptable efficiency.
+
+ If you find our work helpful, please help star this repo🌟. Thanks! 😃  
+ 
+ If you're using DiffuEraser in your applications, tools, or creative ideas, feel free to share the URL on [Discussions](https://github.com/lixiaowen-xw/DiffuEraser/discussions/15).
+
+---
+
+
+## Update Log
+- *2025.01.20*: Release inference code.
+- *2025.03.26*: Release training code.
+- *2025.04.08*: Release online demo on [ModelScope](https://www.modelscope.cn/studios/iic/DiffuEraser).
+
+
+## TODO
+- [x] Release training code.
+- [x] Release HuggingFace/ModelScope demo.
+- [ ] Release gradio demo.
+  
+  
+## Results
+More results will be displayed on the project page.   
+
+https://github.com/user-attachments/assets/b59d0b88-4186-4531-8698-adf6e62058f8
+
+
+
+
+## Method Overview
+Our network is inspired by [BrushNet](https://github.com/TencentARC/BrushNet) and [Animatediff](https://github.com/guoyww/AnimateDiff). The architecture comprises the primary `denoising UNet` and an auxiliary `BrushNet branch`. Features extracted by BrushNet branch are integrated into the denoising UNet layer by layer after a zero convolution block. The denoising UNet performs the denoising process to generate the final output. To enhance temporal consistency, `temporal attention` 

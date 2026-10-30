@@ -1,16 +1,1 @@
-TITLE: Image Quality Assessment: From Error Visibility to Structural Similarity
-AUTHORS: Zhou Wang, Alan C. Bovik, Hamid R. Sheikh, Eero P. Simoncelli
-PUBLISHED: IEEE Transactions on Image Processing, Vol. 13, No. 4, April 2004
-URL: https://doi.org/10.1109/TIP.2003.819861
-
-ABSTRACT & MATHEMATICAL FOUNDATIONS:
-Traditional error summation methods such as MSE and PSNR are based on signal energy differences rather than perceived structural fidelity. The structural similarity index (SSIM) compares local luminance, contrast, and structure:
-- Luminance: l(x, y) = (2 * mu_x * mu_y + C1) / (mu_x^2 + mu_y^2 + C1)
-- Contrast: c(x, y) = (2 * sigma_x * sigma_y + C2) / (sigma_x^2 + sigma_y^2 + C2)
-- Structure: s(x, y) = (sigma_xy + C3) / (sigma_x * sigma_y + C3)
-With C1 = (K1 * L)^2, C2 = (K2 * L)^2, K1 = 0.01, K2 = 0.03, L = 255.
-Local statistics are computed using an 11x11 circular-symmetric Gaussian weighting function with standard deviation 1.5.
-
-RELEVANCE TO ROUND 3 JUDGE:
-- Implemented in `tools/acceptance/metrics.py` as compute_ssim().
-- Used in C2 (collateral damage outside dilated mask: SSIM >= 0.98), C3 (inpaint fidelity: SSIM >= 0.90), and C5 (scene text delta SSIM <= 0.02).
+Objective methods for assessing perceptual image quality have traditionally attempted to quantify the visibility of errors between a distorted image and a reference image using a variety of known properties of the human visual system. Under the assumption that human visual perception is highly adapted for extracting structural information from a scene, we introduce an alternative complementary framework for quality assessment based on the degradation of structural information. As a specific example of this concept, we develop a Structural Similarity Index and demonstrate its promise through a set of intuitive examples, as well as comparison to both subjective ratings and state-of-the-art objective methods on a database of images compressed with JPEG and JPEG2000. A MATLAB implementation of the proposed algorithm is available online at http://www.cns.nyu.edu/~lcv/ssim/ . Index Terms – Image quality assessment, perceptual quality, human visual system, error sensitivity, structural similarity, structural information, image coding, JPEG, JPEG2000 &nbsp;

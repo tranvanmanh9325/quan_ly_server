@@ -340,7 +340,10 @@ class ReportClaimsVerifier:
 
             # Case A: File or directory path
             if ("/" in item or "\\" in item or re.search(r"\.(py|md|json|sh|yml|yaml|txt|mp4|csv|png|jpg)$", item)):
-                norm_path = item.replace("\\", "/").strip("./")
+                norm_path = item.replace("\\", "/")
+                if norm_path.startswith("./"):
+                    norm_path = norm_path[2:]
+                norm_path = norm_path.rstrip("/")
                 # Ignore remote/tmp/url patterns
                 if norm_path.startswith("http") or norm_path.startswith("tmp/") or norm_path.startswith("/tmp/"):
                     continue

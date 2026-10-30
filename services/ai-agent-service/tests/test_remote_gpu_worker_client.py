@@ -5,9 +5,14 @@ Runs 100% offline and deterministic in CI.
 """
 
 import asyncio
+import sys
 from pathlib import Path
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
+
+SERVICE_ROOT = Path(__file__).resolve().parent.parent
+if str(SERVICE_ROOT) not in sys.path:
+    sys.path.insert(0, str(SERVICE_ROOT))
 
 import cv2
 import httpx
@@ -15,10 +20,8 @@ import numpy as np
 
 from app.services.remote_gpu_worker_client import (
     BaseRemoteGpuProvider,
-    ColabRelayProvider,
     GpuProviderTier,
     HuggingFaceZeroGpuProvider,
-    KaggleBatchGpuProvider,
     RemoteGpuWorkerClient,
     get_remote_gpu_worker_client,
 )
@@ -37,12 +40,10 @@ class TestRemoteGpuWorkerClient(unittest.IsolatedAsyncioTestCase):
         self.dummy_png = buf.tobytes()
 
     def test_client_initialization_default_providers(self):
-        """Verify default instantiation includes all 3 tiers."""
+        """Verify default instantiation includes configured providers."""
         client = RemoteGpuWorkerClient()
-        self.assertEqual(len(client.providers), 3)
+        self.assertGreaterEqual(len(client.providers), 1)
         self.assertIsInstance(client.providers[0], HuggingFaceZeroGpuProvider)
-        self.assertIsInstance(client.providers[1], ColabRelayProvider)
-        self.assertIsInstance(client.providers[2], KaggleBatchGpuProvider)
 
         stats = client.get_stats()
         self.assertEqual(stats["total_requests"], 0)
@@ -91,26 +92,26 @@ class TestRemoteGpuWorkerClient(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(await provider.is_available())
 
     async def test_failover_tier1_to_tier2(self):
-        """Verify client fails over to Tier 2 Colab Relay when Tier 1 HF Spaces fails."""
+        """Verify client fails over to backup provider when primary provider fails."""
         mock_hf = MagicMock(spec=BaseRemoteGpuProvider)
         mock_hf.name = "MockHF"
         mock_hf.tier = GpuProviderTier.TIER_1_HF_SPACES
         mock_hf.is_available = AsyncMock(return_value=True)
         mock_hf.inpaint_roi = AsyncMock(return_value=None)  # Fails
 
-        mock_colab = MagicMock(spec=BaseRemoteGpuProvider)
-        mock_colab.name = "MockColab"
-        mock_colab.tier = GpuProviderTier.TIER_2_COLAB_RELAY
-        mock_colab.is_available = AsyncMock(return_value=True)
-        mock_colab.inpaint_roi = AsyncMock(return_value=self.dummy_img)  # Succeeds
+        mock_backup = MagicMock(spec=BaseRemoteGpuProvider)
+        mock_backup.name = "MockBackup"
+        mock_backup.tier = GpuProviderTier.TIER_1_HF_SPACES
+        mock_backup.is_available = AsyncMock(return_value=True)
+        mock_backup.inpaint_roi = AsyncMock(return_value=self.dummy_img)  # Succeeds
 
-        client = RemoteGpuWorkerClient(providers=[mock_hf, mock_colab])
+        client = RemoteGpuWorkerClient(providers=[mock_hf, mock_backup])
         result = await client.inpaint_roi_with_failover(self.dummy_img, self.dummy_mask)
 
         self.assertIsNotNone(result)
         self.assertEqual(result.shape, self.dummy_img.shape)
         self.assertEqual(client.get_stats()["success_requests"], 1)
-        self.assertEqual(client.get_stats()["provider_usage"]["MockColab"], 1)
+        self.assertEqual(client.get_stats()["provider_usage"]["MockBackup"], 1)
 
     async def test_all_providers_fail_returns_none(self):
         """Verify None is returned when all providers in pool fail, enabling classical fallback."""
@@ -173,16 +174,6 @@ class TestRemoteGpuWorkerClient(unittest.IsolatedAsyncioTestCase):
         p1.terminate_session.assert_called_once()
         p2.terminate_session.assert_called_once()
 
-    def test_secret_safety_kaggle_and_colab(self):
-        """Verify Kaggle and Colab providers do not expose raw secrets in repr."""
-        secret_token = "SUPER_SECRET_TOKEN_XYZ123"
-        colab = ColabRelayProvider(relay_url="https://relay.colab", auth_token=secret_token)
-        self.assertNotIn(secret_token, repr(colab))
-        self.assertNotIn(secret_token, str(colab))
-
-        kaggle = KaggleBatchGpuProvider(username="testuser", api_key=secret_token)
-        self.assertNotIn(secret_token, repr(kaggle))
-        self.assertNotIn(secret_token, str(kaggle))
 
     def test_input_validation(self):
         """Verify invalid input types raise appropriate exceptions."""

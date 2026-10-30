@@ -26,17 +26,11 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_HF_LAMA_ENDPOINTS = [
-    "https://sanster-iopaint-lama.hf.space/api/v1/inpaint",
-    "https://sanster-lama-cleaner.hf.space/api/v1/inpaint",
-]
-
-
 def _resolve_endpoints(
     custom_endpoints: Optional[List[str]] = None,
     env_keys: Optional[List[str]] = None,
 ) -> List[str]:
-    """Resolve remote inpainting endpoints from explicit argument, environment, or verified defaults."""
+    """Resolve remote inpainting endpoints from explicit argument or environment configuration."""
     if custom_endpoints:
         return [ep.strip() for ep in custom_endpoints if ep and ep.strip()]
     if env_keys is None:
@@ -47,7 +41,7 @@ def _resolve_endpoints(
             eps = [x.strip() for x in val.split(",") if x.strip()]
             if eps:
                 return eps
-    return list(DEFAULT_HF_LAMA_ENDPOINTS)
+    return []
 
 
 def _get_auth_headers(endpoint: str) -> Dict[str, str]:
@@ -61,8 +55,6 @@ def _get_auth_headers(endpoint: str) -> Dict[str, str]:
 
 class GpuProviderTier(str, Enum):
     TIER_1_HF_SPACES = "tier_1_hf_spaces"
-    TIER_2_COLAB_RELAY = "tier_2_colab_relay"
-    TIER_3_KAGGLE_BATCH = "tier_3_kaggle_batch"
 
 
 class RemoteGpuWorkerError(Exception):
@@ -308,315 +300,12 @@ class HuggingFaceZeroGpuProvider(BaseRemoteGpuProvider):
             self._http_client = None
 
 
-class ColabRelayProvider(BaseRemoteGpuProvider):
-    """
-    Tier 2 Provider: Google Colab Headless Relay Client.
-    Features:
-    - Secret safety: loads credentials/tokens from environment only.
-    - Soft timeout and auto-unassign to prevent resource runaway.
-    - Gracefully declares unavailable when no credentials or relay tunnel is active.
-    """
-
-    def __init__(
-        self,
-        relay_url: Optional[str] = None,
-        auth_token: Optional[str] = None,
-        timeout: float = 60.0,
-        http_client: Optional[httpx.AsyncClient] = None,
-    ):
-        super().__init__(name="ColabRelayProvider", tier=GpuProviderTier.TIER_2_COLAB_RELAY)
-        self.relay_url = relay_url or os.getenv("COLAB_RELAY_ENDPOINT", "").strip()
-        self._auth_token = auth_token or os.getenv("COLAB_AUTH_TOKEN", "").strip()
-        self.timeout = float(timeout)
-        self._http_client = http_client
-        self._session_active = False
-
-    def _get_http_client(self) -> httpx.AsyncClient:
-        if self._http_client is None or self._http_client.is_closed:
-            headers = {}
-            if self._auth_token:
-                headers["Authorization"] = f"Bearer {self._auth_token}"
-            self._http_client = httpx.AsyncClient(
-                timeout=httpx.Timeout(self.timeout, connect=5.0),
-                headers=headers,
-                follow_redirects=True,
-            )
-        return self._http_client
-
-    async def is_available(self) -> bool:
-        """Available only if relay URL is configured and server responds."""
-        if not self.relay_url:
-            return False
-        return await self.health_check()
-
-    async def inpaint_roi(
-        self,
-        image: Union[np.ndarray, bytes],
-        mask: Union[np.ndarray, bytes],
-        timeout: float = 35.0,
-    ) -> Optional[np.ndarray]:
-        """Forward inpaint request through Colab Relay tunnel."""
-        if not self.relay_url:
-            return None
-
-        if isinstance(image, np.ndarray):
-            img_bytes = _ndarray_to_png_bytes(image)
-        elif isinstance(image, bytes):
-            img_bytes = image
-        else:
-            raise TypeError("Image must be np.ndarray or bytes")
-
-        if isinstance(mask, np.ndarray):
-            mask_bytes = _ndarray_to_png_bytes(mask)
-        elif isinstance(mask, bytes):
-            mask_bytes = mask
-        else:
-            raise TypeError("Mask must be np.ndarray or bytes")
-
-        payload = {
-            "image": _encode_to_data_uri(img_bytes),
-            "mask": _encode_to_data_uri(mask_bytes),
-        }
-
-        client = self._get_http_client()
-        base_url = self.relay_url.rstrip("/")
-        # Try both /inpaint and /api/inpaint to support varied relay wrappers
-        candidate_urls = [
-            f"{base_url}/inpaint",
-            f"{base_url}/api/inpaint",
-        ] if not base_url.endswith("/api") else [f"{base_url}/inpaint"]
-
-        for target_url in candidate_urls:
-            try:
-                self._session_active = True
-                resp = await client.post(target_url, json=payload, timeout=timeout)
-                if resp.status_code == 200 and len(resp.content) > 100:
-                    return _png_bytes_to_ndarray(resp.content)
-                if resp.status_code != 404:
-                    logger.warning("[ColabRelayProvider] Unexpected status %d from %s", resp.status_code, target_url)
-            except Exception as err:
-                logger.warning("[ColabRelayProvider] Relay request failed on %s: %s", target_url, err)
-
-        return None
-
-    async def health_check(self) -> bool:
-        if not self.relay_url:
-            return False
-        client = self._get_http_client()
-        base_url = self.relay_url.rstrip("/")
-        for path in ("/health", "/status", "/api/health"):
-            try:
-                res = await client.get(f"{base_url}{path}", timeout=5.0)
-                if res.status_code == 200:
-                    return True
-            except Exception:
-                pass
-        return False
-
-    async def terminate_session(self) -> None:
-        """Signal Colab relay VM to unassign / purge session."""
-        if self._session_active and self.relay_url:
-            try:
-                client = self._get_http_client()
-                await client.post(
-                    f"{self.relay_url.rstrip('/')}/unassign",
-                    timeout=5.0,
-                )
-            except Exception as e:
-                logger.debug("[ColabRelayProvider] Session termination error: %s", e)
-            finally:
-                self._session_active = False
-
-        if self._http_client is not None and not self._http_client.is_closed:
-            await self._http_client.aclose()
-            self._http_client = None
-
-
-class KaggleBatchGpuProvider(BaseRemoteGpuProvider):
-    """
-    Tier 3 Provider: Kaggle Dual Tesla T4 Batch Worker Hook.
-    Features:
-    - Kaggle REST API v1 compatible.
-    - Safe credentials loading (KAGGLE_USERNAME, KAGGLE_KEY from env or ~/.kaggle/kaggle.json).
-    - Session tracking with cancelAcknowledged hooks.
-    """
-
-    KAGGLE_API_BASE = "https://www.kaggle.com/api/v1"
-
-    def __init__(
-        self,
-        username: Optional[str] = None,
-        api_key: Optional[str] = None,
-        timeout: float = 60.0,
-        http_client: Optional[httpx.AsyncClient] = None,
-    ):
-        super().__init__(name="KaggleBatchGpuProvider", tier=GpuProviderTier.TIER_3_KAGGLE_BATCH)
-        self.timeout = float(timeout)
-        self._http_client = http_client
-        self._active_kernel_slug: Optional[str] = None
-
-        # Load credentials safely
-        self.username, self._api_key = self._resolve_credentials(username, api_key)
-
-    @staticmethod
-    def _resolve_credentials(
-        username: Optional[str], api_key: Optional[str]
-    ) -> Tuple[Optional[str], Optional[str]]:
-        """Resolve Kaggle credentials without exposing secrets."""
-        u = username or os.getenv("KAGGLE_USERNAME")
-        k = api_key or os.getenv("KAGGLE_KEY")
-
-        if not u or not k:
-            try:
-                kaggle_json = Path.home() / ".kaggle" / "kaggle.json"
-                if kaggle_json.is_file():
-                    data = json.loads(kaggle_json.read_text(encoding="utf-8"))
-                    u = u or data.get("username")
-                    k = k or data.get("key")
-            except Exception as err:
-                logger.debug("[KaggleBatchGpuProvider] Failed to read kaggle.json: %s", err)
-
-        return u, k
-
-    def _get_http_client(self) -> httpx.AsyncClient:
-        if self._http_client is None or self._http_client.is_closed:
-            auth = None
-            if self.username and self._api_key:
-                auth = httpx.BasicAuth(self.username, self._api_key)
-            self._http_client = httpx.AsyncClient(
-                timeout=httpx.Timeout(self.timeout, connect=5.0),
-                auth=auth,
-                headers={"User-Agent": "kaggle/1.6"},
-                follow_redirects=True,
-            )
-        return self._http_client
-
-    async def is_available(self) -> bool:
-        """Available if credentials are present and Kaggle API is responsive."""
-        if not self.username or not self._api_key:
-            return False
-        return await self.health_check()
-
-    async def inpaint_roi(
-        self,
-        image: Union[np.ndarray, bytes],
-        mask: Union[np.ndarray, bytes],
-        timeout: float = 35.0,
-    ) -> Optional[np.ndarray]:
-        """
-        Batch hook for Kaggle worker executing genuine Kaggle REST API v1.
-        Notice: Kaggle spin-up has cold-start overhead (>60s).
-        Returns None if timeout < 60.0s (cold start threshold) or if batch processing fails.
-        """
-        if not self.username or not self._api_key:
-            return None
-
-        # Kaggle batch is reserved for async/extended batching; failover early if timeout < 60s
-        if timeout < 60.0:
-            logger.debug("[KaggleBatchGpuProvider] Timeout %.1fs too short for Kaggle cold start (>=60s required)", timeout)
-            return None
-
-        if isinstance(image, np.ndarray):
-            img_bytes = _ndarray_to_png_bytes(image)
-        elif isinstance(image, bytes):
-            img_bytes = image
-        else:
-            raise TypeError("Image must be np.ndarray or bytes")
-
-        if isinstance(mask, np.ndarray):
-            mask_bytes = _ndarray_to_png_bytes(mask)
-        elif isinstance(mask, bytes):
-            mask_bytes = mask
-        else:
-            raise TypeError("Mask must be np.ndarray or bytes")
-
-        client = self._get_http_client()
-        token = secrets.token_hex(4)
-        kernel_slug = f"{self.username}/remote-inpaint-{token}"
-        self._active_kernel_slug = kernel_slug
-
-        try:
-            # 1. Push Kaggle Kernel payload via REST API v1 (POST /kernels/push)
-            push_url = f"{self.KAGGLE_API_BASE}/kernels/push"
-            push_payload = {
-                "id": kernel_slug,
-                "title": f"inpaint-{token}",
-                "code": (
-                    "# Remote Inpainting Batch Worker (Dual Tesla T4)\n"
-                    "import cv2, json, base64, numpy as np\n"
-                    "print('Kaggle Batch GPU Inpaint Task Initialized')\n"
-                ),
-                "language": "python",
-                "kernel_type": "script",
-                "is_private": "true",
-                "enable_gpu": "true",
-                "enable_internet": "true",
-            }
-            push_resp = await client.post(push_url, json=push_payload, timeout=min(30.0, timeout))
-            if push_resp.status_code not in (200, 201):
-                logger.warning(
-                    "[KaggleBatchGpuProvider] Kernel push failed (HTTP %d): %s",
-                    push_resp.status_code, push_resp.text[:200]
-                )
-                return None
-
-            # 2. Poll kernel status via GET /kernels/status?kernel={kernel_slug}
-            poll_deadline = time.time() + timeout
-            while time.time() < poll_deadline:
-                await asyncio.sleep(5.0)
-                status_url = f"{self.KAGGLE_API_BASE}/kernels/status?kernel={kernel_slug}"
-                status_resp = await client.get(status_url, timeout=10.0)
-                if status_resp.status_code == 200:
-                    status_data = status_resp.json()
-                    status_str = str(status_data.get("status", "")).lower()
-                    if status_str in ("complete", "completed"):
-                        # 3. Download output via GET /kernels/{kernel_slug}/output
-                        out_url = f"{self.KAGGLE_API_BASE}/kernels/{kernel_slug}/output"
-                        out_resp = await client.get(out_url, timeout=30.0)
-                        if out_resp.status_code == 200 and len(out_resp.content) > 100:
-                            return _png_bytes_to_ndarray(out_resp.content)
-                        break
-                    elif status_str in ("error", "failed", "cancelled"):
-                        logger.warning("[KaggleBatchGpuProvider] Kernel %s exited with status: %s", kernel_slug, status_str)
-                        break
-        except Exception as err:
-            logger.warning("[KaggleBatchGpuProvider] Kaggle REST execution error: %s", err)
-        finally:
-            await self.terminate_session()
-
-        return None
-
-    async def health_check(self) -> bool:
-        if not self.username or not self._api_key:
-            return False
-        client = self._get_http_client()
-        try:
-            res = await client.get(f"{self.KAGGLE_API_BASE}/datasets/list?page_size=1", timeout=5.0)
-            return res.status_code == 200
-        except Exception:
-            return False
-
-    async def terminate_session(self) -> None:
-        """Cancel running Kaggle kernel if active."""
-        if self._active_kernel_slug and self.username and self._api_key:
-            try:
-                client = self._get_http_client()
-                cancel_url = f"{self.KAGGLE_API_BASE}/kernels/{self._active_kernel_slug}/cancel"
-                await client.post(cancel_url, timeout=5.0)
-            except Exception as e:
-                logger.debug("[KaggleBatchGpuProvider] Failed to cancel kernel: %s", e)
-            finally:
-                self._active_kernel_slug = None
-
-        if self._http_client is not None and not self._http_client.is_closed:
-            await self._http_client.aclose()
-            self._http_client = None
 
 
 class RemoteGpuWorkerClient:
     """
-    Coordinator client managing multi-tier remote GPU worker failover.
-    Attempts Tier 1 (HF Spaces) -> Tier 2 (Colab Relay) -> Tier 3 (Kaggle Batch).
+    Coordinator client managing remote GPU worker inpainting failover.
+    Attempts configured remote providers (e.g. HuggingFaceZeroGpuProvider).
     If all tiers are exhausted or offline, returns None to trigger ClassicalFallbackManager.
     """
 
@@ -626,8 +315,6 @@ class RemoteGpuWorkerClient:
         else:
             self._providers = [
                 HuggingFaceZeroGpuProvider(),
-                ColabRelayProvider(),
-                KaggleBatchGpuProvider(),
             ]
 
         self._stats = {

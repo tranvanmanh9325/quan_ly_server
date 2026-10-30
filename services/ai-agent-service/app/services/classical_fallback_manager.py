@@ -254,18 +254,9 @@ class ClassicalFallbackManager:
                 return result
         except Exception as err:
             logger.warning(
-                "[ClassicalFallbackManager] Pure guided filter inpaint failed: %s, falling back to TexturePreservingInpainter",
+                "[ClassicalFallbackManager] Pure guided filter inpaint failed: %s, falling back to emergency Navier-Stokes",
                 err,
             )
-
-        try:
-            from app.services.texture_preserving_inpainter import TexturePreservingInpainter
-            inpainter = TexturePreservingInpainter.get_instance()
-            result = inpainter.fallback_texture_inpaint(roi_img, roi_mask)
-            if result is not None and result.shape == roi_img.shape:
-                return result
-        except Exception as err:
-            logger.warning("[ClassicalFallbackManager] TexturePreservingInpainter failed: %s", err)
 
         # Emergency fallback: C3 emergency Navier-Stokes
         return self.reconstruct_roi_emergency_telea_ns(roi_img, roi_mask)
@@ -435,31 +426,14 @@ class ClassicalFallbackManager:
             ex = (xx - phase_offset_x) % W_E
             tiled_detail = patch_detail[ey, ex]
 
-            # Semantic skin-tone aware gating: exclude skin pixels
-            # 1. Spatial constraint: human skin region gating.
-            base_u8 = np.clip(struct_base, 0, 255).astype(np.uint8)
-            hsv_base = cv2.cvtColor(base_u8, cv2.COLOR_BGR2HSV)
-            skin_color = (
-                (hsv_base[:, :, 0] <= 25)
-                & (hsv_base[:, :, 1] >= 28)
-                & (hsv_base[:, :, 1] <= 175)
-                & (hsv_base[:, :, 2] >= 45)
-            )
+            # General local texture variance gating: prevent lattice artifact on smooth regions
+            gray_base = cv2.cvtColor(np.clip(struct_base, 0, 255).astype(np.uint8), cv2.COLOR_BGR2GRAY)
+            local_mean = cv2.boxFilter(gray_base.astype(np.float32), -1, (9, 9))
+            local_sqr = cv2.boxFilter((gray_base.astype(np.float32)) ** 2, -1, (9, 9))
+            local_var = np.maximum(local_sqr - local_mean ** 2, 0.0)
 
-            if roi_bbox is not None:
-                # Isolate lower region proportionally scaled to frame height
-                skin_allowed = (yy >= int(0.65 * h))
-            else:
-                skin_allowed = (yy >= int(0.75 * h))
-
-            skin_mask = skin_color & skin_allowed
-            skin_dilated = cv2.dilate(
-                skin_mask.astype(np.uint8),
-                cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)),
-            ) > 0
-
-            lattice_weight = np.ones((h, w), dtype=np.float32)
-            lattice_weight[skin_dilated] = 0.0
+            # Smooth regions have low variance; only blend repetitive lattice where variance is significant
+            lattice_weight = np.clip(local_var / 35.0, 0.0, 1.0)
             lattice_weight = cv2.GaussianBlur(lattice_weight, (5, 5), 1.0)[:, :, np.newaxis]
 
             recomposed = np.clip(struct_base + tiled_detail * lattice_weight, 0, 255).astype(np.uint8)

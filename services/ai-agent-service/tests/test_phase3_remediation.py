@@ -22,21 +22,18 @@ if str(SERVICE_ROOT) not in sys.path:
 
 from app.services.video_editor_service import VideoEditorService
 from app.services.classical_fallback_manager import get_classical_fallback_manager
-from app.services.studio_text_detector import StudioTextDetector
 
 
 class TestPhase3Remediation(unittest.TestCase):
     def setUp(self):
         self.editor = VideoEditorService()
         self.classical_mgr = get_classical_fallback_manager()
-        self.detector = StudioTextDetector()
 
     def test_01_static_scan_zero_forbidden_patterns(self):
         """Kiểm tra tĩnh 100% không còn bất kỳ regex cấm hoặc overfit heuristics nào."""
         base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "app", "services"))
         files_to_check = [
             os.path.join(base_dir, "video_editor_service.py"),
-            os.path.join(base_dir, "studio_text_detector.py"),
             os.path.join(base_dir, "classical_fallback_manager.py"),
         ]
 

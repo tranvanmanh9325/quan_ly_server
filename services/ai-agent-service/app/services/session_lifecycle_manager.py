@@ -21,10 +21,9 @@ class JobSessionRecord:
     """Tracking record for active resources associated with a specific job."""
     job_id: str
     active_providers: List[str] = field(default_factory=list)
-    remote_kernel_slugs: List[str] = field(default_factory=list)
-    colab_sessions: List[str] = field(default_factory=list)
     temp_files: List[Path] = field(default_factory=list)
     temp_dirs: List[Path] = field(default_factory=list)
+    protected_deliverables: List[Path] = field(default_factory=list)
     remote_asset_ids: List[str] = field(default_factory=list)
     created_at: float = field(default_factory=time.time)
 
@@ -46,31 +45,71 @@ class RemoteSessionRegistry:
                 self._sessions[job_id] = JobSessionRecord(job_id=job_id)
             return self._sessions[job_id]
 
-    def register_temp_path(self, job_id: str, path: Union[str, Path], is_dir: bool = False) -> None:
-        """Register a temporary file or directory to be deleted on session termination."""
-        p = Path(path)
+    def register_deliverable_path(self, job_id: str, path: Union[str, Path]) -> None:
+        """
+        Register a protected deliverable target file that must NEVER be deleted during cleanup.
+        Any attempt to register or unlink this path as temporary scratch will be rejected.
+        """
+        if not path:
+            return
+        p = Path(path).resolve()
         rec = self.get_or_create(job_id)
         with self._lock:
+            if p not in rec.protected_deliverables:
+                rec.protected_deliverables.append(p)
+            # Purge from temp_files if accidentally registered previously
+            rec.temp_files = [tf for tf in rec.temp_files if tf.resolve() != p]
+            # Purge from temp_dirs if any temp_dir contains the deliverable
+            safe_dirs = []
+            for td in rec.temp_dirs:
+                try:
+                    if p.is_relative_to(td.resolve()):
+                        logger.warning(
+                            "[RemoteSessionRegistry] Removing temp_dir %s from cleanup because it contains protected deliverable %s",
+                            td, p
+                        )
+                        continue
+                except (ValueError, TypeError, AttributeError):
+                    pass
+                safe_dirs.append(td)
+            rec.temp_dirs = safe_dirs
+
+    def register_temp_path(self, job_id: str, path: Union[str, Path], is_dir: bool = False) -> None:
+        """
+        Register a temporary scratch file or directory to be deleted on session termination.
+        Enforces strict safety checks: rejects any path registered as a protected deliverable.
+        """
+        if not path:
+            return
+        p = Path(path).resolve()
+        rec = self.get_or_create(job_id)
+        with self._lock:
+            # SAFETY GUARD: Never register a deliverable target as a temporary scratch asset
+            for d in rec.protected_deliverables:
+                resolved_d = d.resolve()
+                if p == resolved_d:
+                    logger.warning(
+                        "[RemoteSessionRegistry] SAFETY REJECTION: Refusing to register protected deliverable %s as temporary scratch file",
+                        p
+                    )
+                    return
+                if is_dir:
+                    try:
+                        if resolved_d.is_relative_to(p):
+                            logger.warning(
+                                "[RemoteSessionRegistry] SAFETY REJECTION: Refusing to register directory %s containing protected deliverable %s as temporary scratch dir",
+                                p, resolved_d
+                            )
+                            return
+                    except (ValueError, TypeError, AttributeError):
+                        pass
+
             if is_dir:
                 if p not in rec.temp_dirs:
                     rec.temp_dirs.append(p)
             else:
                 if p not in rec.temp_files:
                     rec.temp_files.append(p)
-
-    def register_kernel(self, job_id: str, kernel_slug: str) -> None:
-        """Register a remote Kaggle kernel slug."""
-        rec = self.get_or_create(job_id)
-        with self._lock:
-            if kernel_slug not in rec.remote_kernel_slugs:
-                rec.remote_kernel_slugs.append(kernel_slug)
-
-    def register_colab_session(self, job_id: str, session_id: str) -> None:
-        """Register an active Colab relay session."""
-        rec = self.get_or_create(job_id)
-        with self._lock:
-            if session_id not in rec.colab_sessions:
-                rec.colab_sessions.append(session_id)
 
     async def terminate_session_async(self, job_id: str) -> bool:
         """
@@ -96,14 +135,42 @@ class RemoteSessionRegistry:
         # 2. Clean up temporary directories (chunk dirs, mask caches)
         for tdir in rec.temp_dirs:
             try:
+                resolved_tdir = tdir.resolve()
+                # Safety check: do not delete directory if it contains a protected deliverable
+                is_safe = True
+                for d in rec.protected_deliverables:
+                    resolved_d = d.resolve()
+                    if resolved_d == resolved_tdir:
+                        is_safe = False
+                        break
+                    try:
+                        if resolved_d.is_relative_to(resolved_tdir):
+                            is_safe = False
+                            break
+                    except (ValueError, TypeError, AttributeError):
+                        pass
+                if not is_safe:
+                    logger.warning(
+                        "[RemoteSessionRegistry] SAFETY GUARD: Skipping temp dir %s containing protected deliverable",
+                        tdir
+                    )
+                    continue
                 if tdir.exists():
                     shutil.rmtree(tdir, ignore_errors=True)
             except Exception as err:
                 logger.debug("[RemoteSessionRegistry] Failed deleting temp dir %s: %s", tdir, err)
 
-        # 3. Clean up individual temporary files
+        # 3. Clean up individual temporary files (excluding protected deliverables)
+        protected_set = {d.resolve() for d in rec.protected_deliverables}
         for tfile in rec.temp_files:
             try:
+                resolved_tfile = tfile.resolve()
+                if resolved_tfile in protected_set:
+                    logger.warning(
+                        "[RemoteSessionRegistry] SAFETY GUARD TRIGGERED: Refusing to unlink protected deliverable %s",
+                        tfile
+                    )
+                    continue
                 if tfile.exists():
                     tfile.unlink(missing_ok=True)
             except Exception as err:

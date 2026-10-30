@@ -436,8 +436,7 @@ class ClassicalFallbackManager:
             tiled_detail = patch_detail[ey, ex]
 
             # Semantic skin-tone aware gating: exclude skin pixels
-            # 1. Spatial constraint: human skin (thigh/knee/leg) in car cabin only appears at global_y >= 240.
-            # Speaker grille and upper door panel are strictly at global_y < 240.
+            # 1. Spatial constraint: human skin region gating.
             base_u8 = np.clip(struct_base, 0, 255).astype(np.uint8)
             hsv_base = cv2.cvtColor(base_u8, cv2.COLOR_BGR2HSV)
             skin_color = (
@@ -448,11 +447,8 @@ class ClassicalFallbackManager:
             )
 
             if roi_bbox is not None:
-                hy1 = roi_bbox[0]
-                global_y = hy1 + yy
-                # Strictly isolate human skin (thigh/knee/leg) in car cabin to global_y >= 290.
-                # Speaker grille and upper door panel are strictly at global_y < 285.
-                skin_allowed = (global_y >= 290)
+                # Isolate lower region proportionally scaled to frame height
+                skin_allowed = (yy >= int(0.65 * h))
             else:
                 skin_allowed = (yy >= int(0.75 * h))
 

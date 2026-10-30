@@ -138,6 +138,9 @@ services:
       - ./services/ai-agent-service/app:/app/app
       # Persistent Chromium profile: preserves E2EE IndexedDB keys across restarts
       - browser_data:/app/browser_data
+      # Read-only mount of evaluation tools and test data for acceptance runner
+      - ./tools:/app/tools:ro
+      - ./test:/app/test:ro
     logging:
       driver: "json-file"
       options:

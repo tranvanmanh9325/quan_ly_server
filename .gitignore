@@ -64,4 +64,6 @@ services/ai-agent-service/app/models/*.onnx
 # Empirical & Local Test Directory
 test/
 data/
-benchmarks/
+benchmarks/
+acceptance_out/
+

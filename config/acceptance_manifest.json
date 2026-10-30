@@ -1,0 +1,18 @@
+{
+  "schema_version": "3.0.0",
+  "status": "FROZEN_LOCKED",
+  "algorithm": "SHA-256",
+  "created_at": "2026-10-30T10:15:00Z",
+  "description": "Frozen Acceptance Judge and Anti-Gaming Framework file integrity manifest (Milestone M0 Iteration 2 Remediation).",
+  "files": {
+    "tools/acceptance/__init__.py": "e970f4fb598877ba0d1a87e1a05fdbae8bfc748417aa3ccf81c0571705e16261",
+    "tools/acceptance/thresholds.py": "41b425b1d6b519b7c9b49cfea2ae4c12003ab2c0825e68aedca1c3f3b17639f3",
+    "tools/acceptance/phrase_lists.py": "124989badece66569ae6b2b6ba5b5e867279a33edac334c5bcc8ff15d013831c",
+    "tools/acceptance/metrics.py": "a50ec1a2a199b997890e3ad9d6d1a624c0aa4d311f11db29e7512802a3163828",
+    "tools/acceptance/synthetic_generator.py": "fe53780a5019561d5a216befdb76e64239ded616ab9ca506109057f04c61aa89",
+    "tools/acceptance/sabotage_suite.py": "800cc937f464c1e77f8a46946f6988148e5122901a33a820e04f38544cb1bea8",
+    "tools/acceptance/acceptance_run.py": "926b21e468f6f689d35204e9e9edbf01d48a854b8cceb75e24740deb2db958c0",
+    "tools/lint_no_overfit.py": "7c15d77ecdc3d7dab53af57b9a3de444109ee91cd08d90559ca25cbbeb4e5c9a",
+    "tools/verify_report_claims.py": "6ba4f69dcd8eed91a6657668c5050bd86ff122881fab7c7f71b6de854f1177a9"
+  }
+}

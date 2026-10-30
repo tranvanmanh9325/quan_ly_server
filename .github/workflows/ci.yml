@@ -10,6 +10,138 @@ permissions:
   contents: read
 
 jobs:
+  verify-judge-freeze:
+    name: Verify Judge Freeze & Anti-Overfit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Verify Judge Freeze & Protocol Integrity
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+          EVENT_BEFORE: ${{ github.event.before }}
+        run: |
+          python -c "
+          import json, hashlib, subprocess, re, sys, os
+          from pathlib import Path
+
+          print('=' * 70)
+          print('VERIFYING JUDGE FREEZE & INTEGRITY PROTOCOL')
+          print('=' * 70)
+
+          # 1. Load frozen manifest
+          manifest_path = Path('config/acceptance_manifest.json')
+          if not manifest_path.exists():
+              print('FATAL ERROR: config/acceptance_manifest.json not found!')
+              sys.exit(1)
+
+          with open(manifest_path, 'r', encoding='utf-8') as f:
+              manifest = json.load(f)
+
+          judge_files = set(manifest.get('files', {}).keys())
+          judge_files.add('config/acceptance_manifest.json')
+          print(f'Total {len(judge_files)} frozen judge files registered in manifest.')
+
+          # 2. Determine modified files via git diff
+          event_name = os.environ.get('GITHUB_EVENT_NAME', '')
+          base_ref = os.environ.get('GITHUB_BASE_REF', '')
+          before_sha = os.environ.get('EVENT_BEFORE', '')
+
+          cmd = None
+          if event_name == 'pull_request' and base_ref:
+              cmd = ['git', 'diff', '--name-only', f'origin/{base_ref}...HEAD']
+              print(f'PR Mode: comparing against origin/{base_ref}')
+          elif event_name == 'push' and before_sha and not re.match(r'^0+$', before_sha):
+              cmd = ['git', 'diff', '--name-only', f'{before_sha}..HEAD']
+              print(f'Push Mode: comparing against {before_sha[:8]}')
+          else:
+              try:
+                  head_sha = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+                  origin_sha = subprocess.check_output(['git', 'rev-parse', 'origin/main'], text=True).strip()
+                  if head_sha == origin_sha:
+                      cmd = ['git', 'diff', '--name-only', 'HEAD~1', 'HEAD']
+                      print('Direct Push/Local Mode: comparing HEAD~1 against HEAD')
+                  else:
+                      cmd = ['git', 'diff', '--name-only', 'origin/main...HEAD']
+                      print('Branch Mode: comparing against origin/main')
+              except Exception as e:
+                  cmd = ['git', 'diff', '--name-only', 'HEAD~1', 'HEAD']
+                  print(f'Fallback Diff Mode: {e}')
+
+          res = subprocess.run(cmd, capture_output=True, text=True)
+          if res.returncode != 0:
+              res = subprocess.run(['git', 'diff', '--name-only', 'HEAD~1', 'HEAD'], capture_output=True, text=True)
+
+          diff_files = [f.strip().replace('\\\\', '/') for f in res.stdout.splitlines() if f.strip()]
+          modified_judge = [
+              f for f in diff_files 
+              if f in judge_files or f.startswith('tools/acceptance/') or f == 'config/acceptance_manifest.json'
+          ]
+
+          # 3. Protocol enforcement: If judge modified, require FREEZE-BREAK in commit message
+          if modified_judge:
+              print(f'WARNING: Detected {len(modified_judge)} modified Judge/Manifest file(s):')
+              for mj in modified_judge:
+                  print(f'  - {mj}')
+
+              commit_msg = subprocess.check_output(['git', 'log', '-1', '--pretty=%B'], text=True).strip()
+              fb_match = re.search(r'\bFREEZE-BREAK:\s*(.+)', commit_msg, re.IGNORECASE)
+              if not fb_match:
+                  print('=' * 70)
+                  print('[SECURITY ALERT] UNAUTHORIZED MODIFICATION OF FROZEN ACCEPTANCE JUDGE!')
+                  print('=' * 70)
+                  print('Modification of Judge tools or manifest requires the FREEZE-BREAK protocol.')
+                  print(f'Current Commit Message:\n  \"{commit_msg}\"\n')
+                  print('To authorize this change, the commit message MUST contain:')
+                  print('  FREEZE-BREAK: <detailed justification>\n')
+                  print('=' * 70)
+                  sys.exit(1)
+              else:
+                  reason = fb_match.group(1).strip()
+                  print(f'[FREEZE-BREAK PROTOCOL AUTHORIZED]')
+                  print(f'  Reason: {reason}')
+          else:
+              print('[OK] Zero Judge or Manifest files modified in this changeset.')
+
+          # 4. Bit-for-bit SHA-256 hash check against manifest
+          mismatch = 0
+          for rel_path, exp_hash in manifest.get('files', {}).items():
+              p = Path(rel_path)
+              if not p.exists():
+                  print(f'MISSING FILE: {rel_path}')
+                  mismatch += 1
+                  continue
+              act_hash = hashlib.sha256(p.read_bytes()).hexdigest()
+              if act_hash != exp_hash:
+                  print(f'HASH MISMATCH in {rel_path}: expected {exp_hash}, got {act_hash}')
+                  mismatch += 1
+              else:
+                  print(f'HASH OK: {rel_path}')
+
+          if mismatch > 0:
+              print(f'FAILED: {mismatch} file(s) do not match manifest hashes!')
+              sys.exit(1)
+
+          print('=' * 70)
+          print('SUCCESS: Judge freeze and bit-for-bit integrity verified 100%!')
+          print('=' * 70)
+          "
+
+      - name: Run Anti-Overfitting Linter
+        run: python tools/lint_no_overfit.py
+
+      - name: Verify Report Claims & Snapshots
+        run: python tools/verify_report_claims.py
+
   build-backend:
     name: Build ${{ matrix.service }}
     runs-on: ubuntu-latest

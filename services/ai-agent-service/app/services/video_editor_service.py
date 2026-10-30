@@ -3484,13 +3484,13 @@ class VideoEditorService:
                             dil_sub_m = (dil_sub_m & (~local_table)).astype(np.uint8)
                             paper_pixels = sub_roi[(sub_gray >= 180) & (dil_sub_m == 0)]
                             if len(paper_pixels) > 20:
-                                paper_bgr = np.median(paper_pixels, axis=0).astype(np.float32)
+                                bg_fill_color = np.median(paper_pixels, axis=0).astype(np.float32)
                             else:
-                                paper_bgr = np.array([218.0, 230.0, 234.0], dtype=np.float32)
+                                bg_fill_color = np.median(sub_roi, axis=(0, 1)).astype(np.float32)
                             filled_paper = sub_roi.copy().astype(np.float32)
                             feather_soft = cv2.GaussianBlur(dil_sub_m.astype(np.float32) / 255.0, (9, 9), 2.5)[:, :, np.newaxis]
                             feather_paper = np.maximum(feather_soft, (dil_sub_m > 0).astype(np.float32)[:, :, np.newaxis])
-                            clean_s = (np.full_like(filled_paper, paper_bgr) * feather_paper + filled_paper * (1.0 - feather_paper)).astype(np.uint8)
+                            clean_s = (np.full_like(filled_paper, bg_fill_color) * feather_paper + filled_paper * (1.0 - feather_paper)).astype(np.uint8)
                             clean_s[local_table > 0] = sub_roi[local_table > 0]
                         else:
                             dil_sub_m = cv2.dilate(sub_m, k_dil_kf)
@@ -3944,13 +3944,13 @@ class VideoEditorService:
                             mask_sub = (dil_sub_m & (~local_table)).astype(np.uint8)
                             paper_pixels = sub_roi[(sub_gray >= 180) & (mask_sub == 0)]
                             if len(paper_pixels) > 20:
-                                paper_bgr = np.median(paper_pixels, axis=0).astype(np.float32)
+                                bg_fill_color = np.median(paper_pixels, axis=0).astype(np.float32)
                             else:
-                                paper_bgr = np.array([218.0, 230.0, 234.0], dtype=np.float32)
+                                bg_fill_color = np.median(sub_roi, axis=(0, 1)).astype(np.float32)
                             filled_paper = sub_roi.copy().astype(np.float32)
                             feather_soft = cv2.GaussianBlur(mask_sub.astype(np.float32) / 255.0, (9, 9), 2.5)[:, :, np.newaxis]
                             feather_paper = np.maximum(feather_soft, (mask_sub > 0).astype(np.float32)[:, :, np.newaxis])
-                            clean_sub_roi = (np.full_like(filled_paper, paper_bgr) * feather_paper + filled_paper * (1.0 - feather_paper)).astype(np.uint8)
+                            clean_sub_roi = (np.full_like(filled_paper, bg_fill_color) * feather_paper + filled_paper * (1.0 - feather_paper)).astype(np.uint8)
                             clean_sub_roi[local_table > 0] = sub_roi[local_table > 0]
                             out_frame[sy1:sy2, sx1:sx2] = clean_sub_roi
                             full_frame_mask[sy1:sy2, sx1:sx2] = np.maximum(full_frame_mask[sy1:sy2, sx1:sx2], mask_sub)

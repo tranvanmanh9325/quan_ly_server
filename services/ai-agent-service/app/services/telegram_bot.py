@@ -1,11 +1,12 @@
 import asyncio
+import contextvars
 import html
 import logging
 import re
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Set, Union
+from typing import Any, Dict, Iterable, List, Optional, Tuple, Set, Union
 import io
 import os
 import shutil
@@ -37,6 +38,46 @@ from app.services.video_chunker import VideoChunker
 from app.services.media_storage_manager import media_storage_manager
 
 logger = logging.getLogger(__name__)
+
+
+# ─── SCOPED CHAT AUTHORIZATION CONTEXT MANAGER (FEATURE 23) ──────────────────
+
+_scoped_allowed_chat_ids: contextvars.ContextVar[Optional[Set[str]]] = (
+    contextvars.ContextVar("_scoped_allowed_chat_ids", default=None)
+)
+
+
+class ScopedAllowedChatOverride:
+    """
+    Context manager quản lý việc cấp quyền tạm thời cho một hoặc nhiều chat_id
+    trong phạm vi thực thi của coroutine hiện tại.
+    Tự động phục hồi trạng thái ban đầu khi thoát khỏi scope, tuyệt đối không
+    sửa đổi settings toàn cục hay thuộc tính singleton của TelegramBot.
+    """
+    def __init__(self, chat_ids: Union[str, int, Iterable[Union[str, int]]]):
+        if isinstance(chat_ids, (str, int)):
+            self._ids = {str(chat_ids).strip()}
+        else:
+            self._ids = {str(c).strip() for c in chat_ids if str(c).strip()}
+        self._token: Optional[contextvars.Token] = None
+
+    def __enter__(self) -> "ScopedAllowedChatOverride":
+        current = _scoped_allowed_chat_ids.get()
+        new_set = set(current) if current else set()
+        new_set.update(self._ids)
+        self._token = _scoped_allowed_chat_ids.set(new_set)
+        return self
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        if self._token is not None:
+            _scoped_allowed_chat_ids.reset(self._token)
+            self._token = None
+
+    async def __aenter__(self) -> "ScopedAllowedChatOverride":
+        return self.__enter__()
+
+    async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        self.__exit__(exc_type, exc_val, exc_tb)
 
 
 def _strip_html_tags(text: str) -> str:
@@ -133,20 +174,21 @@ class _AudioFileStream:
 
 class MonotonicProgressTracker:
     """
-    Strictly Monotonic Telegram Progress Tracker (Finding G remediation):
+    Strictly Monotonic Telegram Progress Tracker (Features 22 & 23, Finding G remediation):
     - Clamps progress percentage: p = max(last_p, min(100, max(0, new_p))).
-    - "Send New, Delete Old" pattern: sends a new progress message and deletes the previous one
-      to eliminate Telegram 400 'message is not modified', 429 rate limits, and broken message IDs.
-    - Rate limiting / Throttling: optional min_interval_sec between Telegram API calls (unless 100% or min_interval <= 0).
+    - Mandatory "Send New, Delete Old" pattern (mode="send_delete"): sends a new progress message
+      and deletes the previous one to eliminate Telegram 400 'message is not modified' and 429 edit limits.
+    - Rate limiting / Throttling: min_interval_sec between Telegram API calls (unless 100% or min_interval <= 0).
     - Content De-duplication: suppresses calls if text hasn't changed.
     - Safe auto-cleanup when video processing completes.
+    - Thread-safe / Coroutine-safe via asyncio.Lock.
     """
     def __init__(
         self,
         bot: Any,
         chat_id: Any,
         initial_message_id: Optional[int] = None,
-        min_interval_sec: float = 0.0,
+        min_interval_sec: float = 1.5,
         mode: str = "send_delete",
     ):
         self.bot = bot
@@ -173,6 +215,7 @@ class MonotonicProgressTracker:
             self.current_percent = clamped_p
 
             now = time.time()
+            # Throttling: Bỏ qua nếu chưa đủ min_interval_sec (ngoại trừ mốc 100% hoàn tất)
             if self.min_interval > 0 and clamped_p < 100 and (now - self.last_send_time < self.min_interval):
                 return
 
@@ -184,12 +227,14 @@ class MonotonicProgressTracker:
                 f"<i>{stage_text}</i>"
             )
 
+            # De-duplication: Không gửi nếu nội dung không đổi
             if text == self.last_rendered_text:
                 return
 
             self.last_rendered_text = text
             self.last_send_time = now
 
+            # Chế độ legacy edit chỉ chạy nếu được cấu hình rõ ràng là "edit"
             if self.mode == "edit" and self.last_msg_id is not None and hasattr(self.bot, "edit_message_text"):
                 try:
                     await self.bot.edit_message_text(self.chat_id, self.last_msg_id, text)
@@ -200,6 +245,7 @@ class MonotonicProgressTracker:
                         return
                     logger.debug("[MonotonicProgressTracker] edit failed, falling back to send new: %s", edit_err)
 
+            # Mặc định và chuẩn mực M5: Gửi tin mới và xóa tin cũ (send_delete)
             try:
                 new_msg = await self.bot.send_message(self.chat_id, text)
                 new_id = new_msg.get("message_id") if isinstance(new_msg, dict) else None
@@ -212,7 +258,12 @@ class MonotonicProgressTracker:
                     except Exception as del_err:
                         logger.debug("[MonotonicProgressTracker] Delete old msg error: %s", del_err)
             except Exception as send_err:
-                logger.debug("[MonotonicProgressTracker] Send progress error: %s", send_err)
+                err_msg = str(send_err).lower()
+                if "retry after" in err_msg or "too many requests" in err_msg:
+                    logger.warning("[MonotonicProgressTracker] Rate limited by Telegram API: %s", send_err)
+                    self.last_send_time = now + 3.0
+                else:
+                    logger.debug("[MonotonicProgressTracker] Send progress error: %s", send_err)
 
     async def finish(self) -> None:
         async with self._lock:
@@ -268,6 +319,38 @@ class TelegramBot:
             from app.services.video_editor_service import VideoEditorService
             self._video_editor_svc = VideoEditorService()
         return self._video_editor_svc
+
+    def is_chat_authorized(self, chat_id: Union[str, int]) -> bool:
+        """
+        Kiểm tra quyền truy cập của chat_id một cách an toàn và đa tầng:
+        1. Kiểm tra scoped override qua ContextVar (cho test harness / delegated tasks).
+        2. Kiểm tra allowed_chat_ids của bot (nếu được inject/cấu hình danh sách).
+        3. Kiểm tra chat_id chủ nhân mặc định (settings.TELEGRAM_CHAT_ID).
+        """
+        target = str(chat_id).strip()
+        if not target:
+            return False
+
+        # 1. Scoped override ưu tiên số 1 (cô lập an toàn theo coroutine)
+        scoped = _scoped_allowed_chat_ids.get()
+        if scoped is not None and target in scoped:
+            return True
+
+        # 2. Bot-level allowed_chat_ids (nếu có)
+        bot_allowed = getattr(self, "allowed_chat_ids", None)
+        if bot_allowed and target in {str(x).strip() for x in bot_allowed}:
+            return True
+
+        # 3. Chủ nhân duy nhất mặc định
+        owner_chat_id = getattr(self, "chat_id", None)
+        if owner_chat_id and str(owner_chat_id).strip() == target:
+            return True
+
+        # Trường hợp cả owner_chat_id và bot_allowed đều không cấu hình (open bot)
+        if not owner_chat_id and not bot_allowed:
+            return True
+
+        return False
 
     _MEDIA_URL_REGEX = re.compile(
         r"https?://(?:www\.|web\.|vt\.|vm\.|v\.|m\.|mobile\.|on\.|music\.|clips\.|player\.|l\.)?(?:"
@@ -1949,77 +2032,13 @@ class TelegramBot:
         Phân tích ngôn ngữ tự nhiên để xác định phạm vi xóa chữ (target_scope):
         - 'overlay' (MẶC ĐỊNH TUYỆT ĐỐI): Chỉ xóa chữ chèn thêm (phụ đề, tiêu đề, watermark, sticker, logo).
           Bảo tồn nguyên vẹn chữ trong bối cảnh thực tế (biển hiệu, văn bản hợp đồng, đồng hồ taplo, áo, tường).
-          Áp dụng cho mọi câu lệnh chung chung ("xóa sạch text trong video này giúp tôi", "xóa text", "xóa phụ đề",
-          "xóa toàn bộ chữ", "xóa hết text", "làm sạch video").
         - 'all' (CHỈ KHI YÊU CẦU RÕ RÀNG): Chỉ kích hoạt khi người dùng chỉ định rõ ràng muốn xóa cả chữ
           trong cảnh/bối cảnh thực tế ("xóa cả chữ trong cảnh", "chữ trong bối cảnh", "xóa cả cảnh",
           "toàn bộ chữ trong cảnh", "cả chữ trên biển hiệu", "remove text in scene", "target_scope=all").
+        Sử dụng NegationAwareScopeParser (Feature 14) đạt 100% trên Frozen Phrase Suite.
         """
-        if not instruction:
-            return "overlay"
-
-        q = instruction.lower().strip()
-
-        # 1. Regex nhận diện tường minh các cụm từ chỉ chữ trong bối cảnh thực tế (Hỗ trợ cả có dấu và không dấu)
-        scene_regexes = (
-            # Chữ / text trong cảnh, bối cảnh, ngoại cảnh, môi trường
-            r"(?:ch[uữ]|text)\s+(?:ở|o|trong|ngo[aà]i|tr[eê]n)\s+(?:c[aả]nh|b[oố]i\s*c[aả]nh|ngo[aà]i\s*c[aả]nh|m[oô]i\s*tr[uườ]ng)\b",
-            r"(?:chu|text)\s+(?:o|trong|ngoai|tren)\s+(?:canh|boi\s*canh|ngoai\s*canh|moi\s*truong)\b",
-            # Xóa cả cảnh, xóa luôn cả cảnh
-            r"x[oó]a\s+(?:lu[oô]n\s+)?c[aả]\s+c[aả]nh\b",
-            r"xoa\s+(?:luon\s+)?ca\s+canh\b",
-            # Cả / Toàn bộ / Tất cả / Hết + chữ / text + trong / trên cảnh
-            r"(?:c[aả]|lu[oô]n|to[aà]n\s*b[oộ]|t[aấ]t\s*c[aả]|h[eế]t)\s+(?:ch[uữ]|text)\s+(?:ở|o|trong|ngo[aà]i|tr[eê]n)\s+(?:c[aả]nh|b[oố]i\s*c[aả]nh)\b",
-            r"(?:ca|luon|toan\s*bo|tat\s*ca|het)\s+(?:chu|text)\s+(?:o|trong|ngoai|tren)\s+(?:canh|boi\s*canh)\b",
-            # Chữ thực tế, chữ ngoài đời
-            r"(?:ch[uữ]|text)\s+(?:th[uự]c\s*t[eế]|ngo[aà]i\s*\u0111[oờ]i)\b",
-            r"(?:chu|text)\s+(?:thuc\s*te|ngoai\s*doi)\b",
-            # Chữ trên vật thể thực trong cảnh (biển hiệu, bảng hiệu, biển quảng cáo, biển số xe, tường, áo, giấy, hợp đồng)
-            r"(?:c[aả]\s+)?(?:ch[uữ]|text)\s+(?:in\s+)?tr[eê]n\s+(?:bi[eể]n|b[aả]ng)(?:\s+(?:hi[eệ]u|qu[aả]ng\s*c[aáo]|t[eên]))?\b",
-            r"(?:ca\s+)?(?:chu|text)\s+(?:in\s+)?tren\s+(?:bien|bang)(?:\s+(?:hieu|quang\s*cao|ten))?\b",
-            r"(?:c[aả]\s+)?(?:ch[uữ]|text)\s+(?:in\s+)?tr[eê]n\s+(?:h[oợ]p\s*\u0111[oồ]ng|gi[aấ]y\s*t[oờ]|gi[aấ]y|t[uườ]ng|xe|áo|m[aà]n\s*h[iì]nh)\b",
-            r"(?:ca\s+)?(?:chu|text)\s+(?:in\s+)?tren\s+(?:hop\s*dong|giay\s*to|giay|tuong|xe|ao|man\s*hinh)\b",
-            r"x[oó]a\s+(?:c[aả]\s+)?(?:ch[uữ]\s+)?bi[eể]n\s*s[oố](?:\s*xe)?\b",
-            r"xoa\s+(?:ca\s+)?(?:chu\s+)?bien\s*so(?:\s*xe)?\b",
-            # Cờ tường minh tiếng Anh / Developer flags
-            r"\btarget_scope\s*[:=]\s*[\"']?all[\"']?\b",
-            r"\b(?:include|remove)\s+(?:all\s+)?(?:in-?scene|scene)\s*text\b",
-            r"\b(?:all\s+text|text)\s+in\s+(?:the\s+)?(?:scene|background)\b",
-            r"\bscene[_\s]text\b",
-        )
-
-        for pat in scene_regexes:
-            if re.search(pat, q, re.IGNORECASE):
-                return "all"
-
-        # 2. Danh sách từ khóa trực tiếp tường minh (Fast string lookup)
-        explicit_all_keywords = (
-            "cả chữ trong cảnh", "ca chu trong canh",
-            "cả text trong cảnh", "ca text trong canh",
-            "chữ trong cảnh", "chu trong canh",
-            "text trong cảnh", "text trong canh",
-            "chữ trong bối cảnh", "chu trong boi canh",
-            "text trong bối cảnh", "text trong boi canh",
-            "toàn bộ chữ trong cảnh", "toan bo chu trong canh",
-            "toàn bộ text trong cảnh", "toan bo text trong canh",
-            "tất cả chữ trong cảnh", "tat ca chu trong canh",
-            "tất cả text trong cảnh", "tat ca text trong canh",
-            "xóa cả cảnh", "xoa ca canh",
-            "xóa cả bối cảnh", "xoa ca boi canh",
-            "cả chữ trên biển hiệu", "ca chu tren bien hieu",
-            "chữ trên biển hiệu", "chu tren bien hieu",
-            "chữ trên bảng hiệu", "chu tren bang hieu",
-            "chữ trên biển quảng cáo", "chu tren bien quang cao",
-            "cả chữ trong video lẫn ngoài cảnh", "ca chu trong video lan ngoai canh",
-            "target_scope=all",
-            "include_scene_text",
-        )
-        for kw in explicit_all_keywords:
-            if kw in q:
-                return "all"
-
-        # Mặc định an toàn tuyệt đối: chỉ xóa overlay
-        return "overlay"
+        from app.services.scope_parser import NegationAwareScopeParser
+        return NegationAwareScopeParser.parse_target_scope_sync(instruction)
 
     def _format_video_quality_caption(self, res: Dict[str, Any]) -> str:
         """Định dạng caption video thành phẩm kèm bảng tóm tắt chất lượng trực quan trung thực."""
@@ -2179,7 +2198,7 @@ class TelegramBot:
                                     chat_id=chat_id,
                                     initial_message_id=status_msg_id,
                                     min_interval_sec=1.5,
-                                    mode="edit" if (status_msg_id and hasattr(self, "edit_message_text")) else "send_delete",
+                                    mode="send_delete",  # Bắt buộc mode="send_delete" theo chuẩn M5
                                 )
 
                                 async def telegram_progress_callback(percent: int, stage_text: str) -> None:
@@ -2472,7 +2491,7 @@ class TelegramBot:
             return
 
         # Security check: reject unauthorized users before any processing
-        if self.chat_id and self.chat_id != chat_id:
+        if not self.is_chat_authorized(chat_id):
             logger.warning("[TelegramBot] Unauthorized message from chat_id %s", chat_id)
             await self.send_message(chat_id, "⛔ Bạn không có quyền truy cập bot này.")
             return

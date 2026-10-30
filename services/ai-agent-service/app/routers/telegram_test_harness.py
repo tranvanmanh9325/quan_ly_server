@@ -32,6 +32,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
 from app.config import settings
+from app.services.telegram_bot import ScopedAllowedChatOverride
 from app.services.video_pipeline import PendingVideoSession, VideoMetadata
 
 logger = logging.getLogger("telegram_test_harness")
@@ -131,15 +132,8 @@ def get_dedicated_harness_secret() -> str:
 
 
 def get_test_harness_secret() -> str:
-    """Backward compatibility wrapper for M4 tests."""
-    secret = (getattr(settings, "TELEGRAM_TEST_HARNESS_SECRET", "") or "").strip()
-    if not secret:
-        secret = (getattr(settings, "TEST_HARNESS_SECRET_KEY", "") or "").strip()
-    if not secret:
-        secret = (getattr(settings, "JWT_SECRET", "") or "").strip()
-    if not secret:
-        secret = "default-internal-telegram-test-harness-secret-key-32chars"
-    return secret
+    """An toàn alias cho get_dedicated_harness_secret, không fallback sang JWT_SECRET hay hardcoded string."""
+    return get_dedicated_harness_secret()
 
 
 def is_ip_whitelisted(ip_str: str, allowed_cidrs: Optional[List[str]] = None) -> bool:
@@ -843,38 +837,37 @@ async def inject_synthetic_telegram_update(
         )
 
         async with capture:
-            # Chạy handler sản xuất hoặc pipeline handler cho mock bot
-            if hasattr(bot, "_video_debounce") and bot._video_debounce is not None and hasattr(bot, "_process_update"):
-                if hasattr(bot, "allowed_chat_ids") and isinstance(bot.allowed_chat_ids, set):
-                    bot.allowed_chat_ids.add(chat_id)
-                await asyncio.wait_for(
-                    bot._process_update(synthetic_update),
-                    timeout=timeout_sec,
-                )
-            elif hasattr(bot, "_on_video_process_pipeline") and callable(bot._on_video_process_pipeline):
-                session = PendingVideoSession(
-                    chat_id=str(chat_id),
-                    file_id=synthetic_file_id,
-                    metadata=VideoMetadata(
-                        filename=Path(sandboxed_video_path).name,
-                        file_size=meta["file_size"],
-                        width=meta["width"],
-                        height=meta["height"],
-                        duration=meta["duration"],
-                    ),
-                    temp_dir=os.path.dirname(sandboxed_video_path),
-                    video_path=sandboxed_video_path,
-                    instruction=caption,
-                )
-                await asyncio.wait_for(
-                    bot._on_video_process_pipeline(chat_id=str(chat_id), session=session, instruction=caption),
-                    timeout=timeout_sec,
-                )
-            elif hasattr(bot, "_process_update") and callable(bot._process_update):
-                await asyncio.wait_for(
-                    bot._process_update(synthetic_update),
-                    timeout=timeout_sec,
-                )
+            async with ScopedAllowedChatOverride(chat_id):
+                # Chạy handler sản xuất hoặc pipeline handler cho mock bot
+                if hasattr(bot, "_video_debounce") and bot._video_debounce is not None and hasattr(bot, "_process_update"):
+                    await asyncio.wait_for(
+                        bot._process_update(synthetic_update),
+                        timeout=timeout_sec,
+                    )
+                elif hasattr(bot, "_on_video_process_pipeline") and callable(bot._on_video_process_pipeline):
+                    session = PendingVideoSession(
+                        chat_id=str(chat_id),
+                        file_id=synthetic_file_id,
+                        metadata=VideoMetadata(
+                            filename=Path(sandboxed_video_path).name,
+                            file_size=meta["file_size"],
+                            width=meta["width"],
+                            height=meta["height"],
+                            duration=meta["duration"],
+                        ),
+                        temp_dir=os.path.dirname(sandboxed_video_path),
+                        video_path=sandboxed_video_path,
+                        instruction=caption,
+                    )
+                    await asyncio.wait_for(
+                        bot._on_video_process_pipeline(chat_id=str(chat_id), session=session, instruction=caption),
+                        timeout=timeout_sec,
+                    )
+                elif hasattr(bot, "_process_update") and callable(bot._process_update):
+                    await asyncio.wait_for(
+                        bot._process_update(synthetic_update),
+                        timeout=timeout_sec,
+                    )
 
         duration_sec = time.time() - start_time
         transcript = capture.get_transcript()

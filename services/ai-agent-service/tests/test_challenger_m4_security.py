@@ -343,27 +343,28 @@ class TestChallengerLayer2TokenForgeryAndTimingAttack(unittest.IsolatedAsyncioTe
             # Response should NOT be 401 or 403 (it should pass security layers and reach handler)
             self.assertNotIn(resp.status_code, [401, 403])
 
-    def test_empty_secret_configuration_fallback_security(self):
+    def test_empty_secret_configuration_fail_closed(self):
         """
-        If TEST_HARNESS_SECRET_KEY is empty and JWT_SECRET is empty,
-        get_test_harness_secret() MUST NOT return empty string (which would allow empty token).
-        It must fall back to a non-empty string.
+        M5 Security Hardening:
+        When TELEGRAM_TEST_HARNESS_SECRET and TEST_HARNESS_SECRET_KEY are empty,
+        get_test_harness_secret() MUST return an empty string and the endpoint
+        MUST fail-closed with 403 Forbidden.
         """
-        with patch.object(settings, "TEST_HARNESS_SECRET_KEY", ""), \
+        with patch.object(settings, "TELEGRAM_TEST_HARNESS_SECRET", ""), \
+             patch.object(settings, "TEST_HARNESS_SECRET_KEY", ""), \
              patch.object(settings, "JWT_SECRET", ""):
 
             secret = telegram_test_harness.get_test_harness_secret()
-            self.assertGreater(len(secret), 20)
-            self.assertNotEqual(secret, "")
+            self.assertEqual(secret, "")
 
-            # Attacker trying empty token against empty configured secret must fail 401
             with patch.object(settings, "ENABLE_TELEGRAM_TEST_HARNESS", True):
                 resp = self.client.post(
                     "/api/internal/test-harness/telegram/inject",
                     json={},
-                    headers={"Authorization": "Bearer "},
+                    headers={"Authorization": "Bearer any_token"},
                 )
-                self.assertEqual(resp.status_code, 401)
+                self.assertEqual(resp.status_code, 403)
+                self.assertIn("not configured", resp.json().get("detail", "").lower())
 
     def test_bearer_vs_x_test_harness_key_header_equivalence(self):
         """Test that both Bearer and X-Test-Harness-Key headers authenticate identically."""

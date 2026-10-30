@@ -44,59 +44,11 @@ try:
 except ImportError:
     media_storage_manager = None
 
-try:
-    from app.services.texture_preserving_inpainter import (
-        TexturePreservingInpainter,
-    )
-except ImportError:
-    try:
-        from services.texture_preserving_inpainter import (  # type: ignore
-            TexturePreservingInpainter,
-        )
-    except ImportError:
-        try:
-            from texture_preserving_inpainter import (  # type: ignore
-                TexturePreservingInpainter,
-            )
-        except ImportError:
-            TexturePreservingInpainter = None
-
-try:
-    from app.services.hosted_inpainter_client import (
-        HostedInpainterClient,
-        get_hosted_inpainter_client,
-    )
-except ImportError:
-    try:
-        from services.hosted_inpainter_client import (  # type: ignore
-            HostedInpainterClient,
-            get_hosted_inpainter_client,
-        )
-    except ImportError:
-        try:
-            from hosted_inpainter_client import (  # type: ignore
-                HostedInpainterClient,
-                get_hosted_inpainter_client,
-            )
-        except ImportError:
-            HostedInpainterClient = None
-            get_hosted_inpainter_client = None
-
-
-def get_texture_preserving_inpainter(
-    model_path: Optional[Union[str, Path]] = None,
-    cpu_threads: int = 2,
-) -> Optional[Any]:
-    """
-    Factory helper to access the shared studio-grade TexturePreservingInpainter singleton instance.
-    """
-    if TexturePreservingInpainter is None:
-        return None
-    try:
-        return TexturePreservingInpainter.get_instance(model_path=model_path, cpu_threads=cpu_threads)
-    except Exception as exc:
-        logger.warning("[VideoEditorService] Could not initialize TexturePreservingInpainter: %s", exc)
-        return None
+from app.services.video_reconstruction_engine import VideoReconstructionEngine
+from app.services.hybrid_inpainting_coordinator import (
+    HybridInpaintingCoordinator,
+    RemoteCircuitBreaker,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -131,19 +83,33 @@ class VideoJobContext:
     fallback_reason: Optional[str] = None
     fallback_events: List[Dict[str, Any]] = field(default_factory=list)
     roi_cache: Dict[str, Any] = field(default_factory=dict)
+    roi_inpaint_cache: Dict[str, Any] = field(default_factory=dict)
     start_time: float = field(default_factory=time.time)
+    streaming_success: bool = False
+    ffmpeg_returncode: Optional[int] = None
 
     def __post_init__(self) -> None:
         try:
             from app.services.session_lifecycle_manager import get_session_registry
             registry = get_session_registry()
             registry.get_or_create(self.job_id)
+            if self.output_file:
+                # Crucial Fix (M4 Remediation): output_file is the deliverable target handed to caller,
+                # NEVER a temporary scratch file! Register as protected deliverable.
+                registry.register_deliverable_path(self.job_id, self.output_file)
             if self.cache_dir:
                 registry.register_temp_path(self.job_id, self.cache_dir, is_dir=True)
-            if self.output_file:
-                registry.register_temp_path(self.job_id, self.output_file, is_dir=False)
         except Exception as err:
             logger.debug("[VideoJobContext] Registry init warning: %s", err)
+
+    def set_cache_dir(self, cache_dir: Path) -> None:
+        """Set cache directory and register it as a temporary path in session registry."""
+        self.cache_dir = cache_dir
+        try:
+            from app.services.session_lifecycle_manager import get_session_registry
+            get_session_registry().register_temp_path(self.job_id, cache_dir, is_dir=True)
+        except Exception as err:
+            logger.debug("[VideoJobContext] Failed registering cache_dir: %s", err)
 
     def record_fallback(
         self,
@@ -274,8 +240,22 @@ class VideoEditorService:
 
         base_temp = Path(temp_dir or os.getenv("MEDIA_STUDIO_TEMP_DIR", tempfile.gettempdir()))
         self._temp_dir = base_temp / "video_editor"
-        self._roi_inpaint_cache: Dict[str, Any] = {}
         self._ensure_temp_dir()
+
+    @property
+    def _roi_inpaint_cache(self) -> Dict[str, Any]:
+        """Backward compatibility stub; mutable inpaint cache is strictly isolated in VideoJobContext."""
+        return {}
+
+    @property
+    def _last_branch_counters(self) -> Dict[str, int]:
+        """Backward compatibility stub; branch execution counters are strictly isolated in VideoJobContext."""
+        return {}
+
+    @property
+    def _last_critique_result(self) -> Dict[str, Any]:
+        """Backward compatibility stub; critique result is strictly isolated in VideoJobContext."""
+        return {}
 
     @staticmethod
     def _create_dis_optical_flow() -> Any:
@@ -534,7 +514,7 @@ class VideoEditorService:
         self,
         input_path_or_url: str,
         region: Optional[Union[Dict[str, int], List[Dict[str, int]]]] = None,
-        mode: str = "delogo",
+        mode: str = "auto",
         output_format: str = "mp4",
         progress_callback: Optional[Callable[[int, str], Any]] = None,
         target_scope: str = "overlay",
@@ -542,10 +522,10 @@ class VideoEditorService:
         """
         Removes text, watermark, or static overlays from video.
         Modes supported:
-          - 'delogo': Native fast FFmpeg delogo filter.
-          - 'inpaint': High-quality OpenCV Telea inpainting.
-          - 'auto': Automatic detection of persistent overlay text via OCR sampling across keyframes,
-                    distinguishing fixed overlays from scene text, then applying OpenCV inpainting (or delogo fallback).
+          - 'auto' (default): Automatic detection of persistent overlay text via temporal statistics across frames,
+                    distinguishing fixed overlays from scene text, then applying high-fidelity inpainting.
+          - 'inpaint': High-quality inpainting with forward-backward optical flow & alpha invert blend.
+          - 'delogo': Legacy delogo fallback (redirected to inpaint if OpenCV available).
         Target scopes supported:
           - 'overlay' (default): Only removes persistent overlays, subtitles, and watermarks; preserves scene text.
           - 'all': Removes all detected text including in-scene text.
@@ -565,15 +545,19 @@ class VideoEditorService:
         output_file = self._temp_dir / f"clean_{token}.{out_ext}"
         mode_used = clean_mode
         success = False
+        context: Optional[VideoJobContext] = None
 
         try:
-            # Handle 'auto' mode: Detect text bounding box across sample frames
-            if clean_mode == "auto":
-                try:
-                    import cv2  # noqa: F401
-                    candidate_mode = "inpaint"
-                except (ImportError, ModuleNotFoundError):
-                    candidate_mode = "delogo"
+            # Check OpenCV availability: prefer inpainting to eliminate crude delogo blur patches
+            try:
+                import cv2  # noqa: F401
+                cv_available = True
+            except (ImportError, ModuleNotFoundError):
+                cv_available = False
+
+            # Handle 'auto' and 'delogo' modes: redirect to inpaint when OpenCV is available
+            if clean_mode in {"auto", "delogo"}:
+                candidate_mode = "inpaint" if cv_available else "delogo"
 
                 if region is None:
                     detected_regions = await self._auto_detect_text_region(input_file, target_scope=clean_target_scope)
@@ -587,7 +571,7 @@ class VideoEditorService:
             else:
                 if region is None:
                     detected_regions = await self._auto_detect_text_region(input_file, target_scope=clean_target_scope)
-                    target_regions = detected_regions if detected_regions else [{"x": 0, "y": 0, "w": 100, "h": 50}]
+                    target_regions = detected_regions
                 elif isinstance(region, list):
                     target_regions = region
                 else:
@@ -695,15 +679,8 @@ class VideoEditorService:
                 ]
                 code, stdout, stderr = await self._run_command(cmd, timeout=300)
                 if code != 0:
-                    # Fallback to AAC audio encoding if audio copy fails
-                    fallback_cmd = list(cmd)
-                    if "-c:a" in fallback_cmd:
-                        idx_ca = fallback_cmd.index("-c:a")
-                        fallback_cmd[idx_ca : idx_ca + 2] = ["-c:a", "aac", "-b:a", "192k"]
-                    fb_code, fb_out, fb_err = await self._run_command(fallback_cmd, timeout=300)
-                    if fb_code != 0:
-                        err_msg = fb_err.decode(errors="replace").strip()
-                        raise RuntimeError(f"FFmpeg delogo thất bại (code {fb_code}): {err_msg[-200:]}")
+                    err_msg = stderr.decode(errors="replace").strip()
+                    raise RuntimeError(f"FFmpeg delogo thất bại (code {code}): {err_msg[-200:]}")
 
             elif mode_used == "inpaint":
                 try:
@@ -723,7 +700,7 @@ class VideoEditorService:
                         cancel_event=cancel_event,
                         progress_callback=progress_callback,
                     )
-                    context.cache_dir = self._temp_dir / f"kf_cache_{context.job_id}"
+                    context.set_cache_dir(self._temp_dir / f"kf_cache_{context.job_id}")
                     try:
                         streaming_success = False
                         try:
@@ -735,7 +712,7 @@ class VideoEditorService:
                             from app.services.progress_emitter import PipelineProgressEmitter
                             emitter = PipelineProgressEmitter(loop=main_loop, callback=progress_callback)
 
-                            await asyncio.to_thread(
+                            st_res = await asyncio.to_thread(
                                 self._remove_text_streaming_pipeline_sync,
                                 input_file,
                                 output_file,
@@ -746,7 +723,13 @@ class VideoEditorService:
                                 context=context,
                                 target_scope=clean_target_scope,
                             )
-                            streaming_success = output_file.exists() and output_file.stat().st_size > 1000
+                            streaming_success = (
+                                bool(st_res)
+                                and output_file.exists()
+                                and output_file.stat().st_size > 1000
+                                and (not cancel_event.is_set())
+                                and (context is None or getattr(context, "streaming_success", True))
+                            )
                         except (asyncio.CancelledError, GeneratorExit):
                             cancel_event.set()
                             raise
@@ -756,15 +739,16 @@ class VideoEditorService:
                                 st_err
                             )
                             streaming_success = False
-                            context.record_fallback(
-                                stage="streaming_pipeline",
-                                from_system="streaming_pipeline",
-                                to_system="inpaint_fallback_legacy",
-                                reason=str(st_err),
-                                impact="Phông nền có thể bệt mờ cục bộ do dùng bộ xử lý dự phòng Telea/NS cổ điển.",
-                            )
-                            context.mode_used = "inpaint_fallback_legacy"
-                            mode_used = "inpaint_fallback_legacy"
+                            if context:
+                                context.record_fallback(
+                                    stage="streaming_pipeline",
+                                    from_system="streaming_pipeline",
+                                    to_system="inpaint_fallback_legacy",
+                                    reason=str(st_err),
+                                    impact="Phông nền có thể bệt mờ cục bộ do dùng bộ xử lý dự phòng Telea/NS cổ điển.",
+                                )
+                                context.mode_used = "inpaint_fallback_legacy"
+                                mode_used = "inpaint_fallback_legacy"
 
                         if not streaming_success:
                             logger.warning("[VideoEditorService] Fallback worker executing for job %s...", context.job_id)
@@ -815,10 +799,6 @@ class VideoEditorService:
                         raise
                     finally:
                         self._current_inpaint_cancel_event = None
-                        self._roi_inpaint_cache.clear()
-                        context.cleanup()
-                        self._last_branch_counters = context.branch_counters
-                        self._last_critique_result = context.critique_result
 
             delivery_info = self._publish_or_direct(output_file, title="Video đã xóa text")
             region_summaries = ", ".join(f"({r['x']},{r['y']},{r['w']}x{r['h']})" for r in target_regions[:3])
@@ -827,8 +807,8 @@ class VideoEditorService:
             fb_reason = getattr(context, "fallback_reason", None) if 'context' in locals() else None
             fb_events = getattr(context, "fallback_events", []) if 'context' in locals() else []
             final_mode = context.mode_used if 'context' in locals() else mode_used
-            final_branch = context.branch_counters if 'context' in locals() else getattr(self, "_last_branch_counters", {})
-            final_critique = context.critique_result if 'context' in locals() else getattr(self, "_last_critique_result", {})
+            final_branch = context.branch_counters if 'context' in locals() else {}
+            final_critique = context.critique_result if 'context' in locals() else {}
 
             return {
                 "status": "ok",
@@ -853,6 +833,11 @@ class VideoEditorService:
             }
 
         finally:
+            if context is not None:
+                try:
+                    context.cleanup()
+                except Exception as ctx_err:
+                    logger.debug("[VideoEditorService] Context cleanup warning: %s", ctx_err)
             if not success and output_file.exists():
                 try:
                     output_file.unlink(missing_ok=True)
@@ -903,114 +888,22 @@ class VideoEditorService:
         epsilon: float = 1.0,
     ) -> str:
         """
-        F6: Motion Invariance Classifier.
+        F6 / Feature 12: Motion Invariance Classifier.
         Classifies whether a text region is 'overlay' text (fixed subtitles, watermark, titles)
         or 'scene' text (shop signs, license plates, text embedded on real scene objects)
-        by comparing the text motion vector against the dense optical flow of the surrounding background (20px collar).
-
-        - If text moves synchronously with background (delta_v < epsilon, with background motion >= 0.5px) -> 'scene'.
-        - If text is static on screen while background moves, or moves independently -> 'overlay'.
-        - Default when both background and text are static -> 'overlay'.
+        by comparing the text motion vector against the dense optical flow of the surrounding background.
         """
-        import cv2
-        import numpy as np
+        from app.services.temporal_text_detector import MotionInvarianceClassifier
 
-        if text_box is None:
-            return "overlay"
-
-        if isinstance(text_box, dict):
-            bx = int(text_box.get("x", 0))
-            by = int(text_box.get("y", 0))
-            bw = int(text_box.get("w", 0))
-            bh = int(text_box.get("h", 0))
-        elif isinstance(text_box, (tuple, list)) and len(text_box) >= 4:
-            bx, by, bw, bh = int(text_box[0]), int(text_box[1]), int(text_box[2]), int(text_box[3])
-        else:
-            return "overlay"
-
-        if bw <= 0 or bh <= 0:
-            return "overlay"
-
-        flow = optical_flow
-        h, w = 0, 0
-        if flow is not None and isinstance(flow, np.ndarray) and flow.ndim >= 3 and flow.shape[2] >= 2:
-            h, w = flow.shape[:2]
-        else:
-            if not isinstance(frames, (list, tuple)) or len(frames) < 2:
-                return "overlay"
-            f1, f2 = frames[0], frames[1]
-            if f1 is None or f2 is None or not isinstance(f1, np.ndarray) or not isinstance(f2, np.ndarray):
-                return "overlay"
-            if f1.shape[:2] != f2.shape[:2]:
-                return "overlay"
-
-            h, w = f1.shape[:2]
-            gray1 = cv2.cvtColor(f1, cv2.COLOR_BGR2GRAY) if f1.ndim == 3 else f1
-            gray2 = cv2.cvtColor(f2, cv2.COLOR_BGR2GRAY) if f2.ndim == 3 else f2
-
-            try:
-                dis = cv2.DISOpticalFlow_create(cv2.DISOPTICAL_FLOW_PRESET_FAST)
-                flow = dis.calc(gray1, gray2, None)
-            except Exception:
-                try:
-                    flow = cv2.calcOpticalFlowFarneback(
-                        gray1, gray2, None, 0.5, 3, 15, 3, 5, 1.2, 0
-                    )
-                except Exception:
-                    return "overlay"
-
-        if flow is None or flow.shape[:2] != (h, w):
-            return "overlay"
-
-        x1 = max(0, min(w, bx))
-        y1 = max(0, min(h, by))
-        x2 = max(0, min(w, bx + bw))
-        y2 = max(0, min(h, by + bh))
-        if x2 <= x1 or y2 <= y1:
-            return "overlay"
-
-        c_x1 = max(0, x1 - collar_size)
-        c_y1 = max(0, y1 - collar_size)
-        c_x2 = min(w, x2 + collar_size)
-        c_y2 = min(h, y2 + collar_size)
-
-        collar_mask = np.zeros((h, w), dtype=bool)
-        collar_mask[c_y1:c_y2, c_x1:c_x2] = True
-        collar_mask[y1:y2, x1:x2] = False
-
-        text_mask = np.zeros((h, w), dtype=bool)
-        text_mask[y1:y2, x1:x2] = True
-
-        if np.count_nonzero(collar_mask) < 10 or np.count_nonzero(text_mask) < 4:
-            return "overlay"
-
-        bg_u = flow[:, :, 0][collar_mask]
-        bg_v = flow[:, :, 1][collar_mask]
-        v_bg_u = float(np.median(bg_u))
-        v_bg_v = float(np.median(bg_v))
-        mag_bg = float(np.hypot(v_bg_u, v_bg_v))
-
-        txt_u = flow[:, :, 0][text_mask]
-        txt_v = flow[:, :, 1][text_mask]
-        v_txt_u = float(np.median(txt_u))
-        v_txt_v = float(np.median(txt_v))
-        mag_txt = float(np.hypot(v_txt_u, v_txt_v))
-
-        delta_v = float(np.hypot(v_txt_u - v_bg_u, v_txt_v - v_bg_v))
-
-        # Scene text check: background moves and text moves synchronously with background
-        if mag_bg >= 0.5 and delta_v < float(epsilon):
-            return "scene"
-
-        # Overlay text check: background moves while text stays pinned to screen
-        if mag_bg >= 0.5 and mag_txt < 0.3:
-            return "overlay"
-
-        # Independent motion
-        if delta_v >= float(epsilon):
-            return "overlay"
-
-        # Default static case
+        classifier = MotionInvarianceClassifier(collar_outer_margin=collar_size, delta_v_threshold=epsilon)
+        if optical_flow is not None:
+            res = classifier.classify_region_motion(text_box, optical_flow)
+            return res.get("motion_type", "overlay")
+        elif frames and len(frames) >= 2:
+            flow = classifier.compute_dense_flow(frames[0], frames[1])
+            if flow is not None:
+                res = classifier.classify_region_motion(text_box, flow)
+                return res.get("motion_type", "overlay")
         return "overlay"
 
     @staticmethod
@@ -1382,474 +1275,27 @@ class VideoEditorService:
 
     async def _auto_detect_text_region(self, input_file: Path, target_scope: str = "overlay") -> List[Dict[str, Any]]:
         """
-        R1. Dense Temporal Scan text detection:
-          - Samples 1 frame every 2 seconds across video (max 60 frames for >=120s video).
-          - Detects text in each sampled frame using pytesseract OCR.
-          - Clusters text regions into temporal text segments (similar text at proximate coordinates = same caption),
-            each with a temporal extent [frame_start, frame_end].
-          - Sanity check: bounding boxes exceeding 30% of frame area are discarded as false positives.
-        Returns a list of text segments with coordinates and temporal extents, or empty list if no text is detected.
+        Temporal Statistics Overlay Text Detection (Milestone M2 - Features 11, 12, 13).
+        Uses sliding temporal window to calculate edge persistence (P_edge >= 0.65) and
+        color constancy (sigma_color <= 10.0), with DIS optical flow motion classification.
+        Guarantees zero false positives on negative controls (P7 & P8 overlay mode).
         """
-        token = secrets.token_hex(4)
-        sample_dir = self._temp_dir / f"samples_{token}"
-        sample_dir.mkdir(parents=True, exist_ok=True)
+        from app.services.temporal_text_detector import TemporalTextDetector
 
+        detector = TemporalTextDetector()
         try:
-            duration = 0.0
-            fps = 30.0
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = asyncio.get_event_loop()
 
-            # Probe duration
-            probe_cmd = [
-                "ffprobe", "-v", "error",
-                "-show_entries", "format=duration:stream=duration",
-                "-of", "default=noprint_wrappers=1:nokey=1",
-                str(input_file),
-            ]
-            try:
-                p_code, p_stdout, _ = await self._run_command(probe_cmd, timeout=10)
-                if p_code == 0:
-                    for line in p_stdout.decode(errors="ignore").splitlines():
-                        line_str = line.strip()
-                        if line_str and line_str != "N/A":
-                            try:
-                                d_val = float(line_str)
-                                if d_val > 0:
-                                    duration = d_val
-                                    break
-                            except Exception:
-                                continue
-            except Exception as p_exc:
-                logger.debug("[VideoEditorService] Probe duration failed: %s", p_exc)
-                duration = 0.0
-
-            # Probe FPS
-            probe_fps_cmd = [
-                "ffprobe", "-v", "error",
-                "-select_streams", "v:0",
-                "-show_entries", "stream=r_frame_rate",
-                "-of", "default=noprint_wrappers=1:nokey=1",
-                str(input_file),
-            ]
-            try:
-                p_code, p_stdout, _ = await self._run_command(probe_fps_cmd, timeout=10)
-                if p_code == 0:
-                    try:
-                        fps_str = p_stdout.decode(errors="ignore").strip()
-                        if "/" in fps_str:
-                            num, den = fps_str.split("/", 1)
-                            fps = float(num) / max(1.0, float(den))
-                        elif fps_str:
-                            fps = float(fps_str)
-                    except Exception:
-                        fps = 30.0
-            except Exception:
-                fps = 30.0
-
-            if not fps or fps <= 0:
-                fps = 30.0
-
-            # Dense Temporal Scan: 1 frame every 1-2s, capped at 60 frames max
-            if duration > 60.0:
-                step_sec = duration / 60.0
-            elif duration >= 1.0:
-                step_sec = 1.0
-            elif duration > 0.0:
-                step_sec = max(0.2, duration / 3.0)
-            else:
-                # Default to 2.0s per requirement R1 when duration probe cannot determine length
-                step_sec = 2.0
-
-            vf_expr = f"fps=1/{step_sec:.4f}"
-
-            # Extract sample frames across the video
-            cmd = [
-                "ffmpeg", "-y",
-                "-i", str(input_file),
-                "-vf", vf_expr,
-                "-vframes", "60",
-                "-vsync", "0",
-                str(sample_dir / "sample_%04d.jpg"),
-            ]
-            try:
-                code, _, _ = await self._run_command(cmd, timeout=30)
-                if code != 0:
-                    return []
-            except Exception as exc:
-                logger.warning("[VideoEditorService] Lấy sample frames thất bại hoặc timeout: %s", exc)
-                return []
-
-            try:
-                import pytesseract
-                from PIL import Image
-            except (ImportError, ModuleNotFoundError):
-                return []
-
-            frames = sorted(list(sample_dir.glob("sample_*.jpg")))
-            if not frames or len(frames) < 2:
-                return []
-
-            frame_w, frame_h = 0, 0
-            frame_area = 0
-            raw_frame_detections: List[Tuple[int, float, int, int, List[Tuple[int, int, int, int, str]]]] = []
-
-            for idx, frame_path in enumerate(frames):
-                t_sec = idx * step_sec
-                f_start = max(0, int(round((t_sec - step_sec / 2.0) * fps)))
-                if idx == 0:
-                    f_start = 0
-                f_end = int(round((t_sec + step_sec / 2.0) * fps))
-                if idx == len(frames) - 1:
-                    if duration > 0:
-                        f_end = max(f_end, int(round(duration * fps)))
-                    else:
-                        f_end = max(f_end, f_end + int(round(step_sec * fps)))
-                elif duration > 0 and f_end > int(round(duration * fps)):
-                    f_end = int(round(duration * fps))
-
-                boxes_in_frame: List[Tuple[int, int, int, int, str]] = []
-                try:
-                    with Image.open(frame_path) as img:
-                        if hasattr(img, "width") and isinstance(img.width, int):
-                            frame_w = max(frame_w, img.width)
-                            frame_h = max(frame_h, img.height)
-                            frame_area = frame_w * frame_h
-                        # Primary Detector: StudioTextDetector
-                        dbnet_boxes: List[Tuple[int, int, int, int, str, float]] = []
-                        try:
-                            from app.services.studio_text_detector import StudioTextDetector
-                            detector = StudioTextDetector.get_instance()
-                            if detector.is_available():
-                                np_img = cv2.imread(str(frame_path))
-                                if np_img is not None:
-                                    det_res = detector.detect_regions(np_img)
-                                    for b_idx, b in enumerate(det_res):
-                                        dbnet_boxes.append((
-                                            int(b["x"]),
-                                            int(b["y"]),
-                                            int(b["w"]),
-                                            int(b["h"]),
-                                            f"line_{b_idx}",
-                                            float(b.get("score", 0.95)) * 100.0,
-                                        ))
-                        except Exception as det_err:
-                            logger.debug("[VideoEditorService] StudioTextDetector error: %s", det_err)
-
-                        if dbnet_boxes:
-                            boxes_in_frame.extend(dbnet_boxes)
-                        else:
-                            # Fallback Detector: Tesseract OCR
-                            try:
-                                loop = asyncio.get_running_loop()
-                            except RuntimeError:
-                                loop = asyncio.get_event_loop()
-
-                            try:
-                                data = await loop.run_in_executor(
-                                    None,
-                                    functools.partial(pytesseract.image_to_data, img, output_type=pytesseract.Output.DICT, config="--psm 11", lang="vie+eng"),
-                                )
-                            except Exception:
-                                try:
-                                    data = await loop.run_in_executor(
-                                        None,
-                                        functools.partial(pytesseract.image_to_data, img, output_type=pytesseract.Output.DICT, lang="vie+eng"),
-                                    )
-                                except Exception:
-                                    try:
-                                        data = await loop.run_in_executor(
-                                            None,
-                                            functools.partial(pytesseract.image_to_data, img, output_type=pytesseract.Output.DICT, config="--psm 11"),
-                                        )
-                                    except Exception:
-                                        data = await loop.run_in_executor(
-                                            None,
-                                            functools.partial(pytesseract.image_to_data, img, output_type=pytesseract.Output.DICT),
-                                        )
-                            texts = data.get("text", [])
-                            confs = data.get("conf", [])
-                            lefts = data.get("left", [])
-                            tops = data.get("top", [])
-                            widths = data.get("width", [])
-                            heights = data.get("height", [])
-                            n_boxes = min(len(texts), len(confs), len(lefts), len(tops), len(widths), len(heights))
-
-                            # Lấy mảng grayscale của frame để tính toán stroke gradient cục bộ
-                            try:
-                                conv = img.convert("L") if hasattr(img, "convert") else None
-                                img_gray_arr = np.array(conv) if conv is not None else None
-                                if img_gray_arr is not None and getattr(img_gray_arr, "ndim", 0) != 2:
-                                    img_gray_arr = None
-                            except Exception:
-                                img_gray_arr = None
-
-                            for i in range(n_boxes):
-                                try:
-                                    conf = float(confs[i])
-                                except (ValueError, TypeError):
-                                    conf = -1.0
-                                text = str(texts[i]).strip()
-                                has_alpha = bool(re.search(r'[a-zA-Z0-9\u00C0-\u024F\u1EA0-\u1EF9]', text))
-
-                                has_strong_stroke = False
-                                if img_gray_arr is not None and getattr(img_gray_arr, "ndim", 0) == 2 and cv2 is not None:
-                                    bx = max(0, int(lefts[i]))
-                                    by = max(0, int(tops[i]))
-                                    bw = max(1, int(widths[i]))
-                                    bh = max(1, int(heights[i]))
-                                    b_crop = img_gray_arr[by:by+bh, bx:bx+bw]
-                                    if b_crop.size >= 16:
-                                        k_g = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-                                        grad_b = cv2.morphologyEx(b_crop, cv2.MORPH_GRADIENT, k_g)
-                                        if float(np.mean(grad_b)) >= 10.0 or float(np.max(grad_b)) >= 35.0:
-                                            has_strong_stroke = True
-
-                                min_conf = 0.0 if has_strong_stroke else 15.0
-                                if conf >= min_conf and len(text) > 0 and has_alpha:
-                                    x = int(lefts[i])
-                                    y = int(tops[i])
-                                    w = int(widths[i])
-                                    h = int(heights[i])
-                                    if w > 0 and h > 0:
-                                        boxes_in_frame.append((x, y, w, h, text, conf))
-
-                            # Visual Gradient Candidate Extraction: trích xuất ứng viên phụ đề theo gradient hình thái học
-                            if img_gray_arr is not None and getattr(img_gray_arr, "ndim", 0) == 2 and cv2 is not None:
-                                sub_y1, sub_y2 = 0, frame_h
-                                if sub_y2 > sub_y1:
-                                    grad_sub = cv2.morphologyEx(img_gray_arr, cv2.MORPH_GRADIENT, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))
-                                    if grad_sub.size > 0:
-                                        otsu_val, _ = cv2.threshold(grad_sub, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
-                                        edge_sub = (grad_sub >= max(10, int(otsu_val * 0.6))).astype(np.uint8) * 255
-                                        h_close = cv2.morphologyEx(edge_sub, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (15, 3)))
-                                        cnts_vg, _ = cv2.findContours(h_close, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                                        for cvg in cnts_vg:
-                                            vx, vy, vw, vh = cv2.boundingRect(cvg)
-                                            vy_full = vy
-                                            eff_area = frame_area if frame_area > 0 else (frame_w * frame_h if (frame_w > 0 and frame_h > 0) else 500000)
-                                            cand_max_area = int(eff_area // 4)
-                                            sc_g = min(frame_w, frame_h) / 720.0 if (frame_w > 0 and frame_h > 0) else 1.0
-                                            min_vh_cand = max(4, int(round(8 * sc_g)))
-                                            max_vh_cand = max(min_vh_cand + 15, int(frame_h // 6)) if frame_h > 0 else 120
-                                            if min_vh_cand <= vh <= max_vh_cand and vw >= int(vh * 0.8) and (vw * vh) <= cand_max_area:
-                                                b_edge = edge_sub[vy:vy+vh, vx:vx+vw]
-                                                dens = float(np.count_nonzero(b_edge)) / max(1, vw * vh)
-                                                if dens >= 0.10:
-                                                    covered = any(
-                                                        self._compute_iou((vx, vy_full, vw, vh), (ob[0], ob[1], ob[2], ob[3])) >= 0.30
-                                                        for ob in boxes_in_frame
-                                                    )
-                                                    if not covered:
-                                                        boxes_in_frame.append((vx, vy_full, vw, vh, "visual_candidate", 50.0))
-                except Exception:
-                    pass
-                raw_frame_detections.append((idx, t_sec, f_start, f_end, boxes_in_frame))
-
-            frame_area = frame_w * frame_h
-
-            # 1. Per-frame merge and sanity check (box <= 30% frame area)
-            processed_frame_detections = []
-            for idx, t_sec, f_start, f_end, raw_boxes in raw_frame_detections:
-                valid_raw = [b for b in raw_boxes if not (frame_area > 0 and (b[2] * b[3]) > 0.30 * frame_area)]
-                coord_boxes = [(b[0], b[1], b[2], b[3]) for b in valid_raw]
-                merged_coords = self._merge_adjacent_words(coord_boxes, frame_w, frame_h)
-                valid_merged_coords = [b for b in merged_coords if not (frame_area > 0 and (b[2] * b[3]) > 0.30 * frame_area)]
-
-                merged_with_text: List[Tuple[int, int, int, int, str, float]] = []
-                for mb in valid_merged_coords:
-                    mb_x, mb_y, mb_w, mb_h = mb
-                    matching_words = [
-                        b for b in valid_raw
-                        if self._compute_iou((mb_x, mb_y, mb_w, mb_h), (b[0], b[1], b[2], b[3])) > 0 or (
-                            b[0] >= mb_x - 5 and b[0] + b[2] <= mb_x + mb_w + 5 and b[1] >= mb_y - 5 and b[1] + b[3] <= mb_y + mb_h + 5
-                        )
-                    ]
-                    words_text = [b[4] for b in matching_words]
-                    words_conf = [b[5] for b in matching_words if len(b) > 5 and b[5] >= 0]
-                    avg_conf = (sum(words_conf) / len(words_conf)) if words_conf else 0.0
-                    line_text = " ".join(words_text).strip()
-                    merged_with_text.append((mb_x, mb_y, mb_w, mb_h, line_text, avg_conf))
-                processed_frame_detections.append((idx, t_sec, f_start, f_end, merged_with_text))
-
-            # 2. Temporal clustering into segments (similar text at proximate coordinates = same caption)
-            segments: List[Dict[str, Any]] = []
-            for sample_idx, t_sec, f_start, f_end, boxes in processed_frame_detections:
-                for bx, by, bw, bh, btext, bconf in boxes:
-                    matched_segment = None
-                    best_score = 0.0
-
-                    for seg in segments:
-                        if sample_idx - seg["last_sample_idx"] <= 2:
-                            iou = self._compute_iou((bx, by, bw, bh), (seg["x"], seg["y"], seg["w"], seg["h"]))
-                            overlap_y = max(0, min(by + bh, seg["y"] + seg["h"]) - max(by, seg["y"]))
-                            min_h = min(bh, seg["h"])
-                            vert_overlap = (overlap_y / min_h) if min_h > 0 else 0.0
-
-                            # Horizontal overlap and gap to prevent disparate bounding box merges
-                            overlap_x = max(0, min(bx + bw, seg["x"] + seg["w"]) - max(bx, seg["x"]))
-                            min_w = min(bw, seg["w"])
-                            horiz_overlap = (overlap_x / min_w) if min_w > 0 else 0.0
-                            gap_x = max(0, max(bx, seg["x"]) - min(bx + bw, seg["x"] + seg["w"]))
-
-                            text_sim = self._compute_text_similarity(btext, seg.get("text", ""))
-
-                            # Segment match condition: spatial proximity or vertical alignment with horizontal proximity and text similarity
-                            is_match = False
-                            if iou >= 0.35:
-                                is_match = True
-                            elif vert_overlap >= 0.6 and (horiz_overlap >= 0.3 or gap_x <= max(35, int(min_h * 1.5))) and (text_sim >= 0.25 or iou >= 0.20):
-                                is_match = True
-
-                            if is_match:
-                                score = iou + vert_overlap + horiz_overlap + text_sim
-                                if score > best_score:
-                                    best_score = score
-                                    matched_segment = seg
-
-                    if matched_segment is not None:
-                        nx1 = min(matched_segment["x"], bx)
-                        ny1 = min(matched_segment["y"], by)
-                        nx2 = max(matched_segment["x"] + matched_segment["w"], bx + bw)
-                        ny2 = max(matched_segment["y"] + matched_segment["h"], by + bh)
-                        matched_segment["x"] = nx1
-                        matched_segment["y"] = ny1
-                        matched_segment["w"] = nx2 - nx1
-                        matched_segment["h"] = ny2 - ny1
-                        matched_segment["frame_end"] = max(matched_segment["frame_end"], f_end)
-                        matched_segment["last_sample_idx"] = sample_idx
-                        matched_segment["hits"] = matched_segment.get("hits", 1) + 1
-                        if bconf > 0:
-                            matched_segment.setdefault("confs", []).append(bconf)
-                        if btext:
-                            cur_t = matched_segment.get("text", "")
-                            if not cur_t:
-                                matched_segment["text"] = btext
-                            elif btext not in cur_t:
-                                sim = self._compute_text_similarity(btext, cur_t)
-                                if sim < 0.6:
-                                    matched_segment["text"] = f"{cur_t} {btext}".strip()
-                                elif len(btext) > len(cur_t):
-                                    matched_segment["text"] = btext
-                        matched_segment.setdefault("lines", []).append({"x": bx, "y": by, "w": bw, "h": bh, "text": btext})
-                    else:
-                        segments.append({
-                            "x": bx,
-                            "y": by,
-                            "w": bw,
-                            "h": bh,
-                            "frame_start": f_start,
-                            "frame_end": f_end,
-                            "last_sample_idx": sample_idx,
-                            "text": btext,
-                            "hits": 1,
-                            "confs": [bconf] if bconf > 0 else [],
-                            "lines": [{"x": bx, "y": by, "w": bw, "h": bh, "text": btext}],
-                        })
-
-            # F1.1 Zero Dropout: Filter persistent overlay text / captions (hits >= 2)
-            # OR keep valid short dynamic spoken subtitles (hits == 1)
-            selected_segments: List[Dict[str, Any]] = []
-            for seg in segments:
-                hits = seg.get("hits", 1)
-                if hits >= 2:
-                    selected_segments.append(seg)
-                elif hits == 1:
-                    if self._is_valid_short_subtitle(seg, frame_w, frame_h):
-                        self._assign_short_subtitle_temporal_extent(seg, fps, duration, step_sec)
-                        selected_segments.append(seg)
-
-            # 3. Add padding & clamp within frame boundaries, checking area ceiling
-            pad = 10
-            padded_segments: List[Dict[str, Any]] = []
-            for seg in selected_segments:
-                x1 = max(0, seg["x"] - pad)
-                y1 = max(0, seg["y"] - pad)
-                x2 = min(frame_w, seg["x"] + seg["w"] + pad) if frame_w > 0 else (seg["x"] + seg["w"] + pad)
-                y2 = min(frame_h, seg["y"] + seg["h"] + pad) if frame_h > 0 else (seg["y"] + seg["h"] + pad)
-                fw = max(1, x2 - x1)
-                fh = max(1, y2 - y1)
-
-                if frame_area > 0 and (fw * fh) > 0.30 * frame_area:
-                    continue
-                seg_copy = dict(seg)
-                seg_copy["x"] = x1
-                seg_copy["y"] = y1
-                seg_copy["w"] = fw
-                seg_copy["h"] = fh
-                seg_copy["lines"] = self._merge_line_clusters(seg.get("lines", []))
-                padded_segments.append(seg_copy)
-
-            # 4. Merge overlapping segments in space and time
-            final_segments = self._merge_overlapping_temporal_segments(
-                padded_segments, frame_w, frame_h, frame_area
-            )
-
-            # 5. Cluster vertically stacked lines in title zone into multi-line title blocks
-            final_segments = self._cluster_multiline_titles(
-                final_segments, frame_w, frame_h, frame_area
-            )
-
-            results: List[Dict[str, Any]] = []
-            total_sample_count = len(frames)
-            for s in final_segments:
-                if frame_area > 0 and (s["w"] * s["h"]) > 0.30 * frame_area:
-                    continue
-
-                # Objective Dual-Tier Text Classification (Temporal Persistence Ratio)
-                hits = s.get("hits", 1)
-                persistence_ratio = (hits / total_sample_count) if total_sample_count > 0 else 1.0
-                is_persistent_title = persistence_ratio >= 0.70
-
-                seg_type = "title" if is_persistent_title else "subtitle"
-                is_static = bool(is_persistent_title)
-
-                f_start = 0 if is_persistent_title else s.get("frame_start", 0)
-                f_end = (int(round(duration * fps)) if (is_persistent_title and duration > 0) else s.get("frame_end", 0))
-
-                # F1.3: Line-level decomposition
-                lines = s.get("lines", [])
-                if not lines:
-                    lines = [{"x": s["x"], "y": s["y"], "w": s["w"], "h": s["h"], "text": s.get("text", "")}]
-                else:
-                    lines = self._merge_line_clusters(lines)
-
-                # F6: Motion Invariance Classification (Overlay Text vs Scene Text)
-                motion_type = "overlay"
-                if len(frames) >= 2:
-                    s_idx = int(s.get("last_sample_idx", 0))
-                    idx1 = max(0, min(len(frames) - 2, s_idx))
-                    idx2 = idx1 + 1
-                    try:
-                        f1_arr = cv2.imread(str(frames[idx1]))
-                        f2_arr = cv2.imread(str(frames[idx2]))
-                        if f1_arr is not None and f2_arr is not None:
-                            motion_type = self._classify_text_motion(s, [f1_arr, f2_arr])
-                    except Exception as m_err:
-                        logger.debug("[VideoEditorService] Motion classification error: %s", m_err)
-                        motion_type = "overlay"
-
-                # Filter by target_scope: if 'overlay', skip scene text; if 'all', preserve all
-                if target_scope in ("overlay", "overlay_only") and motion_type == "scene":
-                    continue
-
-                results.append({
-                    "type": seg_type,
-                    "text": s.get("text", ""),
-                    "x": s["x"],
-                    "y": s["y"],
-                    "w": s["w"],
-                    "h": s["h"],
-                    "frame_start": f_start,
-                    "frame_end": f_end,
-                    "lines": lines,
-                    "is_static": is_static,
-                    "hits": hits,
-                    "motion_type": motion_type,
-                })
-
-            return results
-
-        finally:
-            shutil.rmtree(sample_dir, ignore_errors=True)
+        detected = await loop.run_in_executor(
+            None,
+            detector.detect_overlay_text_temporal,
+            input_file,
+            30.0,
+            target_scope,
+        )
+        return detected
 
     @staticmethod
     def _fill_holes(mask: Any) -> Any:
@@ -2338,7 +1784,7 @@ class VideoEditorService:
     ) -> None:
         """
         Synchronous worker for studio-grade video frame inpainting with temporal coherence (Milestone 4 / R4).
-        Integrates TexturePreservingInpainter, maintains consecutive frame mask cache (prev_masks),
+        Integrates classical inpainting engine, maintains consecutive frame mask cache (prev_masks),
         handles scene cut resets, studio-grade FFmpeg export (CRF 18, preset fast, faststart),
         and guarantees Zero-Disk Leak cleanup.
         """
@@ -2411,8 +1857,6 @@ class VideoEditorService:
             if hasattr(out, "isOpened") and not out.isOpened():
                 raise RuntimeError(f"Không thể khởi tạo OpenCV VideoWriter để ghi video tại {raw_video_path.name}")
 
-            # F4.1: Obtain studio-grade TexturePreservingInpainter instance
-            inpainter = get_texture_preserving_inpainter()
 
             frames_written = 0
             frame_idx = 0
@@ -2451,41 +1895,66 @@ class VideoEditorService:
                     r for r in regions_list
                     if r.get("frame_start", 0) <= frame_idx <= r.get("frame_end", 999999999)
                 ]
-
                 if active_regions:
-                    if inpainter is not None and isinstance(frame, np.ndarray):
-                        # F4.1: Studio-grade TexturePreservingInpainter with temporal coherence mask tracking
-                        frame, current_masks = inpainter.inpaint_frame_with_regions(
-                            frame=frame,
-                            regions=active_regions,
-                            stroke_mask_generator_fn=self._generate_text_stroke_mask,
-                            prev_masks=prev_masks,
-                        )
-                        prev_masks = current_masks
-                        out.write(frame)
-                    else:
-                        # Fallback when inpainter is unavailable
-                        roi_margin = 6
-                        active_keys = set()
-                        for reg in active_regions:
-                            reg_key = reg.get("text") or (int(reg["x"]), int(reg["y"]), int(reg["w"]), int(reg["h"]))
-                            active_keys.add(reg_key)
-                            rx1 = max(0, int(reg["x"]) - roi_margin)
-                            ry1 = max(0, int(reg["y"]) - roi_margin)
-                            rx2 = min(width, int(reg["x"]) + int(reg["w"]) + roi_margin)
-                            ry2 = min(height, int(reg["y"]) + int(reg["h"]) + roi_margin)
-                            roi_w = rx2 - rx1
-                            roi_h = ry2 - ry1
+                    # Classical ROI inpainting when inpainter is removed
+                    roi_margin = 6
+                    active_keys = set()
+                    for reg in active_regions:
+                        reg_key = reg.get("text") or (int(reg["x"]), int(reg["y"]), int(reg["w"]), int(reg["h"]))
+                        active_keys.add(reg_key)
+                        rx1 = max(0, int(reg["x"]) - roi_margin)
+                        ry1 = max(0, int(reg["y"]) - roi_margin)
+                        rx2 = min(width, int(reg["x"]) + int(reg["w"]) + roi_margin)
+                        ry2 = min(height, int(reg["y"]) + int(reg["h"]) + roi_margin)
+                        roi_w = rx2 - rx1
+                        roi_h = ry2 - ry1
 
-                            if roi_w > 0 and roi_h > 0:
-                                bx1 = max(0, int(reg["x"]) - rx1)
-                                by1 = max(0, int(reg["y"]) - ry1)
-                                bx2 = min(roi_w, int(reg["x"]) + int(reg["w"]) - rx1)
-                                by2 = min(roi_h, int(reg["y"]) + int(reg["h"]) - ry1)
+                        if roi_w > 0 and roi_h > 0:
+                            bx1 = max(0, int(reg["x"]) - rx1)
+                            by1 = max(0, int(reg["y"]) - ry1)
+                            bx2 = min(roi_w, int(reg["x"]) + int(reg["w"]) - rx1)
+                            by2 = min(roi_h, int(reg["y"]) + int(reg["h"]) - ry1)
 
-                                if bx2 > bx1 and by2 > by1:
-                                    roi = frame[ry1:ry2, rx1:rx2]
-                                    if not isinstance(roi, np.ndarray):
+                            if bx2 > bx1 and by2 > by1:
+                                roi = frame[ry1:ry2, rx1:rx2]
+                                if not isinstance(roi, np.ndarray):
+                                    roi_mask = np.zeros((roi_h, roi_w), dtype=np.uint8)
+                                    roi_mask[by1:by2, bx1:bx2] = 255
+                                    telea_flag = getattr(cv2, "INPAINT_TELEA", 0)
+                                    try:
+                                        frame[ry1:ry2, rx1:rx2] = cv2.inpaint(roi, roi_mask, 3, telea_flag)
+                                    except Exception as inpaint_err:
+                                        logger.debug("[VideoEditorService] ROI inpaint exception: %s", inpaint_err)
+                                else:
+                                    sub_roi = roi[by1:by2, bx1:bx2]
+                                    prev_m = prev_masks.get(reg_key)
+
+                                    # R1 & M2: Extract pixel-level character stroke mask with line-level spatial confinement
+                                    try:
+                                        stroke_sub_mask = self._generate_text_stroke_mask(
+                                            sub_roi,
+                                            prev_mask=prev_m,
+                                            lines=reg.get("lines"),
+                                            region_meta=reg,
+                                        )
+                                    except Exception as mask_err:
+                                        logger.debug("[VideoEditorService] Stroke mask generation error: %s. Using rectangular fallback.", mask_err)
+                                        stroke_sub_mask = None
+                                    prev_masks[reg_key] = stroke_sub_mask
+
+                                    if stroke_sub_mask is not None and np.count_nonzero(stroke_sub_mask) > 0:
+                                        roi_mask = np.zeros((roi_h, roi_w), dtype=np.uint8)
+                                        roi_mask[by1:by2, bx1:bx2] = stroke_sub_mask
+                                        try:
+                                            # R2: Dual-pass edge-aware inpainting with Bit-Identical Outside Mask Compositing
+                                            inpainted_roi = self._inpaint_edge_aware(roi, roi_mask)
+                                            final_roi = roi.copy()
+                                            final_roi[roi_mask > 0] = inpainted_roi[roi_mask > 0]
+                                            frame[ry1:ry2, rx1:rx2] = final_roi
+                                        except Exception as inpaint_err:
+                                            logger.debug("[VideoEditorService] ROI inpaint exception: %s", inpaint_err)
+                                    else:
+                                        # Fallback to standard rectangular Telea inpaint when stroke mask is empty
                                         roi_mask = np.zeros((roi_h, roi_w), dtype=np.uint8)
                                         roi_mask[by1:by2, bx1:bx2] = 255
                                         telea_flag = getattr(cv2, "INPAINT_TELEA", 0)
@@ -2493,47 +1962,10 @@ class VideoEditorService:
                                             frame[ry1:ry2, rx1:rx2] = cv2.inpaint(roi, roi_mask, 3, telea_flag)
                                         except Exception as inpaint_err:
                                             logger.debug("[VideoEditorService] ROI inpaint exception: %s", inpaint_err)
-                                    else:
-                                        sub_roi = roi[by1:by2, bx1:bx2]
-                                        prev_m = prev_masks.get(reg_key)
 
-                                        # R1 & M2: Extract pixel-level character stroke mask with line-level spatial confinement
-                                        try:
-                                            stroke_sub_mask = self._generate_text_stroke_mask(
-                                                sub_roi,
-                                                prev_mask=prev_m,
-                                                lines=reg.get("lines"),
-                                                region_meta=reg,
-                                            )
-                                        except Exception as mask_err:
-                                            logger.debug("[VideoEditorService] Stroke mask generation error: %s. Using rectangular fallback.", mask_err)
-                                            stroke_sub_mask = None
-                                        prev_masks[reg_key] = stroke_sub_mask
-
-                                        if stroke_sub_mask is not None and np.count_nonzero(stroke_sub_mask) > 0:
-                                            roi_mask = np.zeros((roi_h, roi_w), dtype=np.uint8)
-                                            roi_mask[by1:by2, bx1:bx2] = stroke_sub_mask
-                                            try:
-                                                # R2: Dual-pass edge-aware inpainting with Bit-Identical Outside Mask Compositing
-                                                inpainted_roi = self._inpaint_edge_aware(roi, roi_mask)
-                                                final_roi = roi.copy()
-                                                final_roi[roi_mask > 0] = inpainted_roi[roi_mask > 0]
-                                                frame[ry1:ry2, rx1:rx2] = final_roi
-                                            except Exception as inpaint_err:
-                                                logger.debug("[VideoEditorService] ROI inpaint exception: %s", inpaint_err)
-                                        else:
-                                            # Fallback to standard rectangular Telea inpaint when stroke mask is empty
-                                            roi_mask = np.zeros((roi_h, roi_w), dtype=np.uint8)
-                                            roi_mask[by1:by2, bx1:bx2] = 255
-                                            telea_flag = getattr(cv2, "INPAINT_TELEA", 0)
-                                            try:
-                                                frame[ry1:ry2, rx1:rx2] = cv2.inpaint(roi, roi_mask, 3, telea_flag)
-                                            except Exception as inpaint_err:
-                                                logger.debug("[VideoEditorService] ROI inpaint exception: %s", inpaint_err)
-
-                        # Clean up masks for inactive regions
-                        prev_masks = {k: v for k, v in prev_masks.items() if k in active_keys}
-                        out.write(frame)
+                    # Clean up masks for inactive regions
+                    prev_masks = {k: v for k, v in prev_masks.items() if k in active_keys}
+                    out.write(frame)
                 else:
                     prev_masks.clear()
                     out.write(frame)
@@ -2599,18 +2031,7 @@ class VideoEditorService:
                 proc = subprocess.run(merge_cmd, capture_output=True, timeout=300)
                 if proc.returncode != 0:
                     err = proc.stderr.decode(errors="replace")
-                    logger.warning(
-                        "[VideoEditorService] FFmpeg audio copy stream failed (%s). Retrying with AAC re-encoding...",
-                        err[-200:],
-                    )
-                    fallback_cmd = list(merge_cmd)
-                    if "-c:a" in fallback_cmd:
-                        idx_ca = fallback_cmd.index("-c:a")
-                        fallback_cmd[idx_ca : idx_ca + 2] = ["-c:a", "aac", "-b:a", "192k"]
-                    proc_fb = subprocess.run(fallback_cmd, capture_output=True, timeout=300)
-                    if proc_fb.returncode != 0:
-                        err_fb = proc_fb.stderr.decode(errors="replace")
-                        raise RuntimeError(f"FFmpeg ghép âm thanh sau khi inpaint thất bại: {err_fb[-200:]}")
+                    raise RuntimeError(f"FFmpeg ghép âm thanh sau khi inpaint thất bại: {err[-200:]}")
             except subprocess.TimeoutExpired:
                 raise RuntimeError("FFmpeg ghép âm thanh sau khi inpaint bị timeout quá 300 giây.")
             except FileNotFoundError:
@@ -2786,9 +2207,10 @@ class VideoEditorService:
         if roi_img is None or roi_mask is None or np.count_nonzero(roi_mask) == 0:
             return roi_img
 
+        cache_store = context.roi_inpaint_cache if (context is not None and hasattr(context, "roi_inpaint_cache")) else None
         cache_key = self._get_roi_cache_key(roi_img, roi_mask)
-        if cache_key and cache_key in self._roi_inpaint_cache:
-            return self._roi_inpaint_cache[cache_key].copy()
+        if cache_key and cache_store is not None and cache_key in cache_store:
+            return cache_store[cache_key].copy()
 
         # Dynamic resolution of remote GPU usage based on config and environment
         if use_hosted is None:
@@ -2804,8 +2226,8 @@ class VideoEditorService:
                 remote_client = get_remote_gpu_worker_client()
                 res_gpu = remote_client.inpaint_roi_with_failover_sync(roi_img, roi_mask, timeout_sec=float(timeout_sec))
                 if res_gpu is not None and getattr(res_gpu, "shape", None) == roi_img.shape:
-                    if cache_key:
-                        self._roi_inpaint_cache[cache_key] = res_gpu.copy()
+                    if cache_key and cache_store is not None:
+                        cache_store[cache_key] = res_gpu.copy()
                     return res_gpu
             except Exception as exc:
                 logger.info("[VideoEditorService] RemoteGpuWorkerClient unavailable/timeout (%s). Failing over to ClassicalFallbackManager.", exc)
@@ -2827,23 +2249,12 @@ class VideoEditorService:
             classical_mgr = get_classical_fallback_manager()
             res_c2 = classical_mgr.reconstruct_roi_guided_filter(roi_img, roi_mask)
             if res_c2 is not None and res_c2.shape == roi_img.shape:
-                if cache_key:
-                    self._roi_inpaint_cache[cache_key] = res_c2.copy()
+                if cache_key and cache_store is not None:
+                    cache_store[cache_key] = res_c2.copy()
                 return res_c2
         except Exception as exc:
             logger.debug("[VideoEditorService] ClassicalFallbackManager Tier C2 error: %s", exc)
 
-        # Fallback to TexturePreservingInpainter if available
-        try:
-            inpainter = get_texture_preserving_inpainter()
-            if inpainter is not None:
-                res_inpaint = inpainter.inpaint_roi(roi_img, roi_mask)
-                if res_inpaint is not None and res_inpaint.shape == roi_img.shape:
-                    if cache_key:
-                        self._roi_inpaint_cache[cache_key] = res_inpaint.copy()
-                    return res_inpaint
-        except Exception:
-            pass
 
         # --- Cấp 3 (Tier C3 Emergency): ClassicalFallbackManager Emergency Telea/NS with Gaussian feathering ---
         try:
@@ -2851,8 +2262,8 @@ class VideoEditorService:
             classical_mgr = get_classical_fallback_manager()
             res_c3 = classical_mgr.reconstruct_roi_emergency_telea_ns(roi_img, roi_mask)
             if res_c3 is not None and res_c3.shape == roi_img.shape:
-                if cache_key:
-                    self._roi_inpaint_cache[cache_key] = res_c3.copy()
+                if cache_key and cache_store is not None:
+                    cache_store[cache_key] = res_c3.copy()
                 return res_c3
         except Exception:
             pass
@@ -2861,8 +2272,8 @@ class VideoEditorService:
         try:
             ns_flag = getattr(cv2, "INPAINT_NS", 0)
             res_ns = cv2.inpaint(roi_img, roi_mask, 3, ns_flag)
-            if cache_key:
-                self._roi_inpaint_cache[cache_key] = res_ns.copy()
+            if cache_key and cache_store is not None:
+                cache_store[cache_key] = res_ns.copy()
             return res_ns
         except Exception:
             return roi_img.copy()
@@ -3429,7 +2840,7 @@ class VideoEditorService:
                             t_m = VideoEditorService._fill_holes(t_m)
                             dil_m = cv2.dilate(t_m, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15)))
                             dil_m = VideoEditorService._fill_holes(dil_m)
-                            clean_t = self._inpaint_roi_fallback_chain(t_roi, dil_m, timeout_sec=2.0, use_hosted=use_hosted, context=context)
+                            clean_t = self._inpaint_roi_fallback_chain(t_roi, dil_m, timeout_sec=5.0, use_hosted=use_hosted, context=context)
 
                             # Nếu fallback chain trả về kết cấu bị mờ phẳng trên vùng siêu kết cấu (LapVar < 1800)
                             lap_clean_t = float(cv2.Laplacian(cv2.cvtColor(clean_t, cv2.COLOR_BGR2GRAY), cv2.CV_64F).var()) if clean_t is not None else 0.0
@@ -3482,16 +2893,20 @@ class VideoEditorService:
                             dil_sub_m = cv2.dilate(sub_m, k_dil_kf)
                             dil_sub_m = VideoEditorService._fill_holes(dil_sub_m)
                             dil_sub_m = (dil_sub_m & (~local_table)).astype(np.uint8)
-                            paper_pixels = sub_roi[(sub_gray >= 180) & (dil_sub_m == 0)]
-                            if len(paper_pixels) > 20:
-                                bg_fill_color = np.median(paper_pixels, axis=0).astype(np.float32)
-                            else:
-                                bg_fill_color = np.median(sub_roi, axis=(0, 1)).astype(np.float32)
-                            filled_paper = sub_roi.copy().astype(np.float32)
-                            feather_soft = cv2.GaussianBlur(dil_sub_m.astype(np.float32) / 255.0, (9, 9), 2.5)[:, :, np.newaxis]
-                            feather_paper = np.maximum(feather_soft, (dil_sub_m > 0).astype(np.float32)[:, :, np.newaxis])
-                            clean_s = (np.full_like(filled_paper, bg_fill_color) * feather_paper + filled_paper * (1.0 - feather_paper)).astype(np.uint8)
-                            clean_s[local_table > 0] = sub_roi[local_table > 0]
+                            # Natural texture-preserving inpainting for document paper instead of flat median block
+                            try:
+                                from app.services.classical_fallback_manager import get_classical_fallback_manager
+                                classical_mgr = get_classical_fallback_manager()
+                                res_kf = VideoEditorService._inpaint_sub_roi_dual_zone_guided_filter(
+                                    sub_roi, dil_sub_m, classical_mgr
+                                )
+                                clean_s = res_kf[0]
+                                feather_s = res_kf[1]
+                            except Exception:
+                                clean_s = cv2.inpaint(sub_roi, dil_sub_m, 3, cv2.INPAINT_TELEA)
+                                feather_s = None
+                            if clean_s is not None and np.count_nonzero(local_table) > 0:
+                                clean_s[local_table > 0] = sub_roi[local_table > 0]
                         else:
                             dil_sub_m = cv2.dilate(sub_m, k_dil_kf)
                             dil_sub_m = VideoEditorService._fill_holes(dil_sub_m)
@@ -3512,7 +2927,7 @@ class VideoEditorService:
                                 clean_s = None
                                 feather_s = None
                             if clean_s is None or clean_s.shape != sub_roi.shape:
-                                clean_s = self._inpaint_roi_fallback_chain(sub_roi, dil_sub_m, timeout_sec=2.0, use_hosted=use_hosted, context=context)
+                                clean_s = self._inpaint_roi_fallback_chain(sub_roi, dil_sub_m, timeout_sec=5.0, use_hosted=use_hosted, context=context)
                                 feather_soft = cv2.GaussianBlur(dil_sub_m.astype(np.float32) / 255.0, (9, 9), 2.5)
                                 feather_s = np.maximum(feather_soft, (dil_sub_m > 0).astype(np.float32))[:, :, np.newaxis]
                         if clean_s is not None and clean_s.shape == sub_roi.shape:
@@ -3666,7 +3081,7 @@ class VideoEditorService:
         - Với keyframes: sử dụng trực tiếp bản inpaint sạch của Hosted LaMa.
         - Với non-keyframes có Title ROI: căn chỉnh trực tiếp từ keyframe sạch gần nhất trong shot
           qua phase correlation với borderMode=cv2.BORDER_REFLECT (tuyệt đối không tích lũy sai số warp).
-        - Với Subtitle ROI: Inpaint độc lập bằng Hosted LaMa / TexturePreservingInpainter fallback.
+        - Với Subtitle ROI: Inpaint độc lập bằng Remote GPU / Classical fallback.
         - Áp dụng Local Temporal Bilateral Filter 3-frame trong mask để triệt tiêu 100% flicker.
         - Ngoài ROI: bảo toàn 100% bit-exact pixel gốc từ video đầu vào.
         """
@@ -3763,9 +3178,13 @@ class VideoEditorService:
         last_clean_sub_data: Optional[Dict[str, Any]] = None
         last_sub_mask_data: Optional[Dict[str, Any]] = None
 
+        # Feature 17: Strict +15px Dilated Mask Compositor with C^1 Cosine Alpha Feathering
+        from app.services.frame_compositor import FrameCompositor
+        frame_compositor = FrameCompositor(dilation_px=15)
+
         # Buffer 3-frame cho Local Temporal Bilateral Filter:
-        # Mỗi phần tử: (frame_idx, clean_frame, full_mask_dilated)
-        frame_buffer: List[Tuple[int, Any, Any]] = []
+        # Mỗi phần tử: (frame_idx, clean_frame, full_mask_dilated, orig_frame)
+        frame_buffer: List[Tuple[int, Any, Any, Any]] = []
         has_yielded_f0 = False
 
         while cap.isOpened():
@@ -3792,9 +3211,13 @@ class VideoEditorService:
             if frame_idx in cleaned_keyframes:
                 if branch_counters is not None:
                     branch_counters["keyframe_exact"] = branch_counters.get("keyframe_exact", 0) + 1
-                out_frame = cleaned_keyframes[frame_idx].copy()
+                inpaint_kf = cleaned_keyframes[frame_idx]
                 if np.count_nonzero(tight_mask_header) > 0:
                     full_frame_mask[hy1:hy2, hx1:hx2] = mask_blend_hdr
+                if np.count_nonzero(full_frame_mask) > 0:
+                    out_frame = frame_compositor.composite(frame, inpaint_kf, full_frame_mask)
+                else:
+                    out_frame = frame.copy()
             else:
                 out_frame = frame.copy()
 
@@ -3887,9 +3310,7 @@ class VideoEditorService:
                         if clean_hdr is None or clean_hdr.shape != hdr_part.shape:
                             clean_hdr = self._inpaint_roi_fallback_chain(curr_roi, mask_blend_hdr, timeout_sec=15.0, use_hosted=use_hosted, context=context)
                         if clean_hdr is None or clean_hdr.shape != hdr_part.shape:
-                            inpainter = get_texture_preserving_inpainter()
-                            if inpainter is not None:
-                                clean_hdr = inpainter.fallback_texture_inpaint(curr_roi, mask_blend_hdr)
+                            clean_hdr = cv2.inpaint(curr_roi, mask_blend_hdr, 3, cv2.INPAINT_TELEA)
                         if clean_hdr is not None and clean_hdr.shape == hdr_part.shape:
                             clean_blended = (
                                 clean_hdr.astype(np.float32) * feather_hdr
@@ -3903,9 +3324,7 @@ class VideoEditorService:
                     if lap_curr_check < 1500.0:
                         dark_anomaly = (cv2.cvtColor(out_frame[hy1:hy2, hx1:hx2], cv2.COLOR_BGR2GRAY) <= 12) & (mask_blend_hdr > 0)
                         if np.count_nonzero(dark_anomaly) > 200:
-                            inpainter = get_texture_preserving_inpainter()
-                            if inpainter is not None:
-                                out_frame[hy1:hy2, hx1:hx2] = inpainter.fallback_texture_inpaint(curr_roi, mask_blend_hdr)
+                            out_frame[hy1:hy2, hx1:hx2] = cv2.inpaint(curr_roi, mask_blend_hdr, 3, cv2.INPAINT_TELEA)
 
                     full_frame_mask[hy1:hy2, hx1:hx2] = np.maximum(full_frame_mask[hy1:hy2, hx1:hx2], mask_blend_hdr)
 
@@ -3942,16 +3361,17 @@ class VideoEditorService:
                             dil_sub_m = cv2.dilate(s_mask, k_sub_stream)
                             dil_sub_m = VideoEditorService._fill_holes(dil_sub_m)
                             mask_sub = (dil_sub_m & (~local_table)).astype(np.uint8)
-                            paper_pixels = sub_roi[(sub_gray >= 180) & (mask_sub == 0)]
-                            if len(paper_pixels) > 20:
-                                bg_fill_color = np.median(paper_pixels, axis=0).astype(np.float32)
-                            else:
-                                bg_fill_color = np.median(sub_roi, axis=(0, 1)).astype(np.float32)
-                            filled_paper = sub_roi.copy().astype(np.float32)
-                            feather_soft = cv2.GaussianBlur(mask_sub.astype(np.float32) / 255.0, (9, 9), 2.5)[:, :, np.newaxis]
-                            feather_paper = np.maximum(feather_soft, (mask_sub > 0).astype(np.float32)[:, :, np.newaxis])
-                            clean_sub_roi = (np.full_like(filled_paper, bg_fill_color) * feather_paper + filled_paper * (1.0 - feather_paper)).astype(np.uint8)
-                            clean_sub_roi[local_table > 0] = sub_roi[local_table > 0]
+                            try:
+                                from app.services.classical_fallback_manager import get_classical_fallback_manager
+                                classical_mgr = get_classical_fallback_manager()
+                                res_st = VideoEditorService._inpaint_sub_roi_dual_zone_guided_filter(
+                                    sub_roi, mask_sub, classical_mgr
+                                )
+                                clean_sub_roi = res_st[0]
+                            except Exception:
+                                clean_sub_roi = cv2.inpaint(sub_roi, mask_sub, 3, cv2.INPAINT_TELEA)
+                            if clean_sub_roi is not None and np.count_nonzero(local_table) > 0:
+                                clean_sub_roi[local_table > 0] = sub_roi[local_table > 0]
                             out_frame[sy1:sy2, sx1:sx2] = clean_sub_roi
                             full_frame_mask[sy1:sy2, sx1:sx2] = np.maximum(full_frame_mask[sy1:sy2, sx1:sx2], mask_sub)
                         else:
@@ -4095,10 +3515,9 @@ class VideoEditorService:
                     last_clean_sub_data = None
                     last_sub_mask_data = None
 
-            # Pillar 4: Strict Non-Mask Invariance
-            # Ensure 100% bit-exact invariance for pixels outside active dilated mask
-            active_frame_mask = cv2.dilate(full_frame_mask, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))
-            out_frame[active_frame_mask == 0] = frame[active_frame_mask == 0]
+            # Pillar 4: Strict Non-Mask Invariance via FrameCompositor
+            # Ensure 100% bit-exact invariance for pixels outside active +15px dilated mask
+            out_frame = frame_compositor.composite(frame, out_frame, full_frame_mask)
 
             # Thêm vào buffer 3-frame cho Temporal Bilateral Filter kèm frame gốc
             frame_buffer.append((frame_idx, out_frame, full_frame_mask, frame))
@@ -4109,8 +3528,7 @@ class VideoEditorService:
                         None, frame_buffer[0][1], frame_buffer[1][1], frame_buffer[0][2],
                         sigma_t=1.0, sigma_r=25.0, max_fb_error=3.0
                     )
-                    act_m0 = cv2.dilate(frame_buffer[0][2], cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))
-                    out_f0[act_m0 == 0] = frame_buffer[0][3][act_m0 == 0]
+                    out_f0 = frame_compositor.composite(frame_buffer[0][3], out_f0, frame_buffer[0][2])
                     yield out_f0
                     has_yielded_f0 = True
 
@@ -4120,8 +3538,7 @@ class VideoEditorService:
                 m_curr = frame_buffer[1][2]
                 orig_curr = frame_buffer[1][3]
                 out_filtered = self._temporal_bilateral_filter_3frame(f_prev, f_curr, f_next, m_curr, sigma_t=1.0, sigma_r=25.0, max_fb_error=3.0)
-                act_m = cv2.dilate(m_curr, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))
-                out_filtered[act_m == 0] = orig_curr[act_m == 0]
+                out_filtered = frame_compositor.composite(orig_curr, out_filtered, m_curr)
                 yield out_filtered
                 frame_buffer.pop(0)
 
@@ -4140,9 +3557,7 @@ class VideoEditorService:
 
         # Flush hết các frames còn lại trong buffer khi cap kết thúc
         if not has_yielded_f0 and len(frame_buffer) > 0:
-            act_m = cv2.dilate(frame_buffer[0][2], cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))
-            f_out = frame_buffer[0][1]
-            f_out[act_m == 0] = frame_buffer[0][3][act_m == 0]
+            f_out = frame_compositor.composite(frame_buffer[0][3], frame_buffer[0][1], frame_buffer[0][2])
             yield f_out
             frame_buffer.pop(0)
 
@@ -4153,14 +3568,11 @@ class VideoEditorService:
                 m_curr = frame_buffer[1][2]
                 orig_curr = frame_buffer[1][3]
                 out_filtered = self._temporal_bilateral_filter_3frame(f_prev, f_curr, None, m_curr, sigma_t=1.0, sigma_r=25.0, max_fb_error=3.0)
-                act_m = cv2.dilate(m_curr, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))
-                out_filtered[act_m == 0] = orig_curr[act_m == 0]
+                out_filtered = frame_compositor.composite(orig_curr, out_filtered, m_curr)
                 yield out_filtered
                 frame_buffer.clear()
             else:
-                act_m = cv2.dilate(frame_buffer[0][2], cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))
-                f_out = frame_buffer[0][1]
-                f_out[act_m == 0] = frame_buffer[0][3][act_m == 0]
+                f_out = frame_compositor.composite(frame_buffer[0][3], frame_buffer[0][1], frame_buffer[0][2])
                 yield f_out
                 frame_buffer.clear()
 
@@ -4170,6 +3582,133 @@ class VideoEditorService:
             _sync_collect_and_trim()
         except Exception:
             pass
+
+    def _stream_cleaned_video_hybrid(
+        self,
+        video_path: Path,
+        total_frames: int,
+        fps: float,
+        target_regions: Optional[List[Dict[str, Any]]] = None,
+        shot_cuts: Optional[List[int]] = None,
+        target_scope: str = "overlay",
+        context: Optional[VideoJobContext] = None,
+        progress_fn: Optional[Callable[[int, str], None]] = None,
+    ) -> Generator[np.ndarray, None, None]:
+        """
+        Streaming Generator trực tiếp điều phối bởi HybridInpaintingCoordinator:
+        - Sử dụng Sliding-Window Ring Buffer (bán kính R=20, giữ cố định tối đa 41 frames).
+        - Giữ đỉnh RAM container < 150MB, hoàn toàn không nạp toàn bộ video vào bộ nhớ.
+        - Tự động gọi memory reclaimer định kỳ 60 frames.
+        - Xuất từng frame trực tiếp vào stdin của FFmpeg subprocess.
+        """
+        import cv2
+        import numpy as np
+        from app.services.hybrid_inpainting_coordinator import HybridInpaintingCoordinator
+        from app.services.video_reconstruction_engine import VideoReconstructionEngine
+
+        engine = VideoReconstructionEngine(
+            temporal_radius=20,
+            dilation_px=15,
+            unrevealed_gating_threshold=0.25,
+        )
+        coordinator = HybridInpaintingCoordinator(local_engine=engine)
+        temporal_radius = 20
+
+        # Xác định các phân cảnh (shots)
+        shots: List[Tuple[int, int]] = []
+        prev_cut = 0
+        if shot_cuts:
+            for sc in sorted(list(set(shot_cuts))):
+                if sc > prev_cut:
+                    shots.append((prev_cut, sc - 1))
+                    prev_cut = sc
+        shots.append((prev_cut, max(prev_cut, total_frames - 1)))
+
+        def get_shot_boundaries(f_idx: int) -> Tuple[int, int]:
+            for s_start, s_end in shots:
+                if s_start <= f_idx <= s_end:
+                    return (s_start, s_end)
+            return (0, total_frames - 1)
+
+        cap = cv2.VideoCapture(str(video_path))
+        w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or 576
+        h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 1024
+
+        ring_buffer: Dict[int, Tuple[np.ndarray, np.ndarray]] = {}
+        curr_read_idx = 0
+
+        # Nạp trước cửa sổ khởi đầu: [0 .. min(temporal_radius, total_frames - 1)]
+        while curr_read_idx <= temporal_radius and curr_read_idx < total_frames:
+            ret, frame = cap.read()
+            if not ret or frame is None:
+                break
+            raw_mask, _ = self._build_inpaint_mask_for_frame(
+                curr_read_idx, (h, w, 3), frame_img=frame, target_regions=target_regions, target_scope=target_scope
+            )
+            ring_buffer[curr_read_idx] = (
+                frame,
+                raw_mask if raw_mask is not None and isinstance(raw_mask, np.ndarray) else np.zeros((h, w), dtype=np.uint8)
+            )
+            curr_read_idx += 1
+
+        # Vòng lặp streaming frame-by-frame
+        for target_idx in range(total_frames):
+            # Nạp khung hình tương lai để duy trì cửa sổ trượt: target_idx + temporal_radius
+            next_needed_idx = target_idx + temporal_radius
+            if next_needed_idx < total_frames and next_needed_idx not in ring_buffer:
+                ret, next_frame = cap.read()
+                if ret and next_frame is not None:
+                    next_mask, _ = self._build_inpaint_mask_for_frame(
+                        next_needed_idx, (h, w, 3), frame_img=next_frame, target_regions=target_regions, target_scope=target_scope
+                    )
+                    ring_buffer[next_needed_idx] = (
+                        next_frame,
+                        next_mask if next_mask is not None and isinstance(next_mask, np.ndarray) else np.zeros((h, w), dtype=np.uint8),
+                    )
+
+            if target_idx not in ring_buffer:
+                break
+
+            # Tái tạo khung hình target_idx qua Hybrid Coordinator
+            shot_bounds = get_shot_boundaries(target_idx)
+            _, raw_m = ring_buffer.get(target_idx, (None, None))
+
+            clean_frame = coordinator.reconstruct_frame_streaming(
+                target_idx=target_idx,
+                ring_buffer=ring_buffer,
+                raw_mask=raw_m,
+                shot_boundaries=shot_bounds,
+                target_scope=target_scope,
+                context=context,
+            )
+
+            yield clean_frame
+
+            # Giải phóng khung hình cũ nhất nằm ngoài bán kính temporal window
+            old_idx = target_idx - temporal_radius
+            if old_idx in ring_buffer:
+                del ring_buffer[old_idx]
+
+            # Định kỳ giải phóng bộ nhớ heap C/C++ sau mỗi 60 frames
+            if target_idx % 60 == 0:
+                try:
+                    from app.core.memory_reclaimer import _sync_collect_and_trim
+                    _sync_collect_and_trim()
+                except Exception:
+                    pass
+
+            if progress_fn and target_idx % 15 == 0:
+                pct = 25 + int(65 * (target_idx + 1) / max(1, total_frames))
+                progress_fn(pct, f"Đang tái tạo khung hình {target_idx + 1}/{total_frames} (Hybrid Pipeline)...")
+
+        cap.release()
+        ring_buffer.clear()
+
+        # Đồng bộ thống kê từ coordinator sang context nếu có
+        if context:
+            if not hasattr(context, "extra_metrics") or context.extra_metrics is None:
+                context.extra_metrics = {}
+            context.extra_metrics.update(coordinator.stats)
 
     def _calculate_convergence_penalty(
         self,
@@ -4528,7 +4067,6 @@ class VideoEditorService:
 
             if context:
                 context.critique_result = final_critique
-            self._last_critique_result = final_critique
 
             return final_critique
 
@@ -4545,7 +4083,7 @@ class VideoEditorService:
         enable_critique: bool = False,
         context: Optional[VideoJobContext] = None,
         target_scope: str = "overlay",
-    ) -> None:
+    ) -> bool:
         """
         Quy trình xử lý hoàn chỉnh toàn bộ frames video:
         1. Phân tích video, phát hiện shot cuts tự động, lấy mẫu keyframes (0% -> 10%)
@@ -4684,22 +4222,8 @@ class VideoEditorService:
 
             # F7: Bit-Exact Audio Preservation (-c:a copy with AAC fallback)
             can_copy_audio = True
-            try:
-                probe_a_cmd = [
-                    "ffprobe", "-v", "error",
-                    "-select_streams", "a:0",
-                    "-show_entries", "stream=codec_name",
-                    "-of", "default=noprint_wrappers=1:nokey=1",
-                    str(input_file),
-                ]
-                p_a = subprocess.run(probe_a_cmd, capture_output=True, text=True, timeout=5)
-                a_codec = (p_a.stdout or "").strip().lower()
-                if a_codec in ("pcm_s16le", "pcm_s24le", "pcm_u8", "vorbis"):
-                    can_copy_audio = False
-            except Exception:
-                can_copy_audio = True
-
-            audio_opts = ["-c:a", "copy"] if can_copy_audio else ["-c:a", "aac", "-b:a", "192k"]
+            # Milestone M5 / Feature 24: Bit-exact audio stream copy 100% (Acceptance C7)
+            audio_opts = ["-c:a", "copy"]
 
             raw_cmd = [
                 ffmpeg_bin, "-y",
@@ -4713,6 +4237,7 @@ class VideoEditorService:
                 "-i", str(input_file),
                 "-map", "0:v:0",
                 "-map", "1:a?",
+                "-map_metadata", "1",
                 "-c:v", v_encoder,
                 *v_opts,
                 "-pix_fmt", "yuv420p",
@@ -4727,7 +4252,39 @@ class VideoEditorService:
                 except Exception:
                     pass
 
-            proc = subprocess.Popen(raw_cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+            popen_kwargs: Dict[str, Any] = {
+                "stdin": subprocess.PIPE,
+                "stderr": subprocess.PIPE,
+            }
+            if os.name == "nt":
+                popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+            else:
+                popen_kwargs["start_new_session"] = True
+
+            proc = subprocess.Popen(raw_cmd, **popen_kwargs)
+
+            def _cleanup_ffmpeg_proc():
+                try:
+                    if proc.stdin and not proc.stdin.closed:
+                        proc.stdin.close()
+                except Exception:
+                    pass
+                if proc.poll() is None:
+                    try:
+                        if os.name != "nt":
+                            import signal
+                            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                        else:
+                            proc.kill()
+                    except Exception:
+                        try:
+                            proc.kill()
+                        except Exception:
+                            pass
+                try:
+                    proc.wait(timeout=2)
+                except Exception:
+                    pass
 
             stderr_lines = []
             def drain_err():
@@ -4749,24 +4306,23 @@ class VideoEditorService:
                 "inpaint_fallback": 0,
             }
 
-            stream = self._stream_cleaned_video(
+            # Milestone M4 / Feature 19: Hybrid Inpainting Pipeline (Optical Flow M3 -> Remote GPU -> Local Fallback)
+            stream = self._stream_cleaned_video_hybrid(
                 video_path=input_file,
-                keyframe_indices=keyframe_indices,
-                cleaned_keyframes=cleaned_keyframes,
                 total_frames=total_frames,
-                progress_fn=flow_progress,
+                fps=fps,
                 target_regions=target_regions,
-                target_scope=target_scope,
                 shot_cuts=shot_cuts,
-                branch_counters=branch_counters,
+                target_scope=target_scope,
                 context=context,
+                progress_fn=flow_progress,
             )
 
             pipe_broken = False
             try:
                 for fr in stream:
                     if cancel_event is not None and getattr(cancel_event, "is_set", lambda: False)():
-                        proc.kill()
+                        _cleanup_ffmpeg_proc()
                         raise RuntimeError("Video processing cancelled.")
                     try:
                         proc.stdin.write(fr.tobytes())
@@ -4783,16 +4339,14 @@ class VideoEditorService:
                     err_snippet = b"".join(stderr_lines).decode(errors="replace")
                     raise RuntimeError(f"FFmpeg streaming pipe error (code {proc.returncode}): {err_snippet[-500:]}")
             except Exception as pipe_err:
-                try:
-                    proc.kill()
-                except Exception:
-                    pass
+                _cleanup_ffmpeg_proc()
                 err_snippet = b"".join(stderr_lines).decode(errors="replace")
                 raise RuntimeError(f"FFmpeg streaming pipe error: {pipe_err} (stderr: {err_snippet[-500:]})")
+            finally:
+                _cleanup_ffmpeg_proc()
 
             if context:
                 context.branch_counters = dict(branch_counters)
-            self._last_branch_counters = dict(branch_counters)
             logger.info("[VideoEditorService] SBMW-DTI Branch Execution Counters: %s", branch_counters)
 
             # Thu hồi triệt để bộ nhớ sau FFmpeg streaming pipe
@@ -4814,7 +4368,7 @@ class VideoEditorService:
                             context=context,
                             target_regions=target_regions,
                             cancel_event=cancel_event,
-                            max_refinement_rounds=2,
+                            max_refinement_rounds=3,
                             progress_callback=progress_callback,
                         )
                     else:
@@ -4840,7 +4394,6 @@ class VideoEditorService:
                         }
                         if context:
                             context.critique_result = critique_res
-                        self._last_critique_result = critique_res
                 except Exception as critique_err:
                     logger.error("[VideoEditorService] Critique loop failed: %s", critique_err, exc_info=True)
                     critique_res = {
@@ -4865,7 +4418,6 @@ class VideoEditorService:
                     }
                     if context:
                         context.critique_result = critique_res
-                    self._last_critique_result = critique_res
                 finally:
                     try:
                         from app.core.memory_reclaimer import _sync_collect_and_trim
@@ -4892,10 +4444,22 @@ class VideoEditorService:
             # Giai đoạn 4: Finalize & Delivery (90% -> 100%)
             report(95, "Đang hoàn tất đóng gói và tối ưu tệp video (faststart)...")
             report(100, "Hoàn tất xử lý video 100%!")
-        finally:
-            shutil.rmtree(cache_dir, ignore_errors=True)
+
+            is_valid_output = output_file.exists() and output_file.stat().st_size > 1000
             if context:
-                context.cleanup()
+                context.streaming_success = is_valid_output
+                context.ffmpeg_returncode = getattr(proc, "returncode", 0)
+
+            return is_valid_output
+        finally:
+            try:
+                if 'proc' in locals() and proc and proc.poll() is None:
+                    proc.kill()
+                    proc.wait(timeout=5)
+            except Exception:
+                pass
+            shutil.rmtree(cache_dir, ignore_errors=True)
+            # Note: context.cleanup() is managed exclusively by caller (remove_text_from_video)
             try:
                 from app.core.memory_reclaimer import _sync_collect_and_trim
                 _sync_collect_and_trim()
@@ -5629,7 +5193,7 @@ class VideoEditorService:
         boxes = []
         try:
             import pytesseract
-            data = pytesseract.image_to_data(gray, output_type=pytesseract.Output.DICT)
+            data = pytesseract.image_to_data(gray, output_type=pytesseract.Output.DICT, timeout=15)
             n_boxes = len(data.get("text", []))
             for i in range(n_boxes):
                 txt = data["text"][i].strip()
@@ -6082,7 +5646,7 @@ class VideoEditorService:
             import pytesseract
             import cv2
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-            data = pytesseract.image_to_data(gray, output_type=pytesseract.Output.DICT)
+            data = pytesseract.image_to_data(gray, output_type=pytesseract.Output.DICT, timeout=15)
             words = [w.strip() for i, w in enumerate(data.get("text", [])) if w.strip() and int(data.get("conf", [0])[i]) > 40]
             return len(words)
         except Exception:

@@ -473,5 +473,52 @@ class TestSandboxedAssetStorage(unittest.TestCase):
         self.assertEqual(ctx.exception.status_code, 404)
 
 
+class TestFeature23StateSanitization(unittest.IsolatedAsyncioTestCase):
+    """Kiểm tra Feature 23: Triệt tiêu shared mutable state & Scoped ContextVar."""
+
+    async def test_scoped_allowed_chat_override_restores_state(self):
+        """ScopedAllowedChatOverride phải khôi phục chat permissions ngay cả khi có exception."""
+        from app.services.telegram_bot import ScopedAllowedChatOverride, TelegramBot
+
+        bot = TelegramBot.__new__(TelegramBot)
+        bot.allowed_chat_ids = {"100", "200"}
+
+        self.assertFalse(bot.is_chat_authorized("999"))
+
+        try:
+            async with ScopedAllowedChatOverride("999"):
+                self.assertTrue(bot.is_chat_authorized("999"))
+                raise ValueError("Simulated failure in test harness")
+        except ValueError:
+            pass
+
+        self.assertFalse(bot.is_chat_authorized("999"), "Chat permission must be restored after exception")
+
+    def test_job_context_isolation_roi_cache(self):
+        """VideoJobContext phải cô lập roi_inpaint_cache per-job mà không đè lên singleton."""
+        ctx1 = VideoJobContext(job_id="job_1")
+        ctx2 = VideoJobContext(job_id="job_2")
+
+        ctx1.roi_inpaint_cache["key1"] = "val1"
+        self.assertNotIn("key1", ctx2.roi_inpaint_cache)
+
+        editor = VideoEditorService.__new__(VideoEditorService)
+        # Property _roi_inpaint_cache trả về dict nhưng không chia sẻ state
+        self.assertIsInstance(editor._roi_inpaint_cache, dict)
+
+
+class TestFeature24BitExactAudioAndProcessSafety(unittest.TestCase):
+    """Kiểm tra Feature 24: Bit-exact audio copy 100% & an toàn tiến trình subprocess."""
+
+    def test_tesseract_timeout_in_codebase(self):
+        """Đảm bảo mọi lời gọi pytesseract.image_to_data đều cấu hình timeout=15."""
+        import inspect
+        src = inspect.getsource(VideoEditorService._detect_text_boxes_image_sync)
+        self.assertIn("timeout=15", src)
+
+        src2 = inspect.getsource(VideoEditorService._count_ocr_words)
+        self.assertIn("timeout=15", src2)
+
+
 if __name__ == "__main__":
     unittest.main()

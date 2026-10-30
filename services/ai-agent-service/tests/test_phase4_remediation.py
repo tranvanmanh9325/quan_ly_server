@@ -22,10 +22,8 @@ import numpy as np
 
 from app.services.remote_gpu_worker_client import (
     BaseRemoteGpuProvider,
-    ColabRelayProvider,
     GpuProviderTier,
     HuggingFaceZeroGpuProvider,
-    KaggleBatchGpuProvider,
     RemoteGpuWorkerClient,
     get_remote_gpu_worker_client,
 )
@@ -51,84 +49,16 @@ class TestNoStubProviders(unittest.IsolatedAsyncioTestCase):
         _, buf = cv2.imencode(".png", self.dummy_img)
         self.dummy_png = buf.tobytes()
 
-    async def test_kaggle_batch_provider_declares_unavailable_when_no_credentials(self):
-        """KaggleBatchGpuProvider phải trả về trung thực is_available=False khi thiếu credentials."""
-        with patch.dict("os.environ", {}, clear=True):
-            with patch("pathlib.Path.is_file", return_value=False):
-                provider = KaggleBatchGpuProvider(username="", api_key="")
-                self.assertFalse(await provider.is_available())
-                res = await provider.inpaint_roi(self.dummy_img, self.dummy_mask, timeout=30.0)
-                self.assertIsNone(res)
+    async def test_stub_providers_eliminated(self):
+        """Xác nhận các stub providers (Kaggle/Colab) đã bị loại bỏ hoàn toàn."""
+        import app.services.remote_gpu_worker_client as rgw
+        self.assertFalse(hasattr(rgw, "KaggleBatchGpuProvider"))
+        self.assertFalse(hasattr(rgw, "ColabRelayProvider"))
 
-    async def test_kaggle_batch_provider_timeout_threshold_behavior(self):
-        """KaggleBatchGpuProvider failover sớm khi timeout < 60s do đặc tính cold start."""
-        provider = KaggleBatchGpuProvider(username="valid_user", api_key="valid_key")
-        res = await provider.inpaint_roi(self.dummy_img, self.dummy_mask, timeout=30.0)
-        self.assertIsNone(res)
-
-    async def test_kaggle_batch_provider_executes_rest_flow_when_configured(self):
-        """KaggleBatchGpuProvider thực sự gọi REST API v1 khi cấu hình đầy đủ và timeout >= 60s."""
-        provider = KaggleBatchGpuProvider(username="test_user", api_key="test_key")
-
-        # Mock push, status poll, download output, cancel
-        mock_push_resp = MagicMock(spec=httpx.Response)
-        mock_push_resp.status_code = 200
-
-        mock_status_resp = MagicMock(spec=httpx.Response)
-        mock_status_resp.status_code = 200
-        mock_status_resp.json.return_value = {"status": "complete"}
-
-        mock_out_resp = MagicMock(spec=httpx.Response)
-        mock_out_resp.status_code = 200
-        mock_out_resp.content = self.dummy_png
-
-        mock_cancel_resp = MagicMock(spec=httpx.Response)
-        mock_cancel_resp.status_code = 200
-
-        async def fake_post(url, *args, **kwargs):
-            if "cancel" in str(url):
-                return mock_cancel_resp
-            return mock_push_resp
-
-        async def fake_get(url, *args, **kwargs):
-            if "output" in str(url):
-                return mock_out_resp
-            return mock_status_resp
-
-        with patch.object(httpx.AsyncClient, "post", side_effect=fake_post) as mock_post:
-            with patch.object(httpx.AsyncClient, "get", side_effect=fake_get) as mock_get:
-                with patch("asyncio.sleep", new_callable=AsyncMock):
-                    res = await provider.inpaint_roi(self.dummy_img, self.dummy_mask, timeout=120.0)
-                    self.assertIsNotNone(res)
-                    self.assertIsInstance(res, np.ndarray)
-                    self.assertEqual(res.shape, self.dummy_img.shape)
-                    # Verify REST push was called
-                    self.assertTrue(mock_post.called)
-                    self.assertTrue(mock_get.called)
-
-    async def test_colab_relay_provider_declares_unavailable_when_no_url(self):
-        """ColabRelayProvider phải trả về trung thực is_available=False khi chưa cấu hình endpoint."""
-        with patch.dict("os.environ", {}, clear=True):
-            provider = ColabRelayProvider(relay_url="")
-            self.assertFalse(await provider.is_available())
-            res = await provider.inpaint_roi(self.dummy_img, self.dummy_mask)
-            self.assertIsNone(res)
-
-    async def test_colab_relay_executes_when_configured(self):
-        """ColabRelayProvider thực sự gửi POST request qua tunnel khi được cấu hình endpoint."""
-        provider = ColabRelayProvider(relay_url="https://mock.colab.relay", auth_token="token_colab_123")
-        mock_resp = MagicMock(spec=httpx.Response)
-        mock_resp.status_code = 200
-        mock_resp.content = self.dummy_png
-
-        with patch.object(httpx.AsyncClient, "post", new_callable=AsyncMock) as mock_post:
-            mock_post.return_value = mock_resp
-            res = await provider.inpaint_roi(self.dummy_img, self.dummy_mask)
-            self.assertIsNotNone(res)
-            self.assertIsInstance(res, np.ndarray)
-            self.assertEqual(res.shape, self.dummy_img.shape)
-            mock_post.assert_called_once()
-
+    async def test_hf_provider_behavior(self):
+        """HuggingFaceZeroGpuProvider hoạt động chuẩn xác với endpoint hợp lệ."""
+        provider = HuggingFaceZeroGpuProvider(endpoints=["https://example.hf.space"])
+        self.assertTrue(await provider.is_available())
 
 class TestGuaranteedSessionLifecycle(unittest.IsolatedAsyncioTestCase):
     """Test Suite 2: Vòng đời phiên sạch & Giải phóng tài nguyên trong finally."""
@@ -209,6 +139,49 @@ class TestGuaranteedSessionLifecycle(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(test_cache.exists())
         ctx.cleanup()
         self.assertFalse(test_cache.exists())
+
+    def test_deliverable_path_is_never_deleted_on_session_termination(self):
+        """Bảo đảm tệp sản phẩm bàn giao (deliverable) tuyệt đối không bị unlink khi kết thúc session."""
+        registry = RemoteSessionRegistry()
+        job_id = "job_test_deliverable_protection"
+        out_file = self.temp_dir / "final_deliverable.mp4"
+        out_file.write_bytes(b"final_video_payload")
+
+        # 1. Đăng ký bảo vệ deliverable
+        registry.register_deliverable_path(job_id, out_file)
+
+        # 2. Thử nghiệm tấn công: cố tình đăng ký trùng vào temp_files
+        registry.register_temp_path(job_id, out_file, is_dir=False)
+        rec = registry.get_or_create(job_id)
+        self.assertNotIn(out_file.resolve(), [tf.resolve() for tf in rec.temp_files])
+
+        # 3. Kích hoạt dọn dẹp phiên
+        registry.terminate_session_sync(job_id)
+
+        # 4. Xác nhận file sản phẩm vẫn nguyên vẹn 100%
+        self.assertTrue(out_file.exists())
+        self.assertEqual(out_file.read_bytes(), b"final_video_payload")
+
+    def test_job_context_protects_output_file_during_cleanup(self):
+        """VideoJobContext.cleanup() không bao giờ xóa output_file của chính nó."""
+        out_file = self.temp_dir / "clean_deliverable.mp4"
+        out_file.write_bytes(b"clean_video_content")
+
+        ctx = VideoJobContext(output_file=out_file)
+        test_cache = self.temp_dir / f"kf_cache_{ctx.job_id}"
+        test_cache.mkdir(parents=True, exist_ok=True)
+        (test_cache / "kf_0.png").write_bytes(b"temp_scratch")
+        ctx.set_cache_dir(test_cache)
+
+        self.assertTrue(out_file.exists())
+        self.assertTrue(test_cache.exists())
+
+        # Kích hoạt cleanup
+        ctx.cleanup()
+
+        # Cache dir bị xóa sạch, nhưng output_file được bảo vệ nguyên vẹn
+        self.assertFalse(test_cache.exists())
+        self.assertTrue(out_file.exists())
 
 
 class TestFailClosedAndClassicalFailover(unittest.TestCase):

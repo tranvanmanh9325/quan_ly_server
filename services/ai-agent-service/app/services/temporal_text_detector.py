@@ -442,7 +442,39 @@ class TemporalTextDetector:
             x1 = seg["x"]
             x2 = seg["x"] + seg["w"]
 
-            is_title = (seg["frame_end"] - seg["frame_start"]) > (0.60 * total_frames)
+            # Temporal glyph constancy check: distinguish persistent static titles from shifting subtitles
+            is_title = False
+            duration_ratio = (seg["frame_end"] - seg["frame_start"]) / max(1.0, float(total_frames))
+            if duration_ratio > 0.60:
+                f_s = seg["frame_start"]
+                f_e = seg["frame_end"]
+                f_mid = (f_s + f_e) // 2
+                sample_frames = [min(f_s + 3, f_e - 1), f_mid, max(f_s, f_e - 3)]
+                sample_masks = []
+                for sf_idx in sample_frames:
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, sf_idx)
+                    ret, fr = cap.read()
+                    if ret and fr is not None:
+                        roi = fr[y1:y2, x1:x2]
+                        if roi.size > 0:
+                            gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+                            grad = cv2.morphologyEx(gray, cv2.MORPH_GRADIENT, np.ones((3, 3), np.uint8))
+                            _, s_mask = cv2.threshold(grad, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+                            sample_masks.append(s_mask)
+                if len(sample_masks) == 3:
+                    ious = []
+                    for i in range(len(sample_masks)):
+                        for j in range(i + 1, len(sample_masks)):
+                            m1 = sample_masks[i] > 0
+                            m2 = sample_masks[j] > 0
+                            intersection = np.count_nonzero(m1 & m2)
+                            union = np.count_nonzero(m1 | m2)
+                            ious.append(intersection / max(1.0, float(union)))
+                    mean_iou = float(np.mean(ious)) if ious else 0.0
+                    if mean_iou >= 0.55:
+                        is_title = True
+                else:
+                    is_title = True
 
             final_results.append({
                 "bbox": [y1, y2, x1, x2],
@@ -455,7 +487,8 @@ class TemporalTextDetector:
                 "frame_start": seg["frame_start"],
                 "frame_end": seg["frame_end"],
                 "motion_type": motion_type,
-                "persistence": seg.get("persistence", 0.85),
+                "persistence": float(duration_ratio),
+                "is_static": bool(is_title),
                 "type": "title" if is_title else "subtitle",
                 "lines": [{"x": seg["x"], "y": seg["y"], "w": seg["w"], "h": seg["h"], "text": ""}],
             })

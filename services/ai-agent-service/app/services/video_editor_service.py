@@ -2346,7 +2346,7 @@ class VideoEditorService:
             else:
                 title_regions = [
                     r for r in target_regions
-                    if (r.get("type") == "title" or r.get("is_static", False))
+                    if (r.get("type") == "title" and r.get("is_static", True))
                 ]
             for tr in title_regions:
                 tx = max(0, int(tr.get("x", 0)))
@@ -2376,7 +2376,7 @@ class VideoEditorService:
             if target_regions:
                 title_regs = [
                     r for r in target_regions
-                    if (r.get("type") == "title" or r.get("is_static", False))
+                    if (r.get("type") == "title" and r.get("is_static", True))
                 ]
                 for r in title_regs:
                     title_rects.append((
@@ -2393,7 +2393,7 @@ class VideoEditorService:
             if target_regions and target_scope in ("overlay", "overlay_only"):
                 active_subs = [
                     r for r in target_regions
-                    if (r.get("type") == "subtitle" or not r.get("is_static", False) or float(r.get("persistence", 1.0)) < 0.95)
+                    if (r.get("type") == "subtitle" or not r.get("is_static", True))
                     and r.get("frame_start", 0) <= frame_idx <= r.get("frame_end", 0)
                 ]
                 has_sub_in_scope = (len(active_subs) > 0)
@@ -2745,14 +2745,36 @@ class VideoEditorService:
                 boxes_all = valid_boxes
 
             if active_sub_bounding_boxes and np.count_nonzero(sub_mask_strip) == 0:
-                for abx, aby, abw, abh in active_sub_bounding_boxes:
-                    rel_y1 = max(0, aby - sy1)
-                    rel_y2 = min(strip_h, aby + abh - sy1)
-                    rel_x1 = max(0, abx - sx1)
-                    rel_x2 = min(strip_w, abx + abw - sx1)
-                    if rel_y2 > rel_y1 and rel_x2 > rel_x1:
-                        sub_mask_strip[rel_y1:rel_y2, rel_x1:rel_x2] = 255
-                        boxes_all.append((rel_x1, rel_y1, rel_x2 - rel_x1, rel_y2 - rel_y1))
+                subs_to_fallback = active_subs if ('active_subs' in locals() and active_subs) else []
+                if subs_to_fallback:
+                    for s in subs_to_fallback:
+                        sx = max(0, int(s.get("x", 0)))
+                        sy = max(0, int(s.get("y", 0)))
+                        sw = max(1, int(s.get("w", 0)))
+                        sh = max(1, int(s.get("h", 0)))
+                        rel_y1 = max(0, sy - sy1)
+                        rel_y2 = min(strip_h, sy + sh - sy1)
+                        rel_x1 = max(0, sx - sx1)
+                        rel_x2 = min(strip_w, sx + sw - sx1)
+                        if rel_y2 > rel_y1 and rel_x2 > rel_x1:
+                            roi = sub_strip_img[rel_y1:rel_y2, rel_x1:rel_x2]
+                            t_mask = self._generate_text_stroke_mask(roi, region_meta=s)
+                            if t_mask is not None and np.count_nonzero(t_mask) > 0:
+                                k3 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+                                t_mask_dil = cv2.dilate(t_mask, k3)
+                                sub_mask_strip[rel_y1:rel_y2, rel_x1:rel_x2] = np.maximum(
+                                    sub_mask_strip[rel_y1:rel_y2, rel_x1:rel_x2], t_mask_dil
+                                )
+                            else:
+                                gray_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+                                grad_roi = cv2.morphologyEx(gray_roi, cv2.MORPH_GRADIENT, np.ones((3, 3), np.uint8))
+                                _, b_mask = cv2.threshold(grad_roi, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+                                k3 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+                                b_mask_dil = cv2.dilate(b_mask, k3)
+                                sub_mask_strip[rel_y1:rel_y2, rel_x1:rel_x2] = np.maximum(
+                                    sub_mask_strip[rel_y1:rel_y2, rel_x1:rel_x2], b_mask_dil
+                                )
+                            boxes_all.append((rel_x1, rel_y1, rel_x2 - rel_x1, rel_y2 - rel_y1))
 
             # Update full_mask and sub_info (Pillar 2: Line Clustering to kill Mega-Box)
             if np.count_nonzero(sub_mask_strip) > 0 and boxes_all:
@@ -2869,7 +2891,7 @@ class VideoEditorService:
                 frame_w = out_f.shape[1]
                 title_regions = [
                     r for r in target_regions
-                    if (r.get("type") == "title" or r.get("is_static", False))
+                    if (r.get("type") == "title" and r.get("is_static", True))
                 ]
                 if title_regions:
                     pad_x = max(16, int(0.02 * frame_w))
@@ -3156,8 +3178,7 @@ class VideoEditorService:
             else:
                 title_regions = [
                     r for r in target_regions
-                    if (r.get("type") == "title" or r.get("is_static", False))
-                    and float(r.get("persistence", 1.0)) >= 0.85
+                    if (r.get("type") == "title" and r.get("is_static", True))
                 ]
             if title_regions:
                 # Phân cụm động các dòng tiêu đề liên tục theo khoảng cách dọc để cô lập khối tiêu đề chính

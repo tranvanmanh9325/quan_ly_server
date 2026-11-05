@@ -3561,20 +3561,10 @@ class VideoEditorService:
                                 d15_c = cv2.dilate(bbox_m, k15_c)
                                 ctx_c4 = (d35_c > 0) & (d15_c == 0)
                                 e_inp = float(np.mean(diff_sq[bbox_m > 0]))
-                                e_ctx = float(np.mean(diff_sq[ctx_c4])) if np.count_nonzero(ctx_c4) > 0 else 16.0
-                                bg_in_bbox = (bbox_m > 0) & (m_curr_mask == 0)
-                                e_bg_in = float(np.mean(diff_sq[bg_in_bbox])) if np.count_nonzero(bg_in_bbox) > 20 else 0.0
-                                ref_c4 = max(e_ctx, e_bg_in, 16.0)
-                                if e_inp > 1.08 * ref_c4:
+                                if e_inp > 1.05 * max(e_ctx, 16.0):
                                     use_m = (m_curr_mask > 0)
-                                    cand_f = f_curr_out
-                                    for alpha_c4 in (0.82, 0.74):
-                                        blended_f = np.clip(np.round(alpha_c4 * f_curr_out.astype(np.float32) + (1.0 - alpha_c4) * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)
-                                        cand_f = np.where(use_m[:, :, np.newaxis], blended_f, f_curr_out)
-                                        diff_sq_c = (cand_f.astype(np.float32) - w_prev.astype(np.float32)) ** 2
-                                        if float(np.mean(diff_sq_c[bbox_m > 0])) <= 1.12 * ref_c4:
-                                            break
-                                    f_curr_out = cand_f
+                                    blended_f = np.clip(np.round(0.72 * f_curr_out.astype(np.float32) + 0.28 * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)
+                                    f_curr_out = np.where(use_m[:, :, np.newaxis], blended_f, f_curr_out)
                         else:
                             k25_c = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 25))
                             k9_c = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
@@ -3784,17 +3774,13 @@ class VideoEditorService:
                             active_hdr_mask = raw_dil if np.count_nonzero(e5_t) == 0 else cv2.bitwise_and(raw_dil, e5_t)
                             f_act = cv2.GaussianBlur(active_hdr_mask.astype(np.float32) / 255.0, (3, 3), 0.8)[:, :, np.newaxis]
 
-                            # Pre-blend unsharp trực tiếp trên aligned_hdr thích nghi với độ mờ warpAffine
+                            # Pre-blend unsharp trực tiếp trên aligned_hdr để bù suy hao warpAffine
                             lap_curr = cv2.Laplacian(cv2.cvtColor(curr_roi, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
                             v_ctx = float(np.var(lap_curr[b_ref_act])) if np.count_nonzero(b_ref_act) > 0 else 0.0
-                            lap_al_init = cv2.Laplacian(cv2.cvtColor(aligned_hdr, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
-                            v_al_init = float(np.var(lap_al_init[t_mask > 0])) if np.count_nonzero(t_mask) > 0 else 0.0
-                            if max(v_ctx, v_al_init) >= 80.0:
-                                base_al = aligned_hdr.astype(np.float32)
-                                blur_al = cv2.GaussianBlur(base_al, (0, 0), 1.0)
-                                hf_al = base_al - blur_al
-                                g_use = 1.55 if v_ctx >= 1800.0 else 1.35
-                                aligned_hdr = np.clip(np.round(base_al + g_use * hf_al), 0, 255).astype(np.uint8)
+                            if v_ctx >= 400.0:
+                                blur_al = cv2.GaussianBlur(aligned_hdr, (0, 0), 1.0)
+                                hf_al = aligned_hdr.astype(np.float32) - blur_al.astype(np.float32)
+                                aligned_hdr = np.clip(np.round(aligned_hdr.astype(np.float32) + 1.50 * hf_al), 0, 255).astype(np.uint8)
 
                             blend_hdr = np.clip(
                                 np.round(f_act * aligned_hdr.astype(np.float32) + (1.0 - f_act) * curr_roi.astype(np.float32)),

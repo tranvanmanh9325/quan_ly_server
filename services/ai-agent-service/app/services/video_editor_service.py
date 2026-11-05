@@ -3858,7 +3858,13 @@ class VideoEditorService:
         cap.release()
         ring_buffer.clear()
 
-        # Đồng bộ thống kê từ coordinator sang context nếu có
+        # Đồng bộ thống kê từ coordinator sang context và branch_counters
+        if branch_counters is not None:
+            branch_counters["optical_flow"] = int(coordinator.stats.get("tier1_local_flow_frames", 0))
+            branch_counters["keyframe_exact"] = int(coordinator.stats.get("tier2_remote_gpu_frames", 0))
+            branch_counters["translation_aligned"] = int(coordinator.stats.get("tier1_local_flow_frames", 0))
+            branch_counters["inpaint_fallback"] = int(coordinator.stats.get("tier3_local_fallback_frames", 0))
+
         if context:
             if not hasattr(context, "extra_metrics") or context.extra_metrics is None:
                 context.extra_metrics = {}
@@ -4467,18 +4473,17 @@ class VideoEditorService:
                 "inpaint_fallback": 0,
             }
 
-            # Milestone M2/M3: Primary Keyframe Re-anchoring and Direct ROI Streaming Generator
-            stream = self._stream_cleaned_video(
+            # Milestone M4 / Feature 19: Hybrid Inpainting Pipeline (Optical Flow M3 -> Remote GPU -> Local Fallback)
+            stream = self._stream_cleaned_video_hybrid(
                 video_path=input_file,
-                keyframe_indices=keyframe_indices,
-                cleaned_keyframes=cleaned_keyframes,
                 total_frames=total_frames,
-                progress_fn=flow_progress,
+                fps=fps,
                 target_regions=target_regions,
                 shot_cuts=shot_cuts,
-                branch_counters=branch_counters,
                 target_scope=target_scope,
                 context=context,
+                branch_counters=branch_counters,
+                progress_fn=flow_progress,
             )
 
             pipe_broken = False

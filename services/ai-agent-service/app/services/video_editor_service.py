@@ -3533,10 +3533,9 @@ class VideoEditorService:
             roi_ref = ref_frame[hy1:hy2, hx1:hx2] if ref_frame is not None else None
             is_bright_roi = (float(np.mean(cv2.cvtColor(roi_ref, cv2.COLOR_BGR2GRAY))) >= 160.0) if (roi_ref is not None and roi_ref.size > 0) else False
             if is_bright_roi:
-                m_blend = t_mask.copy()
+                m_blend = cv2.dilate(t_mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)))
                 f_hdr = cv2.GaussianBlur(m_blend.astype(np.float32) / 255.0, (5, 5), 1.2)[:, :, np.newaxis]
                 f_hdr = np.maximum(f_hdr, (t_mask > 0).astype(np.float32)[:, :, np.newaxis])
-                f_hdr[m_blend == 0] = 0.0
             else:
                 m_blend = cv2.dilate(t_mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k_hdr_sz, k_hdr_sz)))
                 f_hdr = cv2.GaussianBlur(m_blend.astype(np.float32) / 255.0, (9, 9), 2.5)[:, :, np.newaxis]
@@ -3950,7 +3949,7 @@ class VideoEditorService:
                 if not has_yielded_f0:
                     f0_idx, f0_out, f0_mask, f0_orig, f0_aligned = frame_buffer[0]
                     if f0_aligned:
-                        out_f0 = frame_compositor.composite(f0_orig, f0_out, f0_mask)
+                        out_f0 = f0_out
                     else:
                         out_f0 = self._temporal_bilateral_filter_3frame(
                             None, f0_out, frame_buffer[1][1], f0_mask,
@@ -3967,7 +3966,7 @@ class VideoEditorService:
                 orig_curr = frame_buffer[1][3]
                 curr_aligned = frame_buffer[1][4]
                 if curr_aligned:
-                    out_filtered = frame_compositor.composite(orig_curr, f_curr, m_curr)
+                    out_filtered = f_curr
                 else:
                     out_filtered = self._temporal_bilateral_filter_3frame(f_prev, f_curr, f_next, m_curr, sigma_t=1.0, sigma_r=25.0, max_fb_error=3.0)
                     out_filtered = frame_compositor.composite(orig_curr, out_filtered, m_curr)
@@ -3989,7 +3988,8 @@ class VideoEditorService:
 
         # Flush hết các frames còn lại trong buffer khi cap kết thúc
         if not has_yielded_f0 and len(frame_buffer) > 0:
-            f_out = frame_compositor.composite(frame_buffer[0][3], frame_buffer[0][1], frame_buffer[0][2])
+            f0_aligned = frame_buffer[0][4] if len(frame_buffer[0]) >= 5 else False
+            f_out = frame_buffer[0][1] if f0_aligned else frame_compositor.composite(frame_buffer[0][3], frame_buffer[0][1], frame_buffer[0][2])
             yield f_out
             frame_buffer.pop(0)
 
@@ -4001,14 +4001,15 @@ class VideoEditorService:
                 orig_curr = frame_buffer[1][3]
                 curr_aligned = frame_buffer[1][4]
                 if curr_aligned:
-                    out_filtered = frame_compositor.composite(orig_curr, f_curr, m_curr)
+                    out_filtered = f_curr
                 else:
                     out_filtered = self._temporal_bilateral_filter_3frame(f_prev, f_curr, None, m_curr, sigma_t=1.0, sigma_r=25.0, max_fb_error=3.0)
                     out_filtered = frame_compositor.composite(orig_curr, out_filtered, m_curr)
                 yield out_filtered
                 frame_buffer.clear()
             else:
-                f_out = frame_compositor.composite(frame_buffer[0][3], frame_buffer[0][1], frame_buffer[0][2])
+                f_last_aligned = frame_buffer[0][4] if len(frame_buffer[0]) >= 5 else False
+                f_out = frame_buffer[0][1] if f_last_aligned else frame_compositor.composite(frame_buffer[0][3], frame_buffer[0][1], frame_buffer[0][2])
                 yield f_out
                 frame_buffer.clear()
 
@@ -4235,6 +4236,11 @@ class VideoEditorService:
                     target_idx = f_idx + offset
                     if 0 <= target_idx < tot_frames:
                         defect_map.setdefault(target_idx, []).append(roi)
+
+        if not defect_map:
+            import shutil
+            shutil.copyfile(str(source_cleaned_video), str(target_output_video))
+            return
 
         tier = strategy.get("tier", 1)
         dilation_extra = int(strategy.get("dilation_extra_px", 6))

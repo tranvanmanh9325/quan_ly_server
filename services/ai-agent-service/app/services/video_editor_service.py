@@ -3441,6 +3441,7 @@ class VideoEditorService:
 
         # Xác định ROI phủ tiêu đề/watermark tĩnh động 100% từ target_regions
         hy1, hy2, hx1, hx2 = 0, 0, 0, 0
+        title_unpad_box: Optional[Tuple[int, int, int, int]] = None
         if target_regions:
             if target_scope in ("all", "all_text"):
                 title_regions = [
@@ -3465,6 +3466,13 @@ class VideoEditorService:
                         primary_cluster.append(tr)
                     else:
                         break  # Tách biệt khỏi cụm tiêu đề chính
+
+                title_unpad_box = (
+                    min(int(r.get("y", 0)) for r in primary_cluster),
+                    max(int(r.get("y", 0)) + int(r.get("h", 0)) for r in primary_cluster),
+                    min(int(r.get("x", 0)) for r in primary_cluster),
+                    max(int(r.get("x", 0)) + int(r.get("w", 0)) for r in primary_cluster)
+                )
 
                 pad_x = max(16, int(0.02 * w))
                 pad_y = max(16, int(0.02 * h))
@@ -3566,15 +3574,21 @@ class VideoEditorService:
                                 if e_inp > 1.05 * ref_c4:
                                     use_m = (m_curr_mask > 0)
                                     if e_inp > 600.0 and e_inp > 1.8 * ref_c4:
-                                        b_w = 0.20
+                                        b_w = 0.42
                                     elif e_inp > 1.8 * ref_c4:
-                                        b_w = 0.18
+                                        b_w = 0.35
                                     elif e_inp > 1.15 * ref_c4:
-                                        b_w = 0.15
+                                        b_w = 0.28
                                     else:
-                                        b_w = 0.12
+                                        b_w = 0.20
                                     blended_f = np.clip(np.round((1.0 - b_w) * f_curr_out.astype(np.float32) + b_w * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)
                                     f_curr_out = np.where(use_m[:, :, np.newaxis], blended_f, f_curr_out)
+
+                                    diff_sq_after = (f_curr_out.astype(np.float32) - w_prev.astype(np.float32)) ** 2
+                                    e_inp_after = float(np.mean(diff_sq_after[bbox_m > 0]))
+                                    if e_inp_after > 1.18 * max(e_ctx, 800.0):
+                                        inner_bbox_f55 = (cv2.erode(bbox_m, cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))) > 0)
+                                        f_curr_out = np.where(inner_bbox_f55[:, :, np.newaxis], np.clip(np.round(0.85 * f_curr_out.astype(np.float32) + 0.15 * w_prev.astype(np.float32)), 0, 255).astype(np.uint8), f_curr_out)
                         else:
                             k25_c = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 25))
                             k9_c = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
@@ -4050,13 +4064,9 @@ class VideoEditorService:
             out_frame = frame_compositor.composite(frame, out_frame, full_frame_mask)
             if used_align and is_bright_roi and blend_hdr is not None:
                 out_frame[hy1:hy2, hx1:hx2] = blend_hdr
-                ys_a, xs_a = np.where(active_hdr_mask > 0)
-                if len(ys_a) > 0:
+                if title_unpad_box is not None:
+                    ty1, ty2, tx1, tx2 = title_unpad_box
                     tight_hdr_box = np.zeros_like(full_frame_mask)
-                    ty1 = max(hy1, hy1 + int(ys_a.min()) - 5)
-                    ty2 = min(hy2, hy1 + int(ys_a.max()) + 3)
-                    tx1 = max(hx1, hx1 + int(xs_a.min()) - 3)
-                    tx2 = min(hx2, hx1 + int(xs_a.max()) + 4)
                     tight_hdr_box[ty1:ty2, tx1:tx2] = 255
                     k5_hdr = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
                     inner_hdr = (cv2.erode(tight_hdr_box, k5_hdr) > 0)
@@ -4066,18 +4076,10 @@ class VideoEditorService:
                     lap_out = cv2.Laplacian(cv2.cvtColor(out_frame, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
                     v_inp_h = float(np.var(lap_out[tight_hdr_box > 0])) if np.count_nonzero(tight_hdr_box) > 0 else 0.0
                     v_ctx_h = float(np.var(lap_out[b_ref_hdr])) if np.count_nonzero(b_ref_hdr) > 0 else 0.0
-                    if v_ctx_h >= 15.0 and v_inp_h < 1250.0 and (v_inp_h / (v_ctx_h + 1e-6)) < 0.70:
+                    if v_ctx_h >= 2000.0 and v_inp_h < 1450.0 and (v_inp_h / (v_ctx_h + 1e-6)) < 0.70:
                         blur_o = cv2.GaussianBlur(out_frame, (0, 0), 1.0)
                         hf_o = out_frame.astype(np.float32) - blur_o.astype(np.float32)
-                        target_var = 1.35 * min(v_ctx_h, 2600.0)
-                        sharp_o = out_frame
-                        for g_b in (0.35, 0.65, 0.95, 1.30, 1.65, 2.00, 2.40):
-                            sharp_cand = np.clip(np.round(out_frame.astype(np.float32) + g_b * hf_o), 0, 255).astype(np.uint8)
-                            lap_cand = cv2.Laplacian(cv2.cvtColor(sharp_cand, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
-                            v_cand = float(np.var(lap_cand[tight_hdr_box > 0])) if np.count_nonzero(tight_hdr_box) > 0 else 0.0
-                            sharp_o = sharp_cand
-                            if v_cand >= target_var:
-                                break
+                        sharp_o = np.clip(np.round(out_frame.astype(np.float32) + 0.40 * hf_o), 0, 255).astype(np.uint8)
                         out_frame = np.where(inner_hdr[:, :, np.newaxis], sharp_o, out_frame)
 
             is_aligned_frame = (frame_idx in cleaned_keyframes) or used_align or used_sub_align

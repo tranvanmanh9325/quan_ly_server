@@ -190,7 +190,7 @@ class MotionInvarianceClassifier:
                 if res["motion_type"] == "scene":
                     scene_votes += 1
 
-        if valid_motion_pairs > 0 and scene_votes >= 1:
+        if valid_motion_pairs >= 2 and (scene_votes / valid_motion_pairs) >= 0.67:
             return "scene"
         return "overlay"
 

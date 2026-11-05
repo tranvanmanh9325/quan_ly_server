@@ -2319,10 +2319,13 @@ class VideoEditorService:
 
         # 1. Header/Title Stroke Mask (sinh động từ target_regions nếu có)
         if target_regions:
-            title_regions = [
-                r for r in target_regions
-                if (r.get("type") == "title" or r.get("is_static", False))
-            ]
+            if target_scope in ("all", "all_text"):
+                title_regions = target_regions
+            else:
+                title_regions = [
+                    r for r in target_regions
+                    if (r.get("type") == "title" or r.get("is_static", False))
+                ]
             for tr in title_regions:
                 tx = max(0, int(tr.get("x", 0)))
                 ty = max(0, int(tr.get("y", 0)))
@@ -3106,10 +3109,13 @@ class VideoEditorService:
         # Xác định ROI phủ tiêu đề/watermark tĩnh động 100% từ target_regions
         hy1, hy2, hx1, hx2 = 0, 0, 0, 0
         if target_regions:
-            title_regions = [
-                r for r in target_regions
-                if (r.get("type") == "title" or r.get("is_static", False))
-            ]
+            if target_scope in ("all", "all_text"):
+                title_regions = target_regions
+            else:
+                title_regions = [
+                    r for r in target_regions
+                    if (r.get("type") == "title" or r.get("is_static", False))
+                ]
             if title_regions:
                 # Phân cụm động các dòng tiêu đề liên tục theo khoảng cách dọc để cô lập khối tiêu đề chính
                 sorted_titles = sorted(title_regions, key=lambda r: int(r.get("y", 0)))
@@ -3440,6 +3446,8 @@ class VideoEditorService:
                                         if diff_bg <= 12.0:
                                             aligned_sub = candidate_sub
                                             used_sub_align = True
+                                            if branch_counters is not None:
+                                                branch_counters["translation_aligned"] = branch_counters.get("translation_aligned", 0) + 1
 
                                     # DIS Optical Flow warp cho subtitle ROI qua ClassicalFallbackManager Tầng C1
                                     if not used_sub_align:
@@ -3452,6 +3460,8 @@ class VideoEditorService:
                                             if c1_sub_success and warped_sub is not None:
                                                 aligned_sub = warped_sub
                                                 used_sub_align = True
+                                                if branch_counters is not None:
+                                                    branch_counters["optical_flow"] = branch_counters.get("optical_flow", 0) + 1
                                         except Exception:
                                             pass
                                 except Exception:
@@ -3477,6 +3487,8 @@ class VideoEditorService:
                                     m_active = None
                                 if clean_sub_roi is None or clean_sub_roi.shape != sub_roi.shape:
                                     clean_sub_roi = self._inpaint_roi_fallback_chain(sub_roi, mask_sub, timeout_sec=15.0, use_hosted=use_hosted, context=context)
+                                if branch_counters is not None and not used_sub_align:
+                                    branch_counters["inpaint_fallback"] = branch_counters.get("inpaint_fallback", 0) + 1
                             else:
                                 clean_sub_roi = aligned_sub
 
@@ -4315,6 +4327,7 @@ class VideoEditorService:
                 shot_cuts=shot_cuts,
                 target_scope=target_scope,
                 context=context,
+                branch_counters=branch_counters,
                 progress_fn=flow_progress,
             )
 

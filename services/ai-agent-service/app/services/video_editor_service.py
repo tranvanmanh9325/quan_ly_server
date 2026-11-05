@@ -3562,8 +3562,11 @@ class VideoEditorService:
                                 ctx_c4 = (d35_c > 0) & (d15_c == 0)
                                 e_inp = float(np.mean(diff_sq[bbox_m > 0]))
                                 e_ctx = float(np.mean(diff_sq[ctx_c4])) if np.count_nonzero(ctx_c4) > 0 else 16.0
-                                if e_inp > 1.05 * max(e_ctx, 16.0):
-                                    use_m = (bbox_m > 0)
+                                bg_in = (bbox_m > 0) & (m_curr_mask == 0)
+                                e_bg_in = float(np.mean(diff_sq[bg_in])) if np.count_nonzero(bg_in) > 0 else 0.0
+                                ref_c4 = max(e_ctx, 0.65 * e_bg_in, 16.0)
+                                if e_inp > 1.05 * ref_c4:
+                                    use_m = (m_curr_mask > 0)
                                     blended_f = np.clip(np.round(0.85 * f_curr_out.astype(np.float32) + 0.15 * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)
                                     f_curr_out = np.where(use_m[:, :, np.newaxis], blended_f, f_curr_out)
                         else:
@@ -3778,7 +3781,9 @@ class VideoEditorService:
                             # Pre-blend unsharp trực tiếp trên aligned_hdr để bù suy hao warpAffine
                             lap_curr = cv2.Laplacian(cv2.cvtColor(curr_roi, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
                             v_ctx = float(np.var(lap_curr[b_ref_act])) if np.count_nonzero(b_ref_act) > 0 else 0.0
-                            if v_ctx >= 400.0:
+                            inner_bg_ctx = (t_mask > 0) & (active_hdr_mask == 0)
+                            v_inner_ctx = float(np.var(lap_curr[inner_bg_ctx])) if np.count_nonzero(inner_bg_ctx) > 30 else 0.0
+                            if max(v_ctx, v_inner_ctx) >= 300.0:
                                 blur_al = cv2.GaussianBlur(aligned_hdr, (0, 0), 1.0)
                                 hf_al = aligned_hdr.astype(np.float32) - blur_al.astype(np.float32)
                                 aligned_hdr = np.clip(np.round(aligned_hdr.astype(np.float32) + 2.00 * hf_al), 0, 255).astype(np.uint8)

@@ -3183,10 +3183,10 @@ class VideoEditorService:
                     lap_f_kf = cv2.Laplacian(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
                     ring_kf = (cv2.dilate(orig_mask_dil, np.ones((11, 11), np.uint8)) > 0) & (cv2.dilate(orig_mask_dil, np.ones((3, 3), np.uint8)) == 0)
                     var_ring_kf = float(np.var(lap_f_kf[ring_kf])) if np.count_nonzero(ring_kf) > 0 else 0.0
-                    if var_ring_kf >= 15.0 and best_var < 0.75 * min(var_ring_kf, 1800.0):
+                    if var_ring_kf >= 15.0 and best_var < 0.85 * min(var_ring_kf, 2200.0):
                         blur_bw = cv2.GaussianBlur(best_warped, (0, 0), 1.0)
                         hf_bw = best_warped.astype(np.float32) - blur_bw.astype(np.float32)
-                        best_warped = np.clip(np.round(best_warped.astype(np.float32) + 1.0 * hf_bw), 0, 255).astype(np.uint8)
+                        best_warped = np.clip(np.round(best_warped.astype(np.float32) + 0.75 * hf_bw), 0, 255).astype(np.uint8)
                     out_f[best_unocc] = best_warped[best_unocc]
                     applied_kf_mask[best_unocc] = 255
                     remaining_mask[best_unocc] = 0
@@ -3523,10 +3523,12 @@ class VideoEditorService:
         frame_buffer: List[Tuple[int, Any, Any, Any]] = []
         has_yielded_f0 = False
         prev_yielded_frame: Optional[np.ndarray] = None
+        yielded_count = 0
         dis_flow_temporal = cv2.DISOpticalFlow_create(cv2.DISOPTICAL_FLOW_PRESET_FAST)
 
         def _yield_frame_with_temporal_blend(f_curr_out: np.ndarray, m_curr_mask: Optional[np.ndarray]) -> np.ndarray:
-            nonlocal prev_yielded_frame
+            nonlocal prev_yielded_frame, yielded_count
+            yielded_count += 1
             if prev_yielded_frame is not None and m_curr_mask is not None and np.count_nonzero(m_curr_mask) > 0:
                 inner_m = (cv2.erode(m_curr_mask, np.ones((3, 3), np.uint8)) > 0)
                 if np.count_nonzero(inner_m) > 0:
@@ -3548,7 +3550,7 @@ class VideoEditorService:
                         ctx_c4 = (d25_c > 0) & (d9_c == 0)
                         e_inp = float(np.mean(diff_sq[inner_m])) if np.count_nonzero(inner_m) > 0 else 0.0
                         e_ctx = float(np.mean(diff_sq[ctx_c4])) if np.count_nonzero(ctx_c4) > 0 else 16.0
-                        if (e_inp > 1.15 * max(e_ctx, 16.0) and frame_idx <= 2) or (e_inp > 1.30 * max(e_ctx, 35.0)):
+                        if (e_inp > 1.15 * max(e_ctx, 16.0) and yielded_count <= 2) or (not has_valid_title_roi and e_inp > 1.30 * max(e_ctx, 35.0)):
                             blended_f = np.clip(np.round(0.88 * f_curr_out.astype(np.float32) + 0.12 * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)
                             f_curr_out = np.where(inner_m[:, :, np.newaxis], blended_f, f_curr_out)
 
@@ -3599,6 +3601,8 @@ class VideoEditorService:
             motion_cache_frame: Dict[int, Tuple[Any, float]] = {}
             used_align = False
             used_sub_align = False
+            is_bright_roi = False
+            blend_hdr = None
             full_frame_mask = np.zeros((h, w), dtype=np.uint8)
             tight_mask_header, mask_blend_hdr, bg_mask, feather_hdr = _get_shot_header_masks(cur_shot_idx, frame, frame_idx)
 
@@ -3731,7 +3735,9 @@ class VideoEditorService:
                                 raw_text_hit = (t_mask > 0) & (chroma_curr > 15)
                             else:
                                 raw_text_hit = (t_mask > 0) & ((chroma_curr > 18) | (diff_al > 42))
-                            active_hdr_mask = cv2.dilate(raw_text_hit.astype(np.uint8) * 255, np.ones((3, 3), np.uint8))
+                            e3_t = cv2.erode(t_mask, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))
+                            raw_dil = cv2.dilate(raw_text_hit.astype(np.uint8) * 255, np.ones((3, 3), np.uint8))
+                            active_hdr_mask = raw_dil if np.count_nonzero(e3_t) == 0 else (raw_dil & (e3_t > 0))
                             f_act = cv2.GaussianBlur(active_hdr_mask.astype(np.float32) / 255.0, (3, 3), 0.8)[:, :, np.newaxis]
                             blend_hdr = np.clip(
                                 np.round(f_act * aligned_hdr.astype(np.float32) + (1.0 - f_act) * curr_roi.astype(np.float32)),
@@ -3739,35 +3745,30 @@ class VideoEditorService:
                             ).astype(np.uint8)
 
                             # Conditional pre-blend unsharp: check if texture in title box is lower than context
-                            hit_ys, hit_xs = np.where(raw_text_hit)
-                            if len(hit_ys) > 0:
-                                y0_b = max(0, int(np.min(hit_ys)) - 4)
-                                y1_b = min(curr_roi.shape[0], int(np.max(hit_ys)) + 5)
-                                x0_b = max(0, int(np.min(hit_xs)) - 4)
-                                x1_b = min(curr_roi.shape[1], int(np.max(hit_xs)) + 5)
-                                bbox_box = np.zeros(curr_roi.shape[:2], dtype=np.uint8)
-                                bbox_box[y0_b:y1_b, x0_b:x1_b] = 255
-                                d11_box = cv2.dilate(bbox_box, cv2.getStructuringElement(cv2.MORPH_RECT, (11, 11)))
-                                d3_box = cv2.dilate(bbox_box, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))
-                                b_ref_box = ((d11_box > 0) & (d3_box == 0))
-                                lap_b0 = cv2.Laplacian(cv2.cvtColor(blend_hdr, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
-                                var_inp_b0 = float(np.var(lap_b0[bbox_box > 0]))
-                                var_ctx_b0 = float(np.var(lap_b0[b_ref_box])) if np.count_nonzero(b_ref_box) > 0 else 0.0
-                                target_var_b = min(var_ctx_b0, 2000.0)
-                                if var_ctx_b0 >= 15.0 and var_inp_b0 < 0.85 * target_var_b:
-                                    blur_al = cv2.GaussianBlur(aligned_hdr, (0, 0), 1.0)
-                                    hf_al = aligned_hdr.astype(np.float32) - blur_al.astype(np.float32)
-                                    for g_al in (0.4, 0.7, 1.0, 1.3):
-                                        al_sharp = np.clip(np.round(aligned_hdr.astype(np.float32) + g_al * hf_al), 0, 255).astype(np.uint8)
-                                        blend_try = np.clip(
-                                            np.round(f_act * al_sharp.astype(np.float32) + (1.0 - f_act) * curr_roi.astype(np.float32)),
-                                            0, 255
-                                        ).astype(np.uint8)
-                                        lap_t = cv2.Laplacian(cv2.cvtColor(blend_try, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
-                                        blend_hdr = blend_try
-                                        if float(np.var(lap_t[bbox_box > 0])) >= 0.88 * target_var_b:
-                                            break
-                            full_frame_mask[hy1:hy2, hx1:hx2] = mask_blend_hdr
+                            tys, txs = np.where(t_mask > 0)
+                            if len(tys) > 0:
+                                k3_b = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+                                k11_b = cv2.getStructuringElement(cv2.MORPH_RECT, (11, 11))
+                                b_ref_roi = (cv2.dilate(t_mask, k11_b) > 0) & (cv2.dilate(t_mask, k3_b) == 0)
+                                if np.count_nonzero(b_ref_roi) > 0:
+                                    lap_b0 = cv2.Laplacian(cv2.cvtColor(blend_hdr, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
+                                    var_inp_b0 = float(np.var(lap_b0[t_mask > 0]))
+                                    var_ctx_b0 = float(np.var(lap_b0[b_ref_roi]))
+                                    target_var_b = min(var_ctx_b0, 2400.0)
+                                    if var_ctx_b0 >= 15.0 and var_inp_b0 < 0.90 * target_var_b:
+                                        blur_al = cv2.GaussianBlur(aligned_hdr, (0, 0), 1.0)
+                                        hf_al = aligned_hdr.astype(np.float32) - blur_al.astype(np.float32)
+                                        for g_al in (0.4, 0.7, 1.0, 1.3):
+                                            al_sharp = np.clip(np.round(aligned_hdr.astype(np.float32) + g_al * hf_al), 0, 255).astype(np.uint8)
+                                            blend_try = np.clip(
+                                                np.round(f_act * al_sharp.astype(np.float32) + (1.0 - f_act) * curr_roi.astype(np.float32)),
+                                                0, 255
+                                            ).astype(np.uint8)
+                                            lap_try = cv2.Laplacian(cv2.cvtColor(blend_try, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
+                                            blend_hdr = blend_try
+                                            if float(np.var(lap_try[t_mask > 0])) >= 0.92 * target_var_b:
+                                                break
+                            full_frame_mask[hy1:hy2, hx1:hx2] = active_hdr_mask
                         else:
                             blend_hdr = np.clip(
                                 np.round(feather_hdr * aligned_hdr.astype(np.float32) + (1.0 - feather_hdr) * hdr_part.astype(np.float32)),
@@ -3813,7 +3814,8 @@ class VideoEditorService:
                         if np.count_nonzero(dark_anomaly) > 200:
                             out_frame[hy1:hy2, hx1:hx2] = cv2.inpaint(curr_roi, mask_blend_hdr, 3, cv2.INPAINT_TELEA)
 
-                    full_frame_mask[hy1:hy2, hx1:hx2] = np.maximum(full_frame_mask[hy1:hy2, hx1:hx2], mask_blend_hdr)
+                    if not (used_align and is_bright_roi):
+                        full_frame_mask[hy1:hy2, hx1:hx2] = np.maximum(full_frame_mask[hy1:hy2, hx1:hx2], mask_blend_hdr)
 
                 # 2. Xử lý Subtitle ROI (Dynamic Spoken Subtitles)
                 full_m, sub_info = self._build_inpaint_mask_for_frame(
@@ -3996,6 +3998,8 @@ class VideoEditorService:
             # Pillar 4: Strict Non-Mask Invariance via FrameCompositor
             # Ensure 100% bit-exact invariance for pixels outside active +15px dilated mask
             out_frame = frame_compositor.composite(frame, out_frame, full_frame_mask)
+            if used_align and is_bright_roi and blend_hdr is not None:
+                out_frame[hy1:hy2, hx1:hx2] = blend_hdr
 
             is_aligned_frame = (frame_idx in cleaned_keyframes) or used_align or used_sub_align
             # Thêm vào buffer 3-frame cho Temporal Bilateral Filter kèm frame gốc và cờ căn chỉnh

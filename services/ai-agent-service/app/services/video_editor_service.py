@@ -3564,15 +3564,15 @@ class VideoEditorService:
                                 e_ctx = float(np.mean(diff_sq[ctx_c4])) if np.count_nonzero(ctx_c4) > 0 else 16.0
                                 ref_c4 = max(e_ctx, 16.0)
                                 if e_inp > 1.05 * ref_c4:
-                                    use_m = (m_curr_mask > 0)
+                                    use_m = (cv2.erode(bbox_m, cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))) > 0)
                                     if e_inp > 600.0 and e_inp > 1.8 * ref_c4:
-                                        b_w = 0.42
-                                    elif e_inp > 1.8 * ref_c4:
-                                        b_w = 0.35
-                                    elif e_inp > 1.15 * ref_c4:
-                                        b_w = 0.28
-                                    else:
                                         b_w = 0.20
+                                    elif e_inp > 1.8 * ref_c4:
+                                        b_w = 0.18
+                                    elif e_inp > 1.15 * ref_c4:
+                                        b_w = 0.15
+                                    else:
+                                        b_w = 0.12
                                     blended_f = np.clip(np.round((1.0 - b_w) * f_curr_out.astype(np.float32) + b_w * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)
                                     f_curr_out = np.where(use_m[:, :, np.newaxis], blended_f, f_curr_out)
                         else:
@@ -3791,9 +3791,9 @@ class VideoEditorService:
                             else:
                                 raw_text_hit = (t_mask > 0) & ((chroma_curr > 18) | (diff_al > 42))
 
-                            e5_t = cv2.erode(t_mask, cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5)))
+                            e3_t = cv2.erode(t_mask, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))
                             raw_dil = cv2.dilate(raw_text_hit.astype(np.uint8) * 255, np.ones((3, 3), np.uint8))
-                            active_hdr_mask = raw_dil if np.count_nonzero(e5_t) == 0 else cv2.bitwise_and(raw_dil, e5_t)
+                            active_hdr_mask = raw_dil if np.count_nonzero(e3_t) == 0 else cv2.bitwise_and(raw_dil, e3_t)
                             f_act = cv2.GaussianBlur(active_hdr_mask.astype(np.float32) / 255.0, (3, 3), 0.8)[:, :, np.newaxis]
 
                             # Pre-blend unsharp trực tiếp trên aligned_hdr để bù suy hao warpAffine
@@ -3826,6 +3826,23 @@ class VideoEditorService:
                             ).astype(np.uint8)
 
                         out_frame[hy1:hy2, hx1:hx2] = blend_hdr
+
+                        if is_bright_roi:
+                            tight_hdr_box = np.zeros_like(full_frame_mask)
+                            tight_hdr_box[hy1:hy2, hx1:hx2] = 255
+                            k5_hdr = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+                            inner_hdr = (cv2.erode(tight_hdr_box, k5_hdr) > 0)
+                            k11_hdr = cv2.getStructuringElement(cv2.MORPH_RECT, (11, 11))
+                            k3_hdr = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+                            b_ref_hdr = (cv2.dilate(tight_hdr_box, k11_hdr) > 0) & (cv2.dilate(tight_hdr_box, k3_hdr) == 0)
+                            lap_out = cv2.Laplacian(cv2.cvtColor(out_frame, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
+                            v_inp_h = float(np.var(lap_out[tight_hdr_box > 0])) if np.count_nonzero(tight_hdr_box) > 0 else 0.0
+                            v_ctx_h = float(np.var(lap_out[b_ref_hdr])) if np.count_nonzero(b_ref_hdr) > 0 else 0.0
+                            if v_ctx_h >= 15.0 and v_inp_h < 1250.0 and (v_inp_h / (v_ctx_h + 1e-6)) < 0.70:
+                                blur_o = cv2.GaussianBlur(out_frame, (0, 0), 1.0)
+                                hf_o = out_frame.astype(np.float32) - blur_o.astype(np.float32)
+                                sharp_o = np.clip(np.round(out_frame.astype(np.float32) + 0.50 * hf_o), 0, 255).astype(np.uint8)
+                                out_frame = np.where(inner_hdr[:, :, np.newaxis], sharp_o, out_frame)
 
                         if branch_counters is not None:
                             branch_counters["keyframe_aligned"] = branch_counters.get("keyframe_aligned", 0) + 1

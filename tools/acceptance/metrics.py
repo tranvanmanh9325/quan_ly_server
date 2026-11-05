@@ -267,6 +267,7 @@ def extract_residual_words_ocr(
                 clean_text = re.sub(r"[^\w\s]", "", raw_text).strip()
                 if len(clean_text) >= min_len and conf >= conf_threshold:
                     if require_vowel and not any(c in VI_VOWELS for c in clean_text.lower()):
+                        continue
                     # Reject single-character repeated noise (e.g. 'iii', 'ii', 'lll')
                     if len(clean_text) >= 2 and len(set(clean_text.lower())) == 1:
                         continue

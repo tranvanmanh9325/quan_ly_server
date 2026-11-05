@@ -3564,15 +3564,15 @@ class VideoEditorService:
                                 e_ctx = float(np.mean(diff_sq[ctx_c4])) if np.count_nonzero(ctx_c4) > 0 else 16.0
                                 bg_in_bbox = (bbox_m > 0) & (m_curr_mask == 0)
                                 e_bg_in = float(np.mean(diff_sq[bg_in_bbox])) if np.count_nonzero(bg_in_bbox) > 20 else 0.0
-                                ref_c4 = max(e_ctx, 0.85 * e_bg_in, 16.0)
-                                if e_inp > 1.05 * ref_c4:
+                                ref_c4 = max(e_ctx, e_bg_in, 16.0)
+                                if e_inp > 1.08 * ref_c4:
                                     use_m = (m_curr_mask > 0)
                                     cand_f = f_curr_out
-                                    for alpha_c4 in (0.78, 0.68, 0.58, 0.50):
+                                    for alpha_c4 in (0.82, 0.74):
                                         blended_f = np.clip(np.round(alpha_c4 * f_curr_out.astype(np.float32) + (1.0 - alpha_c4) * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)
                                         cand_f = np.where(use_m[:, :, np.newaxis], blended_f, f_curr_out)
                                         diff_sq_c = (cand_f.astype(np.float32) - w_prev.astype(np.float32)) ** 2
-                                        if float(np.mean(diff_sq_c[bbox_m > 0])) <= 1.05 * ref_c4:
+                                        if float(np.mean(diff_sq_c[bbox_m > 0])) <= 1.12 * ref_c4:
                                             break
                                     f_curr_out = cand_f
                         else:
@@ -3787,27 +3787,19 @@ class VideoEditorService:
                             # Pre-blend unsharp trực tiếp trên aligned_hdr thích nghi với độ mờ warpAffine
                             lap_curr = cv2.Laplacian(cv2.cvtColor(curr_roi, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
                             v_ctx = float(np.var(lap_curr[b_ref_act])) if np.count_nonzero(b_ref_act) > 0 else 0.0
-                            if v_ctx >= 400.0:
+                            lap_al_init = cv2.Laplacian(cv2.cvtColor(aligned_hdr, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
+                            v_al_init = float(np.var(lap_al_init[t_mask > 0])) if np.count_nonzero(t_mask) > 0 else 0.0
+                            if max(v_ctx, v_al_init) >= 80.0:
                                 base_al = aligned_hdr.astype(np.float32)
                                 blur_al = cv2.GaussianBlur(base_al, (0, 0), 1.0)
                                 hf_al = base_al - blur_al
-                                target_v = 0.95 * min(v_ctx, 2800.0)
-                                for g_al in (1.15, 1.55, 1.95, 2.30):
-                                    cand_al = np.clip(np.round(base_al + g_al * hf_al), 0, 255).astype(np.uint8)
-                                    cand_bl = np.clip(
-                                        np.round(f_act * cand_al.astype(np.float32) + (1.0 - f_act) * curr_roi.astype(np.float32)),
-                                        0, 255
-                                    ).astype(np.uint8)
-                                    lap_bl = cv2.Laplacian(cv2.cvtColor(cand_bl, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
-                                    aligned_hdr = cand_al
-                                    blend_hdr = cand_bl
-                                    if float(np.var(lap_bl[t_mask > 0])) >= target_v:
-                                        break
-                            else:
-                                blend_hdr = np.clip(
-                                    np.round(f_act * aligned_hdr.astype(np.float32) + (1.0 - f_act) * curr_roi.astype(np.float32)),
-                                    0, 255
-                                ).astype(np.uint8)
+                                g_use = 1.55 if v_ctx >= 1800.0 else 1.35
+                                aligned_hdr = np.clip(np.round(base_al + g_use * hf_al), 0, 255).astype(np.uint8)
+
+                            blend_hdr = np.clip(
+                                np.round(f_act * aligned_hdr.astype(np.float32) + (1.0 - f_act) * curr_roi.astype(np.float32)),
+                                0, 255
+                            ).astype(np.uint8)
 
                             full_frame_mask[hy1:hy2, hx1:hx2] = active_hdr_mask
                         else:

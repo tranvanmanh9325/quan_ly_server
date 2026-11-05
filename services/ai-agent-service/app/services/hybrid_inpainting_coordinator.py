@@ -194,8 +194,14 @@ class HybridInpaintingCoordinator:
                 unrevealed_dil = cv2.dilate(
                     unrevealed_mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
                 )
-                inpaint_core = cv2.inpaint(core_candidate, unrevealed_dil, inpaintRadius=3, flags=cv2.INPAINT_TELEA)
-                core_candidate[unrevealed_mask > 0] = inpaint_core[unrevealed_mask > 0]
+                try:
+                    from app.services.classical_fallback_manager import get_classical_fallback_manager
+                    cm = get_classical_fallback_manager()
+                    inpaint_core = cm.reconstruct_roi_guided_filter(core_candidate, unrevealed_dil)
+                except Exception:
+                    inpaint_core = cv2.inpaint(core_candidate, unrevealed_dil, inpaintRadius=3, flags=cv2.INPAINT_TELEA)
+                if inpaint_core is not None and inpaint_core.shape == core_candidate.shape:
+                    core_candidate[unrevealed_mask > 0] = inpaint_core[unrevealed_mask > 0]
 
             return self.local_engine.compositor.composite(
                 frame_in=frame_t,
@@ -240,8 +246,14 @@ class HybridInpaintingCoordinator:
                 unrevealed_dil = cv2.dilate(
                     unrevealed_mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
                 )
-                inpaint_core = cv2.inpaint(core_candidate, unrevealed_dil, inpaintRadius=3, flags=cv2.INPAINT_TELEA)
-                core_candidate[unrevealed_mask > 0] = inpaint_core[unrevealed_mask > 0]
+                try:
+                    from app.services.classical_fallback_manager import get_classical_fallback_manager
+                    cm = get_classical_fallback_manager()
+                    inpaint_core = cm.reconstruct_roi_guided_filter(core_candidate, unrevealed_dil)
+                except Exception:
+                    inpaint_core = cv2.inpaint(core_candidate, unrevealed_dil, inpaintRadius=3, flags=cv2.INPAINT_TELEA)
+                if inpaint_core is not None and inpaint_core.shape == core_candidate.shape:
+                    core_candidate[unrevealed_mask > 0] = inpaint_core[unrevealed_mask > 0]
 
         # Khử viền thâm đen bằng Physical Alpha Invert Blending
         k_outer = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11))

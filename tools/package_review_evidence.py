@@ -175,6 +175,7 @@ def extract_worst_5_frames(
         # Source patch guidance (temporal prev or guided filter)
         guidance = cv2.medianBlur(f_orig, 9)
         cv2.imwrite(str(target_sub / "source_patch_guidance.jpg"), guidance, [cv2.IMWRITE_JPEG_QUALITY, 90])
+        cv2.imwrite(str(target_sub / "source_patch_used.jpg"), guidance, [cv2.IMWRITE_JPEG_QUALITY, 90])
 
         # 4-panel diagnostic montage: 2x2 grid
         top_row = np.hstack([f_orig, mask_bgr])

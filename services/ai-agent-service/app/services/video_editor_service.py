@@ -2458,8 +2458,9 @@ class VideoEditorService:
             bright_white = (gray >= 150) & (hsv[:, :, 1] <= 130)
             bright_yellow = (hsv[:, :, 0] >= 10) & (hsv[:, :, 0] <= 35) & (hsv[:, :, 1] >= 60) & (hsv[:, :, 2] >= 160)
             bright_mag_red = ((hsv[:, :, 0] <= 10) | (hsv[:, :, 0] >= 160)) & (hsv[:, :, 1] >= 60) & (hsv[:, :, 2] >= 160)
+            bright_green = (hsv[:, :, 0] >= 35) & (hsv[:, :, 0] <= 85) & (hsv[:, :, 1] >= 80) & (hsv[:, :, 2] >= 120)
             bright_vivid = (hsv[:, :, 1] >= 60) & (hsv[:, :, 2] >= 150)
-            core_bright = (bright_white | bright_yellow | bright_mag_red | bright_vivid).astype(np.uint8) * 255
+            core_bright = (bright_white | bright_yellow | bright_mag_red | bright_green | bright_vivid).astype(np.uint8) * 255
 
             min_glyph_h = max(4, int(round(6 * scale_geom)))
             max_glyph_h = max(50, int(round(75 * scale_geom)))
@@ -3942,9 +3943,9 @@ class VideoEditorService:
                         defect_map.setdefault(target_idx, []).append(roi)
 
         tier = strategy.get("tier", 1)
-        dilation_extra = min(4, int(strategy.get("dilation_extra_px", 4)))
-        top_margin = min(6, int(strategy.get("top_margin_px", 6)))
-        bottom_margin = min(4, int(strategy.get("bottom_margin_px", 4)))
+        dilation_extra = int(strategy.get("dilation_extra_px", 6))
+        top_margin = int(strategy.get("top_margin_px", 12))
+        bottom_margin = int(strategy.get("bottom_margin_px", 6))
 
         ffmpeg_bin = self._find_ffmpeg_binary()
         raw_cmd = [
@@ -4466,17 +4467,18 @@ class VideoEditorService:
                 "inpaint_fallback": 0,
             }
 
-            # Milestone M4 / Feature 19: Hybrid Inpainting Pipeline (Optical Flow M3 -> Remote GPU -> Local Fallback)
-            stream = self._stream_cleaned_video_hybrid(
+            # Milestone M2/M3: Primary Keyframe Re-anchoring and Direct ROI Streaming Generator
+            stream = self._stream_cleaned_video(
                 video_path=input_file,
+                keyframe_indices=keyframe_indices,
+                cleaned_keyframes=cleaned_keyframes,
                 total_frames=total_frames,
-                fps=fps,
+                progress_fn=flow_progress,
                 target_regions=target_regions,
                 shot_cuts=shot_cuts,
+                branch_counters=branch_counters,
                 target_scope=target_scope,
                 context=context,
-                branch_counters=branch_counters,
-                progress_fn=flow_progress,
             )
 
             pipe_broken = False

@@ -162,23 +162,50 @@ class MotionInvarianceClassifier:
         f_end = int(segment.get("frame_end", f_start + 30))
         f_end = min(num_frames - 2, max(f_start + 1, f_end))
 
+        # Check if text is present inside bbox at candidate frame using Sobel gradient
+        bbox = segment.get("bbox", segment)
+        if isinstance(bbox, dict):
+            bx, by, bw, bh = int(bbox.get("x", 0)), int(bbox.get("y", 0)), int(bbox.get("w", 0)), int(bbox.get("h", 0))
+        elif isinstance(bbox, (list, tuple)) and len(bbox) >= 4:
+            bx, by, bw, bh = int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3])
+        else:
+            bx, by, bw, bh = 0, 0, 0, 0
+
+        # Sample checkpoints inside the active text interval (avoid boundary frames where text may not exist)
+        mid_f = (f_start + f_end) // 2
         checkpoints = [
-            max(0, f_start),
-            max(0, (f_start + f_end) // 2),
-            max(0, f_end - 1),
+            min(f_end - 1, max(f_start, f_start + max(1, (f_end - f_start) // 4))),
+            mid_f,
+            max(f_start, min(f_end - 1, f_end - max(1, (f_end - f_start) // 4))),
         ]
+        unique_checkpoints = []
+        for cp in checkpoints:
+            if cp not in unique_checkpoints and 0 <= cp < num_frames - 1:
+                unique_checkpoints.append(cp)
 
         scene_votes = 0
         valid_motion_pairs = 0
 
-        for f_idx in checkpoints:
-            if f_idx < 0 or f_idx >= num_frames - 1:
-                continue
+        for f_idx in unique_checkpoints:
             video_cap.set(cv2.CAP_PROP_POS_FRAMES, f_idx)
             ret1, frame1 = video_cap.read()
             ret2, frame2 = video_cap.read()
             if not ret1 or not ret2 or frame1 is None or frame2 is None:
                 continue
+
+            # Verify that text is present in candidate frame (skip empty background frames)
+            if bw > 8 and bh > 8:
+                h_f, w_f = frame1.shape[:2]
+                y1 = max(0, min(h_f - 1, by))
+                y2 = max(y1 + 1, min(h_f, by + bh))
+                x1 = max(0, min(w_f - 1, bx))
+                x2 = max(x1 + 1, min(w_f, bx + bw))
+                roi_gray = cv2.cvtColor(frame1[y1:y2, x1:x2], cv2.COLOR_BGR2GRAY)
+                gx = cv2.Sobel(roi_gray, cv2.CV_32F, 1, 0, ksize=3)
+                gy = cv2.Sobel(roi_gray, cv2.CV_32F, 0, 1, ksize=3)
+                mag = np.sqrt(gx * gx + gy * gy)
+                if float(np.mean(mag)) < 8.0:
+                    continue
 
             flow = self.compute_dense_flow(frame1, frame2)
             if flow is None:

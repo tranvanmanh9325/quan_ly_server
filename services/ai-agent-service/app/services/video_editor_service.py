@@ -1359,6 +1359,25 @@ class VideoEditorService:
             line_confinement_mask = np.zeros((h, w), dtype=np.uint8)
             rx = int(region_meta.get("x", 0)) if region_meta else 0
             ry = int(region_meta.get("y", 0)) if region_meta else 0
+
+            # Auto-infer ROI offset if lines have absolute frame coordinates but rx/ry are 0
+            if rx == 0 and ry == 0 and target_lines:
+                valid_lines = [
+                    (l.get("x", 0), l.get("y", 0), l.get("w", 0), l.get("h", 0))
+                    if isinstance(l, dict)
+                    else (l[0], l[1], l[2], l[3])
+                    for l in target_lines
+                    if (isinstance(l, dict) and l.get("w", 0) > 0 and l.get("h", 0) > 0)
+                    or (isinstance(l, (list, tuple)) and len(l) >= 4 and l[2] > 0 and l[3] > 0)
+                ]
+                if valid_lines:
+                    min_ly = min(l[1] for l in valid_lines)
+                    min_lx = min(l[0] for l in valid_lines)
+                    if min_ly >= h:
+                        ry = min_ly
+                    if min_lx >= w:
+                        rx = min_lx
+
             s_res = np.sqrt(h**2 + w**2) / 1175.49
             safe_pad_x = max(2, int(round(4 * s_res)))
             safe_pad_y = max(2, int(round(3 * s_res)))
@@ -1452,8 +1471,10 @@ class VideoEditorService:
         min_edge_med = min(top_med, bot_med, left_med, right_med)
 
         # Detect if background is bright (inverted text style or light background paper)
+        bg_sat = float(np.median(s_chan[border_mask])) if border_pixels.size > 0 else float(np.median(s_chan))
         is_bright_bg = (
             (bg_lum >= 170.0)
+            and (bg_sat <= 70.0)
             and (min_edge_med >= 100.0)
             and (border_pixels.size > 0 and np.count_nonzero(border_pixels >= 150) > 0.70 * border_pixels.size)
         )
@@ -2336,7 +2357,7 @@ class VideoEditorService:
                 if ty2 > ty and tx2 > tx:
                     if frame_img is not None:
                         t_roi = frame_img[ty:ty2, tx:tx2]
-                        t_mask = self._generate_text_stroke_mask(t_roi, lines=tr.get("lines"))
+                        t_mask = self._generate_text_stroke_mask(t_roi, lines=tr.get("lines"), region_meta=tr)
                         if t_mask is not None and t_mask.shape == (ty2 - ty, tx2 - tx):
                             k3_title = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
                             t_mask_dil = cv2.dilate(t_mask, k3_title)

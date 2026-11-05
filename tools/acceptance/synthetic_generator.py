@@ -427,10 +427,25 @@ class SyntheticBenchmarkGenerator:
         clean_mp4 = case_dir / "clean.mp4"
         text_mp4 = case_dir / "text.mp4"
 
-        # Writers
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        clean_writer = cv2.VideoWriter(str(clean_mp4), fourcc, fps, (w, h))
-        text_writer = cv2.VideoWriter(str(text_mp4), fourcc, fps, (w, h))
+        # Writers via ffmpeg direct pipe to eliminate lossy mp4v intermediate artifacts
+        cmd_clean = [
+            "ffmpeg", "-y", "-v", "error",
+            "-f", "rawvideo", "-vcodec", "rawvideo",
+            "-s", f"{w}x{h}", "-pix_fmt", "bgr24", "-r", str(fps),
+            "-i", "-",
+            "-c:v", "libx264", "-crf", "14", "-preset", "fast", "-pix_fmt", "yuv420p",
+            str(clean_mp4)
+        ]
+        cmd_text = [
+            "ffmpeg", "-y", "-v", "error",
+            "-f", "rawvideo", "-vcodec", "rawvideo",
+            "-s", f"{w}x{h}", "-pix_fmt", "bgr24", "-r", str(fps),
+            "-i", "-",
+            "-c:v", "libx264", "-crf", "14", "-preset", "fast", "-pix_fmt", "yuv420p",
+            str(text_mp4)
+        ]
+        clean_proc = subprocess.Popen(cmd_clean, stdin=subprocess.PIPE)
+        text_proc = subprocess.Popen(cmd_text, stdin=subprocess.PIPE)
 
         cur_x = 50.0
         cur_y = 50.0
@@ -496,16 +511,18 @@ class SyntheticBenchmarkGenerator:
                 text_frame = clean_frame.copy()
                 mask = np.zeros((h, w), dtype=np.uint8)
 
-            clean_writer.write(clean_frame)
-            text_writer.write(text_frame)
+            clean_proc.stdin.write(clean_frame.tobytes())
+            text_proc.stdin.write(text_frame.tobytes())
             cv2.imwrite(str(mask_dir / f"frame_{f_idx:04d}.png"), mask)
 
             if scene_canvas_mask is not None:
                 st_mask_frame = scene_canvas_mask[iy : iy + h, ix : ix + w].copy()
                 cv2.imwrite(str(scene_mask_dir / f"frame_{f_idx:04d}.png"), st_mask_frame)
 
-        clean_writer.release()
-        text_writer.release()
+        clean_proc.stdin.close()
+        text_proc.stdin.close()
+        clean_proc.wait()
+        text_proc.wait()
 
         # Step 3: Multiplex bit-exact audio track if ffmpeg is available
         self._inject_audio_if_possible(clean_mp4, text_mp4, fps, num_frames)
@@ -546,24 +563,22 @@ class SyntheticBenchmarkGenerator:
             ]
             subprocess.run(cmd_gen, check=True, timeout=30)
 
-            # Mux and re-encode into clean.mp4 with H.264 CRF-14 baseline per Section 3 R7
+            # Mux bit-exact audio into clean.mp4 with video stream copy
             clean_mux = clean_mp4.parent / "clean_mux.mp4"
             cmd_mux1 = [
                 "ffmpeg", "-y", "-v", "error",
                 "-i", str(clean_mp4), "-i", str(audio_aac),
-                "-c:v", "libx264", "-crf", "14", "-preset", "fast", "-pix_fmt", "yuv420p",
-                "-c:a", "copy", str(clean_mux)
+                "-c:v", "copy", "-c:a", "copy", str(clean_mux)
             ]
             subprocess.run(cmd_mux1, check=True, timeout=60)
             shutil.move(str(clean_mux), str(clean_mp4))
 
-            # Mux and re-encode into text.mp4 with identical audio and H.264 CRF-14 baseline
+            # Mux bit-exact audio into text.mp4 with video stream copy
             text_mux = text_mp4.parent / "text_mux.mp4"
             cmd_mux2 = [
                 "ffmpeg", "-y", "-v", "error",
                 "-i", str(text_mp4), "-i", str(audio_aac),
-                "-c:v", "libx264", "-crf", "14", "-preset", "fast", "-pix_fmt", "yuv420p",
-                "-c:a", "copy", str(text_mux)
+                "-c:v", "copy", "-c:a", "copy", str(text_mux)
             ]
             subprocess.run(cmd_mux2, check=True, timeout=60)
             shutil.move(str(text_mux), str(text_mp4))

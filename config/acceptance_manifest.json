@@ -7,10 +7,10 @@
   "files": {
     "tools/acceptance/__init__.py": "e970f4fb598877ba0d1a87e1a05fdbae8bfc748417aa3ccf81c0571705e16261",
     "tools/acceptance/acceptance_run.py": "d5c8d30da116e519e15b51334eab55abe5b3e96531a38a60c602f244c0ffb8fe",
-    "tools/acceptance/metrics.py": "1664196310fd7a8e5fffcf84ecf16a4ec6ce833904ce17ddfcf9d0fc8d2d2f6c",
+    "tools/acceptance/metrics.py": "d2fcf19370028d537dcba810bb6c6d6ed93b695021f6753c812733f94e32ea75",
     "tools/acceptance/phrase_lists.py": "124989badece66569ae6b2b6ba5b5e867279a33edac334c5bcc8ff15d013831c",
     "tools/acceptance/sabotage_suite.py": "800cc937f464c1e77f8a46946f6988148e5122901a33a820e04f38544cb1bea8",
-    "tools/acceptance/synthetic_generator.py": "0bcf18e1e8b2652c3a31654caf0fb819ba4f203462b7ff6ee134c2687cba8195",
+    "tools/acceptance/synthetic_generator.py": "aa52c54947206825eae6897d9870835c11890e617f4dad9f87446f15f8dea7ee",
     "tools/acceptance/thresholds.py": "41b425b1d6b519b7c9b49cfea2ae4c12003ab2c0825e68aedca1c3f3b17639f3",
     "tools/acceptance_run.py": "6fdb9f7abb45774f415598672190c4ae606341956388a168e9462cd9d5850601",
     "tools/lint_no_overfit.py": "7c15d77ecdc3d7dab53af57b9a3de444109ee91cd08d90559ca25cbbeb4e5c9a",

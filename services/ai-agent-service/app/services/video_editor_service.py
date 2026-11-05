@@ -3153,7 +3153,7 @@ class VideoEditorService:
                         ref_f, frame, src_mask=ref_m_dil, dst_mask=orig_mask_dil
                     )
                     if M is not None and conf >= 0.15:
-                        warped_ref = cv2.warpAffine(ref_f, M, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT)
+                        warped_ref = cv2.warpAffine(ref_f, M, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REFLECT)
                         ref_m_u8 = cv2.dilate(ref_m_dil, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))
                         warped_m = cv2.warpAffine(
                             ref_m_u8, M, (w, h),
@@ -3161,7 +3161,7 @@ class VideoEditorService:
                         )
                         unocc = (remaining_mask > 0) & (warped_m == 0)
                         unocc_ratio = float(np.count_nonzero(unocc)) / max(1.0, float(np.count_nonzero(remaining_mask)))
-                        if unocc_ratio >= 0.80:
+                        if unocc_ratio >= 0.50:
                             bg_valid = (orig_mask_dil == 0) & (warped_m == 0)
                             if np.count_nonzero(bg_valid) > 50:
                                 abs_diff_bg = cv2.absdiff(frame, warped_ref)[bg_valid]
@@ -3178,18 +3178,23 @@ class VideoEditorService:
                 if scored_refs:
                     max_var = max(r[1] for r in scored_refs)
                     sharp_refs = [r for r in scored_refs if r[1] >= max(15.0, 0.70 * max_var)]
-                    chosen = min(sharp_refs, key=lambda x: x[0]) if sharp_refs else min(scored_refs, key=lambda x: x[0])
-                    best_ring_mae, best_var, best_warped, best_unocc, best_k = chosen
-                    lap_f_kf = cv2.Laplacian(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
-                    ring_kf = (cv2.dilate(orig_mask_dil, np.ones((11, 11), np.uint8)) > 0) & (cv2.dilate(orig_mask_dil, np.ones((3, 3), np.uint8)) == 0)
-                    var_ring_kf = float(np.var(lap_f_kf[ring_kf])) if np.count_nonzero(ring_kf) > 0 else 0.0
-                    if var_ring_kf >= 15.0 and best_var < 0.95 * min(var_ring_kf, 2400.0):
-                        blur_bw = cv2.GaussianBlur(best_warped, (0, 0), 1.0)
-                        hf_bw = best_warped.astype(np.float32) - blur_bw.astype(np.float32)
-                        best_warped = np.clip(np.round(best_warped.astype(np.float32) + 1.0 * hf_bw), 0, 255).astype(np.uint8)
-                    out_f[best_unocc] = best_warped[best_unocc]
-                    applied_kf_mask[best_unocc] = 255
-                    remaining_mask[best_unocc] = 0
+                    sorted_refs = sorted(sharp_refs, key=lambda x: x[0]) if sharp_refs else sorted(scored_refs, key=lambda x: x[0])
+                    for local_ring_mae, var_inp, warped_ref, unocc, ref_k in sorted_refs:
+                        cur_unocc = (remaining_mask > 0) & (unocc)
+                        if np.count_nonzero(cur_unocc) > 0:
+                            lap_f_kf = cv2.Laplacian(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
+                            ring_kf = (cv2.dilate(orig_mask_dil, np.ones((11, 11), np.uint8)) > 0) & (cv2.dilate(orig_mask_dil, np.ones((3, 3), np.uint8)) == 0)
+                            var_ring_kf = float(np.var(lap_f_kf[ring_kf])) if np.count_nonzero(ring_kf) > 0 else 0.0
+                            best_w = warped_ref
+                            if var_ring_kf >= 15.0 and var_inp < 0.95 * min(var_ring_kf, 2400.0):
+                                blur_bw = cv2.GaussianBlur(best_w, (0, 0), 1.0)
+                                hf_bw = best_w.astype(np.float32) - blur_bw.astype(np.float32)
+                                best_w = np.clip(np.round(best_w.astype(np.float32) + 0.50 * hf_bw), 0, 255).astype(np.uint8)
+                            out_f[cur_unocc] = best_w[cur_unocc]
+                            applied_kf_mask[cur_unocc] = 255
+                            remaining_mask[cur_unocc] = 0
+                        if np.count_nonzero(remaining_mask) == 0:
+                            break
 
             # Inpaint phần remaining_mask còn lại bằng Guided Filter / Fallback chain
             if np.count_nonzero(remaining_mask) > 0:
@@ -3217,24 +3222,26 @@ class VideoEditorService:
                                 k_hdr_sz = max(3, int(round(5 * S_res)) | 1)
                                 dil_m = cv2.dilate(t_m, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k_hdr_sz, k_hdr_sz)))
                                 dil_m = VideoEditorService._fill_holes(dil_m)
+                                dil_m = cv2.bitwise_and(dil_m, cv2.bitwise_not(applied_kf_mask[thy1:thy2, thx1:thx2]))
 
-                                from app.services.classical_fallback_manager import get_classical_fallback_manager
-                                classical_mgr = get_classical_fallback_manager()
-                                clean_t = classical_mgr.reconstruct_roi_guided_filter(
-                                    t_roi,
-                                    dil_m,
-                                    full_frame=out_f,
-                                    roi_bbox=(thy1, thy2, thx1, thx2),
-                                    full_mask=remaining_mask,
-                                )
-                                if clean_t is None or clean_t.shape != t_roi.shape:
-                                    clean_t = self._inpaint_roi_fallback_chain(t_roi, dil_m, timeout_sec=5.0, use_hosted=use_hosted, context=context)
+                                if np.count_nonzero(dil_m) > 0:
+                                    from app.services.classical_fallback_manager import get_classical_fallback_manager
+                                    classical_mgr = get_classical_fallback_manager()
+                                    clean_t = classical_mgr.reconstruct_roi_guided_filter(
+                                        t_roi,
+                                        dil_m,
+                                        full_frame=out_f,
+                                        roi_bbox=(thy1, thy2, thx1, thx2),
+                                        full_mask=remaining_mask,
+                                    )
+                                    if clean_t is None or clean_t.shape != t_roi.shape:
+                                        clean_t = self._inpaint_roi_fallback_chain(t_roi, dil_m, timeout_sec=5.0, use_hosted=use_hosted, context=context)
 
-                                if clean_t is not None and clean_t.shape == t_roi.shape:
-                                    t_mask_3d = (dil_m > 0)[:, :, np.newaxis]
-                                    out_f[thy1:thy2, thx1:thx2] = np.where(t_mask_3d, clean_t, t_roi)
-                                    applied_kf_mask[thy1:thy2, thx1:thx2] = np.maximum(applied_kf_mask[thy1:thy2, thx1:thx2], dil_m)
-                                    remaining_mask[thy1:thy2, thx1:thx2] = 0
+                                    if clean_t is not None and clean_t.shape == t_roi.shape:
+                                        t_mask_3d = (dil_m > 0)[:, :, np.newaxis]
+                                        out_f[thy1:thy2, thx1:thx2] = np.where(t_mask_3d, clean_t, t_roi)
+                                        applied_kf_mask[thy1:thy2, thx1:thx2] = np.maximum(applied_kf_mask[thy1:thy2, thx1:thx2], dil_m)
+                                        remaining_mask[thy1:thy2, thx1:thx2] = 0
 
                 # 2. Subtitle ROI nếu còn text chưa điền
                 if sub_info is not None:
@@ -3543,23 +3550,36 @@ class VideoEditorService:
                     diff_f = np.mean(np.abs(f_curr_out.astype(np.float32) - w_prev.astype(np.float32)), axis=2)
                     if float(np.mean(diff_f)) <= 25.0:
                         diff_sq = (f_curr_out.astype(np.float32) - w_prev.astype(np.float32)) ** 2
-                        k25_c = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 25))
-                        k9_c = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
-                        d25_c = cv2.dilate(m_curr_mask, k25_c)
-                        d9_c = cv2.dilate(m_curr_mask, k9_c)
-                        ctx_c4 = (d25_c > 0) & (d9_c == 0)
-                        e_inp = float(np.mean(diff_sq[inner_m])) if np.count_nonzero(inner_m) > 0 else 0.0
-                        e_ctx = float(np.mean(diff_sq[ctx_c4])) if np.count_nonzero(ctx_c4) > 0 else 16.0
-                        if (e_inp > 1.15 * max(e_ctx, 16.0) and yielded_count <= 2):
-                            blended_f = np.clip(np.round(0.88 * f_curr_out.astype(np.float32) + 0.12 * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)
-                            f_curr_out = np.where(inner_m[:, :, np.newaxis], blended_f, f_curr_out)
-                        elif has_valid_title_roi and e_inp > 1.15 * max(e_ctx, 16.0):
-                            use_m = inner_m if np.count_nonzero(inner_m) > 0 else (m_curr_mask > 0)
-                            blended_f = np.clip(np.round(0.95 * f_curr_out.astype(np.float32) + 0.05 * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)
-                            f_curr_out = np.where(use_m[:, :, np.newaxis], blended_f, f_curr_out)
-                        elif not has_valid_title_roi and e_inp > 1.30 * max(e_ctx, 35.0):
-                            blended_f = np.clip(np.round(0.88 * f_curr_out.astype(np.float32) + 0.12 * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)
-                            f_curr_out = np.where(inner_m[:, :, np.newaxis], blended_f, f_curr_out)
+                        if has_valid_title_roi:
+                            ys, xs = np.where(m_curr_mask > 0)
+                            if len(ys) > 0:
+                                bbox_m = np.zeros_like(m_curr_mask)
+                                bbox_m[ys.min():ys.max()+1, xs.min():xs.max()+1] = 255
+                                k35_c = cv2.getStructuringElement(cv2.MORPH_RECT, (35, 35))
+                                k15_c = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 15))
+                                d35_c = cv2.dilate(bbox_m, k35_c)
+                                d15_c = cv2.dilate(bbox_m, k15_c)
+                                ctx_c4 = (d35_c > 0) & (d15_c == 0)
+                                e_inp = float(np.mean(diff_sq[bbox_m > 0]))
+                                e_ctx = float(np.mean(diff_sq[ctx_c4])) if np.count_nonzero(ctx_c4) > 0 else 16.0
+                                if e_inp > 1.08 * max(e_ctx, 16.0):
+                                    use_m = (m_curr_mask > 0)
+                                    blended_f = np.clip(np.round(0.80 * f_curr_out.astype(np.float32) + 0.20 * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)
+                                    f_curr_out = np.where(use_m[:, :, np.newaxis], blended_f, f_curr_out)
+                        else:
+                            k25_c = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 25))
+                            k9_c = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
+                            d25_c = cv2.dilate(m_curr_mask, k25_c)
+                            d9_c = cv2.dilate(m_curr_mask, k9_c)
+                            ctx_c4 = (d25_c > 0) & (d9_c == 0)
+                            e_inp = float(np.mean(diff_sq[inner_m])) if np.count_nonzero(inner_m) > 0 else 0.0
+                            e_ctx = float(np.mean(diff_sq[ctx_c4])) if np.count_nonzero(ctx_c4) > 0 else 16.0
+                            if (e_inp > 1.15 * max(e_ctx, 16.0) and yielded_count <= 2):
+                                blended_f = np.clip(np.round(0.88 * f_curr_out.astype(np.float32) + 0.12 * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)
+                                f_curr_out = np.where(inner_m[:, :, np.newaxis], blended_f, f_curr_out)
+                            elif e_inp > 1.30 * max(e_ctx, 35.0):
+                                blended_f = np.clip(np.round(0.88 * f_curr_out.astype(np.float32) + 0.12 * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)
+                                f_curr_out = np.where(inner_m[:, :, np.newaxis], blended_f, f_curr_out)
 
             if not has_valid_title_roi and m_curr_mask is not None and np.count_nonzero(m_curr_mask) > 0:
                 inner_m_u = (cv2.erode(m_curr_mask, np.ones((5, 5), np.uint8)) > 0)
@@ -3746,28 +3766,38 @@ class VideoEditorService:
                             raw_dil = cv2.dilate(raw_text_hit.astype(np.uint8) * 255, np.ones((3, 3), np.uint8))
                             active_hdr_mask = raw_dil if np.count_nonzero(e5_t) == 0 else cv2.bitwise_and(raw_dil, e5_t)
                             f_act = cv2.GaussianBlur(active_hdr_mask.astype(np.float32) / 255.0, (3, 3), 0.8)[:, :, np.newaxis]
-                            # Conditional pre-blend unsharp: đo trực tiếp trên aligned_hdr để bù suy hao warpAffine
-                            tys, txs = np.where(t_mask > 0)
-                            if len(tys) > 0:
-                                k3_b = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-                                k11_b = cv2.getStructuringElement(cv2.MORPH_RECT, (11, 11))
-                                b_ref_roi = (cv2.dilate(t_mask, k11_b) > 0) & (cv2.dilate(t_mask, k3_b) == 0)
-                                lap_curr = cv2.Laplacian(cv2.cvtColor(curr_roi, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
-                                v_ctx = float(np.var(lap_curr[b_ref_roi])) if np.count_nonzero(b_ref_roi) > 0 else 0.0
-
-                                lap_al = cv2.Laplacian(cv2.cvtColor(aligned_hdr, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
-                                v_al = float(np.var(lap_al[t_mask > 0])) if np.count_nonzero(t_mask) > 0 else 0.0
-                                target_v = min(v_ctx, 2400.0)
-
-                                if v_ctx >= 500.0 and v_al < 1.20 * target_v:
-                                    blur_al = cv2.GaussianBlur(aligned_hdr, (0, 0), 1.0)
-                                    hf_al = aligned_hdr.astype(np.float32) - blur_al.astype(np.float32)
-                                    aligned_hdr = np.clip(np.round(aligned_hdr.astype(np.float32) + 0.75 * hf_al), 0, 255).astype(np.uint8)
-
                             blend_hdr = np.clip(
                                 np.round(f_act * aligned_hdr.astype(np.float32) + (1.0 - f_act) * curr_roi.astype(np.float32)),
                                 0, 255
                             ).astype(np.uint8)
+
+                            # Bù texture unsharp trực tiếp trên blend_hdr trong inner_act_box (cách biên 2px)
+                            ays, axs = np.where(active_hdr_mask > 0)
+                            if len(ays) > 0:
+                                bbox_act = np.zeros_like(active_hdr_mask)
+                                bbox_act[ays.min():ays.max()+1, axs.min():axs.max()+1] = 255
+                                inner_act_box = (cv2.erode(bbox_act, np.ones((5, 5), np.uint8)) > 0)
+                                k3_b = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+                                k11_b = cv2.getStructuringElement(cv2.MORPH_RECT, (11, 11))
+                                b_ref_act = (cv2.dilate(bbox_act, k11_b) > 0) & (cv2.dilate(bbox_act, k3_b) == 0)
+                                lap_curr = cv2.Laplacian(cv2.cvtColor(curr_roi, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
+                                v_ctx = float(np.var(lap_curr[b_ref_act])) if np.count_nonzero(b_ref_act) > 0 else 0.0
+
+                                lap_bl = cv2.Laplacian(cv2.cvtColor(blend_hdr, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
+                                v_blend = float(np.var(lap_bl[bbox_act > 0])) if np.count_nonzero(bbox_act) > 0 else 0.0
+
+                                if v_ctx >= 400.0 and v_blend < 1.15 * min(v_ctx, 2200.0):
+                                    base_b = blend_hdr.astype(np.float32)
+                                    blur_b = cv2.GaussianBlur(base_b, (0, 0), 1.0)
+                                    hf_b = base_b - blur_b
+                                    for g_b in (0.35, 0.65, 0.95):
+                                        cand_b = np.clip(np.round(base_b + g_b * hf_b), 0, 255).astype(np.uint8)
+                                        cand_hdr = np.where(inner_act_box[:, :, np.newaxis], cand_b, blend_hdr)
+                                        lap_cb = cv2.Laplacian(cv2.cvtColor(cand_hdr, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
+                                        blend_hdr = cand_hdr
+                                        if float(np.var(lap_cb[bbox_act > 0])) >= 1.15 * min(v_ctx, 2200.0):
+                                            break
+
                             full_frame_mask[hy1:hy2, hx1:hx2] = active_hdr_mask
                         else:
                             blend_hdr = np.clip(

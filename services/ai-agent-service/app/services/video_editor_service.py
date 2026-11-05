@@ -2372,23 +2372,28 @@ class VideoEditorService:
         sub_info = None
 
         if frame_img is not None:
-            title_max_y = 0
+            title_rects = []
             if target_regions:
                 title_regs = [
                     r for r in target_regions
                     if (r.get("type") == "title" or r.get("is_static", False))
                 ]
-                if title_regs:
-                    title_max_y = max(int(r.get("y", 0)) + int(r.get("h", 0)) for r in title_regs) + max(4, int(0.02 * h))
+                for r in title_regs:
+                    title_rects.append((
+                        int(r.get("x", 0)),
+                        int(r.get("y", 0)),
+                        int(r.get("x", 0)) + int(r.get("w", 0)),
+                        int(r.get("y", 0)) + int(r.get("h", 0)),
+                    ))
 
             # Pillar 1 (Scene Text Guard): In 'overlay' mode, protect scene text (e.g. laptop code text F1400-F1422).
-            # When target_regions is provided, only process subtitle if an overlay subtitle is active.
+            # When target_regions is provided, process subtitle if an overlay subtitle is active based on temporal constancy.
             has_sub_in_scope = True
             active_sub_bounding_boxes = []
             if target_regions and target_scope in ("overlay", "overlay_only"):
                 active_subs = [
                     r for r in target_regions
-                    if ((r.get("type") == "subtitle" or not r.get("is_static", False)) or int(r.get("y", 0)) > int(0.50 * h))
+                    if (r.get("type") == "subtitle" or not r.get("is_static", False) or float(r.get("persistence", 1.0)) < 0.95)
                     and r.get("frame_start", 0) <= frame_idx <= r.get("frame_end", 0)
                 ]
                 has_sub_in_scope = (len(active_subs) > 0)
@@ -2491,7 +2496,12 @@ class VideoEditorService:
             # Adjacent Glyph Clustering (preserving short words e.g. "ok", "w", "ch")
             detected_line_boxes = []
             for ly, l in lines.items():
-                if title_max_y <= 0 or (sy1 + ly) > title_max_y - 20:
+                # Only exclude glyphs if line strictly falls inside an isolated title bounding box
+                is_inside_title = any(
+                    (sy1 + ly >= ty1 and sy1 + ly <= ty2)
+                    for tx1, ty1, tx2, ty2 in title_rects
+                )
+                if not is_inside_title or not title_rects:
                     sorted_l = sorted(l, key=lambda g: g[1])
                     cur_cl = [sorted_l[0]]
                     for i in range(1, len(sorted_l)):
@@ -3147,7 +3157,7 @@ class VideoEditorService:
                 title_regions = [
                     r for r in target_regions
                     if (r.get("type") == "title" or r.get("is_static", False))
-                    and int(r.get("y", 0)) <= int(0.50 * h)
+                    and float(r.get("persistence", 1.0)) >= 0.85
                 ]
             if title_regions:
                 # Phân cụm động các dòng tiêu đề liên tục theo khoảng cách dọc để cô lập khối tiêu đề chính

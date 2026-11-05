@@ -3351,19 +3351,33 @@ class VideoEditorService:
 
                     used_align = False
                     if best_ref_k is not None and best_ref_k in cleaned_keyframes:
-                        ref_clean_roi = cleaned_keyframes[best_ref_k][hy1:hy2, hx1:hx2]
+                        kf_full = cleaned_keyframes[best_ref_k]
+                        try:
+                            curr_full_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                            kf_full_gray = cv2.cvtColor(kf_full, cv2.COLOR_BGR2GRAY)
+                            shift_full, resp_full = cv2.phaseCorrelate(np.float32(curr_full_gray), np.float32(kf_full_gray))
+                            cam_dx, cam_dy = -shift_full[0], -shift_full[1]
+                            if resp_full >= 0.15 and (abs(cam_dx) > 0.5 or abs(cam_dy) > 0.5):
+                                M_cam = np.float32([[1, 0, cam_dx], [0, 1, cam_dy]])
+                                warped_kf = cv2.warpAffine(kf_full, M_cam, (w, h), borderMode=cv2.BORDER_REFLECT)
+                                ref_clean_roi = warped_kf[hy1:hy2, hx1:hx2]
+                            else:
+                                ref_clean_roi = kf_full[hy1:hy2, hx1:hx2]
+                        except Exception:
+                            ref_clean_roi = kf_full[hy1:hy2, hx1:hx2]
+
                         try:
                             curr_gray = cv2.cvtColor(curr_roi, cv2.COLOR_BGR2GRAY)
                             ref_gray = cv2.cvtColor(ref_clean_roi, cv2.COLOR_BGR2GRAY)
                             shift, resp = cv2.phaseCorrelate(np.float32(curr_gray), np.float32(ref_gray))
                             dx, dy = -shift[0], -shift[1]
                             aligned_hdr = None
-                            # Giới hạn độ dời Phase Correlation |dx| <= 20px, |dy| <= 4px chống sọc rách Venetian blind
-                            if resp >= 0.25 and abs(dx) <= 20.0 and abs(dy) <= 4.0:
+                            # Giới hạn độ dời Phase Correlation sau khi đã bù chuyển động camera toàn cục
+                            if resp >= 0.20 and abs(dx) <= 15.0 and abs(dy) <= 15.0:
                                 M = np.float32([[1, 0, dx], [0, 1, dy]])
                                 candidate_hdr = cv2.warpAffine(ref_clean_roi, M, (roi_w, roi_h), borderMode=cv2.BORDER_REFLECT)
                                 diff_bg = float(np.mean(cv2.absdiff(curr_roi, candidate_hdr)[bg_mask]))
-                                diff_bg_thresh = 12.0
+                                diff_bg_thresh = 14.0
                                 if diff_bg <= diff_bg_thresh:
                                     aligned_hdr = candidate_hdr
                                     used_align = True

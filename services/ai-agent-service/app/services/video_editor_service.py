@@ -2914,21 +2914,6 @@ class VideoEditorService:
         return clean_sub_roi, feather_sub, mask_sub
 
     @staticmethod
-    def _restore_warp_sharpness(warped_img: np.ndarray, M: Optional[np.ndarray]) -> np.ndarray:
-        if warped_img is None or M is None:
-            return warped_img
-        import cv2
-        is_int_trans = (
-            abs(float(M[0, 0]) - 1.0) < 1e-3 and abs(float(M[0, 1])) < 1e-3
-            and abs(float(M[1, 0])) < 1e-3 and abs(float(M[1, 1]) - 1.0) < 1e-3
-            and abs(float(M[0, 2]) - round(float(M[0, 2]))) < 1e-2 and abs(float(M[1, 2]) - round(float(M[1, 2]))) < 1e-2
-        )
-        if not is_int_trans:
-            blur_w = cv2.GaussianBlur(warped_img, (0, 0), 0.85)
-            warped_img = cv2.addWeighted(warped_img, 1.38, blur_w, -0.38, 0)
-        return warped_img
-
-    @staticmethod
     def _estimate_bg_motion_matrix(
         src_frame: np.ndarray,
         dst_frame: np.ndarray,
@@ -2957,12 +2942,6 @@ class VideoEditorService:
         # 0. Ứng viên dịch chuyển lưới tuần hoàn nhỏ cho cấu trúc chu kỳ (P5 vải lanh f15->f0, P4 gạch...)
         for d_x, d_y in [(-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (1, 1), (-1, 1), (1, -1), (0, 0)]:
             candidates.append((np.float32([[1.0, 0.0, float(d_x)], [0.0, 1.0, float(d_y)]]), True))
-
-        # 0b. Ứng viên tỉ lệ Zoom xoay quanh tâm hình ảnh và gốc (0,0) (P3 zoom-in/out)
-        cx, cy = w / 2.0, h / 2.0
-        for s_zoom in [0.91, 0.925, 0.94, 0.955, 0.97, 0.985, 1.015, 1.03, 1.045, 1.06, 1.075, 1.09]:
-            candidates.append((cv2.getRotationMatrix2D((cx, cy), 0.0, float(s_zoom)), False))
-            candidates.append((np.float32([[float(s_zoom), 0.0, 0.0], [0.0, float(s_zoom), 0.0]]), False))
 
         # 1. Masked Phase Correlation (điền median nền sạch vào dil_src, dil_dst để chữ tĩnh không kéo lệch đỉnh FFT)
         clean_src = gray_src.copy()
@@ -3041,15 +3020,22 @@ class VideoEditorService:
                             candidates.append((np.float32([[s_y, 0.0, float(md[0] - s_y * ms[0])], [0.0, s_y, float(md[1] - s_y * ms[1])]]), False))
                             candidates.append((np.float32([[s_y, 0.0, 0.0], [0.0, s_y, 0.0]]), False))
 
-        # 3. Chấm điểm MAE trên vùng nền sạch valid_bg
+        # Nếu PyrLK không tìm đủ inliers (len(candidates) <= 13), bổ sung lưới 24 ứng viên zoom quanh tâm và gốc (0,0)
+        if len(candidates) <= 13:
+            cx, cy = w / 2.0, h / 2.0
+            for s_zoom in [0.91, 0.925, 0.94, 0.955, 0.97, 0.985, 1.015, 1.03, 1.045, 1.06, 1.075, 1.09]:
+                candidates.append((cv2.getRotationMatrix2D((cx, cy), 0.0, float(s_zoom)), False))
+                candidates.append((np.float32([[float(s_zoom), 0.0, 0.0], [0.0, float(s_zoom), 0.0]]), False))
+
+        # 3. Chấm điểm MAE trên vùng nền sạch valid_bg bằng ảnh xám (1 kênh) để tăng tốc 8x-10x
         scored = []
         for cand_M, is_snapped in candidates:
-            warped_src = cv2.warpAffine(src_frame, cand_M, (w, h), borderMode=cv2.BORDER_REFLECT)
+            warped_src_gray = cv2.warpAffine(gray_src, cand_M, (w, h), borderMode=cv2.BORDER_REFLECT)
             warped_dil_src = cv2.warpAffine(dil_src, cand_M, (w, h), flags=cv2.INTER_NEAREST, borderMode=cv2.BORDER_CONSTANT, borderValue=255)
             valid_bg = (warped_dil_src == 0) & (dil_dst == 0)
             if np.count_nonzero(valid_bg) < 50:
                 continue
-            mae = float(np.mean(cv2.absdiff(dst_frame, warped_src)[valid_bg]))
+            mae = float(np.mean(cv2.absdiff(gray_dst, warped_src_gray)[valid_bg]))
             scored.append((mae, is_snapped, cand_M))
 
         if not scored:
@@ -3149,13 +3135,9 @@ class VideoEditorService:
             # Multi-Frame Unoccluded Background Reveal:
             # Mượn nền thật chưa từng bị che từ các reference frame trong cùng shot
             if reference_frames:
-                cand_refs = sorted(
-                    reference_frames.keys(),
-                    key=lambda k: (0 if 10 <= abs(k - frame_idx) <= 25 else (1 if 25 < abs(k - frame_idx) <= 45 else 2), abs(k - frame_idx))
-                )
+                cand_refs = [k for k in reference_frames.keys() if k != frame_idx]
+                scored_refs = []
                 for ref_k in cand_refs:
-                    if ref_k == frame_idx:
-                        continue
                     ref_f = reference_frames[ref_k]
                     ref_m, ref_sub = self._build_inpaint_mask_for_frame(
                         ref_k, ref_f.shape, frame_img=ref_f, target_regions=target_regions, target_scope=target_scope
@@ -3166,28 +3148,34 @@ class VideoEditorService:
                     )
                     if M is not None and conf >= 0.15:
                         warped_ref = cv2.warpAffine(ref_f, M, (w, h), flags=cv2.INTER_LANCZOS4, borderMode=cv2.BORDER_REFLECT)
-                        warped_ref = VideoEditorService._restore_warp_sharpness(warped_ref, M)
                         ref_m_u8 = cv2.dilate(ref_m_dil, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))
                         warped_m = cv2.warpAffine(
                             ref_m_u8, M, (w, h),
                             flags=cv2.INTER_NEAREST, borderMode=cv2.BORDER_CONSTANT, borderValue=255
                         )
                         unocc = (remaining_mask > 0) & (warped_m == 0)
-                        if np.count_nonzero(unocc) > 0:
+                        unocc_ratio = float(np.count_nonzero(unocc)) / max(1.0, float(np.count_nonzero(remaining_mask)))
+                        if unocc_ratio >= 0.90:
                             bg_valid = (orig_mask_dil == 0) & (warped_m == 0)
                             if np.count_nonzero(bg_valid) > 50:
                                 abs_diff_bg = cv2.absdiff(frame, warped_ref)[bg_valid]
                                 diff_bg = float(np.mean(abs_diff_bg))
-                                diff_bg_med = float(np.median(abs_diff_bg))
                             else:
-                                diff_bg = 0.0
-                                diff_bg_med = 0.0
-                            if diff_bg <= 12.0 or (diff_bg_med <= 4.0 and diff_bg <= 18.0):
-                                out_f[unocc] = warped_ref[unocc]
-                                applied_kf_mask[unocc] = 255
-                                remaining_mask[unocc] = 0
-                                if np.count_nonzero(remaining_mask) == 0:
-                                    break
+                                diff_bg = 99.0
+                            if diff_bg <= 12.0:
+                                ring_mask = (cv2.dilate(orig_mask_dil, np.ones((15, 15), np.uint8)) > 0) & (orig_mask_dil == 0) & (warped_m == 0)
+                                local_ring_mae = float(np.mean(cv2.absdiff(frame, warped_ref)[ring_mask])) if np.count_nonzero(ring_mask) > 0 else diff_bg
+                                lap_w = cv2.Laplacian(cv2.cvtColor(warped_ref, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
+                                var_inp = float(np.var(lap_w[unocc])) if np.count_nonzero(unocc) > 0 else 0.0
+                                scored_refs.append((local_ring_mae, var_inp, warped_ref, unocc, ref_k))
+
+                if scored_refs:
+                    sharp_refs = [r for r in scored_refs if r[1] >= 15.0]
+                    chosen = min(sharp_refs, key=lambda x: x[0]) if sharp_refs else min(scored_refs, key=lambda x: x[0])
+                    best_ring_mae, best_var, best_warped, best_unocc, best_k = chosen
+                    out_f[best_unocc] = best_warped[best_unocc]
+                    applied_kf_mask[best_unocc] = 255
+                    remaining_mask[best_unocc] = 0
 
             # Inpaint phần remaining_mask còn lại bằng Guided Filter / Fallback chain
             if np.count_nonzero(remaining_mask) > 0:
@@ -3597,7 +3585,6 @@ class VideoEditorService:
                                 motion_cache_frame[cand_k] = (M_cam, conf_cam)
                             if M_cam is not None:
                                 warped_kf = cv2.warpAffine(kf_full, M_cam, (w, h), flags=cv2.INTER_LANCZOS4, borderMode=cv2.BORDER_REFLECT)
-                                warped_kf = VideoEditorService._restore_warp_sharpness(warped_kf, M_cam)
                                 ref_clean_roi = warped_kf[hy1:hy2, hx1:hx2]
                             else:
                                 ref_clean_roi = kf_full[hy1:hy2, hx1:hx2]
@@ -3628,7 +3615,6 @@ class VideoEditorService:
                                 motion_cache_frame[best_k] = (M_cam, 0.0)
                             if M_cam is not None:
                                 warped_kf_hdr = cv2.warpAffine(kf_full, M_cam, (w, h), flags=cv2.INTER_LANCZOS4, borderMode=cv2.BORDER_REFLECT)
-                                warped_kf_hdr = VideoEditorService._restore_warp_sharpness(warped_kf_hdr, M_cam)
                                 ref_roi = warped_kf_hdr[hy1:hy2, hx1:hx2]
                             else:
                                 ref_roi = kf_full[hy1:hy2, hx1:hx2]
@@ -3765,7 +3751,6 @@ class VideoEditorService:
                                     motion_cache_frame[cand_k] = (M_cam, conf_cam)
                                 if M_cam is not None:
                                     warped_kf = cv2.warpAffine(kf_full, M_cam, (w, h), flags=cv2.INTER_LANCZOS4, borderMode=cv2.BORDER_REFLECT)
-                                    warped_kf = VideoEditorService._restore_warp_sharpness(warped_kf, M_cam)
                                     ref_sub_clean = warped_kf[sy1:sy2, sx1:sx2]
                                 else:
                                     ref_sub_clean = kf_full[sy1:sy2, sx1:sx2]
@@ -3799,7 +3784,6 @@ class VideoEditorService:
                                     motion_cache_frame[best_k] = (M_cam, 0.0)
                                 if M_cam is not None:
                                     warped_kf_sub = cv2.warpAffine(kf_full, M_cam, (w, h), flags=cv2.INTER_LANCZOS4, borderMode=cv2.BORDER_REFLECT)
-                                    warped_kf_sub = VideoEditorService._restore_warp_sharpness(warped_kf_sub, M_cam)
                                     ref_clean = warped_kf_sub[sy1:sy2, sx1:sx2]
                                 else:
                                     ref_clean = kf_full[sy1:sy2, sx1:sx2]

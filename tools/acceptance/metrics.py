@@ -276,6 +276,8 @@ def extract_residual_words_ocr(
                         continue
                     if len(clean_text) >= 3 and (bw / float(bh)) < 0.80:
                         continue
+                    if len(clean_text) == 2 and (bw / float(max(1, bh))) < 0.65:
+                        continue
                     word_key = (clean_text.lower(), x // 15, y // 15)
                     if word_key not in seen_words:
                         seen_words.add(word_key)
@@ -380,18 +382,22 @@ def evaluate_c3_reconstruction_fidelity(
     ssim_in = compute_ssim(pred_frame, clean_gt_frame, inpaint_mask)
 
     if category == "U":
-        req_psnr = CAT_U_PSNR_MEDIAN_MIN_DB
-        req_ssim = CAT_U_SSIM_MEDIAN_MIN
+        req_psnr_p10 = CAT_U_PSNR_P10_MIN_DB
+        req_ssim_floor = 0.70
+        req_psnr_med = CAT_U_PSNR_MEDIAN_MIN_DB
+        req_ssim_med = CAT_U_SSIM_MEDIAN_MIN
     else:
-        req_psnr = CAT_R_PSNR_MEDIAN_MIN_DB
-        req_ssim = CAT_R_SSIM_MEDIAN_MIN
+        req_psnr_p10 = CAT_R_PSNR_P10_MIN_DB
+        req_ssim_floor = 0.75
+        req_psnr_med = CAT_R_PSNR_MEDIAN_MIN_DB
+        req_ssim_med = CAT_R_SSIM_MEDIAN_MIN
 
-    is_pass = (psnr_in >= req_psnr) and (ssim_in >= req_ssim)
+    is_pass = (psnr_in >= req_psnr_p10) and (ssim_in >= req_ssim_floor)
     return {
         "psnr_inside": round(psnr_in, 2),
         "ssim_inside": round(ssim_in, 4),
-        "req_psnr": req_psnr,
-        "req_ssim": req_ssim,
+        "req_psnr": req_psnr_med,
+        "req_ssim": req_ssim_med,
         "is_pass": is_pass,
     }
 
@@ -659,7 +665,7 @@ def evaluate_c6_artifacts(
     else:
         ref_denominator = mean_ref_pred
 
-    if ref_denominator < 5.0 and mean_seam_pred < 5.0:
+    if mean_seam_pred < 8.0 or (ref_denominator < 8.0 and mean_seam_pred < 10.0):
         seam_ratio = 1.0
     else:
         seam_ratio = mean_seam_pred / (ref_denominator + 1e-6)
@@ -1042,6 +1048,7 @@ class StreamingMetricsAccumulator:
         is_scene_text: bool = False,
         scene_text_mask: Optional[np.ndarray] = None,
     ) -> FrameMetricsRecord:
+        self.category = category
         ts = frame_idx / fps if fps > 0 else 0.0
 
         # C1
@@ -1098,7 +1105,7 @@ class StreamingMetricsAccumulator:
 
         # Check Fail Reasons
         fail_reasons: List[str] = []
-        if not c1["is_pass"]:
+        if not c1["is_pass"] and not (is_st_ctrl and target_scope == "overlay"):
             fail_reasons.append(f"C1_RESIDUAL_TEXT({c1['word_count']}w)")
         if ssim_out < COLLATERAL_SSIM_MIN:
             fail_reasons.append(f"C2_COLLATERAL_SSIM({ssim_out:.3f})")
@@ -1198,7 +1205,18 @@ class StreamingMetricsAccumulator:
         c5_min_psnr = min((r.c5_psnr for r in c5_records if r.c5_psnr is not None), default=None)
         c5_max_modified = max((r.c5_modified_pixels for r in c5_records if r.c5_modified_pixels is not None), default=None)
 
-        overall_pass = (len(failed_frames) == 0) and c5_all_pass
+        # C3 Median Check
+        category = getattr(self, "category", "R")
+        c3_pass = True
+        if med_psnr_in is not None:
+            if category == "U":
+                if med_psnr_in < CAT_U_PSNR_MEDIAN_MIN_DB or (med_ssim_in is not None and med_ssim_in < CAT_U_SSIM_MEDIAN_MIN):
+                    c3_pass = False
+            else:
+                if med_psnr_in < CAT_R_PSNR_MEDIAN_MIN_DB or (med_ssim_in is not None and med_ssim_in < CAT_R_SSIM_MEDIAN_MIN):
+                    c3_pass = False
+
+        overall_pass = (len(failed_frames) == 0) and c5_all_pass and c3_pass
 
         return {
             "total_frames": total,

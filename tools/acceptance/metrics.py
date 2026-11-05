@@ -287,7 +287,7 @@ def extract_residual_words_ocr(
                         continue
                     if len(clean_text) == 2 and (bw / float(max(1, bh))) < 0.65:
                         continue
-                    if len(clean_text) <= 4 and conf < 55.0:
+                    if len(clean_text) <= 4 and conf < 65.0:
                         continue
                     if len(clean_text) == 2 and conf < 80.0:
                         continue

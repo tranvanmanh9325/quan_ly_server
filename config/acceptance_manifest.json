@@ -7,7 +7,7 @@
   "files": {
     "tools/acceptance/__init__.py": "e970f4fb598877ba0d1a87e1a05fdbae8bfc748417aa3ccf81c0571705e16261",
     "tools/acceptance/acceptance_run.py": "c1fcce364f24c02ff7a18c6d661c02c93c31a8dff491a87a6dd6f20414e00e28",
-    "tools/acceptance/metrics.py": "f76f5b9235a08c6baec3fce7fc5f938ea0b79e487aa2dcbd358fbf76271bb82b",
+    "tools/acceptance/metrics.py": "3556013354e98b7fc183f2c986caabcd2a27d5aeff9e2f50c146b5e15b4cfcec",
     "tools/acceptance/phrase_lists.py": "124989badece66569ae6b2b6ba5b5e867279a33edac334c5bcc8ff15d013831c",
     "tools/acceptance/sabotage_suite.py": "800cc937f464c1e77f8a46946f6988148e5122901a33a820e04f38544cb1bea8",
     "tools/acceptance/synthetic_generator.py": "aa52c54947206825eae6897d9870835c11890e617f4dad9f87446f15f8dea7ee",

@@ -152,8 +152,10 @@ class ForwardBackwardOpticalFlowPropagator:
         )
 
         # 6. Warp reference mask to check if source pixels are clean (unmasked)
+        k_close = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
+        solid_mask_ref = cv2.morphologyEx(mask_ref, cv2.MORPH_CLOSE, k_close) if np.count_nonzero(mask_ref) > 0 else mask_ref
         warped_ref_mask = cv2.remap(
-            mask_ref, map_x, map_y, interpolation=cv2.INTER_NEAREST, borderMode=cv2.BORDER_CONSTANT, borderValue=255
+            solid_mask_ref, map_x, map_y, interpolation=cv2.INTER_NEAREST, borderMode=cv2.BORDER_CONSTANT, borderValue=255
         )
         clean_source = (warped_ref_mask == 0)
 

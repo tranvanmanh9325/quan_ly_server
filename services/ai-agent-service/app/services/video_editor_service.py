@@ -2399,7 +2399,7 @@ class VideoEditorService:
                 active_subs = [
                     r for r in target_regions
                     if (r.get("type") == "subtitle" or not r.get("is_static", True))
-                    and r.get("frame_start", 0) <= frame_idx <= r.get("frame_end", 0)
+                    and max(0, r.get("frame_start", 0) - 2) <= frame_idx <= r.get("frame_end", 0) + 2
                 ]
                 has_sub_in_scope = (len(active_subs) > 0)
                 for s in active_subs:
@@ -2819,8 +2819,8 @@ class VideoEditorService:
 
                 pad_box_x = max(16, int(round(24 * scale_geom)))
                 pad_box_y = max(8, int(round(10 * scale_geom)))
-                min_bx = max(4, min(b[0] for b in best_cluster) - pad_box_x)
-                max_bx = min(w - 4, max(b[0] + b[2] for b in best_cluster) + pad_box_x)
+                min_bx = max(4, sx1 + min(b[0] for b in best_cluster) - pad_box_x)
+                max_bx = min(w - 4, sx1 + max(b[0] + b[2] for b in best_cluster) + pad_box_x)
                 min_by = max(0, sy1 + min(b[1] for b in best_cluster) - pad_box_y)
                 max_by = min(h, sy1 + max(b[1] + b[3] for b in best_cluster) + pad_box_y)
 
@@ -2964,7 +2964,8 @@ class VideoEditorService:
                             # Dilate to envelop dark stroke outline on structured document
                             dil_sub_m = cv2.dilate(sub_m, k_dil_kf)
                             dil_sub_m = VideoEditorService._fill_holes(dil_sub_m)
-                            dil_sub_m = (dil_sub_m & (~local_table)).astype(np.uint8)
+                            lines_prot = (local_table & (~cv2.dilate(sub_m, cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5)))))
+                            dil_sub_m = (dil_sub_m & (~lines_prot)).astype(np.uint8)
                             # Natural texture-preserving inpainting for document paper instead of flat median block
                             try:
                                 from app.services.classical_fallback_manager import get_classical_fallback_manager
@@ -2977,8 +2978,8 @@ class VideoEditorService:
                             except Exception:
                                 clean_s = cv2.inpaint(sub_roi, dil_sub_m, 3, cv2.INPAINT_TELEA)
                                 feather_s = None
-                            if clean_s is not None and np.count_nonzero(local_table) > 0:
-                                clean_s[local_table > 0] = sub_roi[local_table > 0]
+                            if clean_s is not None and np.count_nonzero(lines_prot) > 0:
+                                clean_s[lines_prot > 0] = sub_roi[lines_prot > 0]
                         else:
                             dil_sub_m = cv2.dilate(sub_m, k_dil_kf)
                             dil_sub_m = VideoEditorService._fill_holes(dil_sub_m)
@@ -3453,7 +3454,8 @@ class VideoEditorService:
                         if has_local_table:
                             dil_sub_m = cv2.dilate(s_mask, k_sub_stream)
                             dil_sub_m = VideoEditorService._fill_holes(dil_sub_m)
-                            mask_sub = (dil_sub_m & (~local_table)).astype(np.uint8)
+                            lines_prot_stream = (local_table & (~cv2.dilate(s_mask, cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5)))))
+                            mask_sub = (dil_sub_m & (~lines_prot_stream)).astype(np.uint8)
                             try:
                                 from app.services.classical_fallback_manager import get_classical_fallback_manager
                                 classical_mgr = get_classical_fallback_manager()
@@ -3463,8 +3465,8 @@ class VideoEditorService:
                                 clean_sub_roi = res_st[0]
                             except Exception:
                                 clean_sub_roi = cv2.inpaint(sub_roi, mask_sub, 3, cv2.INPAINT_TELEA)
-                            if clean_sub_roi is not None and np.count_nonzero(local_table) > 0:
-                                clean_sub_roi[local_table > 0] = sub_roi[local_table > 0]
+                            if clean_sub_roi is not None and np.count_nonzero(lines_prot_stream) > 0:
+                                clean_sub_roi[lines_prot_stream > 0] = sub_roi[lines_prot_stream > 0]
                             out_frame[sy1:sy2, sx1:sx2] = clean_sub_roi
                             full_frame_mask[sy1:sy2, sx1:sx2] = np.maximum(full_frame_mask[sy1:sy2, sx1:sx2], mask_sub)
                         else:
@@ -4312,18 +4314,18 @@ class VideoEditorService:
 
             ffmpeg_bin = self._find_ffmpeg_binary()
 
-            # Determine best available H.264 video encoder (Pillar 5: CRF 18 Studio Grade Encoding, unconstrained bitrate)
+            # Determine best available H.264 video encoder (Pillar 5: CRF 14 Studio Grade Encoding, unconstrained bitrate)
             v_encoder = "libx264"
-            v_opts = ["-preset", "fast", "-crf", "18", "-g", "30"]
+            v_opts = ["-preset", "fast", "-crf", "14", "-g", "30"]
             try:
                 p_enc = subprocess.run([ffmpeg_bin, "-encoders"], capture_output=True, text=True, timeout=5)
                 enc_out = p_enc.stdout or ""
                 if "libx264" not in enc_out and "h264_nvenc" in enc_out:
                     v_encoder = "h264_nvenc"
-                    v_opts = ["-preset", "p7", "-cq", "18", "-g", "30"]
+                    v_opts = ["-preset", "p7", "-cq", "14", "-g", "30"]
                 elif "libx264" not in enc_out and "h264_qsv" in enc_out:
                     v_encoder = "h264_qsv"
-                    v_opts = ["-global_quality", "18", "-g", "30"]
+                    v_opts = ["-global_quality", "14", "-g", "30"]
             except Exception:
                 pass
 

@@ -1492,6 +1492,8 @@ class VideoEditorService:
 
         has_dark_stroke = np.count_nonzero(dark_pixels) > 15
         has_bright_pixels = np.count_nonzero(bright_pixels) > 15
+        has_vivid_pixels = np.count_nonzero(vivid_colored) > 15
+        has_core_fg = has_bright_pixels or has_vivid_pixels
 
         is_meme_text = False
         valid_meme_dark = np.zeros_like(dark_pixels)
@@ -1499,11 +1501,11 @@ class VideoEditorService:
 
         if is_bright_bg:
             # Stroke Hull Separation & Scale-Separation:
-            # When bright subtitle text with dark stroke outline appears on bright background
+            # When bright or vivid subtitle text with dark stroke outline appears on bright background
             # vs genuine printed text and structural table borders.
-            if has_bright_pixels and has_dark_stroke:
+            if has_core_fg and has_dark_stroke:
                 dark_enclosed = cv2.dilate(dark_pixels, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)))
-                adjoining_bright = cv2.bitwise_and(bright_pixels, dark_enclosed)
+                adjoining_bright = cv2.bitwise_and(cv2.bitwise_or(bright_pixels, vivid_colored), dark_enclosed)
                 core_candidates = cv2.bitwise_or(adjoining_bright, vivid_colored)
                 # Scale-Separation: DO NOT bitwise_or with all dark_pixels to protect contract printed text
                 stroke_adjacent = cv2.bitwise_and(
@@ -1512,7 +1514,7 @@ class VideoEditorService:
                 )
                 core_candidates = cv2.bitwise_or(core_candidates, stroke_adjacent)
                 is_stroke_hull_separated = True
-            elif has_bright_pixels:
+            elif has_core_fg:
                 core_candidates = cv2.bitwise_or(bright_pixels, vivid_colored)
                 is_stroke_hull_separated = True
             else:

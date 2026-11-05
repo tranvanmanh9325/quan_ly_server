@@ -3521,7 +3521,7 @@ class VideoEditorService:
         def _yield_frame_with_temporal_blend(f_curr_out: np.ndarray, m_curr_mask: Optional[np.ndarray]) -> np.ndarray:
             nonlocal prev_yielded_frame
             if prev_yielded_frame is not None and m_curr_mask is not None and np.count_nonzero(m_curr_mask) > 0:
-                inner_m = (cv2.erode(m_curr_mask, np.ones((3, 3), np.uint8)) > 0)
+                inner_m = (cv2.erode(m_curr_mask, np.ones((7, 7), np.uint8)) > 0)
                 if np.count_nonzero(inner_m) > 0:
                     h_y, w_y = f_curr_out.shape[:2]
                     gp_c = cv2.cvtColor(f_curr_out, cv2.COLOR_BGR2GRAY)
@@ -3546,26 +3546,32 @@ class VideoEditorService:
                             f_curr_out = np.where(inner_m[:, :, np.newaxis], blended_f, f_curr_out)
 
             if m_curr_mask is not None and np.count_nonzero(m_curr_mask) > 0:
-                inner_m = (cv2.erode(m_curr_mask, np.ones((5, 5), np.uint8)) > 0)
+                inner_m = (cv2.erode(m_curr_mask, np.ones((7, 7), np.uint8)) > 0)
                 k3_s = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+                k7_s = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
                 k11_s = cv2.getStructuringElement(cv2.MORPH_RECT, (11, 11))
                 d3_s = cv2.dilate(m_curr_mask, k3_s)
+                d7_s = cv2.dilate(m_curr_mask, k7_s)
+                e7_s = cv2.erode(m_curr_mask, k7_s)
                 d11_s = cv2.dilate(m_curr_mask, k11_s)
                 b_ref_s = (d11_s > 0) & (d3_s == 0)
+                b_seam_s = (d7_s > 0) & (e7_s == 0)
 
-                if np.count_nonzero(inner_m) > 0 and np.count_nonzero(b_ref_s) > 0:
+                if np.count_nonzero(inner_m) > 0 and (np.count_nonzero(b_ref_s) > 0 or np.count_nonzero(b_seam_s) > 0):
                     gray_out = cv2.cvtColor(f_curr_out, cv2.COLOR_BGR2GRAY)
                     lap_out = cv2.Laplacian(gray_out, cv2.CV_64F)
                     var_inp_m = float(np.var(lap_out[m_curr_mask > 0]))
-                    var_ctx_m = float(np.var(lap_out[b_ref_s]))
-                    if var_ctx_m >= 15.0 and var_inp_m < 0.80 * var_ctx_m:
+                    var_ctx_out = float(np.var(lap_out[b_ref_s])) if np.count_nonzero(b_ref_s) > 0 else 0.0
+                    var_ctx_seam = float(np.var(lap_out[b_seam_s])) if np.count_nonzero(b_seam_s) > 0 else 0.0
+                    var_ctx_m = max(var_ctx_out, var_ctx_seam)
+                    if var_ctx_m >= 15.0 and var_inp_m < 0.85 * var_ctx_m:
                         blur_m = cv2.GaussianBlur(f_curr_out, (0, 0), 0.9)
                         hf_m = f_curr_out.astype(np.float32) - blur_m.astype(np.float32)
                         cand_m = f_curr_out
-                        for g_try in (0.4, 0.8, 1.2, 1.6, 2.0, 2.5, 3.0):
+                        for g_try in (0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0):
                             cand_m = np.clip(np.round(f_curr_out.astype(np.float32) + g_try * hf_m), 0, 255).astype(np.uint8)
                             lap_c = cv2.Laplacian(cv2.cvtColor(cand_m, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
-                            if float(np.var(lap_c[inner_m])) >= 0.95 * min(var_ctx_m, 2600.0):
+                            if float(np.var(lap_c[inner_m])) >= 1.35 * min(var_ctx_m, 2500.0):
                                 break
                         f_curr_out = np.where(inner_m[:, :, np.newaxis], cand_m, f_curr_out)
 
@@ -3719,7 +3725,11 @@ class VideoEditorService:
                             t_mask = tight_mask_header
                             chroma_curr = np.max(curr_roi, axis=2).astype(np.int16) - np.min(curr_roi, axis=2).astype(np.int16)
                             diff_al = np.max(cv2.absdiff(curr_roi, aligned_hdr), axis=2)
-                            raw_text_hit = (t_mask > 0) & ((chroma_curr > 18) | (diff_al > 42))
+                            is_chromatic_text = (np.count_nonzero(t_mask) > 0) and (float(np.percentile(chroma_curr[t_mask > 0], 85)) > 25.0)
+                            if is_chromatic_text:
+                                raw_text_hit = (t_mask > 0) & (chroma_curr > 15)
+                            else:
+                                raw_text_hit = (t_mask > 0) & ((chroma_curr > 18) | (diff_al > 42))
                             active_hdr_mask = cv2.dilate(raw_text_hit.astype(np.uint8) * 255, np.ones((3, 3), np.uint8))
                             f_act = cv2.GaussianBlur(active_hdr_mask.astype(np.float32) / 255.0, (3, 3), 0.8)[:, :, np.newaxis]
                             blend_hdr = np.clip(

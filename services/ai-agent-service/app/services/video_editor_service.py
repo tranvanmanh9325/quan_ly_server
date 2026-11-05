@@ -3563,8 +3563,8 @@ class VideoEditorService:
                                 e_inp = float(np.mean(diff_sq[bbox_m > 0]))
                                 e_ctx = float(np.mean(diff_sq[ctx_c4])) if np.count_nonzero(ctx_c4) > 0 else 16.0
                                 if e_inp > 1.05 * max(e_ctx, 16.0):
-                                    use_m = (m_curr_mask > 0)
-                                    blended_f = np.clip(np.round(0.72 * f_curr_out.astype(np.float32) + 0.28 * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)
+                                    use_m = (bbox_m > 0)
+                                    blended_f = np.clip(np.round(0.85 * f_curr_out.astype(np.float32) + 0.15 * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)
                                     f_curr_out = np.where(use_m[:, :, np.newaxis], blended_f, f_curr_out)
                         else:
                             k25_c = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 25))
@@ -3781,7 +3781,7 @@ class VideoEditorService:
                             if v_ctx >= 400.0:
                                 blur_al = cv2.GaussianBlur(aligned_hdr, (0, 0), 1.0)
                                 hf_al = aligned_hdr.astype(np.float32) - blur_al.astype(np.float32)
-                                aligned_hdr = np.clip(np.round(aligned_hdr.astype(np.float32) + 1.50 * hf_al), 0, 255).astype(np.uint8)
+                                aligned_hdr = np.clip(np.round(aligned_hdr.astype(np.float32) + 2.00 * hf_al), 0, 255).astype(np.uint8)
 
                             blend_hdr = np.clip(
                                 np.round(f_act * aligned_hdr.astype(np.float32) + (1.0 - f_act) * curr_roi.astype(np.float32)),

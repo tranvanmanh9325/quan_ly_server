@@ -3533,10 +3533,8 @@ class VideoEditorService:
         yielded_count = 0
         dis_flow_temporal = cv2.DISOpticalFlow_create(cv2.DISOPTICAL_FLOW_PRESET_FAST)
 
-        title_glyph_bbox: Optional[Tuple[int, int, int, int]] = None
-
         def _yield_frame_with_temporal_blend(f_curr_out: np.ndarray, m_curr_mask: Optional[np.ndarray]) -> np.ndarray:
-            nonlocal prev_yielded_frame, yielded_count, title_glyph_bbox
+            nonlocal prev_yielded_frame, yielded_count
             yielded_count += 1
             if prev_yielded_frame is not None and m_curr_mask is not None and np.count_nonzero(m_curr_mask) > 0:
                 inner_m = (cv2.erode(m_curr_mask, np.ones((3, 3), np.uint8)) > 0)
@@ -3555,23 +3553,6 @@ class VideoEditorService:
                         if has_valid_title_roi:
                             ys, xs = np.where(m_curr_mask > 0)
                             if len(ys) > 0:
-                                if title_glyph_bbox is None:
-                                    title_glyph_bbox = (int(ys.min()), int(ys.max()), int(xs.min()), int(xs.max()))
-                                else:
-                                    title_glyph_bbox = (
-                                        min(title_glyph_bbox[0], int(ys.min())),
-                                        max(title_glyph_bbox[1], int(ys.max())),
-                                        min(title_glyph_bbox[2], int(xs.min())),
-                                        max(title_glyph_bbox[3], int(xs.max())),
-                                    )
-                                gy1, gy2, gx1, gx2 = title_glyph_bbox
-                                y1_p = max(0, gy1 - 7)
-                                y2_p = min(h_y, gy2 + 2)
-                                x1_p = max(0, gx1 - 3)
-                                x2_p = min(w_y, gx2 + 5)
-                                bbox_pad = np.zeros_like(m_curr_mask)
-                                bbox_pad[y1_p:y2_p, x1_p:x2_p] = 255
-
                                 bbox_m = np.zeros_like(m_curr_mask)
                                 bbox_m[ys.min():ys.max()+1, xs.min():xs.max()+1] = 255
                                 k35_c = cv2.getStructuringElement(cv2.MORPH_RECT, (35, 35))
@@ -3584,22 +3565,9 @@ class VideoEditorService:
                                 ref_c4 = max(e_ctx, 16.0)
                                 if e_inp > 1.05 * ref_c4:
                                     use_m = (m_curr_mask > 0)
-                                    blended_f = np.clip(np.round(0.72 * f_curr_out.astype(np.float32) + 0.28 * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)
+                                    b_w = 0.22 if e_inp > 1.15 * ref_c4 else 0.20
+                                    blended_f = np.clip(np.round((1.0 - b_w) * f_curr_out.astype(np.float32) + b_w * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)
                                     f_curr_out = np.where(use_m[:, :, np.newaxis], blended_f, f_curr_out)
-
-                                k3_t = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-                                k11_t = cv2.getStructuringElement(cv2.MORPH_RECT, (11, 11))
-                                b_ref_t = (cv2.dilate(bbox_pad, k11_t) > 0) & (cv2.dilate(bbox_pad, k3_t) == 0)
-                                if np.count_nonzero(b_ref_t) > 0:
-                                    lap_t = cv2.Laplacian(cv2.cvtColor(f_curr_out, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
-                                    var_in_t = float(np.var(lap_t[bbox_pad > 0]))
-                                    var_ctx_t = float(np.var(lap_t[b_ref_t]))
-                                    if var_ctx_t >= 15.0 and var_in_t < 0.72 * min(var_ctx_t, 1750.0):
-                                        inner_u = (cv2.erode(bbox_pad, np.ones((5, 5), np.uint8)) > 0)
-                                        blur_t = cv2.GaussianBlur(f_curr_out, (0, 0), 1.0)
-                                        hf_t = f_curr_out.astype(np.float32) - blur_t.astype(np.float32)
-                                        cand_t = np.clip(np.round(f_curr_out.astype(np.float32) + 0.85 * hf_t), 0, 255).astype(np.uint8)
-                                        f_curr_out = np.where(inner_u[:, :, np.newaxis], cand_t, f_curr_out)
                         else:
                             k25_c = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 25))
                             k9_c = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
@@ -3783,9 +3751,21 @@ class VideoEditorService:
                     if used_align and aligned_hdr is not None:
                         k3_b = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
                         k11_b = cv2.getStructuringElement(cv2.MORPH_RECT, (11, 11))
-                        b_ref_act = (cv2.dilate(tight_mask_header, k11_b) > 0) & (cv2.dilate(tight_mask_header, k3_b) == 0)
-                        if np.count_nonzero(b_ref_act) > 30:
-                            dc_shift = np.median(curr_roi[b_ref_act].astype(np.float32) - aligned_hdr[b_ref_act].astype(np.float32), axis=0)
+
+                        pad_c = 11
+                        y1_c = max(0, hy1 - pad_c)
+                        y2_c = min(h, hy2 + pad_c)
+                        x1_c = max(0, hx1 - pad_c)
+                        x2_c = min(w, hx2 + pad_c)
+                        collar_frame = frame[y1_c:y2_c, x1_c:x2_c]
+                        collar_m = np.zeros((y2_c - y1_c, x2_c - x1_c), dtype=np.uint8)
+                        collar_m[(hy1 - y1_c):(hy2 - y1_c), (hx1 - x1_c):(hx2 - x1_c)] = tight_mask_header
+                        b_ref_collar = (cv2.dilate(collar_m, k11_b) > 0) & (cv2.dilate(collar_m, k3_b) == 0)
+
+                        if np.count_nonzero(b_ref_collar) > 30:
+                            collar_al = np.zeros_like(collar_frame)
+                            collar_al[(hy1 - y1_c):(hy2 - y1_c), (hx1 - x1_c):(hx2 - x1_c)] = aligned_hdr
+                            dc_shift = np.median(collar_frame[b_ref_collar].astype(np.float32) - collar_al[b_ref_collar].astype(np.float32), axis=0)
                             dc_shift = np.clip(dc_shift, -5.0, 5.0)
                             aligned_hdr = np.clip(aligned_hdr.astype(np.float32) + dc_shift, 0, 255).astype(np.uint8)
                         elif np.count_nonzero(bg_mask) > 0:
@@ -3814,10 +3794,10 @@ class VideoEditorService:
                             blur_al = cv2.GaussianBlur(orig_aligned_hdr, (0, 0), 1.0)
                             hf_al = orig_aligned_hdr.astype(np.float32) - blur_al.astype(np.float32)
 
-                            lap_curr = cv2.Laplacian(cv2.cvtColor(curr_roi, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
-                            v_ctx = float(np.var(lap_curr[b_ref_act])) if np.count_nonzero(b_ref_act) > 0 else 0.0
+                            lap_collar = cv2.Laplacian(cv2.cvtColor(collar_frame, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
+                            v_ctx = float(np.var(lap_collar[b_ref_collar])) if np.count_nonzero(b_ref_collar) > 0 else 0.0
                             if v_ctx >= 400.0:
-                                aligned_hdr = np.clip(np.round(orig_aligned_hdr.astype(np.float32) + 1.15 * hf_al), 0, 255).astype(np.uint8)
+                                aligned_hdr = np.clip(np.round(orig_aligned_hdr.astype(np.float32) + 1.85 * hf_al), 0, 255).astype(np.uint8)
                             else:
                                 aligned_hdr = orig_aligned_hdr
 
@@ -3825,22 +3805,6 @@ class VideoEditorService:
                                 np.round(f_act * aligned_hdr.astype(np.float32) + (1.0 - f_act) * curr_roi.astype(np.float32)),
                                 0, 255
                             ).astype(np.uint8)
-
-                            # Adaptive second-stage unsharp: chỉ nâng gain=2.10 khi thiếu texture (F6, F34, F50)
-                            ys_a, xs_a = np.where(active_hdr_mask > 0)
-                            if len(ys_a) > 0:
-                                box_a = np.zeros_like(active_hdr_mask)
-                                box_a[ys_a.min():ys_a.max()+1, xs_a.min():xs_a.max()+1] = 255
-                                b_ref_a = (cv2.dilate(box_a, k11_b) > 0) & (cv2.dilate(box_a, k3_b) == 0)
-                                lap_b = cv2.Laplacian(cv2.cvtColor(blend_hdr, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
-                                var_in_b = float(np.var(lap_b[box_a > 0]))
-                                var_ctx_b = float(np.var(lap_b[b_ref_a])) if np.count_nonzero(b_ref_a) > 0 else 0.0
-                                if var_ctx_b >= 15.0 and var_in_b < 0.78 * var_ctx_b:
-                                    aligned_hdr_sharp = np.clip(np.round(orig_aligned_hdr.astype(np.float32) + 2.10 * hf_al), 0, 255).astype(np.uint8)
-                                    blend_hdr = np.clip(
-                                        np.round(f_act * aligned_hdr_sharp.astype(np.float32) + (1.0 - f_act) * curr_roi.astype(np.float32)),
-                                        0, 255
-                                    ).astype(np.uint8)
 
                             full_frame_mask[hy1:hy2, hx1:hx2] = active_hdr_mask
                         else:

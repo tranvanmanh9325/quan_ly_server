@@ -3533,8 +3533,10 @@ class VideoEditorService:
         yielded_count = 0
         dis_flow_temporal = cv2.DISOpticalFlow_create(cv2.DISOPTICAL_FLOW_PRESET_FAST)
 
+        title_glyph_bbox: Optional[Tuple[int, int, int, int]] = None
+
         def _yield_frame_with_temporal_blend(f_curr_out: np.ndarray, m_curr_mask: Optional[np.ndarray]) -> np.ndarray:
-            nonlocal prev_yielded_frame, yielded_count
+            nonlocal prev_yielded_frame, yielded_count, title_glyph_bbox
             yielded_count += 1
             if prev_yielded_frame is not None and m_curr_mask is not None and np.count_nonzero(m_curr_mask) > 0:
                 inner_m = (cv2.erode(m_curr_mask, np.ones((3, 3), np.uint8)) > 0)
@@ -3553,6 +3555,23 @@ class VideoEditorService:
                         if has_valid_title_roi:
                             ys, xs = np.where(m_curr_mask > 0)
                             if len(ys) > 0:
+                                if title_glyph_bbox is None:
+                                    title_glyph_bbox = (int(ys.min()), int(ys.max()), int(xs.min()), int(xs.max()))
+                                else:
+                                    title_glyph_bbox = (
+                                        min(title_glyph_bbox[0], int(ys.min())),
+                                        max(title_glyph_bbox[1], int(ys.max())),
+                                        min(title_glyph_bbox[2], int(xs.min())),
+                                        max(title_glyph_bbox[3], int(xs.max())),
+                                    )
+                                gy1, gy2, gx1, gx2 = title_glyph_bbox
+                                y1_p = max(0, gy1 - 7)
+                                y2_p = min(h_y, gy2 + 2)
+                                x1_p = max(0, gx1 - 3)
+                                x2_p = min(w_y, gx2 + 5)
+                                bbox_pad = np.zeros_like(m_curr_mask)
+                                bbox_pad[y1_p:y2_p, x1_p:x2_p] = 255
+
                                 bbox_m = np.zeros_like(m_curr_mask)
                                 bbox_m[ys.min():ys.max()+1, xs.min():xs.max()+1] = 255
                                 k35_c = cv2.getStructuringElement(cv2.MORPH_RECT, (35, 35))
@@ -3565,19 +3584,9 @@ class VideoEditorService:
                                 ref_c4 = max(e_ctx, 16.0)
                                 if e_inp > 1.05 * ref_c4:
                                     use_m = (m_curr_mask > 0)
-                                    blended_f = np.clip(np.round(0.75 * f_curr_out.astype(np.float32) + 0.25 * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)
+                                    blended_f = np.clip(np.round(0.72 * f_curr_out.astype(np.float32) + 0.28 * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)
                                     f_curr_out = np.where(use_m[:, :, np.newaxis], blended_f, f_curr_out)
 
-                                    k9_p = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
-                                    bbox_pad = bbox_m if ((ys.max() - ys.min()) >= 32) else cv2.dilate(bbox_m, k9_p)
-                                    diff_sq_new = (f_curr_out.astype(np.float32) - w_prev.astype(np.float32)) ** 2
-                                    e_inp_new = float(np.mean(diff_sq_new[bbox_pad > 0]))
-                                    if e_inp_new > 1.12 * ref_c4:
-                                        blended_box = np.clip(np.round(0.88 * f_curr_out.astype(np.float32) + 0.12 * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)
-                                        f_curr_out = np.where(bbox_pad[:, :, np.newaxis] > 0, blended_box, f_curr_out)
-
-                                k9_p = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
-                                bbox_pad = bbox_m if ((ys.max() - ys.min()) >= 32) else cv2.dilate(bbox_m, k9_p)
                                 k3_t = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
                                 k11_t = cv2.getStructuringElement(cv2.MORPH_RECT, (11, 11))
                                 b_ref_t = (cv2.dilate(bbox_pad, k11_t) > 0) & (cv2.dilate(bbox_pad, k3_t) == 0)

@@ -3562,10 +3562,9 @@ class VideoEditorService:
                                 ctx_c4 = (d35_c > 0) & (d15_c == 0)
                                 e_inp = float(np.mean(diff_sq[bbox_m > 0]))
                                 e_ctx = float(np.mean(diff_sq[ctx_c4])) if np.count_nonzero(ctx_c4) > 0 else 16.0
-                                if e_inp > 0.98 * max(e_ctx, 16.0):
-                                    inner_limit = (cv2.erode(bbox_m, np.ones((5, 5), np.uint8)) > 0)
-                                    use_m = inner_limit if np.count_nonzero(inner_limit) > 0 else (m_curr_mask > 0)
-                                    blended_f = np.clip(np.round(0.75 * f_curr_out.astype(np.float32) + 0.25 * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)
+                                if e_inp > 1.12 * max(e_ctx, 16.0):
+                                    use_m = (m_curr_mask > 0)
+                                    blended_f = np.clip(np.round(0.80 * f_curr_out.astype(np.float32) + 0.20 * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)
                                     f_curr_out = np.where(use_m[:, :, np.newaxis], blended_f, f_curr_out)
                         else:
                             k25_c = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 25))
@@ -3775,31 +3774,19 @@ class VideoEditorService:
                             raw_dil = cv2.dilate(raw_text_hit.astype(np.uint8) * 255, np.ones((3, 3), np.uint8))
                             active_hdr_mask = raw_dil if np.count_nonzero(e5_t) == 0 else cv2.bitwise_and(raw_dil, e5_t)
                             f_act = cv2.GaussianBlur(active_hdr_mask.astype(np.float32) / 255.0, (3, 3), 0.8)[:, :, np.newaxis]
+
+                            # Pre-blend unsharp trực tiếp trên aligned_hdr để bù suy hao warpAffine
+                            lap_curr = cv2.Laplacian(cv2.cvtColor(curr_roi, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
+                            v_ctx = float(np.var(lap_curr[b_ref_act])) if np.count_nonzero(b_ref_act) > 0 else 0.0
+                            if v_ctx >= 400.0:
+                                blur_al = cv2.GaussianBlur(aligned_hdr, (0, 0), 1.0)
+                                hf_al = aligned_hdr.astype(np.float32) - blur_al.astype(np.float32)
+                                aligned_hdr = np.clip(np.round(aligned_hdr.astype(np.float32) + 1.15 * hf_al), 0, 255).astype(np.uint8)
+
                             blend_hdr = np.clip(
                                 np.round(f_act * aligned_hdr.astype(np.float32) + (1.0 - f_act) * curr_roi.astype(np.float32)),
                                 0, 255
                             ).astype(np.uint8)
-
-                            # Bù texture unsharp trực tiếp trên blend_hdr trong inner_act_box (cách biên 3px)
-                            inner_act_box = (cv2.erode(t_mask, np.ones((7, 7), np.uint8)) > 0)
-                            if np.count_nonzero(inner_act_box) > 0:
-                                lap_curr = cv2.Laplacian(cv2.cvtColor(curr_roi, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
-                                v_ctx = float(np.var(lap_curr[b_ref_act])) if np.count_nonzero(b_ref_act) > 0 else 0.0
-
-                                lap_bl = cv2.Laplacian(cv2.cvtColor(blend_hdr, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
-                                v_blend = float(np.var(lap_bl[t_mask > 0]))
-
-                                if v_ctx >= 400.0 and v_blend < 1.35 * min(v_ctx, 2400.0):
-                                    base_b = blend_hdr.astype(np.float32)
-                                    blur_b = cv2.GaussianBlur(base_b, (0, 0), 1.5)
-                                    hf_b = base_b - blur_b
-                                    for g_b in (0.45, 0.80, 1.15, 1.50):
-                                        cand_b = np.clip(np.round(base_b + g_b * hf_b), 0, 255).astype(np.uint8)
-                                        cand_hdr = np.where(inner_act_box[:, :, np.newaxis], cand_b, blend_hdr)
-                                        lap_cb = cv2.Laplacian(cv2.cvtColor(cand_hdr, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
-                                        blend_hdr = cand_hdr
-                                        if float(np.var(lap_cb[t_mask > 0])) >= 1.35 * min(v_ctx, 2400.0):
-                                            break
 
                             full_frame_mask[hy1:hy2, hx1:hx2] = active_hdr_mask
                         else:

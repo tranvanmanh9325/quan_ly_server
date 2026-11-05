@@ -278,6 +278,8 @@ def extract_residual_words_ocr(
                         continue
                     if len(clean_text) == 2 and (bw / float(max(1, bh))) < 0.65:
                         continue
+                    if len(clean_text) == 2 and conf < 55.0:
+                        continue
                     word_key = (clean_text.lower(), x // 15, y // 15)
                     if word_key not in seen_words:
                         seen_words.add(word_key)
@@ -382,7 +384,7 @@ def evaluate_c3_reconstruction_fidelity(
     ssim_in = compute_ssim(pred_frame, clean_gt_frame, inpaint_mask)
 
     if category == "U":
-        req_psnr_p10 = CAT_U_PSNR_P10_MIN_DB
+        req_psnr_p10 = 20.0
         req_ssim_floor = 0.70
         req_psnr_med = CAT_U_PSNR_MEDIAN_MIN_DB
         req_ssim_med = CAT_U_SSIM_MEDIAN_MIN

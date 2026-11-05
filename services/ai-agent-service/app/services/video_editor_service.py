@@ -3562,9 +3562,13 @@ class VideoEditorService:
                                 ctx_c4 = (d35_c > 0) & (d15_c == 0)
                                 e_inp = float(np.mean(diff_sq[bbox_m > 0]))
                                 e_ctx = float(np.mean(diff_sq[ctx_c4])) if np.count_nonzero(ctx_c4) > 0 else 16.0
-                                if e_inp > 1.08 * max(e_ctx, 16.0):
-                                    use_m = (m_curr_mask > 0)
-                                    blended_f = np.clip(np.round(0.80 * f_curr_out.astype(np.float32) + 0.20 * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)
+                                if e_inp > 1.05 * max(e_ctx, 16.0):
+                                    dil_use = cv2.dilate(m_curr_mask, np.ones((5, 5), np.uint8))
+                                    inner_limit = (cv2.erode(bbox_m, np.ones((7, 7), np.uint8)) > 0)
+                                    use_m = (dil_use > 0) & inner_limit
+                                    if np.count_nonzero(use_m) == 0:
+                                        use_m = (m_curr_mask > 0)
+                                    blended_f = np.clip(np.round(0.70 * f_curr_out.astype(np.float32) + 0.30 * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)
                                     f_curr_out = np.where(use_m[:, :, np.newaxis], blended_f, f_curr_out)
                         else:
                             k25_c = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 25))
@@ -3643,7 +3647,30 @@ class VideoEditorService:
                     full_frame_mask = kf_mask
                 else:
                     if np.count_nonzero(tight_mask_header) > 0:
-                        full_frame_mask[hy1:hy2, hx1:hx2] = mask_blend_hdr
+                        if has_valid_title_roi:
+                            curr_roi_kf = frame[hy1:hy2, hx1:hx2]
+                            curr_gray_kf = cv2.cvtColor(curr_roi_kf, cv2.COLOR_BGR2GRAY)
+                            if float(np.mean(curr_gray_kf)) >= 160.0:
+                                chroma_kf = np.max(curr_roi_kf, axis=2).astype(np.int16) - np.min(curr_roi_kf, axis=2).astype(np.int16)
+                                is_chromatic_kf = float(np.percentile(chroma_kf[tight_mask_header > 0], 85)) > 25.0
+                                if is_chromatic_kf:
+                                    raw_text_kf = (tight_mask_header > 0) & (chroma_kf > 15)
+                                    rys_k, rxs_k = np.where(raw_text_kf)
+                                    if len(rys_k) > 0:
+                                        tight_box_k = np.zeros_like(tight_mask_header)
+                                        tight_box_k[rys_k.min():rys_k.max()+1, rxs_k.min():rxs_k.max()+1] = 255
+                                        e5_k = cv2.erode(tight_box_k, cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5)))
+                                        raw_dil_k = cv2.dilate(raw_text_kf.astype(np.uint8) * 255, np.ones((3, 3), np.uint8))
+                                        act_kf = raw_dil_k if np.count_nonzero(e5_k) == 0 else cv2.bitwise_and(raw_dil_k, e5_k)
+                                        full_frame_mask[hy1:hy2, hx1:hx2] = act_kf
+                                    else:
+                                        full_frame_mask[hy1:hy2, hx1:hx2] = mask_blend_hdr
+                                else:
+                                    full_frame_mask[hy1:hy2, hx1:hx2] = mask_blend_hdr
+                            else:
+                                full_frame_mask[hy1:hy2, hx1:hx2] = mask_blend_hdr
+                        else:
+                            full_frame_mask[hy1:hy2, hx1:hx2] = mask_blend_hdr
 
                     # Bổ sung Subtitle mask trên Keyframe để composite đầy đủ cả header và subtitle
                     full_m_kf, sub_info_kf = self._build_inpaint_mask_for_frame(
@@ -3762,7 +3789,12 @@ class VideoEditorService:
                                 raw_text_hit = (t_mask > 0) & (chroma_curr > 15)
                             else:
                                 raw_text_hit = (t_mask > 0) & ((chroma_curr > 18) | (diff_al > 42))
-                            e5_t = cv2.erode(t_mask, cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5)))
+                            rys, rxs = np.where(raw_text_hit)
+                            tight_hit_box = np.zeros_like(t_mask)
+                            if len(rys) > 0:
+                                tight_hit_box[rys.min():rys.max()+1, rxs.min():rxs.max()+1] = 255
+
+                            e5_t = cv2.erode(tight_hit_box, cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5)))
                             raw_dil = cv2.dilate(raw_text_hit.astype(np.uint8) * 255, np.ones((3, 3), np.uint8))
                             active_hdr_mask = raw_dil if np.count_nonzero(e5_t) == 0 else cv2.bitwise_and(raw_dil, e5_t)
                             f_act = cv2.GaussianBlur(active_hdr_mask.astype(np.float32) / 255.0, (3, 3), 0.8)[:, :, np.newaxis]
@@ -3771,31 +3803,29 @@ class VideoEditorService:
                                 0, 255
                             ).astype(np.uint8)
 
-                            # Bù texture unsharp trực tiếp trên blend_hdr trong inner_act_box (cách biên 2px)
-                            ays, axs = np.where(active_hdr_mask > 0)
-                            if len(ays) > 0:
-                                bbox_act = np.zeros_like(active_hdr_mask)
-                                bbox_act[ays.min():ays.max()+1, axs.min():axs.max()+1] = 255
-                                inner_act_box = (cv2.erode(bbox_act, np.ones((5, 5), np.uint8)) > 0)
+                            # Bù texture unsharp trực tiếp trên blend_hdr trong inner_act_box (cách biên 3px)
+                            inner_act_box = (cv2.erode(tight_hit_box, np.ones((7, 7), np.uint8)) > 0)
+                            if np.count_nonzero(inner_act_box) > 0:
                                 k3_b = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
                                 k11_b = cv2.getStructuringElement(cv2.MORPH_RECT, (11, 11))
-                                b_ref_act = (cv2.dilate(bbox_act, k11_b) > 0) & (cv2.dilate(bbox_act, k3_b) == 0)
+                                b_ref_act = (cv2.dilate(tight_hit_box, k11_b) > 0) & (cv2.dilate(tight_hit_box, k3_b) == 0)
                                 lap_curr = cv2.Laplacian(cv2.cvtColor(curr_roi, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
                                 v_ctx = float(np.var(lap_curr[b_ref_act])) if np.count_nonzero(b_ref_act) > 0 else 0.0
 
                                 lap_bl = cv2.Laplacian(cv2.cvtColor(blend_hdr, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
-                                v_blend = float(np.var(lap_bl[bbox_act > 0])) if np.count_nonzero(bbox_act) > 0 else 0.0
+                                v_blend = float(np.var(lap_bl[tight_hit_box > 0]))
 
-                                if v_ctx >= 400.0 and v_blend < 1.15 * min(v_ctx, 2200.0):
+                                target_v = max(v_ctx, 1600.0)
+                                if v_blend < 1.35 * min(target_v, 2600.0):
                                     base_b = blend_hdr.astype(np.float32)
                                     blur_b = cv2.GaussianBlur(base_b, (0, 0), 1.0)
                                     hf_b = base_b - blur_b
-                                    for g_b in (0.35, 0.65, 0.95):
+                                    for g_b in (0.35, 0.65, 0.95, 1.30, 1.65, 2.00, 2.40):
                                         cand_b = np.clip(np.round(base_b + g_b * hf_b), 0, 255).astype(np.uint8)
                                         cand_hdr = np.where(inner_act_box[:, :, np.newaxis], cand_b, blend_hdr)
                                         lap_cb = cv2.Laplacian(cv2.cvtColor(cand_hdr, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
                                         blend_hdr = cand_hdr
-                                        if float(np.var(lap_cb[bbox_act > 0])) >= 1.15 * min(v_ctx, 2200.0):
+                                        if float(np.var(lap_cb[tight_hit_box > 0])) >= 1.35 * min(target_v, 2600.0):
                                             break
 
                             full_frame_mask[hy1:hy2, hx1:hx2] = active_hdr_mask

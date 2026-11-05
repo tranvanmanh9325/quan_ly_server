@@ -3577,7 +3577,11 @@ class VideoEditorService:
                                     f_curr_out = np.where(use_m[:, :, np.newaxis], blended_f, f_curr_out)
 
                                 box_hdr = np.zeros_like(m_curr_mask)
-                                box_hdr[hy1:hy2, hx1:hx2] = 255
+                                yb1 = max(0, int(ys.min()) - 6)
+                                yb2 = min(h_y, int(ys.max()) + 1 + 2)
+                                xb1 = max(0, int(xs.min()) - 4)
+                                xb2 = min(w_y, int(xs.max()) + 1 + 4)
+                                box_hdr[yb1:yb2, xb1:xb2] = 255
                                 k11_t = cv2.getStructuringElement(cv2.MORPH_RECT, (11, 11))
                                 k3_t = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
                                 b_ref_c6 = (cv2.dilate(box_hdr, k11_t) > 0) & (cv2.dilate(box_hdr, k3_t) == 0)

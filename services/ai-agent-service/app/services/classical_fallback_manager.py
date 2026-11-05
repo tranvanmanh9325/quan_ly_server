@@ -229,7 +229,7 @@ class ClassicalFallbackManager:
         mean_lum = float(np.mean(gray_roi))
         is_document = (mean_lum >= 140.0) and (float(np.std(gray_roi)) < 65.0)
 
-        if not is_document and float(cv2.Laplacian(gray_roi, cv2.CV_32F).var()) >= 800.0:
+        if not is_document and float(cv2.Laplacian(gray_roi, cv2.CV_32F).var()) >= 45.0:
             try:
                 # Primary: Exemplar Micro-Lattice Texture Synthesis with Expanded Spatial Context
                 result = self.synthesize_periodic_exemplar_texture(
@@ -378,7 +378,7 @@ class ClassicalFallbackManager:
                                 best_var = v
                                 best_y, best_x = y, x
 
-            if best_var >= 1200.0:
+            if best_var >= 50.0:
                 best_patch = full_frame[best_y:best_y+H_E, best_x:best_x+W_E].astype(np.float32)
                 phase_offset_y = best_y - hy1
                 phase_offset_x = best_x - hx1
@@ -398,7 +398,7 @@ class ClassicalFallbackManager:
                                 best_var = v
                                 best_y, best_x = y, x
 
-            if best_var < 1200.0:
+            if best_var < 50.0:
                 H_E, W_E = 16, 24
                 if h > H_E and w > W_E:
                     for y in range(0, h - H_E, 2):
@@ -409,13 +409,13 @@ class ClassicalFallbackManager:
                                     best_var = v
                                     best_y, best_x = y, x
 
-            if best_var >= 1200.0:
+            if best_var >= 50.0:
                 best_patch = roi_img[best_y:best_y+H_E, best_x:best_x+W_E].astype(np.float32)
                 phase_offset_y = best_y
                 phase_offset_x = best_x
 
         # 3. High-Frequency Periodic Synthesis
-        if best_patch is not None and best_var >= 1200.0:
+        if best_patch is not None and best_var >= 50.0:
             # Scale-separation: Extract micro-perforations detail without low-frequency illumination
             k_blur = (15, 15) if (H_E >= 20 and W_E >= 20) else (7, 7)
             patch_base = cv2.GaussianBlur(best_patch, k_blur, 3.0)

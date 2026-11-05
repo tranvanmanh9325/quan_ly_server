@@ -3553,10 +3553,10 @@ class VideoEditorService:
                         if (e_inp > 1.15 * max(e_ctx, 16.0) and yielded_count <= 2):
                             blended_f = np.clip(np.round(0.88 * f_curr_out.astype(np.float32) + 0.12 * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)
                             f_curr_out = np.where(inner_m[:, :, np.newaxis], blended_f, f_curr_out)
-                        elif has_valid_title_roi and e_inp > 1.18 * max(e_ctx, 16.0):
-                            inner_m_safe = (cv2.erode(m_curr_mask, np.ones((5, 5), np.uint8)) > 0)
-                            blended_f = np.clip(np.round(0.96 * f_curr_out.astype(np.float32) + 0.04 * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)
-                            f_curr_out = np.where(inner_m_safe[:, :, np.newaxis], blended_f, f_curr_out)
+                        elif has_valid_title_roi and e_inp > 1.15 * max(e_ctx, 16.0):
+                            use_m = inner_m if np.count_nonzero(inner_m) > 0 else (m_curr_mask > 0)
+                            blended_f = np.clip(np.round(0.95 * f_curr_out.astype(np.float32) + 0.05 * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)
+                            f_curr_out = np.where(use_m[:, :, np.newaxis], blended_f, f_curr_out)
                         elif not has_valid_title_roi and e_inp > 1.30 * max(e_ctx, 35.0):
                             blended_f = np.clip(np.round(0.88 * f_curr_out.astype(np.float32) + 0.12 * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)
                             f_curr_out = np.where(inner_m[:, :, np.newaxis], blended_f, f_curr_out)
@@ -3765,7 +3765,7 @@ class VideoEditorService:
                                     if var_ctx_b0 >= 15.0 and var_inp_b0 < 0.90 * target_var_b:
                                         blur_al = cv2.GaussianBlur(aligned_hdr, (0, 0), 1.0)
                                         hf_al = aligned_hdr.astype(np.float32) - blur_al.astype(np.float32)
-                                        for g_al in (0.6, 1.0, 1.4, 1.8):
+                                        for g_al in (1.0, 1.4, 1.8):
                                             al_sharp = np.clip(np.round(aligned_hdr.astype(np.float32) + g_al * hf_al), 0, 255).astype(np.uint8)
                                             blend_try = np.clip(
                                                 np.round(f_act * al_sharp.astype(np.float32) + (1.0 - f_act) * curr_roi.astype(np.float32)),
@@ -3773,7 +3773,7 @@ class VideoEditorService:
                                             ).astype(np.uint8)
                                             lap_try = cv2.Laplacian(cv2.cvtColor(blend_try, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
                                             blend_hdr = blend_try
-                                            if float(np.var(lap_try[t_mask > 0])) >= 1.15 * target_var_b:
+                                            if float(np.var(lap_try[t_mask > 0])) >= 1.40 * target_var_b:
                                                 break
                             full_frame_mask[hy1:hy2, hx1:hx2] = active_hdr_mask
                         else:

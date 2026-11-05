@@ -3575,25 +3575,6 @@ class VideoEditorService:
                                         b_w = 0.20
                                     blended_f = np.clip(np.round((1.0 - b_w) * f_curr_out.astype(np.float32) + b_w * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)
                                     f_curr_out = np.where(use_m[:, :, np.newaxis], blended_f, f_curr_out)
-
-                                box_hdr = np.zeros_like(m_curr_mask)
-                                yb1 = max(0, int(ys.min()) - 6)
-                                yb2 = min(h_y, int(ys.max()) + 1 + 2)
-                                xb1 = max(0, int(xs.min()) - 4)
-                                xb2 = min(w_y, int(xs.max()) + 1 + 4)
-                                box_hdr[yb1:yb2, xb1:xb2] = 255
-                                k11_t = cv2.getStructuringElement(cv2.MORPH_RECT, (11, 11))
-                                k3_t = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-                                b_ref_c6 = (cv2.dilate(box_hdr, k11_t) > 0) & (cv2.dilate(box_hdr, k3_t) == 0)
-                                lap_post = cv2.Laplacian(cv2.cvtColor(f_curr_out, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
-                                v_inp_box = float(np.var(lap_post[box_hdr > 0])) if np.count_nonzero(box_hdr) > 0 else 0.0
-                                v_ctx_box = float(np.var(lap_post[b_ref_c6])) if np.count_nonzero(b_ref_c6) > 0 else 0.0
-                                if e_inp <= 520.0 and v_ctx_box >= 750.0 and v_inp_box < 1300.0 and v_inp_box < 0.78 * v_ctx_box:
-                                    g_post = 0.95 if (v_inp_box < 600.0 or (v_inp_box < 815.0 and v_ctx_box >= 2200.0)) else 0.68
-                                    blur_post = cv2.GaussianBlur(f_curr_out, (0, 0), 1.0)
-                                    hf_post = f_curr_out.astype(np.float32) - blur_post.astype(np.float32)
-                                    sharp_post = np.clip(np.round(f_curr_out.astype(np.float32) + g_post * hf_post), 0, 255).astype(np.uint8)
-                                    f_curr_out = np.where((m_curr_mask > 0)[:, :, np.newaxis], sharp_post, f_curr_out)
                         else:
                             k25_c = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 25))
                             k9_c = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
@@ -3829,8 +3810,9 @@ class VideoEditorService:
                             v_ctx = float(np.var(lap_collar[b_ref_collar])) if np.count_nonzero(b_ref_collar) > 0 else 0.0
                             lap_b = cv2.Laplacian(cv2.cvtColor(blend_hdr, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
                             var_in_act = float(np.var(lap_b[active_hdr_mask > 0])) if np.count_nonzero(active_hdr_mask) > 0 else 0.0
-                            if v_ctx >= 2100.0 and var_in_act < 1750.0:
-                                aligned_hdr = np.clip(np.round(orig_aligned_hdr.astype(np.float32) + 2.00 * hf_al), 0, 255).astype(np.uint8)
+                            if v_ctx >= 750.0 and var_in_act < 1750.0:
+                                g_al = 2.85 if var_in_act < 900.0 else 2.10
+                                aligned_hdr = np.clip(np.round(orig_aligned_hdr.astype(np.float32) + g_al * hf_al), 0, 255).astype(np.uint8)
                                 blend_hdr = np.clip(
                                     np.round(f_act * aligned_hdr.astype(np.float32) + (1.0 - f_act) * curr_roi.astype(np.float32)),
                                     0, 255

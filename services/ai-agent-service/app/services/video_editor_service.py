@@ -3153,7 +3153,7 @@ class VideoEditorService:
                         ref_f, frame, src_mask=ref_m_dil, dst_mask=orig_mask_dil
                     )
                     if M is not None and conf >= 0.15:
-                        warped_ref = cv2.warpAffine(ref_f, M, (w, h), flags=cv2.INTER_LANCZOS4, borderMode=cv2.BORDER_REFLECT)
+                        warped_ref = cv2.warpAffine(ref_f, M, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT)
                         ref_m_u8 = cv2.dilate(ref_m_dil, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))
                         warped_m = cv2.warpAffine(
                             ref_m_u8, M, (w, h),
@@ -3178,7 +3178,7 @@ class VideoEditorService:
                 if scored_refs:
                     max_var = max(r[1] for r in scored_refs)
                     sharp_refs = [r for r in scored_refs if r[1] >= max(15.0, 0.70 * max_var)]
-                    chosen = min(sharp_refs, key=lambda x: x[0] + 0.05 * abs(x[4] - frame_idx)) if sharp_refs else min(scored_refs, key=lambda x: x[0] + 0.05 * abs(x[4] - frame_idx))
+                    chosen = min(sharp_refs, key=lambda x: x[0]) if sharp_refs else min(scored_refs, key=lambda x: x[0])
                     best_ring_mae, best_var, best_warped, best_unocc, best_k = chosen
                     out_f[best_unocc] = best_warped[best_unocc]
                     applied_kf_mask[best_unocc] = 255
@@ -3491,9 +3491,9 @@ class VideoEditorService:
             roi_ref = ref_frame[hy1:hy2, hx1:hx2] if ref_frame is not None else None
             is_bright_roi = (float(np.mean(cv2.cvtColor(roi_ref, cv2.COLOR_BGR2GRAY))) >= 160.0) if (roi_ref is not None and roi_ref.size > 0) else False
             if is_bright_roi:
-                m_blend = cv2.dilate(t_mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)))
+                m_blend = t_mask.copy()
                 f_hdr = cv2.GaussianBlur(m_blend.astype(np.float32) / 255.0, (5, 5), 1.2)[:, :, np.newaxis]
-                inner_core_t = (cv2.erode(t_mask, np.ones((3, 3), np.uint8)) > 0).astype(np.float32)[:, :, np.newaxis]
+                inner_core_t = (cv2.erode(t_mask, np.ones((5, 5), np.uint8)) > 0).astype(np.float32)[:, :, np.newaxis]
                 f_hdr = np.maximum(f_hdr, inner_core_t)
             else:
                 m_blend = cv2.dilate(t_mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k_hdr_sz, k_hdr_sz)))
@@ -3532,10 +3532,54 @@ class VideoEditorService:
                     my_p = gy_p + flow_p[:, :, 1]
                     w_prev = cv2.remap(prev_yielded_frame, mx_p, my_p, interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT)
                     diff_f = np.mean(np.abs(f_curr_out.astype(np.float32) - w_prev.astype(np.float32)), axis=2)
-                    valid_blend = inner_m & (diff_f <= 35.0)
-                    if np.count_nonzero(valid_blend) > 0:
-                        blended_f = np.clip(np.round(0.80 * f_curr_out.astype(np.float32) + 0.20 * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)
-                        f_curr_out = np.where(valid_blend[:, :, np.newaxis], blended_f, f_curr_out)
+                    if float(np.mean(diff_f)) <= 30.0:
+                        diff_sq = (f_curr_out.astype(np.float32) - w_prev.astype(np.float32)) ** 2
+                        k35_c = cv2.getStructuringElement(cv2.MORPH_RECT, (35, 35))
+                        k15_c = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 15))
+                        d35_c = cv2.dilate(m_curr_mask, k35_c)
+                        d15_c = cv2.dilate(m_curr_mask, k15_c)
+                        ctx_c4 = (d35_c > 0) & (d15_c == 0)
+                        e_inp = float(np.mean(diff_sq[inner_m])) if np.count_nonzero(inner_m) > 0 else 0.0
+                        e_ctx = float(np.mean(diff_sq[ctx_c4])) if np.count_nonzero(ctx_c4) > 0 else 16.0
+                        if e_inp > 1.05 * max(e_ctx, 16.0):
+                            blended_f = np.clip(np.round(0.80 * f_curr_out.astype(np.float32) + 0.20 * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)
+                            f_curr_out = np.where(inner_m[:, :, np.newaxis], blended_f, f_curr_out)
+
+            if m_curr_mask is not None and np.count_nonzero(m_curr_mask) > 0:
+                inner_m = (cv2.erode(m_curr_mask, np.ones((3, 3), np.uint8)) > 0)
+                k3_s = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+                k11_s = cv2.getStructuringElement(cv2.MORPH_RECT, (11, 11))
+                d3_s = cv2.dilate(m_curr_mask, k3_s)
+                e3_s = cv2.erode(m_curr_mask, k3_s)
+                d11_s = cv2.dilate(m_curr_mask, k11_s)
+                b_seam_s = (d3_s > 0) & (e3_s == 0)
+                b_ref_s = (d11_s > 0) & (d3_s == 0)
+                if np.count_nonzero(b_seam_s) > 0 and np.count_nonzero(b_ref_s) > 0:
+                    gray_tmp = cv2.cvtColor(f_curr_out, cv2.COLOR_BGR2GRAY)
+                    gx_p = cv2.Sobel(gray_tmp, cv2.CV_32F, 1, 0, ksize=3)
+                    gy_p = cv2.Sobel(gray_tmp, cv2.CV_32F, 0, 1, ksize=3)
+                    grad_p = np.sqrt(gx_p * gx_p + gy_p * gy_p)
+                    mean_seam_p = float(np.mean(grad_p[b_seam_s]))
+                    mean_ref_p = float(np.mean(grad_p[b_ref_s]))
+                    if mean_seam_p > 8.0 and mean_seam_p > 1.15 * mean_ref_p:
+                        seam_smoothed = cv2.GaussianBlur(f_curr_out, (3, 3), 0.8)
+                        f_curr_out = np.where(b_seam_s[:, :, np.newaxis], seam_smoothed, f_curr_out)
+
+                if np.count_nonzero(inner_m) > 0 and np.count_nonzero(b_ref_s) > 0:
+                    gray_out = cv2.cvtColor(f_curr_out, cv2.COLOR_BGR2GRAY)
+                    lap_out = cv2.Laplacian(gray_out, cv2.CV_64F)
+                    var_inp_m = float(np.var(lap_out[m_curr_mask > 0]))
+                    var_ctx_m = float(np.var(lap_out[b_ref_s]))
+                    if var_ctx_m >= 15.0 and var_inp_m < 0.80 * var_ctx_m:
+                        blur_m = cv2.GaussianBlur(f_curr_out, (0, 0), 0.9)
+                        hf_m = f_curr_out.astype(np.float32) - blur_m.astype(np.float32)
+                        for g_try in (0.35, 0.65, 0.95, 1.25):
+                            cand_m = np.clip(np.round(f_curr_out.astype(np.float32) + g_try * hf_m), 0, 255).astype(np.uint8)
+                            lap_c = cv2.Laplacian(cv2.cvtColor(cand_m, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
+                            if float(np.var(lap_c[m_curr_mask > 0])) >= 0.90 * min(var_ctx_m, 2600.0):
+                                break
+                        f_curr_out = np.where(inner_m[:, :, np.newaxis], cand_m, f_curr_out)
+
             prev_yielded_frame = f_curr_out.copy()
             return f_curr_out
 
@@ -3567,24 +3611,6 @@ class VideoEditorService:
                 if branch_counters is not None:
                     branch_counters["keyframe_exact"] = branch_counters.get("keyframe_exact", 0) + 1
                 inpaint_kf = cleaned_keyframes[frame_idx]
-                if inpaint_kf is not None and np.count_nonzero(tight_mask_header) > 0 and has_valid_title_roi:
-                    inner_hdr_kf = (cv2.erode(tight_mask_header, np.ones((3, 3), np.uint8)) > 0)
-                    b_ref_kf = (cv2.dilate(tight_mask_header, np.ones((11, 11), np.uint8)) > 0) & (cv2.dilate(tight_mask_header, np.ones((3, 3), np.uint8)) == 0)
-                    curr_gray_roi = cv2.cvtColor(frame[hy1:hy2, hx1:hx2], cv2.COLOR_BGR2GRAY)
-                    var_ctx_ring = float(np.var(curr_gray_roi[b_ref_kf])) if np.count_nonzero(b_ref_kf) > 0 else 0.0
-                    if np.count_nonzero(inner_hdr_kf) > 0 and var_ctx_ring >= 15.0:
-                        kf_hdr = inpaint_kf[hy1:hy2, hx1:hx2]
-                        lap_kf = cv2.Laplacian(cv2.cvtColor(kf_hdr, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
-                        var_inpaint = float(np.var(lap_kf[inner_hdr_kf]))
-                        if var_inpaint < 0.95 * var_ctx_ring:
-                            blur_k = cv2.GaussianBlur(kf_hdr, (0, 0), 0.9)
-                            high_freq = kf_hdr.astype(np.float32) - blur_k.astype(np.float32)
-                            for g_try in (0.45, 0.75, 1.05, 1.35):
-                                cand_k = np.clip(np.round(kf_hdr.astype(np.float32) + g_try * high_freq), 0, 255).astype(np.uint8)
-                                lap_cand = cv2.Laplacian(cv2.cvtColor(cand_k, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
-                                if float(np.var(lap_cand[inner_hdr_kf])) >= 1.10 * min(var_ctx_ring, 2600.0):
-                                    break
-                            inpaint_kf[hy1:hy2, hx1:hx2] = np.where(inner_hdr_kf[:, :, np.newaxis], cand_k, kf_hdr)
                 kf_mask = cleaned_keyframes.get_mask(frame_idx) if hasattr(cleaned_keyframes, "get_mask") else None
                 if kf_mask is not None and np.count_nonzero(kf_mask) > 0:
                     full_frame_mask = kf_mask
@@ -3643,7 +3669,7 @@ class VideoEditorService:
                                 )
                                 motion_cache_frame[cand_k] = (M_cam, conf_cam)
                             if M_cam is not None:
-                                warped_kf = cv2.warpAffine(kf_full, M_cam, (w, h), flags=cv2.INTER_LANCZOS4, borderMode=cv2.BORDER_REFLECT)
+                                warped_kf = cv2.warpAffine(kf_full, M_cam, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT)
                                 ref_clean_roi = warped_kf[hy1:hy2, hx1:hx2]
                                 if np.count_nonzero(bg_mask) > 0:
                                     diff_bg = float(np.mean(cv2.absdiff(curr_roi, ref_clean_roi)[bg_mask]))
@@ -3675,7 +3701,7 @@ class VideoEditorService:
                                 M_cam, _ = VideoEditorService._estimate_bg_motion_matrix(kf_full, frame, src_mask=None, dst_mask=full_frame_mask)
                                 motion_cache_frame[best_k] = (M_cam, 0.0)
                             if M_cam is not None:
-                                warped_kf_hdr = cv2.warpAffine(kf_full, M_cam, (w, h), flags=cv2.INTER_LANCZOS4, borderMode=cv2.BORDER_REFLECT)
+                                warped_kf_hdr = cv2.warpAffine(kf_full, M_cam, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT)
                                 ref_roi = warped_kf_hdr[hy1:hy2, hx1:hx2]
                             else:
                                 ref_roi = kf_full[hy1:hy2, hx1:hx2]
@@ -3698,22 +3724,6 @@ class VideoEditorService:
                             dc_shift = np.median(curr_roi[bg_mask].astype(np.float32) - aligned_hdr[bg_mask].astype(np.float32), axis=0)
                             dc_shift = np.clip(dc_shift, -5.0, 5.0)
                             aligned_hdr = np.clip(aligned_hdr.astype(np.float32) + dc_shift, 0, 255).astype(np.uint8)
-
-                        inner_hdr = (cv2.erode(tight_mask_header, np.ones((3, 3), np.uint8)) > 0)
-                        b_ref_hdr = (cv2.dilate(tight_mask_header, np.ones((11, 11), np.uint8)) > 0) & (cv2.dilate(tight_mask_header, np.ones((3, 3), np.uint8)) == 0)
-                        var_ctx_ring = float(np.var(curr_gray_roi[b_ref_hdr])) if np.count_nonzero(b_ref_hdr) > 0 else 0.0
-                        if np.count_nonzero(inner_hdr) > 0 and var_ctx_ring >= 15.0:
-                            lap_al = cv2.Laplacian(cv2.cvtColor(aligned_hdr, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
-                            var_inpaint = float(np.var(lap_al[inner_hdr]))
-                            if var_inpaint < 0.95 * var_ctx_ring:
-                                blur_al = cv2.GaussianBlur(aligned_hdr, (0, 0), 0.9)
-                                high_freq = aligned_hdr.astype(np.float32) - blur_al.astype(np.float32)
-                                for g_try in (0.45, 0.75, 1.05, 1.35):
-                                    cand_al = np.clip(np.round(aligned_hdr.astype(np.float32) + g_try * high_freq), 0, 255).astype(np.uint8)
-                                    lap_cand = cv2.Laplacian(cv2.cvtColor(cand_al, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
-                                    if float(np.var(lap_cand[inner_hdr])) >= 1.10 * min(var_ctx_ring, 2600.0):
-                                        break
-                                aligned_hdr = np.where(inner_hdr[:, :, np.newaxis], cand_al, aligned_hdr)
 
                         if branch_counters is not None:
                             branch_counters["keyframe_aligned"] = branch_counters.get("keyframe_aligned", 0) + 1

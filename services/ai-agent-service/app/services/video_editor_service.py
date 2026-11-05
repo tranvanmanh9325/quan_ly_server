@@ -3565,7 +3565,7 @@ class VideoEditorService:
                                 ref_c4 = max(e_ctx, 16.0)
                                 if e_inp > 1.05 * ref_c4:
                                     use_m = (m_curr_mask > 0)
-                                    b_w = 0.22 if e_inp > 1.15 * ref_c4 else 0.20
+                                    b_w = 0.35 if e_inp > 1.8 * ref_c4 else (0.28 if e_inp > 1.15 * ref_c4 else 0.20)
                                     blended_f = np.clip(np.round((1.0 - b_w) * f_curr_out.astype(np.float32) + b_w * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)
                                     f_curr_out = np.where(use_m[:, :, np.newaxis], blended_f, f_curr_out)
                         else:
@@ -3801,15 +3801,14 @@ class VideoEditorService:
 
                             lap_collar = cv2.Laplacian(cv2.cvtColor(collar_frame, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
                             v_ctx = float(np.var(lap_collar[b_ref_collar])) if np.count_nonzero(b_ref_collar) > 0 else 0.0
-                            if v_ctx >= 400.0:
-                                lap_b = cv2.Laplacian(cv2.cvtColor(blend_hdr, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
-                                var_in_roi = float(np.var(lap_b))
-                                if var_in_roi < 0.72 * min(v_ctx, 1750.0):
-                                    aligned_hdr = np.clip(np.round(orig_aligned_hdr.astype(np.float32) + 1.85 * hf_al), 0, 255).astype(np.uint8)
-                                    blend_hdr = np.clip(
-                                        np.round(f_act * aligned_hdr.astype(np.float32) + (1.0 - f_act) * curr_roi.astype(np.float32)),
-                                        0, 255
-                                    ).astype(np.uint8)
+                            lap_b = cv2.Laplacian(cv2.cvtColor(blend_hdr, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
+                            var_in_act = float(np.var(lap_b[active_hdr_mask > 0])) if np.count_nonzero(active_hdr_mask) > 0 else 0.0
+                            if v_ctx >= 2100.0 and var_in_act < 1750.0:
+                                aligned_hdr = np.clip(np.round(orig_aligned_hdr.astype(np.float32) + 2.00 * hf_al), 0, 255).astype(np.uint8)
+                                blend_hdr = np.clip(
+                                    np.round(f_act * aligned_hdr.astype(np.float32) + (1.0 - f_act) * curr_roi.astype(np.float32)),
+                                    0, 255
+                                ).astype(np.uint8)
 
                             full_frame_mask[hy1:hy2, hx1:hx2] = active_hdr_mask
                         else:

@@ -3189,7 +3189,7 @@ class VideoEditorService:
                             if var_ring_kf >= 15.0 and var_inp < 0.95 * min(var_ring_kf, 2400.0):
                                 blur_bw = cv2.GaussianBlur(best_w, (0, 0), 1.0)
                                 hf_bw = best_w.astype(np.float32) - blur_bw.astype(np.float32)
-                                best_w = np.clip(np.round(best_w.astype(np.float32) + 0.50 * hf_bw), 0, 255).astype(np.uint8)
+                                best_w = np.clip(np.round(best_w.astype(np.float32) + 0.70 * hf_bw), 0, 255).astype(np.uint8)
                             out_f[cur_unocc] = best_w[cur_unocc]
                             applied_kf_mask[cur_unocc] = 255
                             remaining_mask[cur_unocc] = 0
@@ -3562,13 +3562,10 @@ class VideoEditorService:
                                 ctx_c4 = (d35_c > 0) & (d15_c == 0)
                                 e_inp = float(np.mean(diff_sq[bbox_m > 0]))
                                 e_ctx = float(np.mean(diff_sq[ctx_c4])) if np.count_nonzero(ctx_c4) > 0 else 16.0
-                                if e_inp > 1.05 * max(e_ctx, 16.0):
-                                    dil_use = cv2.dilate(m_curr_mask, np.ones((5, 5), np.uint8))
-                                    inner_limit = (cv2.erode(bbox_m, np.ones((7, 7), np.uint8)) > 0)
-                                    use_m = (dil_use > 0) & inner_limit
-                                    if np.count_nonzero(use_m) == 0:
-                                        use_m = (m_curr_mask > 0)
-                                    blended_f = np.clip(np.round(0.70 * f_curr_out.astype(np.float32) + 0.30 * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)
+                                if e_inp > 0.98 * max(e_ctx, 16.0):
+                                    inner_limit = (cv2.erode(bbox_m, np.ones((5, 5), np.uint8)) > 0)
+                                    use_m = inner_limit if np.count_nonzero(inner_limit) > 0 else (m_curr_mask > 0)
+                                    blended_f = np.clip(np.round(0.75 * f_curr_out.astype(np.float32) + 0.25 * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)
                                     f_curr_out = np.where(use_m[:, :, np.newaxis], blended_f, f_curr_out)
                         else:
                             k25_c = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 25))
@@ -3792,16 +3789,16 @@ class VideoEditorService:
                                 lap_bl = cv2.Laplacian(cv2.cvtColor(blend_hdr, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
                                 v_blend = float(np.var(lap_bl[t_mask > 0]))
 
-                                if v_ctx >= 400.0 and v_blend < 1.25 * min(v_ctx, 2200.0):
+                                if v_ctx >= 400.0 and v_blend < 1.35 * min(v_ctx, 2400.0):
                                     base_b = blend_hdr.astype(np.float32)
-                                    blur_b = cv2.GaussianBlur(base_b, (0, 0), 1.0)
+                                    blur_b = cv2.GaussianBlur(base_b, (0, 0), 1.5)
                                     hf_b = base_b - blur_b
-                                    for g_b in (0.35, 0.65, 0.95, 1.25, 1.55, 1.85):
+                                    for g_b in (0.45, 0.80, 1.15, 1.50):
                                         cand_b = np.clip(np.round(base_b + g_b * hf_b), 0, 255).astype(np.uint8)
                                         cand_hdr = np.where(inner_act_box[:, :, np.newaxis], cand_b, blend_hdr)
                                         lap_cb = cv2.Laplacian(cv2.cvtColor(cand_hdr, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
                                         blend_hdr = cand_hdr
-                                        if float(np.var(lap_cb[t_mask > 0])) >= 1.25 * min(v_ctx, 2200.0):
+                                        if float(np.var(lap_cb[t_mask > 0])) >= 1.35 * min(v_ctx, 2400.0):
                                             break
 
                             full_frame_mask[hy1:hy2, hx1:hx2] = active_hdr_mask

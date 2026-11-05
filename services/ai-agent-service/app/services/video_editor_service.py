@@ -1464,12 +1464,6 @@ class VideoEditorService:
             else np.median(roi, axis=(0, 1))
         )
 
-        # Check background texture variance for high-frequency periodic lattices on background perimeter
-        lap_bg = cv2.Laplacian(gray, cv2.CV_32F)
-        local_var = float(np.var(lap_bg))
-        border_var = float(np.var(lap_bg[border_mask])) if np.count_nonzero(border_mask) > 0 else local_var
-        is_high_texture_mesh = (local_var >= 1500.0) and (border_var >= 300.0) and (min(h, w) >= 30)
-
         # Check border luminance across individual edges to avoid false positives on natural gradient backgrounds
         top_med = float(np.median(v_chan[:pad, :])) if h > 0 else 0.0
         bot_med = float(np.median(v_chan[-pad:, :])) if h > 0 else 0.0
@@ -1484,6 +1478,17 @@ class VideoEditorService:
             and (bg_sat <= 70.0)
             and (min_edge_med >= 100.0)
             and (border_pixels.size > 0 and np.count_nonzero(border_pixels >= 150) > 0.70 * border_pixels.size)
+        )
+
+        # Check background texture variance for high-frequency periodic lattices on background perimeter
+        lap_bg = cv2.Laplacian(gray, cv2.CV_32F)
+        local_var = float(np.var(lap_bg))
+        border_var = float(np.var(lap_bg[border_mask])) if np.count_nonzero(border_mask) > 0 else local_var
+        is_high_texture_mesh = (
+            (not is_bright_bg)
+            and (local_var >= 1500.0)
+            and (border_var >= 300.0)
+            and (min(h, w) >= 30)
         )
 
         # Adaptive shadow threshold relative to background luminance
@@ -1736,8 +1741,8 @@ class VideoEditorService:
                 adj_dark = cv2.bitwise_and(dark_pixels, shadow_zone)
                 stroke_mask = cv2.bitwise_or(stroke_mask, adj_dark)
 
-        # Encompass soft outer glow (neon / karaoke / bright bg subtitles) adjoining text core
-        if len(roi.shape) == 3 and not is_high_texture_mesh:
+        # Encompass soft outer glow (neon / karaoke / dark bg subtitles) adjoining text core
+        if len(roi.shape) == 3 and not is_high_texture_mesh and not is_bright_bg:
             glow_vicinity = cv2.dilate(clean_core, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)))
             color_diff = np.sqrt(np.sum((roi.astype(np.float32) - bg_bgr.astype(np.float32)) ** 2, axis=2))
             glow_pixels = ((color_diff > 12.0) & (glow_vicinity > 0)).astype(np.uint8) * 255
@@ -3170,7 +3175,8 @@ class VideoEditorService:
                                 scored_refs.append((local_ring_mae, var_inp, warped_ref, unocc, ref_k))
 
                 if scored_refs:
-                    sharp_refs = [r for r in scored_refs if r[1] >= 15.0]
+                    max_var = max(r[1] for r in scored_refs)
+                    sharp_refs = [r for r in scored_refs if r[1] >= max(15.0, 0.70 * max_var)]
                     chosen = min(sharp_refs, key=lambda x: x[0]) if sharp_refs else min(scored_refs, key=lambda x: x[0])
                     best_ring_mae, best_var, best_warped, best_unocc, best_k = chosen
                     out_f[best_unocc] = best_warped[best_unocc]
@@ -3481,9 +3487,14 @@ class VideoEditorService:
             )
             t_mask = m_f[hy1:hy2, hx1:hx2] if m_f is not None else np.zeros((roi_h, roi_w), dtype=np.uint8)
             t_mask = VideoEditorService._fill_holes(t_mask)
-            m_blend = cv2.dilate(t_mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k_hdr_sz, k_hdr_sz)))
+            roi_ref = ref_frame[hy1:hy2, hx1:hx2] if ref_frame is not None else None
+            is_bright_roi = (float(np.mean(cv2.cvtColor(roi_ref, cv2.COLOR_BGR2GRAY))) >= 160.0) if (roi_ref is not None and roi_ref.size > 0) else False
+            k_hdr_eff = 3 if is_bright_roi else k_hdr_sz
+            m_blend = cv2.dilate(t_mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k_hdr_eff, k_hdr_eff)))
             bg_m = (m_blend == 0)
-            f_hdr = cv2.GaussianBlur(m_blend.astype(np.float32) / 255.0, (9, 9), 2.5)[:, :, np.newaxis]
+            f_ksize = (5, 5) if is_bright_roi else (9, 9)
+            f_sigma = 1.5 if is_bright_roi else 2.5
+            f_hdr = cv2.GaussianBlur(m_blend.astype(np.float32) / 255.0, f_ksize, f_sigma)[:, :, np.newaxis]
             f_hdr = np.maximum(f_hdr, (t_mask > 0).astype(np.float32)[:, :, np.newaxis])
             return (t_mask, m_blend, bg_m, f_hdr)
 
@@ -3569,10 +3580,13 @@ class VideoEditorService:
                     # 1. Xử lý Title ROI bằng Direct Keyframe Re-anchoring (Không dùng SBTP tuần tự)
                     shot_start, shot_end = shots[cur_shot_idx]
                     shot_kfs = [k for k in keyframe_indices if shot_start <= k <= shot_end and k in cleaned_keyframes]
-                    cand_kfs_hdr = sorted(shot_kfs, key=lambda k: abs(k - frame_idx))[:2]
+                    cand_kfs_hdr = sorted(shot_kfs, key=lambda k: abs(k - frame_idx))[:3]
 
                     used_align = False
                     aligned_hdr = None
+                    best_cand_diff = 999.0
+                    curr_gray_roi = cv2.cvtColor(curr_roi, cv2.COLOR_BGR2GRAY)
+
                     for cand_k in cand_kfs_hdr:
                         kf_full = cleaned_keyframes[cand_k]
                         try:
@@ -3585,21 +3599,38 @@ class VideoEditorService:
                                 motion_cache_frame[cand_k] = (M_cam, conf_cam)
                             if M_cam is not None:
                                 warped_kf = cv2.warpAffine(kf_full, M_cam, (w, h), flags=cv2.INTER_LANCZOS4, borderMode=cv2.BORDER_REFLECT)
-                                ref_clean_roi = warped_kf[hy1:hy2, hx1:hx2]
+                                warped_gray = cv2.cvtColor(warped_kf, cv2.COLOR_BGR2GRAY)
+                                best_local_mae = 999.0
+                                best_local_patch = warped_kf[hy1:hy2, hx1:hx2]
+                                if np.count_nonzero(bg_mask) > 0:
+                                    for dy in range(-3, 4):
+                                        y1_s, y2_s = hy1 + dy, hy2 + dy
+                                        if y1_s < 0 or y2_s > h:
+                                            continue
+                                        for dx in range(-2, 3):
+                                            x1_s, x2_s = hx1 + dx, hx2 + dx
+                                            if x1_s < 0 or x2_s > w:
+                                                continue
+                                            patch_g = warped_gray[y1_s:y2_s, x1_s:x2_s]
+                                            mae_g = float(np.mean(cv2.absdiff(curr_gray_roi, patch_g)[bg_mask]))
+                                            if mae_g < best_local_mae:
+                                                best_local_mae = mae_g
+                                                best_local_patch = warped_kf[y1_s:y2_s, x1_s:x2_s]
+                                else:
+                                    best_local_mae = 0.0
+                                ref_clean_roi = best_local_patch
+                                diff_bg = best_local_mae
                             else:
                                 ref_clean_roi = kf_full[hy1:hy2, hx1:hx2]
+                                if np.count_nonzero(bg_mask) > 0:
+                                    diff_bg = float(np.mean(cv2.absdiff(curr_roi, ref_clean_roi)[bg_mask]))
+                                else:
+                                    diff_bg = 0.0
 
-                            if np.count_nonzero(bg_mask) > 0:
-                                abs_diff_bg = cv2.absdiff(curr_roi, ref_clean_roi)[bg_mask]
-                                diff_bg = float(np.mean(abs_diff_bg))
-                                diff_bg_med = float(np.median(abs_diff_bg))
-                            else:
-                                diff_bg = 0.0
-                                diff_bg_med = 0.0
-                            if diff_bg <= 12.0 or (diff_bg_med <= 4.0 and diff_bg <= 18.0):
+                            if diff_bg <= 12.0 and diff_bg < best_cand_diff:
+                                best_cand_diff = diff_bg
                                 aligned_hdr = ref_clean_roi
                                 used_align = True
-                                break
                         except Exception:
                             continue
 
@@ -3636,7 +3667,11 @@ class VideoEditorService:
                         if branch_counters is not None:
                             branch_counters["keyframe_aligned"] = branch_counters.get("keyframe_aligned", 0) + 1
                             branch_counters["translation_aligned"] = branch_counters.get("translation_aligned", 0) + 1
-                        out_frame[hy1:hy2, hx1:hx2] = np.where((mask_blend_hdr > 0)[:, :, np.newaxis], aligned_hdr, hdr_part)
+                        blend_hdr = np.clip(
+                            np.round(feather_hdr * aligned_hdr.astype(np.float32) + (1.0 - feather_hdr) * hdr_part.astype(np.float32)),
+                            0, 255
+                        ).astype(np.uint8)
+                        out_frame[hy1:hy2, hx1:hx2] = blend_hdr
 
                     if not used_align:
                         # Fallback: ClassicalFallbackManager Tier C2 Guided Filter Structure-Texture Synthesis

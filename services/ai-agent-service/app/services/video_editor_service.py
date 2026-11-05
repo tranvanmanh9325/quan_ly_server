@@ -3180,10 +3180,7 @@ class VideoEditorService:
                     sharp_refs = [r for r in scored_refs if r[1] >= max(15.0, 0.70 * max_var)]
                     chosen = min(sharp_refs, key=lambda x: x[0]) if sharp_refs else min(scored_refs, key=lambda x: x[0])
                     best_ring_mae, best_var, best_warped, best_unocc, best_k = chosen
-                    blur_bw = cv2.GaussianBlur(best_warped, (0, 0), 1.0)
-                    hf_bw = best_warped.astype(np.float32) - blur_bw.astype(np.float32)
-                    best_warped_sharp = np.clip(np.round(best_warped.astype(np.float32) + 1.2 * hf_bw), 0, 255).astype(np.uint8)
-                    out_f[best_unocc] = best_warped_sharp[best_unocc]
+                    out_f[best_unocc] = best_warped[best_unocc]
                     applied_kf_mask[best_unocc] = 255
                     remaining_mask[best_unocc] = 0
 
@@ -3535,17 +3532,17 @@ class VideoEditorService:
                     my_p = gy_p + flow_p[:, :, 1]
                     w_prev = cv2.remap(prev_yielded_frame, mx_p, my_p, interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT)
                     diff_f = np.mean(np.abs(f_curr_out.astype(np.float32) - w_prev.astype(np.float32)), axis=2)
-                    if float(np.mean(diff_f)) <= 30.0:
+                    if float(np.mean(diff_f)) <= 25.0:
                         diff_sq = (f_curr_out.astype(np.float32) - w_prev.astype(np.float32)) ** 2
-                        k35_c = cv2.getStructuringElement(cv2.MORPH_RECT, (35, 35))
-                        k15_c = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 15))
-                        d35_c = cv2.dilate(m_curr_mask, k35_c)
-                        d15_c = cv2.dilate(m_curr_mask, k15_c)
-                        ctx_c4 = (d35_c > 0) & (d15_c == 0)
+                        k25_c = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 25))
+                        k9_c = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
+                        d25_c = cv2.dilate(m_curr_mask, k25_c)
+                        d9_c = cv2.dilate(m_curr_mask, k9_c)
+                        ctx_c4 = (d25_c > 0) & (d9_c == 0)
                         e_inp = float(np.mean(diff_sq[inner_m])) if np.count_nonzero(inner_m) > 0 else 0.0
                         e_ctx = float(np.mean(diff_sq[ctx_c4])) if np.count_nonzero(ctx_c4) > 0 else 16.0
-                        if e_inp > 1.18 * max(e_ctx, 16.0):
-                            blended_f = np.clip(np.round(0.90 * f_curr_out.astype(np.float32) + 0.10 * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)
+                        if (e_inp > 1.15 * max(e_ctx, 16.0) and frame_idx <= 2) or (e_inp > 1.30 * max(e_ctx, 35.0)):
+                            blended_f = np.clip(np.round(0.88 * f_curr_out.astype(np.float32) + 0.12 * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)
                             f_curr_out = np.where(inner_m[:, :, np.newaxis], blended_f, f_curr_out)
 
             if m_curr_mask is not None and np.count_nonzero(m_curr_mask) > 0:

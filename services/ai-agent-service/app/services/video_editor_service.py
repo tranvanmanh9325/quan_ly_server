@@ -3793,9 +3793,9 @@ class VideoEditorService:
                             else:
                                 raw_text_hit = (t_mask > 0) & ((chroma_curr > 18) | (diff_al > 42))
 
-                            e3_t = cv2.erode(t_mask, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))
+                            e5_t = cv2.erode(t_mask, cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5)))
                             raw_dil = cv2.dilate(raw_text_hit.astype(np.uint8) * 255, np.ones((3, 3), np.uint8))
-                            active_hdr_mask = raw_dil if np.count_nonzero(e3_t) == 0 else cv2.bitwise_and(raw_dil, e3_t)
+                            active_hdr_mask = raw_dil if np.count_nonzero(e5_t) == 0 else cv2.bitwise_and(raw_dil, e5_t)
                             f_act = cv2.GaussianBlur(active_hdr_mask.astype(np.float32) / 255.0, (3, 3), 0.8)[:, :, np.newaxis]
 
                             # Pre-blend unsharp trực tiếp trên aligned_hdr để bù suy hao warpAffine
@@ -4052,21 +4052,27 @@ class VideoEditorService:
             out_frame = frame_compositor.composite(frame, out_frame, full_frame_mask)
             if used_align and is_bright_roi and blend_hdr is not None:
                 out_frame[hy1:hy2, hx1:hx2] = blend_hdr
-                tight_hdr_box = np.zeros_like(full_frame_mask)
-                tight_hdr_box[hy1:hy2, hx1:hx2] = 255
-                k5_hdr = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
-                inner_hdr = (cv2.erode(tight_hdr_box, k5_hdr) > 0)
-                k11_hdr = cv2.getStructuringElement(cv2.MORPH_RECT, (11, 11))
-                k3_hdr = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-                b_ref_hdr = (cv2.dilate(tight_hdr_box, k11_hdr) > 0) & (cv2.dilate(tight_hdr_box, k3_hdr) == 0)
-                lap_out = cv2.Laplacian(cv2.cvtColor(out_frame, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
-                v_inp_h = float(np.var(lap_out[tight_hdr_box > 0])) if np.count_nonzero(tight_hdr_box) > 0 else 0.0
-                v_ctx_h = float(np.var(lap_out[b_ref_hdr])) if np.count_nonzero(b_ref_hdr) > 0 else 0.0
-                if v_ctx_h >= 15.0 and v_inp_h < 1250.0 and (v_inp_h / (v_ctx_h + 1e-6)) < 0.70:
-                    blur_o = cv2.GaussianBlur(out_frame, (0, 0), 1.0)
-                    hf_o = out_frame.astype(np.float32) - blur_o.astype(np.float32)
-                    sharp_o = np.clip(np.round(out_frame.astype(np.float32) + 0.50 * hf_o), 0, 255).astype(np.uint8)
-                    out_frame = np.where(inner_hdr[:, :, np.newaxis], sharp_o, out_frame)
+                ys_a, xs_a = np.where(active_hdr_mask > 0)
+                if len(ys_a) > 0:
+                    tight_hdr_box = np.zeros_like(full_frame_mask)
+                    ty1 = max(hy1, hy1 + int(ys_a.min()) - 5)
+                    ty2 = min(hy2, hy1 + int(ys_a.max()) + 3)
+                    tx1 = max(hx1, hx1 + int(xs_a.min()) - 3)
+                    tx2 = min(hx2, hx1 + int(xs_a.max()) + 4)
+                    tight_hdr_box[ty1:ty2, tx1:tx2] = 255
+                    k5_hdr = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+                    inner_hdr = (cv2.erode(tight_hdr_box, k5_hdr) > 0)
+                    k11_hdr = cv2.getStructuringElement(cv2.MORPH_RECT, (11, 11))
+                    k3_hdr = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+                    b_ref_hdr = (cv2.dilate(tight_hdr_box, k11_hdr) > 0) & (cv2.dilate(tight_hdr_box, k3_hdr) == 0)
+                    lap_out = cv2.Laplacian(cv2.cvtColor(out_frame, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
+                    v_inp_h = float(np.var(lap_out[tight_hdr_box > 0])) if np.count_nonzero(tight_hdr_box) > 0 else 0.0
+                    v_ctx_h = float(np.var(lap_out[b_ref_hdr])) if np.count_nonzero(b_ref_hdr) > 0 else 0.0
+                    if v_ctx_h >= 15.0 and v_inp_h < 1250.0 and (v_inp_h / (v_ctx_h + 1e-6)) < 0.70:
+                        blur_o = cv2.GaussianBlur(out_frame, (0, 0), 1.0)
+                        hf_o = out_frame.astype(np.float32) - blur_o.astype(np.float32)
+                        sharp_o = np.clip(np.round(out_frame.astype(np.float32) + 0.50 * hf_o), 0, 255).astype(np.uint8)
+                        out_frame = np.where(inner_hdr[:, :, np.newaxis], sharp_o, out_frame)
 
             is_aligned_frame = (frame_idx in cleaned_keyframes) or used_align or used_sub_align
             # Thêm vào buffer 3-frame cho Temporal Bilateral Filter kèm frame gốc và cờ căn chỉnh

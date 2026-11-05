@@ -3561,6 +3561,7 @@ class VideoEditorService:
                                 d15_c = cv2.dilate(bbox_m, k15_c)
                                 ctx_c4 = (d35_c > 0) & (d15_c == 0)
                                 e_inp = float(np.mean(diff_sq[bbox_m > 0]))
+                                e_ctx = float(np.mean(diff_sq[ctx_c4])) if np.count_nonzero(ctx_c4) > 0 else 16.0
                                 if e_inp > 1.05 * max(e_ctx, 16.0):
                                     use_m = (m_curr_mask > 0)
                                     blended_f = np.clip(np.round(0.72 * f_curr_out.astype(np.float32) + 0.28 * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)

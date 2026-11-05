@@ -3289,10 +3289,28 @@ class VideoEditorService:
                 inpaint_kf = cleaned_keyframes[frame_idx]
                 if np.count_nonzero(tight_mask_header) > 0:
                     full_frame_mask[hy1:hy2, hx1:hx2] = mask_blend_hdr
+
+                # Bổ sung Subtitle mask trên Keyframe để composite đầy đủ cả header và subtitle
+                full_m_kf, sub_info_kf = self._build_inpaint_mask_for_frame(
+                    frame_idx, frame.shape, frame_img=frame, target_regions=target_regions, target_scope=target_scope
+                )
+                if sub_info_kf is not None:
+                    sy1_kf, sy2_kf = sub_info_kf["y1"], sub_info_kf["y2"]
+                    sx1_kf, sx2_kf = sub_info_kf["x1"], sub_info_kf["x2"]
+                    s_mask_kf = full_m_kf[sy1_kf:sy2_kf, sx1_kf:sx2_kf]
+                    if np.count_nonzero(s_mask_kf) > 0:
+                        s_res_kf = np.sqrt(h ** 2 + w ** 2) / np.sqrt(1024 ** 2 + 576 ** 2)
+                        r_dil_kf = max(2, min(4, int(round(3 * s_res_kf))))
+                        k_sub_kf = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * r_dil_kf + 1, 2 * r_dil_kf + 1))
+                        mask_sub_kf = cv2.dilate(s_mask_kf, k_sub_kf)
+                        full_frame_mask[sy1_kf:sy2_kf, sx1_kf:sx2_kf] = np.maximum(
+                            full_frame_mask[sy1_kf:sy2_kf, sx1_kf:sx2_kf], mask_sub_kf
+                        )
+
                 if np.count_nonzero(full_frame_mask) > 0:
                     out_frame = frame_compositor.composite(frame, inpaint_kf, full_frame_mask)
                 else:
-                    out_frame = frame.copy()
+                    out_frame = inpaint_kf if inpaint_kf is not None else frame.copy()
             else:
                 out_frame = frame.copy()
 

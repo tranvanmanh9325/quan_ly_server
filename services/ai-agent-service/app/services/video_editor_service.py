@@ -3605,6 +3605,8 @@ class VideoEditorService:
         target_scope: str = "overlay",
         context: Optional[VideoJobContext] = None,
         progress_fn: Optional[Callable[[int, str], None]] = None,
+        branch_counters: Optional[Dict[str, int]] = None,
+        **kwargs: Any,
     ) -> Generator[np.ndarray, None, None]:
         """
         Streaming Generator trực tiếp điều phối bởi HybridInpaintingCoordinator:
@@ -3721,6 +3723,12 @@ class VideoEditorService:
             if not hasattr(context, "extra_metrics") or context.extra_metrics is None:
                 context.extra_metrics = {}
             context.extra_metrics.update(coordinator.stats)
+            if hasattr(coordinator, "stats") and isinstance(coordinator.stats, dict):
+                for k, v in coordinator.stats.items():
+                    if branch_counters is not None and k in branch_counters:
+                        branch_counters[k] += int(v)
+                    if hasattr(context, "branch_counters") and k in context.branch_counters:
+                        context.branch_counters[k] += int(v)
 
     def _calculate_convergence_penalty(
         self,

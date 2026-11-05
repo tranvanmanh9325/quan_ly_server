@@ -387,8 +387,8 @@ class TemporalTextDetector:
                         # Geometric sanity checks
                         if oh < 8 or ow < 6:
                             continue
-                        # Reject thin horizontal ruling lines (e.g. document texture ruled lines)
-                        if bh <= 2 or (bh <= 3 and (bw / float(max(1, bh))) >= 8.0):
+                        # Reject thin horizontal ruling lines and full-width brick mortar lines
+                        if bh <= 2 or (bh <= 3 and (bw / float(max(1, bh))) >= 8.0) or (bw >= 0.80 * proc_w and (bw / float(max(1, bh))) >= 15.0):
                             continue
                         if (ow * oh) > (0.30 * orig_w * orig_h):
                             continue
@@ -532,6 +532,9 @@ class TemporalTextDetector:
             for c in cnts:
                 bx, by, bw, bh = cv2.boundingRect(c)
                 if bh < 12 or bw < 20 or (bw * bh) > (0.30 * orig_w * orig_h):
+                    continue
+                # Reject horizontal brick mortar lines stretching across the frame
+                if bw >= 0.80 * orig_w and (bw / float(max(1, bh))) >= 15.0:
                     continue
                 # Aspect ratio and stroke density
                 if (bw / float(bh)) < 0.6:

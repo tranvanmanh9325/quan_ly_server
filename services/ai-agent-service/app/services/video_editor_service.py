@@ -1523,9 +1523,11 @@ class VideoEditorService:
                 has_dark_stroke = False
         else:
             # Standard or meme subtitle on normal/dark/medium background
-            if has_dark_stroke and has_bright_pixels:
+            has_core_fg = has_bright_pixels or (np.count_nonzero(vivid_colored) > 15)
+            if has_dark_stroke and has_core_fg:
+                core_for_stroke = cv2.bitwise_or(bright_pixels, vivid_colored)
                 num_d, labels_d, stats_d, _ = cv2.connectedComponentsWithStats(dark_pixels, connectivity=8)
-                bright_dil = cv2.dilate(bright_pixels, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)))
+                bright_dil = cv2.dilate(core_for_stroke, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)))
                 for i in range(1, num_d):
                     area_d = stats_d[i, cv2.CC_STAT_AREA]
                     cw_d = stats_d[i, cv2.CC_STAT_WIDTH]
@@ -1537,11 +1539,11 @@ class VideoEditorService:
                     border_touch = np.count_nonzero(comp_d & border_mask)
                     if border_touch > 4 or (border_touch / area_d) > 0.08:
                         continue
-                    # Check envelope adjacency with bright outline
+                    # Check envelope adjacency with bright/vivid outline
                     comp_dil = cv2.dilate(
                         comp_d.astype(np.uint8) * 255, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
                     )
-                    overlap_d = np.count_nonzero(cv2.bitwise_and(comp_dil, bright_pixels))
+                    overlap_d = np.count_nonzero(cv2.bitwise_and(comp_dil, core_for_stroke))
                     if overlap_d >= 0.20 * area_d:
                         valid_meme_dark[comp_d] = 255
                         is_meme_text = True
@@ -2342,7 +2344,11 @@ class VideoEditorService:
         # 1. Header/Title Stroke Mask (sinh động từ target_regions nếu có)
         if target_regions:
             if target_scope in ("all", "all_text"):
-                title_regions = target_regions
+                title_regions = [
+                    r for r in target_regions
+                    if (r.get("type") == "title" or r.get("is_static", True))
+                    and r.get("motion_type") != "scene"
+                ]
             else:
                 title_regions = [
                     r for r in target_regions
@@ -2452,7 +2458,8 @@ class VideoEditorService:
             bright_white = (gray >= 150) & (hsv[:, :, 1] <= 130)
             bright_yellow = (hsv[:, :, 0] >= 10) & (hsv[:, :, 0] <= 35) & (hsv[:, :, 1] >= 60) & (hsv[:, :, 2] >= 160)
             bright_mag_red = ((hsv[:, :, 0] <= 10) | (hsv[:, :, 0] >= 160)) & (hsv[:, :, 1] >= 60) & (hsv[:, :, 2] >= 160)
-            core_bright = (bright_white | bright_yellow | bright_mag_red).astype(np.uint8) * 255
+            bright_vivid = (hsv[:, :, 1] >= 60) & (hsv[:, :, 2] >= 150)
+            core_bright = (bright_white | bright_yellow | bright_mag_red | bright_vivid).astype(np.uint8) * 255
 
             min_glyph_h = max(4, int(round(6 * scale_geom)))
             max_glyph_h = max(50, int(round(75 * scale_geom)))
@@ -2558,7 +2565,17 @@ class VideoEditorService:
                     x2, y2 = min(strip_w, cx + cw + pad), min(strip_h, cy + ch + pad)
                     surr_gray = gray[y1:y2, x1:x2]
                     surr_sat = hsv[y1:y2, x1:x2, 1]
-                    if np.mean(surr_gray) >= 145 and np.mean(surr_sat) <= 70:
+                    is_bright_bg = (np.mean(surr_gray) >= 145 and np.mean(surr_sat) <= 70)
+                    is_textured_dark = False
+                    if not is_bright_bg:
+                        med_roi = cv2.medianBlur(gray[y1:y2, x1:x2], 15)
+                        diff_dark = med_roi.astype(np.int16) - gray[y1:y2, x1:x2].astype(np.int16)
+                        sub_diff = diff_dark[cy - y1 : cy - y1 + ch, cx - x1 : cx - x1 + cw]
+                        sub_gray_c = gray[cy:cy+ch, cx:cx+cw]
+                        dark_stroke_px = (sub_gray_c <= 55) & (sub_diff >= 30)
+                        if np.count_nonzero(dark_stroke_px) >= 0.15 * (cw * ch):
+                            is_textured_dark = True
+                    if is_bright_bg or is_textured_dark:
                         dark_words.append((c, cx, cy, cw, ch))
 
             d_lines = {}
@@ -2574,7 +2591,8 @@ class VideoEditorService:
                     d_lines[mid_y] = [(c, cx, cy, cw, ch)]
 
             for ly, l in d_lines.items():
-                if title_max_y <= 0 or (sy1 + ly) > title_max_y - 20:
+                is_inside_title = any((sy1 + ly >= ty1 and sy1 + ly <= ty2) for tx1, ty1, tx2, ty2 in title_rects)
+                if not is_inside_title or not title_rects:
                     sorted_l = sorted(l, key=lambda g: g[1])
                     cur_cl = [sorted_l[0]]
                     for i in range(1, len(sorted_l)):
@@ -3180,7 +3198,11 @@ class VideoEditorService:
         hy1, hy2, hx1, hx2 = 0, 0, 0, 0
         if target_regions:
             if target_scope in ("all", "all_text"):
-                title_regions = target_regions
+                title_regions = [
+                    r for r in target_regions
+                    if (r.get("type") == "title" or r.get("is_static", True))
+                    and r.get("motion_type") != "scene"
+                ]
             else:
                 title_regions = [
                     r for r in target_regions
@@ -3397,7 +3419,7 @@ class VideoEditorService:
                                 mask_blend_hdr,
                                 full_frame=frame,
                                 roi_bbox=(hy1, hy2, hx1, hx2),
-                                full_mask=m_full,
+                                full_mask=full_frame_mask,
                             )
                         except Exception:
                             clean_hdr = None
@@ -3521,18 +3543,32 @@ class VideoEditorService:
                             used_sub_align = False
                             aligned_sub = None
                             if best_sub_k is not None and best_sub_k in cleaned_keyframes:
-                                ref_sub_clean = cleaned_keyframes[best_sub_k][sy1:sy2, sx1:sx2]
+                                kf_full = cleaned_keyframes[best_sub_k]
+                                try:
+                                    curr_full_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                                    kf_full_gray = cv2.cvtColor(kf_full, cv2.COLOR_BGR2GRAY)
+                                    shift_full, resp_full = cv2.phaseCorrelate(np.float32(curr_full_gray), np.float32(kf_full_gray))
+                                    cam_dx, cam_dy = -shift_full[0], -shift_full[1]
+                                    if resp_full >= 0.15 and (abs(cam_dx) > 0.5 or abs(cam_dy) > 0.5):
+                                        M_cam = np.float32([[1, 0, cam_dx], [0, 1, cam_dy]])
+                                        warped_kf = cv2.warpAffine(kf_full, M_cam, (w, h), borderMode=cv2.BORDER_REFLECT)
+                                        ref_sub_clean = warped_kf[sy1:sy2, sx1:sx2]
+                                    else:
+                                        ref_sub_clean = kf_full[sy1:sy2, sx1:sx2]
+                                except Exception:
+                                    ref_sub_clean = kf_full[sy1:sy2, sx1:sx2]
+
                                 try:
                                     curr_sub_gray = cv2.cvtColor(sub_roi, cv2.COLOR_BGR2GRAY)
                                     ref_sub_gray = cv2.cvtColor(ref_sub_clean, cv2.COLOR_BGR2GRAY)
                                     shift, resp = cv2.phaseCorrelate(np.float32(curr_sub_gray), np.float32(ref_sub_gray))
                                     dx, dy = -shift[0], -shift[1]
-                                    if resp >= 0.25 and abs(dx) <= 15.0 and abs(dy) <= 4.0:
+                                    if resp >= 0.20 and abs(dx) <= 15.0 and abs(dy) <= 6.0:
                                         M = np.float32([[1, 0, dx], [0, 1, dy]])
                                         candidate_sub = cv2.warpAffine(ref_sub_clean, M, (sub_w, sub_h), borderMode=cv2.BORDER_REFLECT)
                                         bg_m = (mask_sub == 0)
                                         diff_bg = float(np.mean(cv2.absdiff(sub_roi, candidate_sub)[bg_m])) if np.count_nonzero(bg_m) > 0 else 0.0
-                                        if diff_bg <= 12.0:
+                                        if diff_bg <= 14.0:
                                             aligned_sub = candidate_sub
                                             used_sub_align = True
                                             if branch_counters is not None:
@@ -3711,7 +3747,7 @@ class VideoEditorService:
 
         engine = VideoReconstructionEngine(
             temporal_radius=20,
-            dilation_px=15,
+            dilation_px=3,
             unrevealed_gating_threshold=0.25,
         )
         coordinator = HybridInpaintingCoordinator(local_engine=engine)
@@ -3892,9 +3928,9 @@ class VideoEditorService:
                         defect_map.setdefault(target_idx, []).append(roi)
 
         tier = strategy.get("tier", 1)
-        dilation_extra = int(strategy.get("dilation_extra_px", 6))
-        top_margin = int(strategy.get("top_margin_px", 12))
-        bottom_margin = int(strategy.get("bottom_margin_px", 6))
+        dilation_extra = min(4, int(strategy.get("dilation_extra_px", 4)))
+        top_margin = min(6, int(strategy.get("top_margin_px", 6)))
+        bottom_margin = min(4, int(strategy.get("bottom_margin_px", 4)))
 
         ffmpeg_bin = self._find_ffmpeg_binary()
         raw_cmd = [
@@ -3911,7 +3947,8 @@ class VideoEditorService:
             "-map", "1:a?",
             "-c:v", "libx264",
             "-preset", "fast",
-            "-crf", "23",
+            "-crf", "14",
+            "-g", "30",
             "-pix_fmt", "yuv420p",
             "-c:a", "copy",
             "-movflags", "+faststart",

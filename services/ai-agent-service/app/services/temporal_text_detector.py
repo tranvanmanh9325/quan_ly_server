@@ -484,15 +484,15 @@ class TemporalTextDetector:
                 presence_ratio = sum(presence) / max(1, len(presence))
                 if presence_ratio >= 0.75 and max_consecutive_absent < 3 and len(sample_masks) >= 4:
                     ious = []
-                    for i in range(min(5, len(sample_masks))):
-                        for j in range(i + 1, min(5, len(sample_masks))):
-                            m1 = sample_masks[i] > 0
-                            m2 = sample_masks[j] > 0
-                            intersection = np.count_nonzero(m1 & m2)
-                            union = np.count_nonzero(m1 | m2)
-                            ious.append(intersection / max(1.0, float(union)))
+                    for i in range(len(sample_masks) - 1):
+                        m1 = sample_masks[i] > 0
+                        m2 = sample_masks[i + 1] > 0
+                        intersection = np.count_nonzero(m1 & m2)
+                        union = np.count_nonzero(m1 | m2)
+                        ious.append(intersection / max(1.0, float(union)))
                     mean_iou = float(np.mean(ious)) if ious else 0.0
-                    if mean_iou >= 0.45:
+                    min_iou = float(np.min(ious)) if ious else 0.0
+                    if mean_iou >= 0.55 and min_iou >= 0.35:
                         is_title = True
 
             final_results.append({

@@ -3793,7 +3793,8 @@ class VideoEditorService:
                         if clean_sub_roi is not None and clean_sub_roi.shape == sub_roi.shape:
                             # Temporal Recursive Consistency (T-EMA): triệt tiêu hoàn toàn hiện tượng flicker MSE
                             if (
-                                last_clean_sub_data is not None
+                                not used_sub_align
+                                and last_clean_sub_data is not None
                                 and last_clean_sub_data.get("shot_idx") == cur_shot_idx
                                 and last_clean_sub_data.get("bbox") == (sy1, sy2, sx1, sx2)
                             ):
@@ -4104,9 +4105,9 @@ class VideoEditorService:
 
         defect_map: Dict[int, List[Tuple[int, int, int, int]]] = {}
         for cand in worst_candidates:
+            violated = getattr(cand, "violated_metrics", None) if not isinstance(cand, dict) else cand.get("violated_metrics")
             res_words = getattr(cand, "residual_words", None) if not isinstance(cand, dict) else cand.get("residual_words")
-            # Tuyệt đối không đưa vào defect_map nếu không còn chữ sót lại (residual_words == 0)
-            if res_words is not None and res_words == 0:
+            if (res_words is not None and res_words == 0) or (violated is not None and "residual_ocr" not in violated):
                 continue
             f_idx = getattr(cand, "frame_idx", None) if not isinstance(cand, dict) else cand.get("frame_idx")
             roi = getattr(cand, "roi_rect", None) if not isinstance(cand, dict) else cand.get("roi_rect")

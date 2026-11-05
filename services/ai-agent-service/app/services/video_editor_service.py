@@ -2364,7 +2364,12 @@ class VideoEditorService:
                             t_mask_dil = cv2.dilate(t_mask, k3_title)
                             full_mask[ty:ty2, tx:tx2] = np.maximum(full_mask[ty:ty2, tx:tx2], t_mask_dil)
                         else:
-                            full_mask[ty:ty2, tx:tx2] = 255
+                            gray_t = cv2.cvtColor(t_roi, cv2.COLOR_BGR2GRAY)
+                            grad_t = cv2.morphologyEx(gray_t, cv2.MORPH_GRADIENT, np.ones((3, 3), np.uint8))
+                            _, b_t = cv2.threshold(grad_t, 15, 255, cv2.THRESH_BINARY)
+                            k3_t = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+                            t_mask_dil = cv2.dilate(b_t, k3_t)
+                            full_mask[ty:ty2, tx:tx2] = np.maximum(full_mask[ty:ty2, tx:tx2], t_mask_dil)
                     else:
                         full_mask[ty:ty2, tx:tx2] = 255
 
@@ -2706,7 +2711,7 @@ class VideoEditorService:
 
             # Structure-aware stroke dilation (Pillar 3: Adaptive dilation)
             if np.count_nonzero(sub_mask_strip) > 0:
-                k_sub_size = max(9, int(round(13 * S_res)) | 1)
+                k_sub_size = max(5, int(round(6 * S_res)) | 1)
                 k_sub_dil = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k_sub_size, k_sub_size))
                 if has_table_structure:
                     sub_mask_strip = cv2.dilate(sub_mask_strip, k_sub_dil)
@@ -2757,7 +2762,7 @@ class VideoEditorService:
                         rel_x1 = max(0, sx - sx1)
                         rel_x2 = min(strip_w, sx + sw - sx1)
                         if rel_y2 > rel_y1 and rel_x2 > rel_x1:
-                            roi = sub_strip_img[rel_y1:rel_y2, rel_x1:rel_x2]
+                            roi = strip[rel_y1:rel_y2, rel_x1:rel_x2]
                             t_mask = self._generate_text_stroke_mask(roi, region_meta=s)
                             if t_mask is not None and np.count_nonzero(t_mask) > 0:
                                 k3 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
@@ -2953,7 +2958,7 @@ class VideoEditorService:
                         feather_s = None
                         # Pillar 3: Adaptive Dilation 8-12px for Subtitle in Keyframe
                         s_res_kf = np.sqrt(frame.shape[0] ** 2 + frame.shape[1] ** 2) / np.sqrt(1024 ** 2 + 576 ** 2)
-                        r_dil_kf = max(8, min(14, int(round(10 * s_res_kf))))
+                        r_dil_kf = max(2, min(4, int(round(3 * s_res_kf))))
                         k_dil_kf = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * r_dil_kf + 1, 2 * r_dil_kf + 1))
                         if has_local_table:
                             # Dilate to envelop dark stroke outline on structured document
@@ -3250,7 +3255,7 @@ class VideoEditorService:
 
         # Feature 17: Strict +15px Dilated Mask Compositor with C^1 Cosine Alpha Feathering
         from app.services.frame_compositor import FrameCompositor
-        frame_compositor = FrameCompositor(dilation_px=15)
+        frame_compositor = FrameCompositor(dilation_px=3)
 
         # Buffer 3-frame cho Local Temporal Bilateral Filter:
         # Mỗi phần tử: (frame_idx, clean_frame, full_mask_dilated, orig_frame)
@@ -3422,9 +3427,9 @@ class VideoEditorService:
                             and (np.count_nonzero(local_table) >= 30)
                         )
 
-                        # Pillar 3: Adaptive Dilation 8-12px for Subtitle in Streaming
+                        # Pillar 3: Adaptive Dilation for Subtitle in Streaming (clamped to prevent C2 violation)
                         s_res_stream = np.sqrt(h ** 2 + w ** 2) / np.sqrt(1024 ** 2 + 576 ** 2)
-                        r_dil_stream = max(8, min(14, int(round(10 * s_res_stream))))
+                        r_dil_stream = max(2, min(4, int(round(3 * s_res_stream))))
                         k_sub_stream = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * r_dil_stream + 1, 2 * r_dil_stream + 1))
 
                         if has_local_table:

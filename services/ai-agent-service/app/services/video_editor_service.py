@@ -1675,12 +1675,15 @@ class VideoEditorService:
                 cw = stats[i, cv2.CC_STAT_WIDTH]
                 ch = stats[i, cv2.CC_STAT_HEIGHT]
                 if area >= min_area and min_char_h <= ch <= max_char_h and cw >= min_char_w:
-                    if is_bright_bg and is_stroke_hull_separated and "adjoining_bright" in locals():
+                    if is_bright_bg and is_stroke_hull_separated and "adjoining_bright" in locals() and np.count_nonzero(adjoining_bright) > 0:
                         # Scale-Separation: Protect printed document text and structural table borders on light surfaces
                         # Only accept components with sufficient height or direct contact with bright text core
                         comp_mask = (labels == i)
-                        has_bright_core = (np.count_nonzero(comp_mask & (adjoining_bright > 0)) > 0)
-                        if not has_bright_core and (ch < 18 or cw < 18):
+                        has_bright_core = (
+                            np.count_nonzero(comp_mask & (adjoining_bright > 0)) > 0
+                            or (np.count_nonzero(comp_mask & (vivid_colored > 0)) > 0 if "vivid_colored" in locals() else False)
+                        )
+                        if not has_bright_core and (ch < 10 and cw < 10):
                             continue
                     clean_core[labels == i] = 255
 
@@ -3123,8 +3126,14 @@ class VideoEditorService:
                         unocc = (remaining_mask > 0) & (warped_m == 0)
                         if np.count_nonzero(unocc) > 0:
                             bg_valid = (remaining_mask == 0) & (warped_m == 0)
-                            diff_bg = float(np.mean(cv2.absdiff(frame, warped_ref)[bg_valid])) if np.count_nonzero(bg_valid) > 50 else 0.0
-                            if diff_bg <= 8.5:
+                            if np.count_nonzero(bg_valid) > 50:
+                                abs_diff_bg = cv2.absdiff(frame, warped_ref)[bg_valid]
+                                diff_bg = float(np.mean(abs_diff_bg))
+                                diff_bg_med = float(np.median(abs_diff_bg))
+                            else:
+                                diff_bg = 0.0
+                                diff_bg_med = 0.0
+                            if diff_bg <= 12.0 or (diff_bg_med <= 4.0 and diff_bg <= 18.0):
                                 out_f[unocc] = warped_ref[unocc]
                                 applied_kf_mask[unocc] = 255
                                 remaining_mask[unocc] = 0
@@ -3472,6 +3481,9 @@ class VideoEditorService:
                 except Exception:
                     pass
 
+            motion_cache_frame: Dict[int, Tuple[Any, float]] = {}
+            used_align = False
+            used_sub_align = False
             full_frame_mask = np.zeros((h, w), dtype=np.uint8)
             tight_mask_header, mask_blend_hdr, bg_mask, feather_hdr = _get_shot_header_masks(cur_shot_idx, frame, frame_idx)
 
@@ -3516,24 +3528,34 @@ class VideoEditorService:
                     # 1. Xử lý Title ROI bằng Direct Keyframe Re-anchoring (Không dùng SBTP tuần tự)
                     shot_start, shot_end = shots[cur_shot_idx]
                     shot_kfs = [k for k in keyframe_indices if shot_start <= k <= shot_end and k in cleaned_keyframes]
-                    cand_kfs_hdr = sorted(shot_kfs, key=lambda k: abs(k - frame_idx))
+                    cand_kfs_hdr = sorted(shot_kfs, key=lambda k: abs(k - frame_idx))[:2]
 
                     used_align = False
                     aligned_hdr = None
                     for cand_k in cand_kfs_hdr:
                         kf_full = cleaned_keyframes[cand_k]
                         try:
-                            M_cam, conf_cam = VideoEditorService._estimate_bg_motion_matrix(
-                                kf_full, frame, src_mask=None, dst_mask=full_frame_mask
-                            )
+                            if cand_k in motion_cache_frame:
+                                M_cam, conf_cam = motion_cache_frame[cand_k]
+                            else:
+                                M_cam, conf_cam = VideoEditorService._estimate_bg_motion_matrix(
+                                    kf_full, frame, src_mask=None, dst_mask=full_frame_mask
+                                )
+                                motion_cache_frame[cand_k] = (M_cam, conf_cam)
                             if M_cam is not None:
                                 warped_kf = cv2.warpAffine(kf_full, M_cam, (w, h), borderMode=cv2.BORDER_REFLECT)
                                 ref_clean_roi = warped_kf[hy1:hy2, hx1:hx2]
                             else:
                                 ref_clean_roi = kf_full[hy1:hy2, hx1:hx2]
 
-                            diff_bg = float(np.mean(cv2.absdiff(curr_roi, ref_clean_roi)[bg_mask])) if np.count_nonzero(bg_mask) > 0 else 0.0
-                            if diff_bg <= 8.5:
+                            if np.count_nonzero(bg_mask) > 0:
+                                abs_diff_bg = cv2.absdiff(curr_roi, ref_clean_roi)[bg_mask]
+                                diff_bg = float(np.mean(abs_diff_bg))
+                                diff_bg_med = float(np.median(abs_diff_bg))
+                            else:
+                                diff_bg = 0.0
+                                diff_bg_med = 0.0
+                            if diff_bg <= 12.0 or (diff_bg_med <= 4.0 and diff_bg <= 18.0):
                                 aligned_hdr = ref_clean_roi
                                 used_align = True
                                 break
@@ -3545,7 +3567,11 @@ class VideoEditorService:
                         try:
                             best_k = cand_kfs_hdr[0]
                             kf_full = cleaned_keyframes[best_k]
-                            M_cam, _ = VideoEditorService._estimate_bg_motion_matrix(kf_full, frame, src_mask=None, dst_mask=full_frame_mask)
+                            if best_k in motion_cache_frame:
+                                M_cam, _ = motion_cache_frame[best_k]
+                            else:
+                                M_cam, _ = VideoEditorService._estimate_bg_motion_matrix(kf_full, frame, src_mask=None, dst_mask=full_frame_mask)
+                                motion_cache_frame[best_k] = (M_cam, 0.0)
                             ref_roi = cv2.warpAffine(kf_full, M_cam, (w, h), borderMode=cv2.BORDER_REFLECT)[hy1:hy2, hx1:hx2] if M_cam is not None else kf_full[hy1:hy2, hx1:hx2]
                             from app.services.classical_fallback_manager import get_classical_fallback_manager
                             classical_mgr = get_classical_fallback_manager()
@@ -3664,16 +3690,20 @@ class VideoEditorService:
                         # Thử căn chỉnh trực tiếp từ keyframe sạch trong cùng phân cảnh
                         shot_start, shot_end = shots[cur_shot_idx]
                         shot_kfs = [k for k in keyframe_indices if shot_start <= k <= shot_end and k in cleaned_keyframes]
-                        cand_kfs_sub = sorted(shot_kfs, key=lambda k: abs(k - frame_idx))
+                        cand_kfs_sub = sorted(shot_kfs, key=lambda k: abs(k - frame_idx))[:2]
 
                         used_sub_align = False
                         aligned_sub = None
                         for cand_k in cand_kfs_sub:
                             kf_full = cleaned_keyframes[cand_k]
                             try:
-                                M_cam, conf_cam = VideoEditorService._estimate_bg_motion_matrix(
-                                    kf_full, frame, src_mask=None, dst_mask=full_frame_mask
-                                )
+                                if cand_k in motion_cache_frame:
+                                    M_cam, conf_cam = motion_cache_frame[cand_k]
+                                else:
+                                    M_cam, conf_cam = VideoEditorService._estimate_bg_motion_matrix(
+                                        kf_full, frame, src_mask=None, dst_mask=full_frame_mask
+                                    )
+                                    motion_cache_frame[cand_k] = (M_cam, conf_cam)
                                 if M_cam is not None:
                                     warped_kf = cv2.warpAffine(kf_full, M_cam, (w, h), borderMode=cv2.BORDER_REFLECT)
                                     ref_sub_clean = warped_kf[sy1:sy2, sx1:sx2]
@@ -3681,8 +3711,14 @@ class VideoEditorService:
                                     ref_sub_clean = kf_full[sy1:sy2, sx1:sx2]
 
                                 bg_m = (mask_sub == 0)
-                                diff_bg = float(np.mean(cv2.absdiff(sub_roi, ref_sub_clean)[bg_m])) if np.count_nonzero(bg_m) > 0 else 0.0
-                                if diff_bg <= 8.5:
+                                if np.count_nonzero(bg_m) > 0:
+                                    abs_diff_bg = cv2.absdiff(sub_roi, ref_sub_clean)[bg_m]
+                                    diff_bg = float(np.mean(abs_diff_bg))
+                                    diff_bg_med = float(np.median(abs_diff_bg))
+                                else:
+                                    diff_bg = 0.0
+                                    diff_bg_med = 0.0
+                                if diff_bg <= 12.0 or (diff_bg_med <= 4.0 and diff_bg <= 18.0):
                                     aligned_sub = ref_sub_clean
                                     used_sub_align = True
                                     if branch_counters is not None:
@@ -3696,7 +3732,11 @@ class VideoEditorService:
                             try:
                                 best_k = cand_kfs_sub[0]
                                 kf_full = cleaned_keyframes[best_k]
-                                M_cam, _ = VideoEditorService._estimate_bg_motion_matrix(kf_full, frame, src_mask=None, dst_mask=full_frame_mask)
+                                if best_k in motion_cache_frame:
+                                    M_cam, _ = motion_cache_frame[best_k]
+                                else:
+                                    M_cam, _ = VideoEditorService._estimate_bg_motion_matrix(kf_full, frame, src_mask=None, dst_mask=full_frame_mask)
+                                    motion_cache_frame[best_k] = (M_cam, 0.0)
                                 ref_clean = cv2.warpAffine(kf_full, M_cam, (w, h), borderMode=cv2.BORDER_REFLECT)[sy1:sy2, sx1:sx2] if M_cam is not None else kf_full[sy1:sy2, sx1:sx2]
                                 from app.services.classical_fallback_manager import get_classical_fallback_manager
                                 classical_mgr = get_classical_fallback_manager()
@@ -3765,16 +3805,21 @@ class VideoEditorService:
             # Ensure 100% bit-exact invariance for pixels outside active +15px dilated mask
             out_frame = frame_compositor.composite(frame, out_frame, full_frame_mask)
 
-            # Thêm vào buffer 3-frame cho Temporal Bilateral Filter kèm frame gốc
-            frame_buffer.append((frame_idx, out_frame, full_frame_mask, frame))
+            is_aligned_frame = (frame_idx in cleaned_keyframes) or used_align or used_sub_align
+            # Thêm vào buffer 3-frame cho Temporal Bilateral Filter kèm frame gốc và cờ căn chỉnh
+            frame_buffer.append((frame_idx, out_frame, full_frame_mask, frame, is_aligned_frame))
 
             if len(frame_buffer) >= 3:
                 if not has_yielded_f0:
-                    out_f0 = self._temporal_bilateral_filter_3frame(
-                        None, frame_buffer[0][1], frame_buffer[1][1], frame_buffer[0][2],
-                        sigma_t=1.0, sigma_r=25.0, max_fb_error=3.0
-                    )
-                    out_f0 = frame_compositor.composite(frame_buffer[0][3], out_f0, frame_buffer[0][2])
+                    f0_idx, f0_out, f0_mask, f0_orig, f0_aligned = frame_buffer[0]
+                    if f0_aligned:
+                        out_f0 = frame_compositor.composite(f0_orig, f0_out, f0_mask)
+                    else:
+                        out_f0 = self._temporal_bilateral_filter_3frame(
+                            None, f0_out, frame_buffer[1][1], f0_mask,
+                            sigma_t=1.0, sigma_r=25.0, max_fb_error=3.0
+                        )
+                        out_f0 = frame_compositor.composite(f0_orig, out_f0, f0_mask)
                     yield out_f0
                     has_yielded_f0 = True
 
@@ -3783,8 +3828,12 @@ class VideoEditorService:
                 f_next = frame_buffer[2][1]
                 m_curr = frame_buffer[1][2]
                 orig_curr = frame_buffer[1][3]
-                out_filtered = self._temporal_bilateral_filter_3frame(f_prev, f_curr, f_next, m_curr, sigma_t=1.0, sigma_r=25.0, max_fb_error=3.0)
-                out_filtered = frame_compositor.composite(orig_curr, out_filtered, m_curr)
+                curr_aligned = frame_buffer[1][4]
+                if curr_aligned:
+                    out_filtered = frame_compositor.composite(orig_curr, f_curr, m_curr)
+                else:
+                    out_filtered = self._temporal_bilateral_filter_3frame(f_prev, f_curr, f_next, m_curr, sigma_t=1.0, sigma_r=25.0, max_fb_error=3.0)
+                    out_filtered = frame_compositor.composite(orig_curr, out_filtered, m_curr)
                 yield out_filtered
                 frame_buffer.pop(0)
 
@@ -3813,8 +3862,12 @@ class VideoEditorService:
                 f_curr = frame_buffer[1][1]
                 m_curr = frame_buffer[1][2]
                 orig_curr = frame_buffer[1][3]
-                out_filtered = self._temporal_bilateral_filter_3frame(f_prev, f_curr, None, m_curr, sigma_t=1.0, sigma_r=25.0, max_fb_error=3.0)
-                out_filtered = frame_compositor.composite(orig_curr, out_filtered, m_curr)
+                curr_aligned = frame_buffer[1][4]
+                if curr_aligned:
+                    out_filtered = frame_compositor.composite(orig_curr, f_curr, m_curr)
+                else:
+                    out_filtered = self._temporal_bilateral_filter_3frame(f_prev, f_curr, None, m_curr, sigma_t=1.0, sigma_r=25.0, max_fb_error=3.0)
+                    out_filtered = frame_compositor.composite(orig_curr, out_filtered, m_curr)
                 yield out_filtered
                 frame_buffer.clear()
             else:
@@ -4247,7 +4300,7 @@ class VideoEditorService:
                     if (
                         phi <= best_phi
                         and words_cnt <= best_words
-                        and tex_ratio >= best_tex - 0.05
+                        and (tex_ratio >= 0.68 or tex_ratio >= best_tex - 0.05)
                         and seam_ratio <= max(1.25, best_seam + 0.10)
                     ):
                         best_phi = phi

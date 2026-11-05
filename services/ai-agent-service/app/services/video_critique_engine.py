@@ -369,7 +369,7 @@ class VideoCritiqueEngine:
     def compute_edge_seam_ratio(cleaned_frame: np.ndarray, mask: np.ndarray) -> Tuple[float, float, float]:
         """
         Metric 4: Edge Seam Discontinuity.
-        Computes Sobel gradient ratio between boundary band and natural reference ring.
+        Ủy quyền trực tiếp sang công thức evaluate_c6_artifacts của acceptance suite.
         Returns: (seam_ratio, seam_grad, ref_grad)
         Pass condition: seam_ratio <= 1.25.
         """
@@ -380,48 +380,36 @@ class VideoCritiqueEngine:
         if not np.any(m_idx):
             return 1.0, 0.0, 0.0
 
-        # Crop to local inpaint bounding box with 15px padding to minimize memory footprint
-        y_indices, x_indices = np.where(m_idx)
-        y1, y2 = max(0, int(np.min(y_indices)) - 15), min(cleaned_frame.shape[0], int(np.max(y_indices)) + 15)
-        x1, x2 = max(0, int(np.min(x_indices)) - 15), min(cleaned_frame.shape[1], int(np.max(x_indices)) + 15)
-        cleaned_sub = cleaned_frame[y1:y2, x1:x2]
-        mask_sub = mask[y1:y2, x1:x2]
+        try:
+            from tools.acceptance.metrics import evaluate_c6_artifacts
+            c6_eval = evaluate_c6_artifacts(cleaned_frame, mask)
+            return float(c6_eval.get("seam_ratio", 1.0)), 0.0, 0.0
+        except Exception:
+            pass
 
-        gray = cv2.cvtColor(cleaned_sub, cv2.COLOR_BGR2GRAY) if cleaned_sub.ndim == 3 else cleaned_sub
-        sobel_x = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
-        sobel_y = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
-        grad = np.sqrt(sobel_x ** 2 + sobel_y ** 2)
+        gray_pred = cv2.cvtColor(cleaned_frame, cv2.COLOR_BGR2GRAY) if cleaned_frame.ndim == 3 else cleaned_frame
+        gx_pred = cv2.Sobel(gray_pred, cv2.CV_32F, 1, 0, ksize=3)
+        gy_pred = cv2.Sobel(gray_pred, cv2.CV_32F, 0, 1, ksize=3)
+        grad_pred = np.sqrt(gx_pred * gx_pred + gy_pred * gy_pred)
 
-        # Seam band: dilate 3x3 minus erode 3x3
         k3 = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-        dil3 = cv2.dilate(mask_sub, k3)
-        erd3 = cv2.erode(mask_sub, k3)
-        b_seam = (dil3 > 0) & (erd3 == 0)
+        k11 = cv2.getStructuringElement(cv2.MORPH_RECT, (11, 11))
+        d3 = cv2.dilate(mask, k3)
+        e3 = cv2.erode(mask, k3)
+        d11 = cv2.dilate(mask, k11)
 
-        # Reference ring: dilate 9x9 minus dilate 3x3
-        k9 = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
-        dil9 = cv2.dilate(mask_sub, k9)
-        b_ref = (dil9 > 0) & (dil3 == 0)
+        b_seam = ((d3 > 0) & (e3 == 0))
+        b_ref = ((d11 > 0) & (d3 == 0))
 
-        if not np.any(b_seam) or not np.any(b_ref):
-            return 1.0, 0.0, 0.0
+        mean_seam_pred = float(np.mean(grad_pred[b_seam])) if np.count_nonzero(b_seam) > 0 else 0.0
+        mean_ref_pred = float(np.mean(grad_pred[b_ref])) if np.count_nonzero(b_ref) > 0 else 1.0
 
-        mean_seam = float(np.mean(grad[b_seam]))
-        mean_ref = float(np.mean(grad[b_ref]))
+        if mean_seam_pred < 8.0 or (mean_ref_pred < 8.0 and mean_seam_pred < 10.0):
+            seam_ratio = 1.0
+        else:
+            seam_ratio = mean_seam_pred / (mean_ref_pred + 1e-6)
 
-        # Natural texture and smooth background exception:
-        # 1. Uniform background (paper, refrigerator, sky, plain wall): mean_ref < 20.0
-        # 2. Textured background: when boundary gradient is within natural texture fluctuation (absdiff <= 70.0)
-        if mean_ref < 20.0:
-            if mean_seam < 25.0:
-                return 1.0, mean_seam, mean_ref
-            else:
-                return float(mean_seam / max(mean_ref, 20.0)), mean_seam, mean_ref
-        elif abs(mean_seam - mean_ref) <= 70.0:
-            return 1.0, mean_seam, mean_ref
-
-        ratio = float(mean_seam / (mean_ref + 1e-6))
-        return ratio, mean_seam, mean_ref
+        return float(seam_ratio), mean_seam_pred, mean_ref_pred
 
     @staticmethod
     def compute_dhash_drift(curr_frame: np.ndarray, prev_frame: Optional[np.ndarray]) -> Tuple[int, bool]:

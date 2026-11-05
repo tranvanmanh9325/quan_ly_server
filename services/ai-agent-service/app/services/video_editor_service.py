@@ -2388,7 +2388,7 @@ class VideoEditorService:
             if target_regions and target_scope in ("overlay", "overlay_only"):
                 active_subs = [
                     r for r in target_regions
-                    if (r.get("type") == "subtitle" or not r.get("is_static", False))
+                    if ((r.get("type") == "subtitle" or not r.get("is_static", False)) or int(r.get("y", 0)) > int(0.50 * h))
                     and r.get("frame_start", 0) <= frame_idx <= r.get("frame_end", 0)
                 ]
                 has_sub_in_scope = (len(active_subs) > 0)
@@ -3147,6 +3147,7 @@ class VideoEditorService:
                 title_regions = [
                     r for r in target_regions
                     if (r.get("type") == "title" or r.get("is_static", False))
+                    and int(r.get("y", 0)) <= int(0.50 * h)
                 ]
             if title_regions:
                 # Phân cụm động các dòng tiêu đề liên tục theo khoảng cách dọc để cô lập khối tiêu đề chính

@@ -189,8 +189,7 @@ class MotionInvarianceClassifier:
         for f_idx in unique_checkpoints:
             video_cap.set(cv2.CAP_PROP_POS_FRAMES, f_idx)
             ret1, frame1 = video_cap.read()
-            ret2, frame2 = video_cap.read()
-            if not ret1 or not ret2 or frame1 is None or frame2 is None:
+            if not ret1 or frame1 is None:
                 continue
 
             # Verify that text is present in candidate frame (skip empty background frames)
@@ -207,17 +206,38 @@ class MotionInvarianceClassifier:
                 if float(np.mean(mag)) < 8.0:
                     continue
 
-            flow = self.compute_dense_flow(frame1, frame2)
-            if flow is None:
-                continue
+            # Adaptive temporal stride: probe dt in [1, 4, 8, 12] to reliably measure slow camera motion (e.g. slow zoom/pan)
+            chosen_res = None
+            for dt_step in [1, 4, 8, 12]:
+                f_idx2 = f_idx + dt_step
+                if f_idx2 >= num_frames:
+                    continue
+                video_cap.set(cv2.CAP_PROP_POS_FRAMES, f_idx2)
+                ret2, frame2 = video_cap.read()
+                if not ret2 or frame2 is None:
+                    continue
 
-            res = self.classify_region_motion(segment, flow)
-            if res["v_bg"] >= self.min_bg_motion:
+                flow = self.compute_dense_flow(frame1, frame2)
+                if flow is None:
+                    continue
+
+                res = self.classify_region_motion(segment, flow)
+                # Rescale motion magnitudes to 1-frame equivalent for consistent thresholding
+                norm_bg = res["v_bg"] / float(dt_step)
+                norm_txt = res["v_text"] / float(dt_step)
+                norm_delta = res["delta_v"] / float(dt_step)
+
+                # Check if background motion is significant over this dt window
+                if res["v_bg"] >= self.min_bg_motion:
+                    chosen_res = res
+                    break
+
+            if chosen_res is not None:
                 valid_motion_pairs += 1
-                if res["motion_type"] == "scene":
+                if chosen_res["motion_type"] == "scene":
                     scene_votes += 1
 
-        if valid_motion_pairs >= 2 and (scene_votes / valid_motion_pairs) >= 0.67:
+        if valid_motion_pairs >= 2 and (scene_votes / valid_motion_pairs) >= 0.50:
             return "scene"
         return "overlay"
 
@@ -366,6 +386,9 @@ class TemporalTextDetector:
 
                         # Geometric sanity checks
                         if oh < 8 or ow < 6:
+                            continue
+                        # Reject thin horizontal ruling lines (e.g. document texture ruled lines)
+                        if bh <= 2 or (bh <= 3 and (bw / float(max(1, bh))) >= 8.0):
                             continue
                         if (ow * oh) > (0.30 * orig_w * orig_h):
                             continue

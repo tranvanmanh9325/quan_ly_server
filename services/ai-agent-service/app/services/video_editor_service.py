@@ -3103,7 +3103,8 @@ class VideoEditorService:
                         if np.count_nonzero(t_m) > 0:
                             t_m = VideoEditorService._fill_holes(t_m)
                             S_res = np.sqrt(h ** 2 + w ** 2) / np.sqrt(1024 ** 2 + 576 ** 2)
-                            k_hdr_sz = max(3, int(round(5 * S_res)) | 1)
+                            is_bright_t = (float(np.median(frame[thy1:thy2, thx1:thx2])) >= 160.0) if frame is not None else False
+                            k_hdr_sz = 3 if is_bright_t else max(3, int(round(5 * S_res)) | 1)
                             dil_t = cv2.dilate(t_m, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k_hdr_sz, k_hdr_sz)))
                             dil_t = VideoEditorService._fill_holes(dil_t)
                             processed[thy1:thy2, thx1:thx2] = np.maximum(processed[thy1:thy2, thx1:thx2], dil_t)
@@ -3169,16 +3170,58 @@ class VideoEditorService:
                                 diff_bg = 99.0
                             if diff_bg <= 12.0:
                                 ring_mask = (cv2.dilate(orig_mask_dil, np.ones((15, 15), np.uint8)) > 0) & (orig_mask_dil == 0) & (warped_m == 0)
-                                local_ring_mae = float(np.mean(cv2.absdiff(frame, warped_ref)[ring_mask])) if np.count_nonzero(ring_mask) > 0 else diff_bg
+                                best_dy, best_dx = 0, 0
+                                best_ring_mae = float(np.mean(cv2.absdiff(frame, warped_ref)[ring_mask])) if np.count_nonzero(ring_mask) > 0 else diff_bg
+                                gray_f = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                                gray_w = cv2.cvtColor(warped_ref, cv2.COLOR_BGR2GRAY)
+                                if np.count_nonzero(ring_mask) > 20:
+                                    y_nz, x_nz = np.where(orig_mask_dil > 0)
+                                    if len(y_nz) > 0 and len(x_nz) > 0:
+                                        by1 = max(0, int(np.min(y_nz)) - 10)
+                                        by2 = min(h, int(np.max(y_nz)) + 10)
+                                        bx1 = max(0, int(np.min(x_nz)) - 10)
+                                        bx2 = min(w, int(np.max(x_nz)) + 10)
+                                        ring_crop = ring_mask[by1:by2, bx1:bx2]
+                                        fg_crop = gray_f[by1:by2, bx1:bx2]
+                                        for dy in range(-3, 4):
+                                            y1_s, y2_s = by1 + dy, by2 + dy
+                                            if y1_s < 0 or y2_s > h: continue
+                                            for dx in range(-2, 3):
+                                                x1_s, x2_s = bx1 + dx, bx2 + dx
+                                                if x1_s < 0 or x2_s > w: continue
+                                                wg_crop = gray_w[y1_s:y2_s, x1_s:x2_s]
+                                                mae_shift = float(np.mean(cv2.absdiff(fg_crop, wg_crop)[ring_crop]))
+                                                if mae_shift < best_ring_mae:
+                                                    best_ring_mae = mae_shift
+                                                    best_dy, best_dx = dy, dx
+
+                                if best_dy != 0 or best_dx != 0:
+                                    M_ref = M.copy()
+                                    M_ref[0, 2] += best_dx
+                                    M_ref[1, 2] += best_dy
+                                    warped_ref = cv2.warpAffine(ref_f, M_ref, (w, h), flags=cv2.INTER_LANCZOS4, borderMode=cv2.BORDER_REFLECT)
+                                    warped_m = cv2.warpAffine(ref_m_u8, M_ref, (w, h), flags=cv2.INTER_NEAREST, borderMode=cv2.BORDER_CONSTANT, borderValue=255)
+                                    unocc = (remaining_mask > 0) & (warped_m == 0)
+
                                 lap_w = cv2.Laplacian(cv2.cvtColor(warped_ref, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
                                 var_inp = float(np.var(lap_w[unocc])) if np.count_nonzero(unocc) > 0 else 0.0
-                                scored_refs.append((local_ring_mae, var_inp, warped_ref, unocc, ref_k))
+                                scored_refs.append((best_ring_mae, var_inp, warped_ref, unocc, ref_k))
 
                 if scored_refs:
                     max_var = max(r[1] for r in scored_refs)
                     sharp_refs = [r for r in scored_refs if r[1] >= max(15.0, 0.70 * max_var)]
                     chosen = min(sharp_refs, key=lambda x: x[0]) if sharp_refs else min(scored_refs, key=lambda x: x[0])
                     best_ring_mae, best_var, best_warped, best_unocc, best_k = chosen
+
+                    # Unsharp nhẹ bên trong inner_unocc nếu độ nét bị giảm do nội suy
+                    lap_f = cv2.Laplacian(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
+                    var_ring = float(np.var(lap_f[orig_mask_dil == 0])) if np.count_nonzero(orig_mask_dil == 0) > 0 else 100.0
+                    if best_var < 0.85 * var_ring:
+                        inner_unocc = (cv2.erode((best_unocc.astype(np.uint8) * 255), np.ones((3, 3), np.uint8)) > 0)
+                        blur_w = cv2.GaussianBlur(best_warped, (0, 0), 0.85)
+                        sharp_w = np.clip(np.round(1.30 * best_warped.astype(np.float32) - 0.30 * blur_w.astype(np.float32)), 0, 255).astype(np.uint8)
+                        best_warped[inner_unocc] = sharp_w[inner_unocc]
+
                     out_f[best_unocc] = best_warped[best_unocc]
                     applied_kf_mask[best_unocc] = 255
                     remaining_mask[best_unocc] = 0
@@ -3489,13 +3532,16 @@ class VideoEditorService:
             t_mask = VideoEditorService._fill_holes(t_mask)
             roi_ref = ref_frame[hy1:hy2, hx1:hx2] if ref_frame is not None else None
             is_bright_roi = (float(np.mean(cv2.cvtColor(roi_ref, cv2.COLOR_BGR2GRAY))) >= 160.0) if (roi_ref is not None and roi_ref.size > 0) else False
-            k_hdr_eff = 3 if is_bright_roi else k_hdr_sz
-            m_blend = cv2.dilate(t_mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k_hdr_eff, k_hdr_eff)))
+            if is_bright_roi:
+                m_blend = t_mask.copy()
+                f_hdr = cv2.GaussianBlur(m_blend.astype(np.float32) / 255.0, (5, 5), 1.2)[:, :, np.newaxis]
+                f_hdr = np.maximum(f_hdr, (t_mask > 0).astype(np.float32)[:, :, np.newaxis])
+                f_hdr[m_blend == 0] = 0.0
+            else:
+                m_blend = cv2.dilate(t_mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k_hdr_sz, k_hdr_sz)))
+                f_hdr = cv2.GaussianBlur(m_blend.astype(np.float32) / 255.0, (9, 9), 2.5)[:, :, np.newaxis]
+                f_hdr = np.maximum(f_hdr, (t_mask > 0).astype(np.float32)[:, :, np.newaxis])
             bg_m = (m_blend == 0)
-            f_ksize = (5, 5) if is_bright_roi else (9, 9)
-            f_sigma = 1.5 if is_bright_roi else 2.5
-            f_hdr = cv2.GaussianBlur(m_blend.astype(np.float32) / 255.0, f_ksize, f_sigma)[:, :, np.newaxis]
-            f_hdr = np.maximum(f_hdr, (t_mask > 0).astype(np.float32)[:, :, np.newaxis])
             return (t_mask, m_blend, bg_m, f_hdr)
 
         cur_shot_idx = 0
@@ -3664,6 +3710,12 @@ class VideoEditorService:
 
 
                     if used_align and aligned_hdr is not None:
+                        inner_hdr = (cv2.erode(mask_blend_hdr, np.ones((3, 3), np.uint8)) > 0)
+                        if np.count_nonzero(inner_hdr) > 0:
+                            blur_al = cv2.GaussianBlur(aligned_hdr, (0, 0), 0.85)
+                            sharp_al = np.clip(np.round(1.30 * aligned_hdr.astype(np.float32) - 0.30 * blur_al.astype(np.float32)), 0, 255).astype(np.uint8)
+                            aligned_hdr = np.where(inner_hdr[:, :, np.newaxis], sharp_al, aligned_hdr)
+
                         if branch_counters is not None:
                             branch_counters["keyframe_aligned"] = branch_counters.get("keyframe_aligned", 0) + 1
                             branch_counters["translation_aligned"] = branch_counters.get("translation_aligned", 0) + 1

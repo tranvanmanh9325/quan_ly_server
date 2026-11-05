@@ -2997,13 +2997,66 @@ class VideoEditorService:
         import numpy as np
 
         out_f = frame.copy()
+        h, w = frame.shape[:2]
         full_mask, sub_info = self._build_inpaint_mask_for_frame(
             frame_idx, frame.shape, frame_img=frame, target_regions=target_regions, target_scope=target_scope
         )
-        applied_kf_mask = np.zeros(frame.shape[:2], dtype=np.uint8)
+        applied_kf_mask = np.zeros((h, w), dtype=np.uint8)
+
+        def _get_dilated_hole_filled_mask(raw_m: Optional[np.ndarray], s_info: Optional[Dict[str, Any]]) -> np.ndarray:
+            if raw_m is None or np.count_nonzero(raw_m) == 0:
+                return np.zeros((h, w), dtype=np.uint8)
+            processed = np.zeros((h, w), dtype=np.uint8)
+            # 1. Title ROI (nếu có)
+            if target_regions:
+                title_regions = [
+                    r for r in target_regions
+                    if (r.get("type") == "title" and r.get("is_static", True))
+                ]
+                if title_regions:
+                    pad_x = max(16, int(0.02 * w))
+                    pad_y = max(16, int(0.02 * h))
+                    thx1 = max(0, min(int(r.get("x", 0)) for r in title_regions) - pad_x)
+                    thy1 = max(0, min(int(r.get("y", 0)) for r in title_regions) - pad_y)
+                    thx2 = min(w, max(int(r.get("x", 0)) + int(r.get("w", 0)) for r in title_regions) + pad_x)
+                    thy2 = min(h, max(int(r.get("y", 0)) + int(r.get("h", 0)) for r in title_regions) + pad_y)
+                    if thy2 > thy1 and thx2 > thx1:
+                        t_m = raw_m[thy1:thy2, thx1:thx2]
+                        if np.count_nonzero(t_m) > 0:
+                            t_m = VideoEditorService._fill_holes(t_m)
+                            S_res = np.sqrt(h ** 2 + w ** 2) / np.sqrt(1024 ** 2 + 576 ** 2)
+                            k_hdr_sz = max(3, int(round(5 * S_res)) | 1)
+                            dil_t = cv2.dilate(t_m, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k_hdr_sz, k_hdr_sz)))
+                            dil_t = VideoEditorService._fill_holes(dil_t)
+                            processed[thy1:thy2, thx1:thx2] = np.maximum(processed[thy1:thy2, thx1:thx2], dil_t)
+
+            # 2. Subtitle ROI (nếu có)
+            if s_info is not None:
+                sy1, sy2 = s_info["y1"], s_info["y2"]
+                sx1, sx2 = s_info["x1"], s_info["x2"]
+                if sy2 > sy1 and sx2 > sx1:
+                    sub_m = raw_m[sy1:sy2, sx1:sx2]
+                    if np.count_nonzero(sub_m) > 0:
+                        s_res_kf = np.sqrt(h ** 2 + w ** 2) / np.sqrt(1024 ** 2 + 576 ** 2)
+                        r_dil_kf = max(2, min(4, int(round(3 * s_res_kf))))
+                        k_dil_kf = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * r_dil_kf + 1, 2 * r_dil_kf + 1))
+                        dil_sub = cv2.dilate(sub_m, k_dil_kf)
+                        dil_sub = VideoEditorService._fill_holes(dil_sub)
+                        processed[sy1:sy2, sx1:sx2] = np.maximum(processed[sy1:sy2, sx1:sx2], dil_sub)
+
+            # 3. Phần còn lại ngoài Title & Subtitle (nếu có)
+            other_m = raw_m.copy()
+            other_m[processed > 0] = 0
+            if np.count_nonzero(other_m) > 0:
+                other_m = VideoEditorService._fill_holes(other_m)
+                dil_other = cv2.dilate(other_m, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)))
+                dil_other = VideoEditorService._fill_holes(dil_other)
+                processed = np.maximum(processed, dil_other)
+
+            return processed
 
         if full_mask is not None and np.count_nonzero(full_mask) > 0:
-            remaining_mask = full_mask.copy()
+            remaining_mask = _get_dilated_hole_filled_mask(full_mask, sub_info)
 
             # Multi-Frame Unoccluded Background Reveal:
             # Mượn nền thật chưa từng bị che từ các reference frame trong cùng shot
@@ -3016,16 +3069,16 @@ class VideoEditorService:
                     if ref_k == frame_idx:
                         continue
                     ref_f = reference_frames[ref_k]
-                    ref_m, _ = self._build_inpaint_mask_for_frame(
+                    ref_m, ref_sub = self._build_inpaint_mask_for_frame(
                         ref_k, ref_f.shape, frame_img=ref_f, target_regions=target_regions, target_scope=target_scope
                     )
+                    ref_m_dil = _get_dilated_hole_filled_mask(ref_m, ref_sub)
                     M, conf = VideoEditorService._estimate_bg_motion_matrix(
-                        ref_f, frame, src_mask=ref_m, dst_mask=remaining_mask
+                        ref_f, frame, src_mask=ref_m_dil, dst_mask=remaining_mask
                     )
                     if M is not None and conf >= 0.15:
-                        h, w = frame.shape[:2]
                         warped_ref = cv2.warpAffine(ref_f, M, (w, h), borderMode=cv2.BORDER_REFLECT)
-                        ref_m_u8 = ref_m if ref_m is not None else np.zeros((h, w), dtype=np.uint8)
+                        ref_m_u8 = cv2.dilate(ref_m_dil, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))
                         warped_m = cv2.warpAffine(
                             ref_m_u8, M, (w, h),
                             flags=cv2.INTER_NEAREST, borderMode=cv2.BORDER_CONSTANT, borderValue=255
@@ -3421,6 +3474,7 @@ class VideoEditorService:
                 if np.count_nonzero(tight_mask_header) > 0:
                     curr_roi = frame[hy1:hy2, hx1:hx2]
                     hdr_part = out_frame[hy1:hy2, hx1:hx2]
+                    full_frame_mask[hy1:hy2, hx1:hx2] = mask_blend_hdr
 
                     # 1. Xử lý Title ROI bằng Direct Keyframe Re-anchoring (Không dùng SBTP tuần tự)
                     shot_start, shot_end = shots[cur_shot_idx]
@@ -4342,6 +4396,15 @@ class VideoEditorService:
         )
         cache_dir.mkdir(parents=True, exist_ok=True)
 
+        shots_list: List[Tuple[int, int]] = []
+        prev_cut_kf = 0
+        if shot_cuts:
+            for sc in sorted(list(set(shot_cuts))):
+                if sc > prev_cut_kf:
+                    shots_list.append((prev_cut_kf, sc - 1))
+                    prev_cut_kf = sc
+        shots_list.append((prev_cut_kf, max(prev_cut_kf, total_frames - 1)))
+
         try:
             cleaned_keyframes = KeyframeDiskCache(cache_dir, max_cache_size=4)
             done_count = 0
@@ -4352,8 +4415,10 @@ class VideoEditorService:
                 if cache_file.exists() and cache_mask_file.exists():
                     return kidx
                 frame = raw_kfs[kidx]
+                k_shot = next(((s, e) for (s, e) in shots_list if s <= kidx <= e), (0, total_frames - 1))
+                shot_raw_kfs = {k: f for k, f in raw_kfs.items() if k_shot[0] <= k <= k_shot[1]}
                 clean, applied_m = self._inpaint_keyframe_full(
-                    frame, kidx, target_regions=target_regions, target_scope=target_scope, context=context, return_mask=True, reference_frames=raw_kfs
+                    frame, kidx, target_regions=target_regions, target_scope=target_scope, context=context, return_mask=True, reference_frames=shot_raw_kfs
                 )
                 try:
                     cv2.imwrite(str(cache_file), clean)

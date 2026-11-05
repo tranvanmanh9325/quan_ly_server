@@ -3178,7 +3178,7 @@ class VideoEditorService:
                 if scored_refs:
                     max_var = max(r[1] for r in scored_refs)
                     sharp_refs = [r for r in scored_refs if r[1] >= max(15.0, 0.70 * max_var)]
-                    chosen = min(sharp_refs, key=lambda x: x[0] + 0.05 * abs(x[4] - kidx)) if sharp_refs else min(scored_refs, key=lambda x: x[0] + 0.05 * abs(x[4] - kidx))
+                    chosen = min(sharp_refs, key=lambda x: x[0] + 0.05 * abs(x[4] - frame_idx)) if sharp_refs else min(scored_refs, key=lambda x: x[0] + 0.05 * abs(x[4] - frame_idx))
                     best_ring_mae, best_var, best_warped, best_unocc, best_k = chosen
                     out_f[best_unocc] = best_warped[best_unocc]
                     applied_kf_mask[best_unocc] = 255

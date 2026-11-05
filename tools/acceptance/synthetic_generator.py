@@ -546,24 +546,26 @@ class SyntheticBenchmarkGenerator:
             ]
             subprocess.run(cmd_gen, check=True, timeout=30)
 
-            # Mux into clean.mp4
+            # Mux and re-encode into clean.mp4 with H.264 CRF-14 baseline per Section 3 R7
             clean_mux = clean_mp4.parent / "clean_mux.mp4"
             cmd_mux1 = [
                 "ffmpeg", "-y", "-v", "error",
                 "-i", str(clean_mp4), "-i", str(audio_aac),
-                "-c:v", "copy", "-c:a", "copy", str(clean_mux)
+                "-c:v", "libx264", "-crf", "14", "-preset", "fast", "-pix_fmt", "yuv420p",
+                "-c:a", "copy", str(clean_mux)
             ]
-            subprocess.run(cmd_mux1, check=True, timeout=30)
+            subprocess.run(cmd_mux1, check=True, timeout=60)
             shutil.move(str(clean_mux), str(clean_mp4))
 
-            # Mux into text.mp4 with identical audio
+            # Mux and re-encode into text.mp4 with identical audio and H.264 CRF-14 baseline
             text_mux = text_mp4.parent / "text_mux.mp4"
             cmd_mux2 = [
                 "ffmpeg", "-y", "-v", "error",
                 "-i", str(text_mp4), "-i", str(audio_aac),
-                "-c:v", "copy", "-c:a", "copy", str(text_mux)
+                "-c:v", "libx264", "-crf", "14", "-preset", "fast", "-pix_fmt", "yuv420p",
+                "-c:a", "copy", str(text_mux)
             ]
-            subprocess.run(cmd_mux2, check=True, timeout=30)
+            subprocess.run(cmd_mux2, check=True, timeout=60)
             shutil.move(str(text_mux), str(text_mp4))
 
             if audio_aac.exists():

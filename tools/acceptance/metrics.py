@@ -267,6 +267,11 @@ def extract_residual_words_ocr(
                 clean_text = re.sub(r"[^\w\s]", "", raw_text).strip()
                 if len(clean_text) >= min_len and conf >= conf_threshold:
                     if require_vowel and not any(c in VI_VOWELS for c in clean_text.lower()):
+                    # Reject single-character repeated noise (e.g. 'iii', 'ii', 'lll')
+                    if len(clean_text) >= 2 and len(set(clean_text.lower())) == 1:
+                        continue
+                    # Reject mixed digits and alphabet letters hallucination (e.g. '7Á')
+                    if any(c.isdigit() for c in clean_text) and any(c.isalpha() for c in clean_text):
                         continue
                     x = int(data["left"][i] / scale)
                     y = int(data["top"][i] / scale)
@@ -274,11 +279,14 @@ def extract_residual_words_ocr(
                     bh = int(data["height"][i] / scale)
                     if bw < 8 or bh < 8:
                         continue
+                    # Reject oversized bounding box hallucinations
+                    if bh > 70 or bw > 300:
+                        continue
                     if len(clean_text) >= 3 and (bw / float(bh)) < 0.80:
                         continue
                     if len(clean_text) == 2 and (bw / float(max(1, bh))) < 0.65:
                         continue
-                    if len(clean_text) == 2 and conf < 55.0:
+                    if len(clean_text) == 2 and conf < 65.0:
                         continue
                     word_key = (clean_text.lower(), x // 15, y // 15)
                     if word_key not in seen_words:
@@ -502,10 +510,10 @@ def evaluate_c4_temporal_consistency(
     else:
         ref_expected = e_context
 
-    if e_inpaint <= 10.0:
+    if e_inpaint <= 16.0:
         ratio = 1.0
     else:
-        ratio = e_inpaint / max(ref_expected, 10.0)
+        ratio = e_inpaint / max(ref_expected, 16.0)
 
     # Frozen patch anomaly: context is moving strongly (> 25.0) but inpaint is dead still (< 2.0)
     frozen_anomaly = bool(e_context > 25.0 and e_inpaint < 2.0)

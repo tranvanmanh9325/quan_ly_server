@@ -3555,6 +3555,9 @@ class VideoEditorService:
                             if len(ys) > 0:
                                 bbox_m = np.zeros_like(m_curr_mask)
                                 bbox_m[ys.min():ys.max()+1, xs.min():xs.max()+1] = 255
+                                k9_pad = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
+                                bbox_m = cv2.dilate(bbox_m, k9_pad)
+
                                 k35_c = cv2.getStructuringElement(cv2.MORPH_RECT, (35, 35))
                                 k15_c = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 15))
                                 d35_c = cv2.dilate(bbox_m, k35_c)
@@ -3565,8 +3568,28 @@ class VideoEditorService:
                                 ref_c4 = max(e_ctx, 16.0)
                                 if e_inp > 1.05 * ref_c4:
                                     use_m = (m_curr_mask > 0)
-                                    blended_f = np.clip(np.round(0.80 * f_curr_out.astype(np.float32) + 0.20 * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)
+                                    f_pre_blend = f_curr_out.copy()
+                                    blended_f = np.clip(np.round(0.73 * f_curr_out.astype(np.float32) + 0.27 * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)
                                     f_curr_out = np.where(use_m[:, :, np.newaxis], blended_f, f_curr_out)
+
+                                    # Post-blend high frequency compensation on use_m to protect C6 texture
+                                    k3_c = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+                                    k11_c = cv2.getStructuringElement(cv2.MORPH_RECT, (11, 11))
+                                    b_ref_c = (cv2.dilate(bbox_m, k11_c) > 0) & (cv2.dilate(bbox_m, k3_c) == 0)
+                                    if np.count_nonzero(b_ref_c) > 0:
+                                        lap_out = cv2.Laplacian(cv2.cvtColor(f_curr_out, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
+                                        var_inpaint = float(np.var(lap_out[bbox_m > 0]))
+                                        var_context = float(np.var(lap_out[b_ref_c]))
+                                        if var_context >= 15.0 and var_inpaint < 0.80 * var_context:
+                                            blur_pre = cv2.GaussianBlur(f_pre_blend, (0, 0), 1.0)
+                                            hf_pre = f_pre_blend.astype(np.float32) - blur_pre.astype(np.float32)
+                                            for g_try in (0.35, 0.65, 0.95, 1.25):
+                                                cand_out = np.clip(np.round(f_curr_out.astype(np.float32) + g_try * hf_pre), 0, 255).astype(np.uint8)
+                                                cand_f = np.where(use_m[:, :, np.newaxis], cand_out, f_curr_out)
+                                                lap_cand = cv2.Laplacian(cv2.cvtColor(cand_f, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
+                                                f_curr_out = cand_f
+                                                if float(np.var(lap_cand[bbox_m > 0])) >= 0.85 * min(var_context, 2400.0):
+                                                    break
                         else:
                             k25_c = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 25))
                             k9_c = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
@@ -3639,12 +3662,27 @@ class VideoEditorService:
                 if branch_counters is not None:
                     branch_counters["keyframe_exact"] = branch_counters.get("keyframe_exact", 0) + 1
                 inpaint_kf = cleaned_keyframes[frame_idx]
-                kf_mask = cleaned_keyframes.get_mask(frame_idx) if hasattr(cleaned_keyframes, "get_mask") else None
-                if kf_mask is not None and np.count_nonzero(kf_mask) > 0:
-                    full_frame_mask = kf_mask
+                curr_kf_roi = frame[hy1:hy2, hx1:hx2] if (hy2 > hy1 and hx2 > hx1) else None
+                is_bright_kf = (float(np.mean(cv2.cvtColor(curr_kf_roi, cv2.COLOR_BGR2GRAY))) >= 160.0) if (curr_kf_roi is not None and curr_kf_roi.size > 0) else False
+                if is_bright_kf and np.count_nonzero(tight_mask_header) > 0:
+                    chroma_kf = np.max(curr_kf_roi, axis=2).astype(np.int16) - np.min(curr_kf_roi, axis=2).astype(np.int16)
+                    is_chromatic_kf = (np.count_nonzero(tight_mask_header) > 0) and (float(np.percentile(chroma_kf[tight_mask_header > 0], 85)) > 25.0)
+                    if is_chromatic_kf:
+                        raw_hit_kf = (tight_mask_header > 0) & (chroma_kf > 15)
+                    else:
+                        diff_kf = np.max(cv2.absdiff(curr_kf_roi, inpaint_kf[hy1:hy2, hx1:hx2]), axis=2)
+                        raw_hit_kf = (tight_mask_header > 0) & ((chroma_kf > 18) | (diff_kf > 42))
+                    e5_kf = cv2.erode(tight_mask_header, cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5)))
+                    raw_dil_kf = cv2.dilate(raw_hit_kf.astype(np.uint8) * 255, np.ones((3, 3), np.uint8))
+                    act_kf_m = raw_dil_kf if np.count_nonzero(e5_kf) == 0 else cv2.bitwise_and(raw_dil_kf, e5_kf)
+                    full_frame_mask[hy1:hy2, hx1:hx2] = act_kf_m
                 else:
-                    if np.count_nonzero(tight_mask_header) > 0:
-                        full_frame_mask[hy1:hy2, hx1:hx2] = mask_blend_hdr
+                    kf_mask = cleaned_keyframes.get_mask(frame_idx) if hasattr(cleaned_keyframes, "get_mask") else None
+                    if kf_mask is not None and np.count_nonzero(kf_mask) > 0:
+                        full_frame_mask = kf_mask
+                    else:
+                        if np.count_nonzero(tight_mask_header) > 0:
+                            full_frame_mask[hy1:hy2, hx1:hx2] = mask_blend_hdr
 
                     # Bổ sung Subtitle mask trên Keyframe để composite đầy đủ cả header và subtitle
                     full_m_kf, sub_info_kf = self._build_inpaint_mask_for_frame(
@@ -3710,7 +3748,7 @@ class VideoEditorService:
                                 else:
                                     diff_bg = 0.0
 
-                            score_cand = diff_bg + 0.05 * abs(cand_k - frame_idx)
+                            score_cand = diff_bg + 0.25 * abs(cand_k - frame_idx)
                             if diff_bg <= 12.0 and score_cand < best_cand_diff:
                                 best_cand_diff = score_cand
                                 aligned_hdr = ref_clean_roi
@@ -3793,17 +3831,20 @@ class VideoEditorService:
                                 0, 255
                             ).astype(np.uint8)
 
-                            # Adaptive second-stage unsharp: chỉ nâng gain=2.10 khi thiếu texture (F6, F34, F50)
+                            # Adaptive second-stage unsharp: chỉ nâng gain khi thiếu texture (F6, F34, F50)
                             ys_a, xs_a = np.where(active_hdr_mask > 0)
                             if len(ys_a) > 0:
                                 box_a = np.zeros_like(active_hdr_mask)
                                 box_a[ys_a.min():ys_a.max()+1, xs_a.min():xs_a.max()+1] = 255
-                                b_ref_a = (cv2.dilate(box_a, k11_b) > 0) & (cv2.dilate(box_a, k3_b) == 0)
+                                k9_pad = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
+                                box_pad = cv2.dilate(box_a, k9_pad)
+                                b_ref_a = (cv2.dilate(box_pad, k11_b) > 0) & (cv2.dilate(box_pad, k3_b) == 0)
                                 lap_b = cv2.Laplacian(cv2.cvtColor(blend_hdr, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
-                                var_in_b = float(np.var(lap_b[box_a > 0]))
-                                var_ctx_b = float(np.var(lap_b[b_ref_a])) if np.count_nonzero(b_ref_a) > 0 else 0.0
-                                if var_ctx_b >= 15.0 and var_in_b < 0.78 * var_ctx_b:
-                                    aligned_hdr_sharp = np.clip(np.round(orig_aligned_hdr.astype(np.float32) + 2.10 * hf_al), 0, 255).astype(np.uint8)
+                                var_in_b = float(np.var(lap_b[box_pad > 0]))
+                                var_ctx_b = float(np.var(lap_b[b_ref_a])) if np.count_nonzero(b_ref_a) > 0 else v_ctx
+                                ref_ctx_v = max(var_ctx_b, v_ctx)
+                                if ref_ctx_v >= 15.0 and var_in_b < 0.80 * ref_ctx_v:
+                                    aligned_hdr_sharp = np.clip(np.round(orig_aligned_hdr.astype(np.float32) + 2.50 * hf_al), 0, 255).astype(np.uint8)
                                     blend_hdr = np.clip(
                                         np.round(f_act * aligned_hdr_sharp.astype(np.float32) + (1.0 - f_act) * curr_roi.astype(np.float32)),
                                         0, 255

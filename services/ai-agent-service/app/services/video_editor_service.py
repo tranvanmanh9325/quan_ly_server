@@ -2348,11 +2348,13 @@ class VideoEditorService:
                     r for r in target_regions
                     if (r.get("type") == "title" or r.get("is_static", True))
                     and r.get("motion_type") != "scene"
+                    and max(0, r.get("frame_start", 0) - 1) <= frame_idx <= r.get("frame_end", 0) + 1
                 ]
             else:
                 title_regions = [
                     r for r in target_regions
                     if (r.get("type") == "title" and r.get("is_static", True))
+                    and max(0, r.get("frame_start", 0) - 1) <= frame_idx <= r.get("frame_end", 0) + 1
                 ]
             for tr in title_regions:
                 tx = max(0, int(tr.get("x", 0)))
@@ -2372,10 +2374,15 @@ class VideoEditorService:
                         else:
                             gray_t = cv2.cvtColor(t_roi, cv2.COLOR_BGR2GRAY)
                             grad_t = cv2.morphologyEx(gray_t, cv2.MORPH_GRADIENT, np.ones((3, 3), np.uint8))
-                            _, b_t = cv2.threshold(grad_t, 15, 255, cv2.THRESH_BINARY)
-                            k3_t = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-                            t_mask_dil = cv2.dilate(b_t, k3_t)
-                            full_mask[ty:ty2, tx:tx2] = np.maximum(full_mask[ty:ty2, tx:tx2], t_mask_dil)
+                            bg_y1 = max(0, ty - 20)
+                            bg_y2 = min(h, ty2 + 20)
+                            bg_patch = cv2.cvtColor(frame_img[bg_y1:bg_y2, tx:tx2], cv2.COLOR_BGR2GRAY)
+                            grad_bg = cv2.morphologyEx(bg_patch, cv2.MORPH_GRADIENT, np.ones((3, 3), np.uint8))
+                            if float(np.mean(grad_t)) >= 1.35 * max(1.0, float(np.mean(grad_bg))):
+                                _, b_t = cv2.threshold(grad_t, 15, 255, cv2.THRESH_BINARY)
+                                k3_t = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+                                t_mask_dil = VideoEditorService._fill_holes(cv2.dilate(b_t, k3_t))
+                                full_mask[ty:ty2, tx:tx2] = np.maximum(full_mask[ty:ty2, tx:tx2], t_mask_dil)
                     else:
                         full_mask[ty:ty2, tx:tx2] = 255
 
@@ -2452,6 +2459,7 @@ class VideoEditorService:
             k_horiz_protect = cv2.getStructuringElement(cv2.MORPH_RECT, (k_horiz_len, 1))
             horiz_lines_prot = cv2.morphologyEx((gray < 140).astype(np.uint8) * 255, cv2.MORPH_OPEN, k_horiz_protect)
             table_structure_mask = vert_lines_prot | horiz_lines_prot
+            table_structure_mask = table_structure_mask & (hsv[:, :, 1] < 70)
             has_table_structure = is_white_doc and (np.count_nonzero(table_structure_mask) >= int(round(80 * scale_geom)))
 
             # Bright core candidate extraction (White, Yellow, Cyan, Green, Pink...)
@@ -2902,7 +2910,7 @@ class VideoEditorService:
     ) -> Tuple[Optional[np.ndarray], float]:
         """
         Ước lượng ma trận chuyển động Affine Partial 2D (4 DOF: scale, rotation, translation)
-        chỉ trên vùng nền ngoài mask (Background Motion Compensation).
+        chỉ trên vùng nền ngoài mask (Background Motion Compensation) bằng Minimum Background MAE.
         Bắt chính xác chuyển động Zoom scale (P3), pan ngang (P1, P8), vertical tilt (P2),
         integer snap cho bề mặt chu kỳ (P5, P4).
         Returns: (M_affine_2x3, confidence)
@@ -2914,25 +2922,36 @@ class VideoEditorService:
         gray_src = cv2.cvtColor(src_frame, cv2.COLOR_BGR2GRAY) if src_frame.ndim == 3 else src_frame
         gray_dst = cv2.cvtColor(dst_frame, cv2.COLOR_BGR2GRAY) if dst_frame.ndim == 3 else dst_frame
 
-        # Vùng tìm đặc trưng: loại bỏ vùng mask + mở rộng 15px
-        src_bg_valid = np.ones((h, w), dtype=np.uint8) * 255
-        if src_mask is not None and np.count_nonzero(src_mask) > 0:
-            dil_src = cv2.dilate(src_mask, cv2.getStructuringElement(cv2.MORPH_RECT, (15, 15)))
-            src_bg_valid[dil_src > 0] = 0
+        dil_src = cv2.dilate(src_mask, cv2.getStructuringElement(cv2.MORPH_RECT, (15, 15))) if (src_mask is not None and np.count_nonzero(src_mask) > 0) else np.zeros((h, w), dtype=np.uint8)
+        dil_dst = cv2.dilate(dst_mask, cv2.getStructuringElement(cv2.MORPH_RECT, (15, 15))) if (dst_mask is not None and np.count_nonzero(dst_mask) > 0) else np.zeros((h, w), dtype=np.uint8)
 
-        # Trích xuất điểm đặc trưng trên nền src_frame
-        p0 = cv2.goodFeaturesToTrack(
-            gray_src,
-            maxCorners=400,
-            qualityLevel=0.01,
-            minDistance=8,
-            mask=src_bg_valid,
-        )
+        candidates: List[Tuple[np.ndarray, bool]] = []
 
+        # 0. Ứng viên dịch chuyển lưới tuần hoàn nhỏ cho cấu trúc chu kỳ (P5 vải lanh f15->f0, P4 gạch...)
+        for d_x, d_y in [(-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (1, 1), (-1, 1), (1, -1), (0, 0)]:
+            candidates.append((np.float32([[1.0, 0.0, float(d_x)], [0.0, 1.0, float(d_y)]]), True))
+
+        # 1. Masked Phase Correlation (điền median nền sạch vào dil_src, dil_dst để chữ tĩnh không kéo lệch đỉnh FFT)
+        clean_src = gray_src.copy()
+        clean_dst = gray_dst.copy()
+        if np.count_nonzero(dil_src) > 0 and np.count_nonzero(dil_src == 0) > 0:
+            clean_src[dil_src > 0] = int(np.median(gray_src[dil_src == 0]))
+        if np.count_nonzero(dil_dst) > 0 and np.count_nonzero(dil_dst == 0) > 0:
+            clean_dst[dil_dst > 0] = int(np.median(gray_dst[dil_dst == 0]))
+
+        shift, resp = cv2.phaseCorrelate(np.float32(clean_dst), np.float32(clean_src))
+        if resp >= 0.03:
+            for s in [(-shift[0], -shift[1]), (shift[0], shift[1])]:
+                candidates.append((np.float32([[1.0, 0.0, s[0]], [0.0, 1.0, s[1]]]), False))
+                candidates.append((np.float32([[1.0, 0.0, float(round(s[0]))], [0.0, 1.0, float(round(s[1]))]]), True))
+
+        # 2. PyrLK Affine with larger window (31x31) and pyramid (level 5)
+        src_valid = (dil_src == 0).astype(np.uint8) * 255
+        p0 = cv2.goodFeaturesToTrack(gray_src, maxCorners=400, qualityLevel=0.01, minDistance=8, mask=src_valid)
         if p0 is not None and len(p0) >= 8:
             p1, status, err = cv2.calcOpticalFlowPyrLK(
                 gray_src, gray_dst, p0, None,
-                winSize=(21, 21), maxLevel=3,
+                winSize=(31, 31), maxLevel=5,
                 criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 30, 0.01)
             )
             if p1 is not None and status is not None:
@@ -2940,8 +2959,7 @@ class VideoEditorService:
                 good_dst = p1[status == 1]
 
                 # Lọc bỏ các điểm rơi vào mask của dst_frame
-                if dst_mask is not None and np.count_nonzero(dst_mask) > 0:
-                    dil_dst = cv2.dilate(dst_mask, cv2.getStructuringElement(cv2.MORPH_RECT, (15, 15)))
+                if np.count_nonzero(dil_dst) > 0:
                     keep = []
                     for i, pt in enumerate(good_dst):
                         x, y = int(round(pt[0])), int(round(pt[1]))
@@ -2953,33 +2971,50 @@ class VideoEditorService:
 
                 if len(good_src) >= 8:
                     M, inliers = cv2.estimateAffinePartial2D(
-                        good_src, good_dst, method=cv2.RANSAC, ransacReprojThreshold=2.5
+                        good_src, good_dst, method=cv2.RANSAC, ransacReprojThreshold=3.0
                     )
-                    if M is not None and inliers is not None:
-                        inlier_ratio = float(np.count_nonzero(inliers)) / float(len(inliers))
-                        if inlier_ratio >= 0.35:
-                            # Integer shift snapping nếu góc quay ~ 0 và scale ~ 1 (chống mờ lưới chu kỳ)
-                            cos_val = M[0, 0]
-                            sin_val = M[1, 0]
-                            scale = np.sqrt(cos_val**2 + sin_val**2)
-                            angle = np.abs(np.arctan2(sin_val, cos_val))
-                            if abs(scale - 1.0) < 0.015 and angle < 0.015:
-                                M[0, 0] = 1.0
-                                M[0, 1] = 0.0
-                                M[1, 0] = 0.0
-                                M[1, 1] = 1.0
-                                M[0, 2] = float(round(M[0, 2]))
-                                M[1, 2] = float(round(M[1, 2]))
-                            return M, inlier_ratio
+                    if M is not None:
+                        candidates.append((M, False))
+                        cos_val = M[0, 0]
+                        sin_val = M[1, 0]
+                        scale = np.sqrt(cos_val**2 + sin_val**2)
+                        angle = np.abs(np.arctan2(sin_val, cos_val))
+                        if abs(scale - 1.0) < 0.008 and angle < 0.008:
+                            M_snap = M.copy()
+                            M_snap[0, 0] = 1.0
+                            M_snap[0, 1] = 0.0
+                            M_snap[1, 0] = 0.0
+                            M_snap[1, 1] = 1.0
+                            M_snap[0, 2] = float(round(M[0, 2]))
+                            M_snap[1, 2] = float(round(M[1, 2]))
+                            candidates.append((M_snap, True))
 
-        # Fallback to Phase Correlation toàn khung hình
-        shift, resp = cv2.phaseCorrelate(np.float32(gray_dst), np.float32(gray_src))
-        if resp >= 0.12:
-            dx, dy = -shift[0], -shift[1]
-            M_phase = np.float32([[1.0, 0.0, dx], [0.0, 1.0, dy]])
-            return M_phase, float(resp)
+        # 3. Chấm điểm MAE trên vùng nền sạch valid_bg
+        scored = []
+        for cand_M, is_snapped in candidates:
+            warped_src = cv2.warpAffine(src_frame, cand_M, (w, h), borderMode=cv2.BORDER_REFLECT)
+            warped_dil_src = cv2.warpAffine(dil_src, cand_M, (w, h), flags=cv2.INTER_NEAREST, borderMode=cv2.BORDER_CONSTANT, borderValue=255)
+            valid_bg = (warped_dil_src == 0) & (dil_dst == 0)
+            if np.count_nonzero(valid_bg) < 50:
+                continue
+            mae = float(np.mean(cv2.absdiff(dst_frame, warped_src)[valid_bg]))
+            scored.append((mae, is_snapped, cand_M))
 
-        return None, 0.0
+        if not scored:
+            return None, 0.0
+
+        scored.sort(key=lambda x: x[0])
+        best_mae = scored[0][0]
+
+        if best_mae > 9.0:
+            return None, 0.0
+
+        # Ưu tiên integer-snapped nếu mae <= best_mae + 0.15 để tránh bilinear interpolation làm mờ vân chu kỳ
+        for mae, is_snapped, cand_M in scored:
+            if is_snapped and mae <= best_mae + 0.15:
+                return cand_M, float(max(0.1, 1.0 - mae / 9.0))
+
+        return scored[0][2], float(max(0.1, 1.0 - best_mae / 9.0))
 
     def _inpaint_keyframe_full(
         self,
@@ -3087,7 +3122,7 @@ class VideoEditorService:
                         if np.count_nonzero(unocc) > 0:
                             bg_valid = (remaining_mask == 0) & (warped_m == 0)
                             diff_bg = float(np.mean(cv2.absdiff(frame, warped_ref)[bg_valid])) if np.count_nonzero(bg_valid) > 50 else 0.0
-                            if diff_bg <= 16.0:
+                            if diff_bg <= 8.5:
                                 out_f[unocc] = warped_ref[unocc]
                                 applied_kf_mask[unocc] = 255
                                 remaining_mask[unocc] = 0
@@ -3496,7 +3531,7 @@ class VideoEditorService:
                                 ref_clean_roi = kf_full[hy1:hy2, hx1:hx2]
 
                             diff_bg = float(np.mean(cv2.absdiff(curr_roi, ref_clean_roi)[bg_mask])) if np.count_nonzero(bg_mask) > 0 else 0.0
-                            if diff_bg <= 14.0:
+                            if diff_bg <= 8.5:
                                 aligned_hdr = ref_clean_roi
                                 used_align = True
                                 break
@@ -3523,14 +3558,6 @@ class VideoEditorService:
                         except Exception:
                             pass
 
-                    # Micro-texture Preservation Guard: Với các bề mặt siêu cấu trúc mắt lưới kim loại,
-                    # luôn kích hoạt Tier C2 Reconstruct ROI Guided Filter tái tạo 100% mắt lưới đục lỗ sắc nét!
-                    if used_align and aligned_hdr is not None:
-                        curr_roi_gray = cv2.cvtColor(curr_roi, cv2.COLOR_BGR2GRAY)
-                        lap_curr = float(np.var(cv2.Laplacian(curr_roi_gray, cv2.CV_64F)[bg_mask])) if np.count_nonzero(bg_mask) > 20 else 0.0
-                        if lap_curr >= 2000.0:
-                            used_align = False
-                            aligned_hdr = None
 
                     if used_align and aligned_hdr is not None:
                         if branch_counters is not None:
@@ -3653,7 +3680,7 @@ class VideoEditorService:
 
                                 bg_m = (mask_sub == 0)
                                 diff_bg = float(np.mean(cv2.absdiff(sub_roi, ref_sub_clean)[bg_m])) if np.count_nonzero(bg_m) > 0 else 0.0
-                                if diff_bg <= 14.0:
+                                if diff_bg <= 8.5:
                                     aligned_sub = ref_sub_clean
                                     used_sub_align = True
                                     if branch_counters is not None:
@@ -4210,20 +4237,29 @@ class VideoEditorService:
                 if round_num == 0:
                     best_phi = phi
                     best_words = words_cnt
+                    best_tex = tex_ratio
+                    best_seam = seam_ratio
                     best_candidate_video = current_candidate_video
                     best_critique_res = critique_res
                 else:
-                    if phi <= best_phi and words_cnt <= best_words:
+                    if (
+                        phi <= best_phi
+                        and words_cnt <= best_words
+                        and tex_ratio >= best_tex - 0.05
+                        and seam_ratio <= max(1.25, best_seam + 0.10)
+                    ):
                         best_phi = phi
                         best_words = words_cnt
+                        best_tex = tex_ratio
+                        best_seam = seam_ratio
                         best_candidate_video = current_candidate_video
                         best_critique_res = critique_res
                         completed_rounds = round_num
                     else:
                         logger.warning(
-                            "[SelfCritiqueLoop] Regression detected at Round %d (Phi %.2f > Best %.2f or Words %d > Best %d). "
+                            "[SelfCritiqueLoop] Regression detected at Round %d (Phi %.2f > Best %.2f, Words %d > Best %d, Tex %.2f vs %.2f, Seam %.2f vs %.2f). "
                             "Rolling back to best candidate.",
-                            round_num, phi, best_phi, words_cnt, best_words
+                            round_num, phi, best_phi, words_cnt, best_words, tex_ratio, best_tex, seam_ratio, best_seam
                         )
                         break
 

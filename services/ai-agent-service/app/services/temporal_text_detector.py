@@ -448,33 +448,52 @@ class TemporalTextDetector:
             if duration_ratio > 0.60:
                 f_s = seg["frame_start"]
                 f_e = seg["frame_end"]
-                f_mid = (f_s + f_e) // 2
-                sample_frames = [min(f_s + 3, f_e - 1), f_mid, max(f_s, f_e - 3)]
+                n_samples = 10
+                if f_e > f_s:
+                    sample_indices = np.linspace(f_s, f_e, num=n_samples, dtype=int)
+                else:
+                    sample_indices = [f_s]
+
+                presence = []
                 sample_masks = []
-                for sf_idx in sample_frames:
-                    cap.set(cv2.CAP_PROP_POS_FRAMES, sf_idx)
+                for sf_idx in sample_indices:
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, int(sf_idx))
                     ret, fr = cap.read()
+                    has_text = False
                     if ret and fr is not None:
                         roi = fr[y1:y2, x1:x2]
                         if roi.size > 0:
                             gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
                             grad = cv2.morphologyEx(gray, cv2.MORPH_GRADIENT, np.ones((3, 3), np.uint8))
-                            _, s_mask = cv2.threshold(grad, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-                            sample_masks.append(s_mask)
-                if len(sample_masks) == 3:
+                            otsu_val, s_mask = cv2.threshold(grad, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+                            if otsu_val >= 8 and np.count_nonzero(s_mask) >= 0.02 * roi.shape[0] * roi.shape[1]:
+                                has_text = True
+                                sample_masks.append(s_mask)
+                    presence.append(has_text)
+
+                max_consecutive_absent = 0
+                curr_absent = 0
+                for p in presence:
+                    if not p:
+                        curr_absent += 1
+                        if curr_absent > max_consecutive_absent:
+                            max_consecutive_absent = curr_absent
+                    else:
+                        curr_absent = 0
+
+                presence_ratio = sum(presence) / max(1, len(presence))
+                if presence_ratio >= 0.75 and max_consecutive_absent < 3 and len(sample_masks) >= 4:
                     ious = []
-                    for i in range(len(sample_masks)):
-                        for j in range(i + 1, len(sample_masks)):
+                    for i in range(min(5, len(sample_masks))):
+                        for j in range(i + 1, min(5, len(sample_masks))):
                             m1 = sample_masks[i] > 0
                             m2 = sample_masks[j] > 0
                             intersection = np.count_nonzero(m1 & m2)
                             union = np.count_nonzero(m1 | m2)
                             ious.append(intersection / max(1.0, float(union)))
                     mean_iou = float(np.mean(ious)) if ious else 0.0
-                    if mean_iou >= 0.55:
+                    if mean_iou >= 0.45:
                         is_title = True
-                else:
-                    is_title = True
 
             final_results.append({
                 "bbox": [y1, y2, x1, x2],

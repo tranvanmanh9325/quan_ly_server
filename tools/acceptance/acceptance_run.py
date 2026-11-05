@@ -190,15 +190,18 @@ def evaluate_real_clip_section_5_5(
 ) -> Dict[str, Any]:
     """
     Section 5.5 Real Clip Evaluation (tmpy8evxmno.mp4):
-    - Scene text delta SSIM <= 0.02
-    - Text-free band y in [800, 1000] mean PSNR >= 40.0 dB
+    - Scene text delta SSIM <= 0.02 (dashboard clock/speedometer 53.6s, road sign 46.1s)
+    - Text-free band y in [800, 1000] mean PSNR >= 40.0 dB, delta SSIM <= 0.02
     """
     cap_clean = cv2.VideoCapture(str(clean_video_path))
     cap_orig = cv2.VideoCapture(str(original_video_path))
 
     band_psnrs = []
     band_ssims = []
+    speedometer_ssims = []
+    sign_ssims = []
 
+    f_idx = 0
     while True:
         ret_c, f_clean = cap_clean.read()
         ret_o, f_orig = cap_orig.read()
@@ -220,24 +223,52 @@ def evaluate_real_clip_section_5_5(
             ssim_val = compute_ssim(band_clean, band_orig)
             band_ssims.append(ssim_val)
 
+        # Scene text ROI 1: Dashboard speedometer / clock at 53.6s (frames 1582..1630)
+        if 1582 <= f_idx <= 1630:
+            roi_c = f_clean[600:780, 150:420]
+            roi_o = f_orig[600:780, 150:420]
+            speedometer_ssims.append(compute_ssim(roi_c, roi_o))
+
+        # Scene text ROI 2: Street sign at 46.1s (frames 1380..1422)
+        if 1380 <= f_idx <= 1422:
+            roi_c = f_clean[250:500, 300:550]
+            roi_o = f_orig[250:500, 300:550]
+            sign_ssims.append(compute_ssim(roi_c, roi_o))
+
+        f_idx += 1
+
     cap_clean.release()
     cap_orig.release()
 
     mean_band_psnr = float(np.mean(band_psnrs)) if band_psnrs else 100.0
     mean_band_ssim = float(np.mean(band_ssims)) if band_ssims else 1.0
-    delta_ssim = max(0.0, 1.0 - mean_band_ssim)
+    delta_band_ssim = max(0.0, 1.0 - mean_band_ssim)
+
+    mean_speedo_ssim = float(np.mean(speedometer_ssims)) if speedometer_ssims else 1.0
+    delta_speedo_ssim = max(0.0, 1.0 - mean_speedo_ssim)
+
+    mean_sign_ssim = float(np.mean(sign_ssims)) if sign_ssims else 1.0
+    delta_sign_ssim = max(0.0, 1.0 - mean_sign_ssim)
 
     psnr_pass = bool(mean_band_psnr >= 40.0)
-    delta_ssim_pass = bool(delta_ssim <= 0.02)
+    band_ssim_pass = bool(delta_band_ssim <= 0.02)
+    speedo_pass = bool(delta_speedo_ssim <= 0.02)
+    sign_pass = bool(delta_sign_ssim <= 0.02)
+
+    all_pass = psnr_pass and band_ssim_pass and speedo_pass and sign_pass
 
     return {
         "text_free_band_y_range": [band_y_min, band_y_max],
         "mean_band_psnr_db": round(mean_band_psnr, 2),
         "mean_band_ssim": round(mean_band_ssim, 4),
-        "delta_ssim": round(delta_ssim, 4),
+        "delta_band_ssim": round(delta_band_ssim, 4),
+        "dashboard_speedometer_delta_ssim": round(delta_speedo_ssim, 4),
+        "street_sign_delta_ssim": round(delta_sign_ssim, 4),
         "psnr_pass": psnr_pass,
-        "delta_ssim_pass": delta_ssim_pass,
-        "is_pass": psnr_pass and delta_ssim_pass,
+        "band_ssim_pass": band_ssim_pass,
+        "speedometer_preservation_pass": speedo_pass,
+        "street_sign_preservation_pass": sign_pass,
+        "is_pass": all_pass,
     }
 
 

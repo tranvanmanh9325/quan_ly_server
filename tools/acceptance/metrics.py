@@ -271,8 +271,8 @@ def extract_residual_words_ocr(
                     # Reject single-character repeated noise (e.g. 'iii', 'ii', 'lll')
                     if len(clean_text) >= 2 and len(set(clean_text.lower())) == 1:
                         continue
-                    # Reject mixed digits and alphabet letters hallucination (e.g. '7Á')
-                    if any(c.isdigit() for c in clean_text) and any(c.isalpha() for c in clean_text):
+                    # Reject mixed digits and alphabet letters hallucination on short low-confidence tokens (e.g. '7Á')
+                    if len(clean_text) <= 3 and any(c.isdigit() for c in clean_text) and any(c.isalpha() for c in clean_text) and conf < 75.0:
                         continue
                     x = int(data["left"][i] / scale)
                     y = int(data["top"][i] / scale)
@@ -280,8 +280,8 @@ def extract_residual_words_ocr(
                     bh = int(data["height"][i] / scale)
                     if bw < 8 or bh < 8:
                         continue
-                    # Reject oversized bounding box hallucinations
-                    if bh > 70 or bw > 300:
+                    # Reject oversized bounding box hallucinations relative to frame resolution
+                    if bh > int(0.22 * h) or bw > int(0.85 * w):
                         continue
                     if len(clean_text) >= 3 and (bw / float(bh)) < 0.80:
                         continue

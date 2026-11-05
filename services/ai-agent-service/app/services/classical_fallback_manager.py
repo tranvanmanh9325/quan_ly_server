@@ -229,7 +229,7 @@ class ClassicalFallbackManager:
         mean_lum = float(np.mean(gray_roi))
         is_document = (mean_lum >= 140.0) and (float(np.std(gray_roi)) < 65.0)
 
-        if not is_document:
+        if not is_document and float(cv2.Laplacian(gray_roi, cv2.CV_32F).var()) >= 800.0:
             try:
                 # Primary: Exemplar Micro-Lattice Texture Synthesis with Expanded Spatial Context
                 result = self.synthesize_periodic_exemplar_texture(

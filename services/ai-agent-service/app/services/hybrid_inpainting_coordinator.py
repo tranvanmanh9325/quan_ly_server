@@ -194,14 +194,22 @@ class HybridInpaintingCoordinator:
                 unrevealed_dil = cv2.dilate(
                     unrevealed_mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
                 )
-                try:
-                    from app.services.classical_fallback_manager import get_classical_fallback_manager
-                    cm = get_classical_fallback_manager()
-                    inpaint_core = cm.reconstruct_roi_guided_filter(core_candidate, unrevealed_dil)
-                except Exception:
-                    inpaint_core = cv2.inpaint(core_candidate, unrevealed_dil, inpaintRadius=3, flags=cv2.INPAINT_TELEA)
-                if inpaint_core is not None and inpaint_core.shape == core_candidate.shape:
-                    core_candidate[unrevealed_mask > 0] = inpaint_core[unrevealed_mask > 0]
+                ux, uy, uw, uh = cv2.boundingRect(unrevealed_dil)
+                if uw > 0 and uh > 0:
+                    pad = 24
+                    rx1, ry1 = max(0, ux - pad), max(0, uy - pad)
+                    rx2, ry2 = min(w, ux + uw + pad), min(h, uy + uh + pad)
+                    crop_cand = core_candidate[ry1:ry2, rx1:rx2].copy()
+                    crop_mask = unrevealed_dil[ry1:ry2, rx1:rx2]
+                    crop_unrev = (unrevealed_mask[ry1:ry2, rx1:rx2] > 0)
+                    try:
+                        from app.services.classical_fallback_manager import get_classical_fallback_manager
+                        cm = get_classical_fallback_manager()
+                        inpaint_crop = cm.reconstruct_roi_guided_filter(crop_cand, crop_mask)
+                    except Exception:
+                        inpaint_crop = cv2.inpaint(crop_cand, crop_mask, inpaintRadius=3, flags=cv2.INPAINT_TELEA)
+                    if inpaint_crop is not None and inpaint_crop.shape == crop_cand.shape:
+                        core_candidate[ry1:ry2, rx1:rx2][crop_unrev] = inpaint_crop[crop_unrev]
 
             return self.local_engine.compositor.composite(
                 frame_in=frame_t,
@@ -246,14 +254,22 @@ class HybridInpaintingCoordinator:
                 unrevealed_dil = cv2.dilate(
                     unrevealed_mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
                 )
-                try:
-                    from app.services.classical_fallback_manager import get_classical_fallback_manager
-                    cm = get_classical_fallback_manager()
-                    inpaint_core = cm.reconstruct_roi_guided_filter(core_candidate, unrevealed_dil)
-                except Exception:
-                    inpaint_core = cv2.inpaint(core_candidate, unrevealed_dil, inpaintRadius=3, flags=cv2.INPAINT_TELEA)
-                if inpaint_core is not None and inpaint_core.shape == core_candidate.shape:
-                    core_candidate[unrevealed_mask > 0] = inpaint_core[unrevealed_mask > 0]
+                ux, uy, uw, uh = cv2.boundingRect(unrevealed_dil)
+                if uw > 0 and uh > 0:
+                    pad = 24
+                    rx1, ry1 = max(0, ux - pad), max(0, uy - pad)
+                    rx2, ry2 = min(w, ux + uw + pad), min(h, uy + uh + pad)
+                    crop_cand = core_candidate[ry1:ry2, rx1:rx2].copy()
+                    crop_mask = unrevealed_dil[ry1:ry2, rx1:rx2]
+                    crop_unrev = (unrevealed_mask[ry1:ry2, rx1:rx2] > 0)
+                    try:
+                        from app.services.classical_fallback_manager import get_classical_fallback_manager
+                        cm = get_classical_fallback_manager()
+                        inpaint_crop = cm.reconstruct_roi_guided_filter(crop_cand, crop_mask)
+                    except Exception:
+                        inpaint_crop = cv2.inpaint(crop_cand, crop_mask, inpaintRadius=3, flags=cv2.INPAINT_TELEA)
+                    if inpaint_crop is not None and inpaint_crop.shape == crop_cand.shape:
+                        core_candidate[ry1:ry2, rx1:rx2][crop_unrev] = inpaint_crop[crop_unrev]
 
         # Khử viền thâm đen bằng Physical Alpha Invert Blending
         k_outer = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11))

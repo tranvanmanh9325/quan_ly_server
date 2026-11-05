@@ -4295,31 +4295,9 @@ class VideoEditorService:
 
         shot_cuts = self._detect_scene_shot_cuts_sync(cap, total_frames, fps)
         cap.release()
-        cap = cv2.VideoCapture(str(input_file))
 
         keyframe_indices = self._select_keyframes_for_shots_sync(shot_cuts, total_frames, max_step=55)
-        report(15, f"Đã phát hiện {len(shot_cuts)+1} phân cảnh, trích xuất {len(keyframe_indices)} keyframes...")
-
-        # Single-pass sequential frame extraction để khắc phục triệt để lỗi imprecise seek H.264
-        needed_kfs = set(keyframe_indices)
-        max_kf = max(needed_kfs) if needed_kfs else 0
-        raw_kfs: Dict[int, Any] = {}
-        curr_k_idx = 0
-        while cap.isOpened():
-            read_val = cap.read()
-            if not isinstance(read_val, (tuple, list)) or len(read_val) < 2:
-                break
-            ret, kf_img = read_val[0], read_val[1]
-            if not ret or kf_img is None:
-                break
-            if curr_k_idx in needed_kfs:
-                raw_kfs[curr_k_idx] = kf_img
-            if curr_k_idx >= max_kf:
-                break
-            curr_k_idx += 1
-        cap.release()
-
-        report(25, f"Bắt đầu inpaint song song {len(raw_kfs)} keyframes qua Fallback Chain...")
+        report(25, f"Đã phát hiện {len(shot_cuts)+1} phân cảnh, tối ưu luồng xử lý streaming...")
 
         import secrets
         import shutil
@@ -4333,35 +4311,6 @@ class VideoEditorService:
 
         try:
             cleaned_keyframes = KeyframeDiskCache(cache_dir, max_cache_size=4)
-            done_count = 0
-
-            def inpaint_worker(kidx: int) -> int:
-                cache_file = cache_dir / f"kf_{kidx}.png"
-                if cache_file.exists():
-                    return kidx
-                frame = raw_kfs[kidx]
-                clean = self._inpaint_keyframe_full(
-                    frame, kidx, target_regions=target_regions, target_scope=target_scope, context=context
-                )
-                try:
-                    cv2.imwrite(str(cache_file), clean)
-                except Exception:
-                    pass
-                return kidx
-
-            with ThreadPoolExecutor(max_workers=2) as pool:
-                futures = [pool.submit(inpaint_worker, kidx) for kidx in raw_kfs.keys()]
-                for fut in futures:
-                    if cancel_event is not None and getattr(cancel_event, "is_set", lambda: False)():
-                        raise RuntimeError("Inpaint cancelled.")
-                    fut.result()
-                    done_count += 1
-                    if done_count % 8 == 0 or done_count == len(raw_kfs):
-                        pct = 25 + int(20 * done_count / max(1, len(raw_kfs)))
-                        report(pct, f"Inpaint keyframes: {done_count}/{len(raw_kfs)} frames...")
-
-            # Giải phóng bộ nhớ thô raw_kfs ngay sau khi inpaint xong để duy trì RAM < 35MB
-            raw_kfs.clear()
             try:
                 from app.core.memory_reclaimer import _sync_collect_and_trim
                 _sync_collect_and_trim()

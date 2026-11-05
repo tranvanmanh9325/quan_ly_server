@@ -3647,30 +3647,7 @@ class VideoEditorService:
                     full_frame_mask = kf_mask
                 else:
                     if np.count_nonzero(tight_mask_header) > 0:
-                        if has_valid_title_roi:
-                            curr_roi_kf = frame[hy1:hy2, hx1:hx2]
-                            curr_gray_kf = cv2.cvtColor(curr_roi_kf, cv2.COLOR_BGR2GRAY)
-                            if float(np.mean(curr_gray_kf)) >= 160.0:
-                                chroma_kf = np.max(curr_roi_kf, axis=2).astype(np.int16) - np.min(curr_roi_kf, axis=2).astype(np.int16)
-                                is_chromatic_kf = float(np.percentile(chroma_kf[tight_mask_header > 0], 85)) > 25.0
-                                if is_chromatic_kf:
-                                    raw_text_kf = (tight_mask_header > 0) & (chroma_kf > 15)
-                                    rys_k, rxs_k = np.where(raw_text_kf)
-                                    if len(rys_k) > 0:
-                                        tight_box_k = np.zeros_like(tight_mask_header)
-                                        tight_box_k[rys_k.min():rys_k.max()+1, rxs_k.min():rxs_k.max()+1] = 255
-                                        e5_k = cv2.erode(tight_box_k, cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5)))
-                                        raw_dil_k = cv2.dilate(raw_text_kf.astype(np.uint8) * 255, np.ones((3, 3), np.uint8))
-                                        act_kf = raw_dil_k if np.count_nonzero(e5_k) == 0 else cv2.bitwise_and(raw_dil_k, e5_k)
-                                        full_frame_mask[hy1:hy2, hx1:hx2] = act_kf
-                                    else:
-                                        full_frame_mask[hy1:hy2, hx1:hx2] = mask_blend_hdr
-                                else:
-                                    full_frame_mask[hy1:hy2, hx1:hx2] = mask_blend_hdr
-                            else:
-                                full_frame_mask[hy1:hy2, hx1:hx2] = mask_blend_hdr
-                        else:
-                            full_frame_mask[hy1:hy2, hx1:hx2] = mask_blend_hdr
+                        full_frame_mask[hy1:hy2, hx1:hx2] = mask_blend_hdr
 
                     # Bổ sung Subtitle mask trên Keyframe để composite đầy đủ cả header và subtitle
                     full_m_kf, sub_info_kf = self._build_inpaint_mask_for_frame(

@@ -229,7 +229,10 @@ class ClassicalFallbackManager:
         mean_lum = float(np.mean(gray_roi))
         is_document = (mean_lum >= 140.0) and (float(np.std(gray_roi)) < 65.0)
 
-        if not is_document and float(cv2.Laplacian(gray_roi, cv2.CV_32F).var()) >= 45.0:
+        unmasked = (roi_mask == 0) if roi_mask is not None else np.ones(gray_roi.shape, dtype=bool)
+        bg_lap_var = float(np.var(cv2.Laplacian(gray_roi, cv2.CV_32F)[unmasked])) if np.count_nonzero(unmasked) > 20 else 0.0
+
+        if not is_document and bg_lap_var >= 800.0:
             try:
                 # Primary: Exemplar Micro-Lattice Texture Synthesis with Expanded Spatial Context
                 result = self.synthesize_periodic_exemplar_texture(
@@ -438,21 +441,7 @@ class ClassicalFallbackManager:
 
             recomposed = np.clip(struct_base + tiled_detail * lattice_weight, 0, 255).astype(np.uint8)
         else:
-            # Standard Guided Filter fallback
-            src_f = roi_img.astype(np.float32) / 255.0
-            gray_f = cv2.cvtColor(roi_img, cv2.COLOR_BGR2GRAY).astype(np.float32) / 255.0
-            ksize = (2 * radius + 1, 2 * radius + 1)
-            mean_I = cv2.boxFilter(gray_f, -1, ksize)
-            mean_p = cv2.boxFilter(src_f, -1, ksize)
-            mean_Ip = cv2.boxFilter(src_f * gray_f[:, :, None], -1, ksize)
-            cov_Ip = mean_Ip - mean_I[:, :, None] * mean_p
-            var_I = cv2.boxFilter(gray_f * gray_f, -1, ksize) - mean_I * mean_I
-            a = cov_Ip / (var_I[:, :, None] + eps)
-            b = mean_p - a * mean_I[:, :, None]
-            struct_f = cv2.boxFilter(a, -1, ksize) * gray_f[:, :, None] + cv2.boxFilter(b, -1, ksize)
-            smooth = np.clip(struct_f * 255.0, 0.0, 255.0).astype(np.uint8)
-            texture_residual = cv2.absdiff(roi_img, smooth).astype(np.float32)
-            recomposed = np.clip(struct_base + texture_residual * 0.5, 0, 255).astype(np.uint8)
+            return ClassicalFallbackManager._pure_guided_filter_inpaint(roi_img, mask_u8, radius=radius, eps=eps)
 
         # 4. Seamless feathering with solid glyph core lock & bit-exact background preservation
         k_feather = 3

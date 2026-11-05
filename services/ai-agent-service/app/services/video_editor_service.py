@@ -2868,7 +2868,11 @@ class VideoEditorService:
                 sub_info = None
 
         if full_mask is not None:
-            full_mask = np.where(full_mask > 0, 255, 0).astype(np.uint8)
+            if np.count_nonzero(full_mask) < 15:
+                full_mask = np.zeros_like(full_mask)
+                sub_info = None
+            else:
+                full_mask = np.where(full_mask > 0, 255, 0).astype(np.uint8)
 
         return full_mask, sub_info
 
@@ -2897,6 +2901,7 @@ class VideoEditorService:
         use_hosted: Optional[bool] = None,
         context: Optional[VideoJobContext] = None,
         target_scope: str = "overlay",
+        return_mask: bool = False,
     ) -> Any:
         """Inpaint toàn bộ text trên 1 keyframe độc lập."""
         import cv2
@@ -2906,7 +2911,7 @@ class VideoEditorService:
         full_mask, sub_info = self._build_inpaint_mask_for_frame(
             frame_idx, frame.shape, frame_img=frame, target_regions=target_regions, target_scope=target_scope
         )
-        orig_full_mask = full_mask.copy() if full_mask is not None else np.zeros((frame.shape[0], frame.shape[1]), dtype=np.uint8)
+        applied_kf_mask = np.zeros(frame.shape[:2], dtype=np.uint8)
 
         if full_mask is not None and np.count_nonzero(full_mask) > 0:
             # 1. Inpaint Title ROI nguyên khối để lấy toàn bộ texture nền xung quanh
@@ -2929,27 +2934,27 @@ class VideoEditorService:
                         t_m = full_mask[thy1:thy2, thx1:thx2]
                         if np.count_nonzero(t_m) > 0:
                             t_m = VideoEditorService._fill_holes(t_m)
-                            dil_m = cv2.dilate(t_m, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15)))
+                            S_res = np.sqrt(frame_h ** 2 + frame_w ** 2) / np.sqrt(1024 ** 2 + 576 ** 2)
+                            k_hdr_sz = max(3, int(round(5 * S_res)) | 1)
+                            dil_m = cv2.dilate(t_m, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k_hdr_sz, k_hdr_sz)))
                             dil_m = VideoEditorService._fill_holes(dil_m)
-                            clean_t = self._inpaint_roi_fallback_chain(t_roi, dil_m, timeout_sec=5.0, use_hosted=use_hosted, context=context)
 
-                            # Nếu fallback chain trả về kết cấu bị mờ phẳng trên vùng siêu kết cấu (LapVar < 1800)
-                            lap_clean_t = float(cv2.Laplacian(cv2.cvtColor(clean_t, cv2.COLOR_BGR2GRAY), cv2.CV_64F).var()) if clean_t is not None else 0.0
-                            lap_t_orig = float(cv2.Laplacian(cv2.cvtColor(t_roi, cv2.COLOR_BGR2GRAY), cv2.CV_64F).var())
-                            if lap_t_orig >= 2000.0 and lap_clean_t < 1800.0:
-                                from app.services.classical_fallback_manager import get_classical_fallback_manager
-                                classical_mgr = get_classical_fallback_manager()
-                                clean_t = classical_mgr.reconstruct_roi_guided_filter(
-                                    t_roi,
-                                    dil_m,
-                                    full_frame=out_f,
-                                    roi_bbox=(thy1, thy2, thx1, thx2),
-                                    full_mask=full_mask,
-                                )
+                            from app.services.classical_fallback_manager import get_classical_fallback_manager
+                            classical_mgr = get_classical_fallback_manager()
+                            clean_t = classical_mgr.reconstruct_roi_guided_filter(
+                                t_roi,
+                                dil_m,
+                                full_frame=out_f,
+                                roi_bbox=(thy1, thy2, thx1, thx2),
+                                full_mask=full_mask,
+                            )
+                            if clean_t is None or clean_t.shape != t_roi.shape:
+                                clean_t = self._inpaint_roi_fallback_chain(t_roi, dil_m, timeout_sec=5.0, use_hosted=use_hosted, context=context)
 
                             if clean_t is not None and clean_t.shape == t_roi.shape:
                                 t_mask_3d = (dil_m > 0)[:, :, np.newaxis]
                                 out_f[thy1:thy2, thx1:thx2] = np.where(t_mask_3d, clean_t, t_roi)
+                                applied_kf_mask[thy1:thy2, thx1:thx2] = np.maximum(applied_kf_mask[thy1:thy2, thx1:thx2], dil_m)
                                 full_mask[thy1:thy2, thx1:thx2] = 0
 
             # 2. Inpaint Subtitle ROI (Dynamic Spoken Subtitles) ôm sát nét chữ
@@ -2960,9 +2965,6 @@ class VideoEditorService:
                     sub_roi = out_f[sy1:sy2, sx1:sx2]
                     sub_m = full_mask[sy1:sy2, sx1:sx2]
                     if np.count_nonzero(sub_m) > 0:
-                        clean_s = None
-                        feather_s = None
-                        # Pillar 3: Adaptive Dilation 8-12px for Subtitle in Keyframe
                         s_res_kf = np.sqrt(frame.shape[0] ** 2 + frame.shape[1] ** 2) / np.sqrt(1024 ** 2 + 576 ** 2)
                         r_dil_kf = max(2, min(4, int(round(3 * s_res_kf))))
                         k_dil_kf = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * r_dil_kf + 1, 2 * r_dil_kf + 1))
@@ -2971,8 +2973,8 @@ class VideoEditorService:
                         if np.count_nonzero(dil_sub_m) > 0.85 * dil_sub_m.size:
                             dil_sub_m = sub_m.copy()
                         dil_sub_m = np.where(dil_sub_m > 0, 255, 0).astype(np.uint8)
+
                         clean_s = None
-                        feather_s = None
                         try:
                             from app.services.classical_fallback_manager import get_classical_fallback_manager
                             classical_mgr = get_classical_fallback_manager()
@@ -2980,24 +2982,14 @@ class VideoEditorService:
                                 sub_roi, dil_sub_m, classical_mgr
                             )
                             clean_s = res_kf[0]
-                            feather_s = res_kf[1]
                         except Exception:
                             clean_s = None
-                            feather_s = None
                         if clean_s is None or clean_s.shape != sub_roi.shape:
                             clean_s = self._inpaint_roi_fallback_chain(sub_roi, dil_sub_m, timeout_sec=5.0, use_hosted=use_hosted, context=context)
-                            feather_soft = cv2.GaussianBlur(dil_sub_m.astype(np.float32) / 255.0, (9, 9), 2.5)
-                            feather_s = np.maximum(feather_soft, (dil_sub_m > 0).astype(np.float32))[:, :, np.newaxis]
+
                         if clean_s is not None and clean_s.shape == sub_roi.shape:
-                            # Gaussian Alpha Feathering bán kính 9px (sigma=2.5) loại bỏ Edge Seam triệt để,
-                            # hoặc feathering từ Dual-Zone Guided Filter bảo tồn mép đứng vật lý
-                            if feather_s is None:
-                                feather_soft = cv2.GaussianBlur(dil_sub_m.astype(np.float32) / 255.0, (9, 9), 2.5)
-                                feather_s = np.maximum(feather_soft, (dil_sub_m > 0).astype(np.float32))[:, :, np.newaxis]
-                            out_f[sy1:sy2, sx1:sx2] = (
-                                clean_s.astype(np.float32) * feather_s
-                                + sub_roi.astype(np.float32) * (1.0 - feather_s)
-                            ).astype(np.uint8)
+                            out_f[sy1:sy2, sx1:sx2] = np.where((dil_sub_m > 0)[:, :, np.newaxis], clean_s, sub_roi)
+                            applied_kf_mask[sy1:sy2, sx1:sx2] = np.maximum(applied_kf_mask[sy1:sy2, sx1:sx2], dil_sub_m)
                             full_mask[sy1:sy2, sx1:sx2] = 0
 
             # 3. Inpaint các contours còn lại (watermark cục bộ ngoài title và subtitle)
@@ -3016,15 +3008,15 @@ class VideoEditorService:
                     m_roi = full_mask[y1:y2, x1:x2]
                     clean_roi = self._inpaint_roi_fallback_chain(roi, m_roi, timeout_sec=5.0, use_hosted=use_hosted, context=context)
                     if clean_roi is not None and clean_roi.shape == roi.shape:
-                        dst = out_f[y1:y2, x1:x2]
-                        dst[m_roi > 0] = clean_roi[m_roi > 0]
-                        out_f[y1:y2, x1:x2] = dst
+                        out_f[y1:y2, x1:x2] = np.where((m_roi > 0)[:, :, np.newaxis], clean_roi, roi)
+                        applied_kf_mask[y1:y2, x1:x2] = np.maximum(applied_kf_mask[y1:y2, x1:x2], m_roi)
 
         # Pillar 4: Strict Non-Mask Invariance on Keyframe
-        if orig_full_mask is not None and np.count_nonzero(orig_full_mask) > 0:
-            active_kf_mask = cv2.dilate(orig_full_mask, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))
-            out_f[active_kf_mask == 0] = frame[active_kf_mask == 0]
+        if np.count_nonzero(applied_kf_mask) > 0:
+            out_f[applied_kf_mask == 0] = frame[applied_kf_mask == 0]
 
+        if return_mask:
+            return out_f, applied_kf_mask
         return out_f
 
     @staticmethod
@@ -3305,10 +3297,12 @@ class VideoEditorService:
                     shot_start, shot_end = shots[cur_shot_idx]
                     shot_kfs = [k for k in keyframe_indices if shot_start <= k <= shot_end and k in cleaned_keyframes]
 
-                    # Lấy keyframe có khoảng cách thời gian ngắn nhất tới frame hiện tại trong cùng shot
-                    best_ref_k = min(shot_kfs, key=lambda k: abs(k - frame_idx)) if shot_kfs else None
+                    # Lấy keyframe trong cùng phân cảnh (ưu tiên khoảng cách 16..45 frames để tránh bẫy che cùng vị trí)
+                    shot_kfs_hdr = sorted(shot_kfs, key=lambda k: (0 if 16 <= abs(k - frame_idx) <= 45 else 1, abs(k - frame_idx)))
+                    best_ref_k = shot_kfs_hdr[0] if shot_kfs_hdr else None
 
                     used_align = False
+                    aligned_hdr = None
                     if best_ref_k is not None and best_ref_k in cleaned_keyframes:
                         kf_full = cleaned_keyframes[best_ref_k]
                         try:
@@ -3322,24 +3316,11 @@ class VideoEditorService:
                                 ref_clean_roi = warped_kf[hy1:hy2, hx1:hx2]
                             else:
                                 ref_clean_roi = kf_full[hy1:hy2, hx1:hx2]
-                        except Exception:
-                            ref_clean_roi = kf_full[hy1:hy2, hx1:hx2]
 
-                        try:
-                            curr_gray = cv2.cvtColor(curr_roi, cv2.COLOR_BGR2GRAY)
-                            ref_gray = cv2.cvtColor(ref_clean_roi, cv2.COLOR_BGR2GRAY)
-                            shift, resp = cv2.phaseCorrelate(np.float32(curr_gray), np.float32(ref_gray))
-                            dx, dy = -shift[0], -shift[1]
-                            aligned_hdr = None
-                            # Giới hạn độ dời Phase Correlation sau khi đã bù chuyển động camera toàn cục
-                            if resp >= 0.20 and abs(dx) <= 15.0 and abs(dy) <= 15.0:
-                                M = np.float32([[1, 0, dx], [0, 1, dy]])
-                                candidate_hdr = cv2.warpAffine(ref_clean_roi, M, (roi_w, roi_h), borderMode=cv2.BORDER_REFLECT)
-                                diff_bg = float(np.mean(cv2.absdiff(curr_roi, candidate_hdr)[bg_mask]))
-                                diff_bg_thresh = 14.0
-                                if diff_bg <= diff_bg_thresh:
-                                    aligned_hdr = candidate_hdr
-                                    used_align = True
+                            diff_bg = float(np.mean(cv2.absdiff(curr_roi, ref_clean_roi)[bg_mask])) if np.count_nonzero(bg_mask) > 0 else 0.0
+                            if diff_bg <= 14.0:
+                                aligned_hdr = ref_clean_roi
+                                used_align = True
 
                             # Nâng cấp: Dùng ClassicalFallbackManager Tầng C1 (DIS Optical Flow Warping với photometric error gating chặt chẽ)
                             if not used_align:
@@ -3358,8 +3339,7 @@ class VideoEditorService:
                                     pass
 
                             # Micro-texture Preservation Guard: Với các bề mặt siêu cấu trúc mắt lưới kim loại,
-                            # tuyệt đối không dán đè bản warp keyframe (vốn bị nội suy bilinear làm mờ).
-                            # Luôn hủy alignment để kích hoạt Tier C2 Reconstruct ROI Guided Filter tái tạo 100% mắt lưới đục lỗ sắc nét!
+                            # luôn kích hoạt Tier C2 Reconstruct ROI Guided Filter tái tạo 100% mắt lưới đục lỗ sắc nét!
                             if used_align and aligned_hdr is not None:
                                 lap_curr = float(cv2.Laplacian(curr_gray, cv2.CV_64F).var())
                                 if lap_curr >= 2000.0:
@@ -3370,11 +3350,7 @@ class VideoEditorService:
                                 if branch_counters is not None:
                                     branch_counters["keyframe_aligned"] = branch_counters.get("keyframe_aligned", 0) + 1
                                     branch_counters["translation_aligned"] = branch_counters.get("translation_aligned", 0) + 1
-                                clean_blended = (
-                                    aligned_hdr.astype(np.float32) * feather_hdr
-                                    + hdr_part.astype(np.float32) * (1.0 - feather_hdr)
-                                ).astype(np.uint8)
-                                out_frame[hy1:hy2, hx1:hx2] = clean_blended
+                                out_frame[hy1:hy2, hx1:hx2] = np.where((mask_blend_hdr > 0)[:, :, np.newaxis], aligned_hdr, hdr_part)
                         except Exception:
                             used_align = False
 
@@ -3401,11 +3377,7 @@ class VideoEditorService:
                         if clean_hdr is None or clean_hdr.shape != hdr_part.shape:
                             clean_hdr = cv2.inpaint(curr_roi, mask_blend_hdr, 3, cv2.INPAINT_TELEA)
                         if clean_hdr is not None and clean_hdr.shape == hdr_part.shape:
-                            clean_blended = (
-                                clean_hdr.astype(np.float32) * feather_hdr
-                                + hdr_part.astype(np.float32) * (1.0 - feather_hdr)
-                            ).astype(np.uint8)
-                            out_frame[hy1:hy2, hx1:hx2] = clean_blended
+                            out_frame[hy1:hy2, hx1:hx2] = np.where((mask_blend_hdr > 0)[:, :, np.newaxis], clean_hdr, hdr_part)
 
                     # Kiểm tra và triệt tiêu mảng đen / vết rách dị thường nếu xuất hiện
                     # Tuyệt đối không xóa các lỗ đục kim loại tự nhiên của mặt loa (LapVar >= 1500)
@@ -3476,10 +3448,11 @@ class VideoEditorService:
                                     mask_sub = full_sub_m[sy1:sy2, sx1:sx2].copy()
                                 mask_sub = np.where(mask_sub > 0, 255, 0).astype(np.uint8)
 
-                        # Thử căn chỉnh trực tiếp từ keyframe sạch gần nhất trong cùng phân cảnh (Scene Cut Isolation)
+                        # Thử căn chỉnh trực tiếp từ keyframe sạch trong cùng phân cảnh (ưu tiên khoảng cách 16..45 frames)
                         shot_start, shot_end = shots[cur_shot_idx]
                         shot_kfs = [k for k in keyframe_indices if shot_start <= k <= shot_end and k in cleaned_keyframes]
-                        best_sub_k = min(shot_kfs, key=lambda k: abs(k - frame_idx)) if shot_kfs else None
+                        shot_kfs_sub = sorted(shot_kfs, key=lambda k: (0 if 16 <= abs(k - frame_idx) <= 45 else 1, abs(k - frame_idx)))
+                        best_sub_k = shot_kfs_sub[0] if shot_kfs_sub else None
 
                         used_sub_align = False
                         aligned_sub = None
@@ -3496,24 +3469,30 @@ class VideoEditorService:
                                     ref_sub_clean = warped_kf[sy1:sy2, sx1:sx2]
                                 else:
                                     ref_sub_clean = kf_full[sy1:sy2, sx1:sx2]
-                            except Exception:
-                                ref_sub_clean = kf_full[sy1:sy2, sx1:sx2]
 
-                            try:
-                                curr_sub_gray = cv2.cvtColor(sub_roi, cv2.COLOR_BGR2GRAY)
-                                ref_sub_gray = cv2.cvtColor(ref_sub_clean, cv2.COLOR_BGR2GRAY)
-                                shift, resp = cv2.phaseCorrelate(np.float32(curr_sub_gray), np.float32(ref_sub_gray))
-                                dx, dy = -shift[0], -shift[1]
-                                if resp >= 0.20 and abs(dx) <= 15.0 and abs(dy) <= 6.0:
-                                    M = np.float32([[1, 0, dx], [0, 1, dy]])
-                                    candidate_sub = cv2.warpAffine(ref_sub_clean, M, (sub_w, sub_h), borderMode=cv2.BORDER_REFLECT)
-                                    bg_m = (mask_sub == 0)
-                                    diff_bg = float(np.mean(cv2.absdiff(sub_roi, candidate_sub)[bg_m])) if np.count_nonzero(bg_m) > 0 else 0.0
-                                    if diff_bg <= 14.0:
-                                        aligned_sub = candidate_sub
-                                        used_sub_align = True
-                                        if branch_counters is not None:
-                                            branch_counters["translation_aligned"] = branch_counters.get("translation_aligned", 0) + 1
+                                # Multi-Frame Unoccluded Background Reveal: Nạp mask của keyframe để khôi phục 100% nền thật
+                                cache_dir_ref = getattr(cleaned_keyframes, "_cache_dir", None)
+                                if cache_dir_ref is not None:
+                                    mask_fpath = cache_dir_ref / f"kf_mask_{best_sub_k}.png"
+                                    if mask_fpath.exists():
+                                        kf_m_full = cv2.imread(str(mask_fpath), cv2.IMREAD_GRAYSCALE)
+                                        if kf_m_full is not None:
+                                            if resp_full >= 0.15 and (abs(cam_dx) > 0.5 or abs(cam_dy) > 0.5):
+                                                warped_kf_m = cv2.warpAffine(kf_m_full, M_cam, (w, h), flags=cv2.INTER_NEAREST, borderMode=cv2.BORDER_CONSTANT, borderValue=255)
+                                                sub_m_kf = warped_kf_m[sy1:sy2, sx1:sx2]
+                                            else:
+                                                sub_m_kf = kf_m_full[sy1:sy2, sx1:sx2]
+                                            unocc_px = (mask_sub > 0) & (sub_m_kf == 0)
+                                            if np.count_nonzero(unocc_px) > 0:
+                                                ref_sub_clean[unocc_px] = ref_sub_clean[unocc_px]
+
+                                bg_m = (mask_sub == 0)
+                                diff_bg = float(np.mean(cv2.absdiff(sub_roi, ref_sub_clean)[bg_m])) if np.count_nonzero(bg_m) > 0 else 0.0
+                                if diff_bg <= 14.0:
+                                    aligned_sub = ref_sub_clean
+                                    used_sub_align = True
+                                    if branch_counters is not None:
+                                        branch_counters["translation_aligned"] = branch_counters.get("translation_aligned", 0) + 1
 
                                 # DIS Optical Flow warp cho subtitle ROI qua ClassicalFallbackManager Tầng C1
                                 if not used_sub_align:
@@ -3534,7 +3513,6 @@ class VideoEditorService:
                                 used_sub_align = False
 
                         clean_sub_roi = None
-                        feather_sub = None
                         m_active = None
                         if not used_sub_align or aligned_sub is None:
                             try:
@@ -3544,12 +3522,10 @@ class VideoEditorService:
                                     sub_roi, mask_sub, classical_mgr
                                 )
                                 clean_sub_roi = res_sub[0]
-                                feather_sub = res_sub[1]
                                 if len(res_sub) >= 3:
                                     m_active = res_sub[2]
                             except Exception:
                                 clean_sub_roi = None
-                                feather_sub = None
                                 m_active = None
                             if clean_sub_roi is None or clean_sub_roi.shape != sub_roi.shape:
                                 clean_sub_roi = self._inpaint_roi_fallback_chain(sub_roi, mask_sub, timeout_sec=15.0, use_hosted=use_hosted, context=context)
@@ -3578,14 +3554,7 @@ class VideoEditorService:
                                 "clean_roi": clean_sub_roi.copy(),
                             }
 
-                            if feather_sub is None:
-                                feather_soft = cv2.GaussianBlur(mask_sub.astype(np.float32) / 255.0, (9, 9), 2.5)
-                                feather_sub = np.maximum(feather_soft, (mask_sub > 0).astype(np.float32))[:, :, np.newaxis]
-
-                            out_frame[sy1:sy2, sx1:sx2] = (
-                                clean_sub_roi.astype(np.float32) * feather_sub
-                                + sub_roi.astype(np.float32) * (1.0 - feather_sub)
-                            ).astype(np.uint8)
+                            out_frame[sy1:sy2, sx1:sx2] = np.where((mask_sub > 0)[:, :, np.newaxis], clean_sub_roi, sub_roi)
 
                         sub_m_applied = m_active if m_active is not None else mask_sub
                         full_frame_mask[sy1:sy2, sx1:sx2] = np.maximum(full_frame_mask[sy1:sy2, sx1:sx2], sub_m_applied)
@@ -4263,14 +4232,16 @@ class VideoEditorService:
 
             def inpaint_worker(kidx: int) -> int:
                 cache_file = cache_dir / f"kf_{kidx}.png"
-                if cache_file.exists():
+                cache_mask_file = cache_dir / f"kf_mask_{kidx}.png"
+                if cache_file.exists() and cache_mask_file.exists():
                     return kidx
                 frame = raw_kfs[kidx]
-                clean = self._inpaint_keyframe_full(
-                    frame, kidx, target_regions=target_regions, target_scope=target_scope, context=context
+                clean, applied_m = self._inpaint_keyframe_full(
+                    frame, kidx, target_regions=target_regions, target_scope=target_scope, context=context, return_mask=True
                 )
                 try:
                     cv2.imwrite(str(cache_file), clean)
+                    cv2.imwrite(str(cache_mask_file), applied_m)
                 except Exception:
                     pass
                 return kidx

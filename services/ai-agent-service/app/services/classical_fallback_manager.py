@@ -505,6 +505,8 @@ class ClassicalFallbackManager:
         k_feather = 5
         blurred_mask = cv2.GaussianBlur(mask_u8.astype(np.float32) / 255.0, (k_feather, k_feather), 1.5)
         alpha = np.clip(blurred_mask[:, :, None], 0.0, 1.0)
+        alpha = np.maximum(alpha, (mask_u8 > 0).astype(np.float32)[:, :, None])
+        alpha[mask_u8 == 0] = 0.0
         res = roi_img.astype(np.float32) * (1.0 - alpha) + synthesized.astype(np.float32) * alpha
         return np.clip(res, 0, 255).astype(np.uint8)
 

@@ -235,7 +235,7 @@ class ForwardBackwardOpticalFlowPropagator:
             accum_weights += np.where(valid_mask, w_k, 0.0)
 
             # Early stopping optimization: if all mask pixels are revealed with high confidence
-            unfilled_count = int(np.count_nonzero((prop_mask_t > 0) & (accum_weights == 0.0)))
+            unfilled_count = int(np.count_nonzero((mask_t > 0) & (accum_weights == 0.0)))
             if unfilled_count == 0 and abs(k) >= 2:
                 break
 

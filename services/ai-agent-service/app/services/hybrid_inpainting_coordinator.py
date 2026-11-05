@@ -201,7 +201,7 @@ class HybridInpaintingCoordinator:
                     rx2, ry2 = min(w, ux + uw + pad), min(h, uy + uh + pad)
                     crop_cand = core_candidate[ry1:ry2, rx1:rx2].copy()
                     crop_mask = unrevealed_dil[ry1:ry2, rx1:rx2]
-                    crop_unrev = (unrevealed_mask[ry1:ry2, rx1:rx2] > 0)
+                    crop_unrev = (crop_mask > 0)
                     try:
                         from app.services.classical_fallback_manager import get_classical_fallback_manager
                         cm = get_classical_fallback_manager()
@@ -261,7 +261,7 @@ class HybridInpaintingCoordinator:
                     rx2, ry2 = min(w, ux + uw + pad), min(h, uy + uh + pad)
                     crop_cand = core_candidate[ry1:ry2, rx1:rx2].copy()
                     crop_mask = unrevealed_dil[ry1:ry2, rx1:rx2]
-                    crop_unrev = (unrevealed_mask[ry1:ry2, rx1:rx2] > 0)
+                    crop_unrev = (crop_mask > 0)
                     try:
                         from app.services.classical_fallback_manager import get_classical_fallback_manager
                         cm = get_classical_fallback_manager()

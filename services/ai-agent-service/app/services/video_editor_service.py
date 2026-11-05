@@ -1485,8 +1485,9 @@ class VideoEditorService:
         else:
             shadow_thresh = max(75, int(bg_lum - 25)) if bg_lum >= 75 else 75
         dark_pixels = (v_chan <= shadow_thresh).astype(np.uint8) * 255
-        bright_thresh = max(200, min(230, int(bg_lum + 40))) if is_high_texture_mesh else 170
-        bright_pixels = ((v_chan >= bright_thresh) & (s_chan <= 80)).astype(np.uint8) * 255
+        sat_limit = max(80, int(bg_sat * 0.75))
+        bright_thresh = max(200, min(230, int(bg_lum + 40))) if is_high_texture_mesh else max(145, int(bg_lum + 25))
+        bright_pixels = ((v_chan >= bright_thresh) & (s_chan <= sat_limit)).astype(np.uint8) * 255
         vivid_colored = ((s_chan >= 60) & (v_chan >= 100)).astype(np.uint8) * 255
 
         has_dark_stroke = np.count_nonzero(dark_pixels) > 15
@@ -2358,7 +2359,7 @@ class VideoEditorService:
                     if frame_img is not None:
                         t_roi = frame_img[ty:ty2, tx:tx2]
                         t_mask = self._generate_text_stroke_mask(t_roi, lines=tr.get("lines"), region_meta=tr)
-                        if t_mask is not None and t_mask.shape == (ty2 - ty, tx2 - tx):
+                        if t_mask is not None and t_mask.shape == (ty2 - ty, tx2 - tx) and np.count_nonzero(t_mask) > 10:
                             k3_title = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
                             t_mask_dil = cv2.dilate(t_mask, k3_title)
                             full_mask[ty:ty2, tx:tx2] = np.maximum(full_mask[ty:ty2, tx:tx2], t_mask_dil)
@@ -2438,7 +2439,7 @@ class VideoEditorService:
             has_table_structure = is_white_doc and (np.count_nonzero(table_structure_mask) >= int(round(80 * scale_geom)))
 
             # Bright core candidate extraction (White, Yellow, Cyan, Green, Pink...)
-            bright_white = (gray >= 155) & (hsv[:, :, 1] <= 85)
+            bright_white = (gray >= 150) & (hsv[:, :, 1] <= 130)
             bright_yellow = (hsv[:, :, 0] >= 10) & (hsv[:, :, 0] <= 35) & (hsv[:, :, 1] >= 60) & (hsv[:, :, 2] >= 160)
             bright_mag_red = ((hsv[:, :, 0] <= 10) | (hsv[:, :, 0] >= 160)) & (hsv[:, :, 1] >= 60) & (hsv[:, :, 2] >= 160)
             core_bright = (bright_white | bright_yellow | bright_mag_red).astype(np.uint8) * 255
@@ -2732,6 +2733,16 @@ class VideoEditorService:
                             valid_boxes.append((cbx, cby, cbw, cbh))
                 sub_mask_strip = filtered_mask
                 boxes_all = valid_boxes
+
+            if active_sub_bounding_boxes and np.count_nonzero(sub_mask_strip) == 0:
+                for abx, aby, abw, abh in active_sub_bounding_boxes:
+                    rel_y1 = max(0, aby - sy1)
+                    rel_y2 = min(strip_h, aby + abh - sy1)
+                    rel_x1 = max(0, abx - sx1)
+                    rel_x2 = min(strip_w, abx + abw - sx1)
+                    if rel_y2 > rel_y1 and rel_x2 > rel_x1:
+                        sub_mask_strip[rel_y1:rel_y2, rel_x1:rel_x2] = 255
+                        boxes_all.append((rel_x1, rel_y1, rel_x2 - rel_x1, rel_y2 - rel_y1))
 
             # Update full_mask and sub_info (Pillar 2: Line Clustering to kill Mega-Box)
             if np.count_nonzero(sub_mask_strip) > 0 and boxes_all:

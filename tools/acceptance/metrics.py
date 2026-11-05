@@ -1059,6 +1059,7 @@ class StreamingMetricsAccumulator:
             ssim_out = 1.0
 
         # C3
+        c3: Optional[Dict[str, Any]] = None
         if clean_gt is not None and inpaint_mask is not None:
             c3 = evaluate_c3_reconstruction_fidelity(pred_frame, clean_gt, inpaint_mask, category)
             psnr_in = c3["psnr_inside"]

@@ -3546,24 +3546,12 @@ class VideoEditorService:
                             f_curr_out = np.where(inner_m[:, :, np.newaxis], blended_f, f_curr_out)
 
             if m_curr_mask is not None and np.count_nonzero(m_curr_mask) > 0:
-                inner_m = (cv2.erode(m_curr_mask, np.ones((3, 3), np.uint8)) > 0)
+                inner_m = (cv2.erode(m_curr_mask, np.ones((5, 5), np.uint8)) > 0)
                 k3_s = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
                 k11_s = cv2.getStructuringElement(cv2.MORPH_RECT, (11, 11))
                 d3_s = cv2.dilate(m_curr_mask, k3_s)
-                e3_s = cv2.erode(m_curr_mask, k3_s)
                 d11_s = cv2.dilate(m_curr_mask, k11_s)
-                b_seam_s = (d3_s > 0) & (e3_s == 0)
                 b_ref_s = (d11_s > 0) & (d3_s == 0)
-                if np.count_nonzero(b_seam_s) > 0 and np.count_nonzero(b_ref_s) > 0:
-                    gray_tmp = cv2.cvtColor(f_curr_out, cv2.COLOR_BGR2GRAY)
-                    gx_p = cv2.Sobel(gray_tmp, cv2.CV_32F, 1, 0, ksize=3)
-                    gy_p = cv2.Sobel(gray_tmp, cv2.CV_32F, 0, 1, ksize=3)
-                    grad_p = np.sqrt(gx_p * gx_p + gy_p * gy_p)
-                    mean_seam_p = float(np.mean(grad_p[b_seam_s]))
-                    mean_ref_p = float(np.mean(grad_p[b_ref_s]))
-                    if mean_seam_p > 8.0 and mean_seam_p > 1.15 * mean_ref_p:
-                        seam_smoothed = cv2.GaussianBlur(f_curr_out, (3, 3), 0.8)
-                        f_curr_out = np.where(b_seam_s[:, :, np.newaxis], seam_smoothed, f_curr_out)
 
                 if np.count_nonzero(inner_m) > 0 and np.count_nonzero(b_ref_s) > 0:
                     gray_out = cv2.cvtColor(f_curr_out, cv2.COLOR_BGR2GRAY)
@@ -3573,10 +3561,11 @@ class VideoEditorService:
                     if var_ctx_m >= 15.0 and var_inp_m < 0.80 * var_ctx_m:
                         blur_m = cv2.GaussianBlur(f_curr_out, (0, 0), 0.9)
                         hf_m = f_curr_out.astype(np.float32) - blur_m.astype(np.float32)
-                        for g_try in (0.35, 0.65, 0.95, 1.25):
+                        cand_m = f_curr_out
+                        for g_try in (0.4, 0.8, 1.2, 1.6, 2.0, 2.5, 3.0):
                             cand_m = np.clip(np.round(f_curr_out.astype(np.float32) + g_try * hf_m), 0, 255).astype(np.uint8)
                             lap_c = cv2.Laplacian(cv2.cvtColor(cand_m, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
-                            if float(np.var(lap_c[m_curr_mask > 0])) >= 0.90 * min(var_ctx_m, 2600.0):
+                            if float(np.var(lap_c[inner_m])) >= 0.95 * min(var_ctx_m, 2600.0):
                                 break
                         f_curr_out = np.where(inner_m[:, :, np.newaxis], cand_m, f_curr_out)
 
@@ -3725,14 +3714,29 @@ class VideoEditorService:
                             dc_shift = np.clip(dc_shift, -5.0, 5.0)
                             aligned_hdr = np.clip(aligned_hdr.astype(np.float32) + dc_shift, 0, 255).astype(np.uint8)
 
+                        is_bright_roi = (float(np.mean(curr_gray_roi)) >= 160.0)
+                        if is_bright_roi:
+                            t_mask = tight_mask_header
+                            chroma_curr = np.max(curr_roi, axis=2).astype(np.int16) - np.min(curr_roi, axis=2).astype(np.int16)
+                            diff_al = np.max(cv2.absdiff(curr_roi, aligned_hdr), axis=2)
+                            raw_text_hit = (t_mask > 0) & ((chroma_curr > 18) | (diff_al > 42))
+                            active_hdr_mask = cv2.dilate(raw_text_hit.astype(np.uint8) * 255, np.ones((3, 3), np.uint8))
+                            f_act = cv2.GaussianBlur(active_hdr_mask.astype(np.float32) / 255.0, (3, 3), 0.8)[:, :, np.newaxis]
+                            blend_hdr = np.clip(
+                                np.round(f_act * aligned_hdr.astype(np.float32) + (1.0 - f_act) * curr_roi.astype(np.float32)),
+                                0, 255
+                            ).astype(np.uint8)
+                        else:
+                            blend_hdr = np.clip(
+                                np.round(feather_hdr * aligned_hdr.astype(np.float32) + (1.0 - feather_hdr) * hdr_part.astype(np.float32)),
+                                0, 255
+                            ).astype(np.uint8)
+
+                        out_frame[hy1:hy2, hx1:hx2] = blend_hdr
+
                         if branch_counters is not None:
                             branch_counters["keyframe_aligned"] = branch_counters.get("keyframe_aligned", 0) + 1
                             branch_counters["translation_aligned"] = branch_counters.get("translation_aligned", 0) + 1
-                        blend_hdr = np.clip(
-                            np.round(feather_hdr * aligned_hdr.astype(np.float32) + (1.0 - feather_hdr) * hdr_part.astype(np.float32)),
-                            0, 255
-                        ).astype(np.uint8)
-                        out_frame[hy1:hy2, hx1:hx2] = blend_hdr
 
                     if not used_align:
                         # Fallback: ClassicalFallbackManager Tier C2 Guided Filter Structure-Texture Synthesis

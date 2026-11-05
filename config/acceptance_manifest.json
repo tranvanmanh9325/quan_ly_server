@@ -6,7 +6,7 @@
   "description": "Frozen Acceptance Judge and Anti-Gaming Framework file integrity manifest (Milestone M0 Iteration 2 Remediation - 10 Files Full Coverage).",
   "files": {
     "tools/acceptance/__init__.py": "e970f4fb598877ba0d1a87e1a05fdbae8bfc748417aa3ccf81c0571705e16261",
-    "tools/acceptance/acceptance_run.py": "d5c8d30da116e519e15b51334eab55abe5b3e96531a38a60c602f244c0ffb8fe",
+    "tools/acceptance/acceptance_run.py": "c1fcce364f24c02ff7a18c6d661c02c93c31a8dff491a87a6dd6f20414e00e28",
     "tools/acceptance/metrics.py": "f76f5b9235a08c6baec3fce7fc5f938ea0b79e487aa2dcbd358fbf76271bb82b",
     "tools/acceptance/phrase_lists.py": "124989badece66569ae6b2b6ba5b5e867279a33edac334c5bcc8ff15d013831c",
     "tools/acceptance/sabotage_suite.py": "800cc937f464c1e77f8a46946f6988148e5122901a33a820e04f38544cb1bea8",

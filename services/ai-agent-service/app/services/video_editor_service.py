@@ -3737,7 +3737,7 @@ class VideoEditorService:
                                 raw_text_hit = (t_mask > 0) & ((chroma_curr > 18) | (diff_al > 42))
                             e3_t = cv2.erode(t_mask, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))
                             raw_dil = cv2.dilate(raw_text_hit.astype(np.uint8) * 255, np.ones((3, 3), np.uint8))
-                            active_hdr_mask = raw_dil if np.count_nonzero(e3_t) == 0 else (raw_dil & (e3_t > 0))
+                            active_hdr_mask = raw_dil if np.count_nonzero(e3_t) == 0 else cv2.bitwise_and(raw_dil, e3_t)
                             f_act = cv2.GaussianBlur(active_hdr_mask.astype(np.float32) / 255.0, (3, 3), 0.8)[:, :, np.newaxis]
                             blend_hdr = np.clip(
                                 np.round(f_act * aligned_hdr.astype(np.float32) + (1.0 - f_act) * curr_roi.astype(np.float32)),

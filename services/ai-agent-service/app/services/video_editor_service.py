@@ -3550,7 +3550,14 @@ class VideoEditorService:
                         ctx_c4 = (d25_c > 0) & (d9_c == 0)
                         e_inp = float(np.mean(diff_sq[inner_m])) if np.count_nonzero(inner_m) > 0 else 0.0
                         e_ctx = float(np.mean(diff_sq[ctx_c4])) if np.count_nonzero(ctx_c4) > 0 else 16.0
-                        if (e_inp > 1.15 * max(e_ctx, 16.0) and yielded_count <= 2) or (not has_valid_title_roi and e_inp > 1.30 * max(e_ctx, 35.0)):
+                        if (e_inp > 1.15 * max(e_ctx, 16.0) and yielded_count <= 2):
+                            blended_f = np.clip(np.round(0.88 * f_curr_out.astype(np.float32) + 0.12 * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)
+                            f_curr_out = np.where(inner_m[:, :, np.newaxis], blended_f, f_curr_out)
+                        elif has_valid_title_roi and e_inp > 1.18 * max(e_ctx, 16.0):
+                            inner_m_safe = (cv2.erode(m_curr_mask, np.ones((5, 5), np.uint8)) > 0)
+                            blended_f = np.clip(np.round(0.96 * f_curr_out.astype(np.float32) + 0.04 * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)
+                            f_curr_out = np.where(inner_m_safe[:, :, np.newaxis], blended_f, f_curr_out)
+                        elif not has_valid_title_roi and e_inp > 1.30 * max(e_ctx, 35.0):
                             blended_f = np.clip(np.round(0.88 * f_curr_out.astype(np.float32) + 0.12 * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)
                             f_curr_out = np.where(inner_m[:, :, np.newaxis], blended_f, f_curr_out)
 
@@ -3735,9 +3742,9 @@ class VideoEditorService:
                                 raw_text_hit = (t_mask > 0) & (chroma_curr > 15)
                             else:
                                 raw_text_hit = (t_mask > 0) & ((chroma_curr > 18) | (diff_al > 42))
-                            e3_t = cv2.erode(t_mask, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))
+                            e5_t = cv2.erode(t_mask, cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5)))
                             raw_dil = cv2.dilate(raw_text_hit.astype(np.uint8) * 255, np.ones((3, 3), np.uint8))
-                            active_hdr_mask = raw_dil if np.count_nonzero(e3_t) == 0 else cv2.bitwise_and(raw_dil, e3_t)
+                            active_hdr_mask = raw_dil if np.count_nonzero(e5_t) == 0 else cv2.bitwise_and(raw_dil, e5_t)
                             f_act = cv2.GaussianBlur(active_hdr_mask.astype(np.float32) / 255.0, (3, 3), 0.8)[:, :, np.newaxis]
                             blend_hdr = np.clip(
                                 np.round(f_act * aligned_hdr.astype(np.float32) + (1.0 - f_act) * curr_roi.astype(np.float32)),
@@ -3758,7 +3765,7 @@ class VideoEditorService:
                                     if var_ctx_b0 >= 15.0 and var_inp_b0 < 0.90 * target_var_b:
                                         blur_al = cv2.GaussianBlur(aligned_hdr, (0, 0), 1.0)
                                         hf_al = aligned_hdr.astype(np.float32) - blur_al.astype(np.float32)
-                                        for g_al in (0.4, 0.7, 1.0, 1.3):
+                                        for g_al in (0.6, 1.0, 1.4, 1.8):
                                             al_sharp = np.clip(np.round(aligned_hdr.astype(np.float32) + g_al * hf_al), 0, 255).astype(np.uint8)
                                             blend_try = np.clip(
                                                 np.round(f_act * al_sharp.astype(np.float32) + (1.0 - f_act) * curr_roi.astype(np.float32)),
@@ -3766,7 +3773,7 @@ class VideoEditorService:
                                             ).astype(np.uint8)
                                             lap_try = cv2.Laplacian(cv2.cvtColor(blend_try, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
                                             blend_hdr = blend_try
-                                            if float(np.var(lap_try[t_mask > 0])) >= 0.92 * target_var_b:
+                                            if float(np.var(lap_try[t_mask > 0])) >= 1.15 * target_var_b:
                                                 break
                             full_frame_mask[hy1:hy2, hx1:hx2] = active_hdr_mask
                         else:

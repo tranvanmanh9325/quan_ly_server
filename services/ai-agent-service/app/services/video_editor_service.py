@@ -3565,25 +3565,30 @@ class VideoEditorService:
                                 ref_c4 = max(e_ctx, 16.0)
                                 if e_inp > 1.05 * ref_c4:
                                     use_m = (m_curr_mask > 0)
-                                    if e_inp > 620.0 and e_inp > 1.8 * ref_c4:
+                                    if e_inp > 600.0 and e_inp > 1.8 * ref_c4:
                                         b_w = 0.42
-                                    elif e_inp > 480.0 and e_inp > 1.15 * ref_c4:
-                                        b_w = 0.32
+                                    elif e_inp > 1.8 * ref_c4:
+                                        b_w = 0.35
+                                    elif e_inp > 1.15 * ref_c4:
+                                        b_w = 0.28
                                     else:
-                                        b_w = 0.18
+                                        b_w = 0.20
                                     blended_f = np.clip(np.round((1.0 - b_w) * f_curr_out.astype(np.float32) + b_w * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)
                                     f_curr_out = np.where(use_m[:, :, np.newaxis], blended_f, f_curr_out)
 
+                                box_hdr = np.zeros_like(m_curr_mask)
+                                box_hdr[hy1:hy2, hx1:hx2] = 255
                                 k11_t = cv2.getStructuringElement(cv2.MORPH_RECT, (11, 11))
                                 k3_t = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-                                b_ref_c6 = (cv2.dilate(bbox_m, k11_t) > 0) & (cv2.dilate(bbox_m, k3_t) == 0)
+                                b_ref_c6 = (cv2.dilate(box_hdr, k11_t) > 0) & (cv2.dilate(box_hdr, k3_t) == 0)
                                 lap_post = cv2.Laplacian(cv2.cvtColor(f_curr_out, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
-                                v_inp_post = float(np.var(lap_post[bbox_m > 0])) if np.count_nonzero(bbox_m) > 0 else 0.0
-                                v_ctx_post = float(np.var(lap_post[b_ref_c6])) if np.count_nonzero(b_ref_c6) > 0 else 0.0
-                                if e_inp <= 500.0 and v_ctx_post >= 750.0 and v_inp_post < 1350.0 and v_inp_post < 0.82 * v_ctx_post:
+                                v_inp_box = float(np.var(lap_post[box_hdr > 0])) if np.count_nonzero(box_hdr) > 0 else 0.0
+                                v_ctx_box = float(np.var(lap_post[b_ref_c6])) if np.count_nonzero(b_ref_c6) > 0 else 0.0
+                                if e_inp <= 520.0 and v_ctx_box >= 750.0 and v_inp_box < 1300.0 and v_inp_box < 0.78 * v_ctx_box:
+                                    g_post = 0.95 if (v_inp_box < 600.0 or (v_inp_box < 815.0 and v_ctx_box >= 2200.0)) else 0.68
                                     blur_post = cv2.GaussianBlur(f_curr_out, (0, 0), 1.0)
                                     hf_post = f_curr_out.astype(np.float32) - blur_post.astype(np.float32)
-                                    sharp_post = np.clip(np.round(f_curr_out.astype(np.float32) + 0.65 * hf_post), 0, 255).astype(np.uint8)
+                                    sharp_post = np.clip(np.round(f_curr_out.astype(np.float32) + g_post * hf_post), 0, 255).astype(np.uint8)
                                     f_curr_out = np.where((m_curr_mask > 0)[:, :, np.newaxis], sharp_post, f_curr_out)
                         else:
                             k25_c = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 25))

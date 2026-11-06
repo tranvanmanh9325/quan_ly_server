@@ -388,7 +388,7 @@ class TemporalTextDetector:
                         if oh < 8 or ow < 6:
                             continue
                         # Reject thin horizontal ruling lines and full-width brick mortar lines
-                        if bh <= 2 or (bh <= 3 and (bw / float(max(1, bh))) >= 8.0) or (bw >= 0.80 * proc_w and (bw / float(max(1, bh))) >= 15.0):
+                        if bh <= 2 or (bh <= 3 and (bw / float(max(1, bh))) >= 8.0) or ((bw / float(max(1, bh))) >= 12.0 and bh <= 15):
                             continue
                         if (ow * oh) > (0.30 * orig_w * orig_h):
                             continue
@@ -429,10 +429,10 @@ class TemporalTextDetector:
             motion_type = self.classifier.classify_segment_temporal_polling(seg, cap, fps, total_frames)
             seg["motion_type"] = motion_type
 
-            # If default overlay mode: exclude physical scene text candidates
-            if target_scope in ("overlay", "overlay_only") and motion_type == "scene":
+            # Exclude physical scene candidates from static window accumulator (handled dynamically via scene_cands)
+            if motion_type == "scene":
                 logger.info(
-                    "[TemporalDetector] Preserving scene text candidate: bbox=[%d, %d, %d, %d], motion=%s",
+                    "[TemporalDetector] Excluding static window scene candidate: bbox=[%d, %d, %d, %d], motion=%s",
                     seg["y"], seg["y"] + seg["h"], seg["x"], seg["x"] + seg["w"], motion_type
                 )
                 continue
@@ -499,43 +499,43 @@ class TemporalTextDetector:
                 continue
 
             final_results.append({
-                "bbox": [y1, y2, x1, x2],
-                "x": seg["x"],
-                "y": seg["y"],
-                "w": seg["w"],
-                "h": seg["h"],
-                "start_sec": round(seg["frame_start"] / fps, 3),
-                "end_sec": round(seg["frame_end"] / fps, 3),
-                "frame_start": seg["frame_start"],
-                "frame_end": seg["frame_end"],
+                "bbox": [int(y1), int(y2), int(x1), int(x2)],
+                "x": int(seg["x"]),
+                "y": int(seg["y"]),
+                "w": int(seg["w"]),
+                "h": int(seg["h"]),
+                "start_sec": round(float(seg["frame_start"]) / fps, 3),
+                "end_sec": round(float(seg["frame_end"]) / fps, 3),
+                "frame_start": int(seg["frame_start"]),
+                "frame_end": int(seg["frame_end"]),
                 "motion_type": motion_type,
                 "persistence": float(duration_ratio),
                 "is_static": bool(is_title),
                 "type": "title" if is_title else "subtitle",
-                "lines": [{"x": seg["x"], "y": seg["y"], "w": seg["w"], "h": seg["h"], "text": ""}],
+                "lines": [{"x": int(seg["x"]), "y": int(seg["y"]), "w": int(seg["w"]), "h": int(seg["h"]), "text": ""}],
             })
 
         # Append moving physical scene candidates when in 'all' mode
         if target_scope == "all" and scene_cands:
             for sc in scene_cands:
                 final_results.append({
-                    "bbox": [sc["y"], sc["y"] + sc["h"], sc["x"], sc["x"] + sc["w"]],
-                    "x": sc["x"],
-                    "y": sc["y"],
-                    "w": sc["w"],
-                    "h": sc["h"],
-                    "start_sec": round(sc["frame_start"] / fps, 3),
-                    "end_sec": round(sc["frame_end"] / fps, 3),
-                    "frame_start": sc["frame_start"],
-                    "frame_end": sc["frame_end"],
+                    "bbox": [int(sc["y"]), int(sc["y"] + sc["h"]), int(sc["x"]), int(sc["x"] + sc["w"])],
+                    "x": int(sc["x"]),
+                    "y": int(sc["y"]),
+                    "w": int(sc["w"]),
+                    "h": int(sc["h"]),
+                    "start_sec": round(float(sc["frame_start"]) / fps, 3),
+                    "end_sec": round(float(sc["frame_end"]) / fps, 3),
+                    "frame_start": int(sc["frame_start"]),
+                    "frame_end": int(sc["frame_end"]),
                     "motion_type": "scene",
-                    "vx": sc.get("vx", 0.0),
-                    "vy": sc.get("vy", 0.0),
-                    "ref_frame": sc.get("ref_frame", 0),
-                    "persistence": sc.get("persistence", 0.95),
+                    "vx": float(sc.get("vx", 0.0)),
+                    "vy": float(sc.get("vy", 0.0)),
+                    "ref_frame": int(sc.get("ref_frame", 0)),
+                    "persistence": float(sc.get("persistence", 0.95)),
                     "is_static": False,
                     "type": "subtitle",
-                    "lines": [{"x": sc["x"], "y": sc["y"], "w": sc["w"], "h": sc["h"], "text": ""}],
+                    "lines": [{"x": int(sc["x"]), "y": int(sc["y"]), "w": int(sc["w"]), "h": int(sc["h"]), "text": ""}],
                 })
 
         cap.release()
@@ -624,15 +624,15 @@ class TemporalTextDetector:
                             vx, vy = float(s[0]), float(s[1])
 
                 cands.append({
-                    "x": max(0, lx - 4),
-                    "y": max(0, ly - 4),
-                    "w": min(orig_w - lx, lw + 8),
-                    "h": min(orig_h - ly, lh + 8),
+                    "x": int(max(0, lx - 4)),
+                    "y": int(max(0, ly - 4)),
+                    "w": int(min(orig_w - lx, lw + 8)),
+                    "h": int(min(orig_h - ly, lh + 8)),
                     "frame_start": 0,
-                    "frame_end": total_frames,
-                    "ref_frame": f_idx,
-                    "vx": vx,
-                    "vy": vy,
+                    "frame_end": int(total_frames),
+                    "ref_frame": int(f_idx),
+                    "vx": float(vx),
+                    "vy": float(vy),
                     "motion_type": "scene",
                     "persistence": 0.95,
                     "score": 0.90,

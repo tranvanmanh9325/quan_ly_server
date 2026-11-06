@@ -863,9 +863,13 @@ class VideoEditorService:
             if k not in region:
                 raise ValueError(f"Thiếu tham số tọa độ '{k}' trong region.")
             val = region[k]
-            if not isinstance(val, (int, float)) or int(val) < 0:
+            try:
+                int_val = int(val)
+            except (TypeError, ValueError):
                 raise ValueError(f"Tọa độ '{k}' phải là số nguyên không âm.")
-            if int(val) > 10000:
+            if int_val < 0:
+                raise ValueError(f"Tọa độ '{k}' phải là số nguyên không âm.")
+            if int_val > 10000:
                 raise ValueError(f"Tọa độ '{k}' ({val}) vượt quá giới hạn an toàn 10000px.")
         if int(region["w"]) <= 0 or int(region["h"]) <= 0:
             raise ValueError("Kích thước chiều rộng (w) và chiều cao (h) phải lớn hơn 0.")

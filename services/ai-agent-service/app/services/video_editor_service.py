@@ -3891,7 +3891,7 @@ class VideoEditorService:
                                         box_f55 = np.zeros_like(m_curr_mask)
                                         box_f55[ty1:ty2, tx1:tx2] = 255
                                         e_inp_after = float(np.mean(diff_sq_after[box_f55 > 0]))
-                                        if (e_inp_after > 1.18 * max(e_ctx, 820.0) and e_ctx < 200.0) or (e_ctx < 60.0 and e_inp > 650.0 and e_inp_after > 210.0):
+                                        if (e_inp_after > 1.18 * max(e_ctx, 1150.0) and e_ctx < 200.0) or (e_ctx < 80.0 and e_inp_after > 210.0):
                                             inner_bbox_f55 = (cv2.erode(box_f55, cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))) > 0)
                                             f_curr_out = np.where(inner_bbox_f55[:, :, np.newaxis], np.clip(np.round(0.72 * f_curr_out.astype(np.float32) + 0.28 * w_prev.astype(np.float32)), 0, 255).astype(np.uint8), f_curr_out)
                         else:
@@ -3958,8 +3958,8 @@ class VideoEditorService:
                     g_post = 1.40 if v_inp_h < 750.0 else 1.10
                 elif is_bright_hdr and 650.0 <= v_ctx_h < 1700.0 and v_inp_h < 650.0 and ratio_h < 0.72:
                     g_post = 0.85
-                elif is_bright_hdr and ratio_h < 0.85 and v_inp_h < 1000.0 and v_ctx_h >= 600.0:
-                    g_post = 0.25
+                elif is_bright_hdr and ratio_h < 0.70 and v_inp_h < 1000.0 and v_ctx_h >= 650.0:
+                    g_post = 0.35
                 elif is_bright_hdr and v_ctx_h < 250.0:
                     full_hdr_box = np.zeros_like(f_curr_out[:, :, 0])
                     full_hdr_box[max(0, ty1 - 4):ty2, tx1:tx2] = 255

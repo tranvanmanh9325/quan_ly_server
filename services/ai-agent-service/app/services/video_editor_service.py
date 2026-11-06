@@ -1510,7 +1510,7 @@ class VideoEditorService:
             shadow_thresh = max(75, int(bg_lum - 25)) if bg_lum >= 75 else 75
         dark_pixels = (v_chan <= shadow_thresh).astype(np.uint8) * 255
         sat_limit = max(80, int(bg_sat * 0.75))
-        bright_thresh = max(200, min(230, int(bg_lum + 40))) if is_high_texture_mesh else max(145, int(bg_lum + 25))
+        bright_thresh = max(200, min(230, int(bg_lum + 40))) if (is_high_texture_mesh and has_vivid_pixels) else max(145, int(bg_lum + 25))
         bright_pixels = ((v_chan >= bright_thresh) & (s_chan <= sat_limit)).astype(np.uint8) * 255
         if bg_sat >= 45.0:
             bg_hue = float(np.median(h_chan[border_mask])) if border_pixels.size > 0 else float(np.median(h_chan))
@@ -1734,16 +1734,12 @@ class VideoEditorService:
         clean_core = VideoEditorService._fill_holes(clean_core)
 
         # 4. Character-Level Tight Stroke Dilation (Resolution-scaled)
-        if is_high_texture_mesh:
-            # On high-texture mesh: avoid unconstrained gradient expansion
-            # Controlled 100% solid glyph filling preserves lattice outside text
-            if has_vivid_pixels:
-                k3 = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-                prox_vivid = cv2.dilate(clean_core, k3)
-                dark_border = (v_chan <= 75) & (prox_vivid > 0)
-                stroke_mask = cv2.bitwise_or(clean_core, dark_border.astype(np.uint8) * 255)
-            else:
-                stroke_mask = clean_core
+        if is_high_texture_mesh and has_vivid_pixels:
+            # On high-texture mesh with vivid text: avoid unconstrained gradient expansion
+            k3 = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+            prox_vivid = cv2.dilate(clean_core, k3)
+            dark_border = (v_chan <= 75) & (prox_vivid > 0)
+            stroke_mask = cv2.bitwise_or(clean_core, dark_border.astype(np.uint8) * 255)
         else:
             dist = cv2.distanceTransform(clean_core, cv2.DIST_L2, 5)
             core_pts = dist[clean_core > 0]
@@ -2317,7 +2313,7 @@ class VideoEditorService:
                 lap_val = float(np.var(cv2.Laplacian(roi_g, cv2.CV_64F)[unmasked_px]))
                 hsv_roi = cv2.cvtColor(roi_img, cv2.COLOR_BGR2HSV) if roi_img.ndim == 3 else None
                 has_green = (np.count_nonzero((hsv_roi[:, :, 0] >= 35) & (hsv_roi[:, :, 0] <= 85) & (hsv_roi[:, :, 1] >= 100)) > 200) if hsv_roi is not None else False
-                is_perforated_mesh = (lap_val >= 1400.0 and (float(np.mean(roi_g)) < 115.0 or has_green))
+                is_perforated_mesh = (lap_val >= 1400.0 and has_green)
                 if is_perforated_mesh:
                     res_telea = cv2.inpaint(roi_img, roi_mask, 3, cv2.INPAINT_TELEA)
                     try:
@@ -2494,7 +2490,7 @@ class VideoEditorService:
                             lap_var_t = float(np.var(cv2.Laplacian(t_gray, cv2.CV_64F)[t_mask == 0])) if np.count_nonzero(t_mask == 0) > 20 else 0.0
                             hsv_t = cv2.cvtColor(t_roi, cv2.COLOR_BGR2HSV) if t_roi.ndim == 3 else None
                             has_green_t = (np.count_nonzero((hsv_t[:, :, 0] >= 35) & (hsv_t[:, :, 0] <= 85) & (hsv_t[:, :, 1] >= 100)) > 200) if hsv_t is not None else False
-                            is_mesh_bg = (lap_var_t >= 1400.0 and (float(np.mean(t_gray)) < 115.0 or has_green_t))
+                            is_mesh_bg = (lap_var_t >= 1400.0 and has_green_t)
                             t_mask_dil = t_mask if is_mesh_bg else cv2.dilate(t_mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)))
                             full_mask[ty_pad:ty2_pad, tx_pad:tx2_pad] = np.maximum(full_mask[ty_pad:ty2_pad, tx_pad:tx2_pad], t_mask_dil)
                         else:
@@ -3296,7 +3292,7 @@ class VideoEditorService:
                             lap_var_kf = float(np.var(cv2.Laplacian(t_gray_kf, cv2.CV_64F)[t_m == 0])) if (t_gray_kf is not None and np.count_nonzero(t_m == 0) > 20) else 0.0
                             hsv_kf = cv2.cvtColor(frame[thy1:thy2, thx1:thx2], cv2.COLOR_BGR2HSV) if (frame is not None and frame[thy1:thy2, thx1:thx2].ndim == 3) else None
                             has_green_kf = (np.count_nonzero((hsv_kf[:, :, 0] >= 35) & (hsv_kf[:, :, 0] <= 85) & (hsv_kf[:, :, 1] >= 100)) > 200) if hsv_kf is not None else False
-                            is_mesh_kf = (lap_var_kf >= 1400.0 and (float(np.mean(t_gray_kf)) < 115.0 or has_green_kf))
+                            is_mesh_kf = (lap_var_kf >= 1400.0 and has_green_kf)
                             s_res_kf = np.sqrt(h ** 2 + w ** 2) / np.sqrt(1024 ** 2 + 576 ** 2)
                             k_hdr_sz = 3 if is_doc_bright else max(3, int(round(5 * s_res_kf)) | 1)
                             dil_t = t_m if is_mesh_kf else cv2.dilate(t_m, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k_hdr_sz, k_hdr_sz)))
@@ -3421,9 +3417,9 @@ class VideoEditorService:
                                 k_hdr_sz = max(3, int(round(5 * s_res_val)) | 1)
                                 t_roi_gray = cv2.cvtColor(t_roi, cv2.COLOR_BGR2GRAY) if t_roi.ndim == 3 else t_roi
                                 lap_roi = cv2.Laplacian(t_roi_gray, cv2.CV_64F)
-                                hsv_roi_t = cv2.cvtColor(t_roi, cv2.COLOR_BGR2HSV) if t_roi.ndim == 3 else None
+                                hsv_roi_t = cv2.cvtColor(frame[thy1:thy2, thx1:thx2], cv2.COLOR_BGR2HSV) if (frame is not None and frame[thy1:thy2, thx1:thx2].ndim == 3) else None
                                 has_green_roi = (np.count_nonzero((hsv_roi_t[:, :, 0] >= 35) & (hsv_roi_t[:, :, 0] <= 85) & (hsv_roi_t[:, :, 1] >= 100)) > 200) if hsv_roi_t is not None else False
-                                is_textured_bg = (float(np.var(lap_roi[t_m == 0])) >= 1400.0 and (float(np.mean(t_roi_gray)) < 115.0 or has_green_roi)) if np.count_nonzero(t_m == 0) > 20 else False
+                                is_textured_bg = (float(np.var(lap_roi[t_m == 0])) >= 1400.0 and has_green_roi) if np.count_nonzero(t_m == 0) > 20 else False
 
                                 if is_textured_bg:
                                     dil_m = cv2.bitwise_and(t_m, cv2.bitwise_not(applied_kf_mask[thy1:thy2, thx1:thx2]))
@@ -3751,7 +3747,7 @@ class VideoEditorService:
             lap_var_hdr = float(np.var(cv2.Laplacian(roi_ref_g, cv2.CV_64F)[t_mask == 0])) if (roi_ref_g is not None and np.count_nonzero(t_mask == 0) > 20) else 0.0
             hsv_hdr = cv2.cvtColor(roi_ref, cv2.COLOR_BGR2HSV) if (roi_ref is not None and roi_ref.ndim == 3) else None
             has_green_hdr = (np.count_nonzero((hsv_hdr[:, :, 0] >= 35) & (hsv_hdr[:, :, 0] <= 85) & (hsv_hdr[:, :, 1] >= 100)) > 200) if hsv_hdr is not None else False
-            is_perforated_mesh = (lap_var_hdr >= 1400.0 and (float(np.mean(roi_ref_g)) < 115.0 or has_green_hdr))
+            is_perforated_mesh = (lap_var_hdr >= 1400.0 and has_green_hdr)
 
             if is_perforated_mesh:
                 m_blend = t_mask.copy()
@@ -3838,7 +3834,7 @@ class VideoEditorService:
                                 ref_c4 = max(e_ctx, 16.0)
                                 if e_inp > 1.05 * ref_c4:
                                     roi_curr_gray = cv2.cvtColor(f_curr_out[ys.min():ys.max()+1, xs.min():xs.max()+1], cv2.COLOR_BGR2GRAY)
-                                    is_bright_title = (float(np.mean(roi_curr_gray)) >= (160.0 if h_fr <= 1500 else 215.0)) if roi_curr_gray.size > 0 else False
+                                    is_bright_title = (float(np.mean(roi_curr_gray)) >= (180.0 if h_fr <= 1500 else 215.0)) if roi_curr_gray.size > 0 else False
                                     if not is_bright_title:
                                         if w_fr > h_fr:
                                             k_p4 = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 25))
@@ -4149,7 +4145,7 @@ class VideoEditorService:
                             dc_shift = np.clip(dc_shift, -5.0, 5.0)
                             aligned_hdr = np.clip(aligned_hdr.astype(np.float32) + dc_shift, 0, 255).astype(np.uint8)
 
-                        is_bright_roi = (float(np.mean(curr_gray_roi)) >= 215.0)
+                        is_bright_roi = (float(np.mean(curr_gray_roi)) >= (160.0 if h <= 1500 else 215.0))
                         if is_bright_roi:
                             t_mask = tight_mask_header
                             chroma_curr = np.max(curr_roi, axis=2).astype(np.int16) - np.min(curr_roi, axis=2).astype(np.int16)

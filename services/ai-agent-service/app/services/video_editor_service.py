@@ -3578,9 +3578,9 @@ class VideoEditorService:
                                     elif e_inp > 1.8 * ref_c4:
                                         b_w = 0.35
                                     elif e_inp > 1.15 * ref_c4:
-                                        b_w = 0.28
+                                        b_w = 0.33
                                     else:
-                                        b_w = 0.20
+                                        b_w = 0.22
                                     blended_f = np.clip(np.round((1.0 - b_w) * f_curr_out.astype(np.float32) + b_w * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)
                                     f_curr_out = np.where(use_m[:, :, np.newaxis], blended_f, f_curr_out)
 
@@ -3640,7 +3640,7 @@ class VideoEditorService:
             if title_unpad_box is not None:
                 ty1, ty2, tx1, tx2 = title_unpad_box
                 tight_hdr_box = np.zeros_like(f_curr_out[:, :, 0])
-                tight_hdr_box[ty1:ty2, tx1:tx2] = 255
+                tight_hdr_box[max(0, ty1 - 4):ty2, tx1:tx2] = 255
                 k9_hdr = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
                 inner_hdr = (cv2.erode(tight_hdr_box, k9_hdr) > 0)
                 inner_hdr[ty2 - 3:, :] = False
@@ -3653,8 +3653,8 @@ class VideoEditorService:
                 v_ctx_h = float(np.var(lap_out[b_ref_hdr])) if np.count_nonzero(b_ref_hdr) > 0 else 0.0
                 ratio_h = v_inp_h / (v_ctx_h + 1e-6)
                 g_post = 0.0
-                if v_ctx_h >= 1700.0 and v_inp_h < 1100.0 and ratio_h < 0.55:
-                    g_post = 1.40 if v_inp_h < 750.0 else 1.10
+                if v_ctx_h >= 1700.0 and v_inp_h < 1300.0 and ratio_h < 0.60:
+                    g_post = 1.30 if v_inp_h < 750.0 else 0.85
                 elif 650.0 <= v_ctx_h < 1700.0 and v_inp_h < 650.0 and ratio_h < 0.72:
                     g_post = 0.85
                 elif ratio_h < 0.70 and v_inp_h < 1000.0 and v_ctx_h >= 650.0:

@@ -4547,10 +4547,18 @@ class VideoEditorService:
                     c0 = float(np.mean(out_fr[:, 0::3, :]))
                     c1 = float(np.mean(out_fr[:, 1::3, :]))
                     c2 = float(np.mean(out_fr[:, 2::3, :]))
+                    f_aa = out_fr.astype(np.int16)
                     if abs(c1 - 0.5 * (c0 + c2)) > 6.0 and abs(c0 - c2) < 4.0:
-                        f_aa = out_fr.astype(np.int16)
                         f_aa[:, 0::3, :] += 3
                         f_aa[:, 2::3, :] -= 3
+                        out_fr = np.clip(f_aa, 0, 255).astype(np.uint8)
+                    elif abs(c0 - 0.5 * (c1 + c2)) > 6.0 and abs(c1 - c2) < 4.0:
+                        f_aa[:, 1::3, :] += 3
+                        f_aa[:, 2::3, :] -= 3
+                        out_fr = np.clip(f_aa, 0, 255).astype(np.uint8)
+                    elif abs(c2 - 0.5 * (c0 + c1)) > 6.0 and abs(c0 - c1) < 4.0:
+                        f_aa[:, 0::3, :] += 3
+                        f_aa[:, 1::3, :] -= 3
                         out_fr = np.clip(f_aa, 0, 255).astype(np.uint8)
                 proc.stdin.write(out_fr.tobytes())
                 curr_f_idx += 1
@@ -5021,10 +5029,18 @@ class VideoEditorService:
                             c0 = float(np.mean(fr[:, 0::3, :]))
                             c1 = float(np.mean(fr[:, 1::3, :]))
                             c2 = float(np.mean(fr[:, 2::3, :]))
+                            f_aa = fr.astype(np.int16)
                             if abs(c1 - 0.5 * (c0 + c2)) > 6.0 and abs(c0 - c2) < 4.0:
-                                f_aa = fr.astype(np.int16)
                                 f_aa[:, 0::3, :] += 3
                                 f_aa[:, 2::3, :] -= 3
+                                fr = np.clip(f_aa, 0, 255).astype(np.uint8)
+                            elif abs(c0 - 0.5 * (c1 + c2)) > 6.0 and abs(c1 - c2) < 4.0:
+                                f_aa[:, 1::3, :] += 3
+                                f_aa[:, 2::3, :] -= 3
+                                fr = np.clip(f_aa, 0, 255).astype(np.uint8)
+                            elif abs(c2 - 0.5 * (c0 + c1)) > 6.0 and abs(c0 - c1) < 4.0:
+                                f_aa[:, 0::3, :] += 3
+                                f_aa[:, 1::3, :] -= 3
                                 fr = np.clip(f_aa, 0, 255).astype(np.uint8)
                         proc.stdin.write(fr.tobytes())
                     except (BrokenPipeError, OSError) as write_err:

@@ -2171,7 +2171,7 @@ class VideoEditorService:
                         if not cuts or (f_idx - cuts[-1] >= min_shot_gap):
                             # Kiểm tra loại trừ camera trôi tịnh tiến đều
                             s, resp = cv2.phaseCorrelate(np.float32(prev_gray), np.float32(gray))
-                            if not (resp > 0.65 and abs(s[0]) < 6.0 and abs(s[1]) < 6.0):
+                            if bhat > 0.70 or not (resp > 0.65 and abs(s[0]) < 6.0 and abs(s[1]) < 6.0):
                                 cuts.append(f_idx)
                 prev_hist = hist
                 prev_gray = gray
@@ -3169,7 +3169,7 @@ class VideoEditorService:
                     )
                     if M is not None and conf >= 0.15:
                         warped_ref = cv2.warpAffine(ref_f, M, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REFLECT)
-                        ref_m_u8 = cv2.dilate(ref_m_dil, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))
+                        ref_m_u8 = (ref_m > 0).astype(np.uint8) * 255
                         warped_m = cv2.warpAffine(
                             ref_m_u8, M, (w, h),
                             flags=cv2.INTER_NEAREST, borderMode=cv2.BORDER_CONSTANT, borderValue=255
@@ -4844,7 +4844,8 @@ class VideoEditorService:
         cap.release()
         cap = cv2.VideoCapture(str(input_file))
 
-        keyframe_indices = self._select_keyframes_for_shots_sync(shot_cuts, total_frames, max_step=15)
+        kf_max_step = 5 if total_frames <= 120 else 15
+        keyframe_indices = self._select_keyframes_for_shots_sync(shot_cuts, total_frames, max_step=kf_max_step)
         report(15, f"Đã phát hiện {len(shot_cuts)+1} phân cảnh, trích xuất {len(keyframe_indices)} keyframes...")
 
         # Single-pass sequential frame extraction để khắc phục triệt để lỗi imprecise seek H.264

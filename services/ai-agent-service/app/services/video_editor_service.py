@@ -2306,6 +2306,22 @@ class VideoEditorService:
                 lap_val = float(np.var(cv2.Laplacian(roi_g, cv2.CV_64F)[unmasked_px]))
                 if lap_val >= 800.0:
                     res_telea = cv2.inpaint(roi_img, roi_mask, 3, cv2.INPAINT_TELEA)
+                    try:
+                        clean_base = np.where((roi_mask > 0)[:, :, np.newaxis], res_telea, roi_img).astype(np.float32)
+                        hf_src = clean_base - cv2.GaussianBlur(clean_base, (5, 5), 1.2)
+                        valid_bg = (cv2.dilate(roi_mask, np.ones((5, 5), np.uint8)) == 0)
+                        if np.count_nonzero(valid_bg) > 50:
+                            bg_vals = hf_src[valid_bg]
+                            hf_clean_2d = hf_src.copy()
+                            inv_valid = ~valid_bg
+                            n_inv = int(np.count_nonzero(inv_valid))
+                            if n_inv > 0:
+                                hf_clean_2d[inv_valid] = bg_vals[np.arange(n_inv) % len(bg_vals)]
+                            hf_shifted = np.roll(hf_clean_2d, shift=(11, 23), axis=(0, 1))
+                            res_telea_f = np.clip(np.round(res_telea.astype(np.float32) + 0.58 * hf_shifted), 0, 255).astype(np.uint8)
+                            res_telea = np.where((roi_mask > 0)[:, :, np.newaxis], res_telea_f, res_telea)
+                    except Exception:
+                        pass
                     if res_telea is not None and res_telea.shape == roi_img.shape:
                         if cache_key and cache_store is not None:
                             cache_store[cache_key] = res_telea.copy()
@@ -3298,6 +3314,22 @@ class VideoEditorService:
                                     is_textured_bg = (float(np.var(lap_roi[dil_m == 0])) >= 800.0) if np.count_nonzero(dil_m == 0) > 20 else False
                                     if is_textured_bg:
                                         clean_t = cv2.inpaint(t_roi, dil_m, 3, cv2.INPAINT_TELEA)
+                                        try:
+                                            clean_base = np.where((dil_m > 0)[:, :, np.newaxis], clean_t, t_roi).astype(np.float32)
+                                            hf_src = clean_base - cv2.GaussianBlur(clean_base, (5, 5), 1.2)
+                                            valid_bg = (cv2.dilate(dil_m, np.ones((5, 5), np.uint8)) == 0)
+                                            if np.count_nonzero(valid_bg) > 50:
+                                                bg_vals = hf_src[valid_bg]
+                                                hf_clean_2d = hf_src.copy()
+                                                inv_valid = ~valid_bg
+                                                n_inv = int(np.count_nonzero(inv_valid))
+                                                if n_inv > 0:
+                                                    hf_clean_2d[inv_valid] = bg_vals[np.arange(n_inv) % len(bg_vals)]
+                                                hf_shifted = np.roll(hf_clean_2d, shift=(11, 23), axis=(0, 1))
+                                                clean_t_f = np.clip(np.round(clean_t.astype(np.float32) + 0.58 * hf_shifted), 0, 255).astype(np.uint8)
+                                                clean_t = np.where((dil_m > 0)[:, :, np.newaxis], clean_t_f, clean_t)
+                                        except Exception:
+                                            pass
                                     else:
                                         from app.services.classical_fallback_manager import get_classical_fallback_manager
                                         classical_mgr = get_classical_fallback_manager()
@@ -3598,7 +3630,11 @@ class VideoEditorService:
             lap_var_hdr = float(np.var(cv2.Laplacian(roi_ref_g, cv2.CV_64F)[t_mask == 0])) if (roi_ref_g is not None and np.count_nonzero(t_mask == 0) > 20) else 0.0
             is_textured_bg = (lap_var_hdr >= 800.0)
 
-            if is_bright_roi or is_textured_bg:
+            if is_textured_bg:
+                m_blend = t_mask.copy()
+                f_hdr = cv2.GaussianBlur(m_blend.astype(np.float32) / 255.0, (5, 5), 1.2)[:, :, np.newaxis]
+                f_hdr = np.maximum(f_hdr, (t_mask > 0).astype(np.float32)[:, :, np.newaxis])
+            elif is_bright_roi:
                 m_blend = t_mask.copy()
                 f_hdr = cv2.GaussianBlur(m_blend.astype(np.float32) / 255.0, (5, 5), 1.2)[:, :, np.newaxis]
                 inner_core_t = (cv2.erode(t_mask, np.ones((5, 5), np.uint8)) > 0).astype(np.float32)[:, :, np.newaxis]

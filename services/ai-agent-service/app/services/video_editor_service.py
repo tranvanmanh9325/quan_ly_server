@@ -3590,12 +3590,12 @@ class VideoEditorService:
                                         box_f55 = np.zeros_like(m_curr_mask)
                                         box_f55[ty1:ty2, tx1:tx2] = 255
                                         e_inp_after = float(np.mean(diff_sq_after[box_f55 > 0]))
-                                        if e_inp_after > 1.05 * max(e_ctx, 400.0):
+                                        if e_inp_after > 1.18 * max(e_ctx, 820.0) and e_ctx < 200.0:
                                             inner_bbox_f55 = (cv2.erode(box_f55, cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))) > 0)
                                             f_curr_out = np.where(inner_bbox_f55[:, :, np.newaxis], np.clip(np.round(0.72 * f_curr_out.astype(np.float32) + 0.28 * w_prev.astype(np.float32)), 0, 255).astype(np.uint8), f_curr_out)
                                     else:
                                         e_inp_after = float(np.mean(diff_sq_after[bbox_m > 0]))
-                                        if e_inp_after > 1.05 * max(e_ctx, 400.0):
+                                        if e_inp_after > 1.18 * max(e_ctx, 820.0) and e_ctx < 200.0:
                                             inner_bbox_f55 = (cv2.erode(bbox_m, cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))) > 0)
                                             f_curr_out = np.where(inner_bbox_f55[:, :, np.newaxis], np.clip(np.round(0.72 * f_curr_out.astype(np.float32) + 0.28 * w_prev.astype(np.float32)), 0, 255).astype(np.uint8), f_curr_out)
                         else:
@@ -4086,22 +4086,10 @@ class VideoEditorService:
                     v_inp_h = float(np.var(lap_out[tight_hdr_box > 0])) if np.count_nonzero(tight_hdr_box) > 0 else 0.0
                     v_ctx_h = float(np.var(lap_out[b_ref_hdr])) if np.count_nonzero(b_ref_hdr) > 0 else 0.0
                     ratio_h = v_inp_h / (v_ctx_h + 1e-6)
-                    if v_ctx_h >= 2000.0:
-                        if v_inp_h < 1450.0 and ratio_h < 0.70:
-                            blur_o = cv2.GaussianBlur(out_frame, (0, 0), 1.0)
-                            hf_o = out_frame.astype(np.float32) - blur_o.astype(np.float32)
-                            g_use = 0.60 if (v_ctx_h > 2500.0 and v_inp_h < 1100.0) else 0.45
-                            sharp_o = np.clip(np.round(out_frame.astype(np.float32) + g_use * hf_o), 0, 255).astype(np.uint8)
-                            out_frame = np.where(inner_hdr[:, :, np.newaxis], sharp_o, out_frame)
-                        elif 1450.0 <= v_inp_h < 2500.0 and ratio_h < 0.45:
-                            blur_o = cv2.GaussianBlur(out_frame, (0, 0), 1.0)
-                            hf_o = out_frame.astype(np.float32) - blur_o.astype(np.float32)
-                            sharp_o = np.clip(np.round(out_frame.astype(np.float32) + 0.75 * hf_o), 0, 255).astype(np.uint8)
-                            out_frame = np.where(inner_hdr[:, :, np.newaxis], sharp_o, out_frame)
-                    elif 750.0 <= v_ctx_h < 900.0 and v_inp_h < 900.0 and ratio_h < 0.70:
+                    if v_ctx_h >= 750.0 and v_inp_h < 1450.0 and ratio_h < 0.70:
                         blur_o = cv2.GaussianBlur(out_frame, (0, 0), 1.0)
                         hf_o = out_frame.astype(np.float32) - blur_o.astype(np.float32)
-                        sharp_o = np.clip(np.round(out_frame.astype(np.float32) + 0.25 * hf_o), 0, 255).astype(np.uint8)
+                        sharp_o = np.clip(np.round(out_frame.astype(np.float32) + 0.55 * hf_o), 0, 255).astype(np.uint8)
                         out_frame = np.where(inner_hdr[:, :, np.newaxis], sharp_o, out_frame)
 
             is_aligned_frame = (frame_idx in cleaned_keyframes) or used_align or used_sub_align

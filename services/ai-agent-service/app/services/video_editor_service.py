@@ -1361,6 +1361,8 @@ class VideoEditorService:
         if h < 4 or w < 4:
             return np.zeros((h, w), dtype=np.uint8)
 
+        is_doc_bright = (roi is not None and getattr(roi, "size", 0) > 0 and float(np.mean(cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY))) >= 195.0)
+
         # F2.1 Line-Level Spatial Confinement: prepare line bounding mask
         target_lines = lines
         if target_lines is None and region_meta is not None:
@@ -1391,8 +1393,13 @@ class VideoEditorService:
                         rx = min_lx
 
             s_res = np.sqrt(h**2 + w**2) / 1175.49
-            safe_pad_x = max(6, int(round(6 * s_res)))
-            safe_pad_y = max(6, int(round(6 * s_res)))
+            is_doc_bright = (roi is not None and getattr(roi, "size", 0) > 0 and float(np.mean(cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY))) >= 195.0)
+            if is_doc_bright:
+                safe_pad_x = max(2, int(round(4 * s_res)))
+                safe_pad_y = max(2, int(round(3 * s_res)))
+            else:
+                safe_pad_x = max(6, int(round(6 * s_res)))
+                safe_pad_y = max(6, int(round(6 * s_res)))
 
             for line_entry in target_lines:
                 if isinstance(line_entry, dict):
@@ -1654,7 +1661,7 @@ class VideoEditorService:
         min_char_h = 2
         min_char_w = 2
         min_area = 2
-        max_char_h = max(4, h)
+        max_char_h = max(4, int(h * 0.98)) if is_doc_bright else max(4, h)
 
         if is_high_texture_mesh:
             primary_mask = np.zeros_like(text_core)
@@ -2455,12 +2462,13 @@ class VideoEditorService:
                     "frame_end": max(r.get("frame_end", 0) for r in curr_line_tr),
                     "lines": None if len(curr_line_tr) > 1 else ([ln for r in curr_line_tr for ln in (r.get("lines") or [])] or None),
                 })
+            is_doc_bright = (frame_img is not None and getattr(frame_img, "size", 0) > 0 and float(np.mean(cv2.cvtColor(frame_img, cv2.COLOR_BGR2GRAY))) >= 195.0) if frame_img is not None else False
             for tr in merged_title_regions:
                 tx = max(0, int(tr.get("x", 0)))
                 ty = max(0, int(tr.get("y", 0)))
                 tw = max(1, int(tr.get("w", 0)))
                 th = max(1, int(tr.get("h", 0)))
-                pad_t = 6
+                pad_t = 0 if is_doc_bright else 6
                 tx_pad = max(0, tx - pad_t)
                 ty_pad = max(0, ty - pad_t)
                 tx2_pad = min(w, tx + tw + pad_t)
@@ -3248,6 +3256,7 @@ class VideoEditorService:
 
         out_f = frame.copy()
         h, w = frame.shape[:2]
+        is_doc_bright = (frame is not None and getattr(frame, "size", 0) > 0 and float(np.mean(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY))) >= 195.0) if frame is not None else False
         full_mask, sub_info = self._build_inpaint_mask_for_frame(
             frame_idx, frame.shape, frame_img=frame, target_regions=target_regions, target_scope=target_scope
         )
@@ -3274,10 +3283,13 @@ class VideoEditorService:
                         t_m = raw_m[thy1:thy2, thx1:thx2]
                         if np.count_nonzero(t_m) > 0:
                             t_m = VideoEditorService._fill_holes(t_m)
-                            t_gray_kf = cv2.cvtColor(frame[thy1:thy2, thx1:thx2], cv2.COLOR_BGR2GRAY) if frame is not None else None
-                            lap_var_kf = float(np.var(cv2.Laplacian(t_gray_kf, cv2.CV_64F)[t_m == 0])) if (t_gray_kf is not None and np.count_nonzero(t_m == 0) > 20) else 0.0
-                            is_mesh_kf = (lap_var_kf >= 800.0)
-                            dil_t = t_m if is_mesh_kf else cv2.dilate(t_m, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)))
+                            if is_doc_bright:
+                                dil_t = cv2.dilate(t_m, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)))
+                            else:
+                                t_gray_kf = cv2.cvtColor(frame[thy1:thy2, thx1:thx2], cv2.COLOR_BGR2GRAY) if frame is not None else None
+                                lap_var_kf = float(np.var(cv2.Laplacian(t_gray_kf, cv2.CV_64F)[t_m == 0])) if (t_gray_kf is not None and np.count_nonzero(t_m == 0) > 20) else 0.0
+                                is_mesh_kf = (lap_var_kf >= 800.0)
+                                dil_t = t_m if is_mesh_kf else cv2.dilate(t_m, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)))
                             dil_t = VideoEditorService._fill_holes(dil_t)
                             processed[thy1:thy2, thx1:thx2] = np.maximum(processed[thy1:thy2, thx1:thx2], dil_t)
 
@@ -3326,14 +3338,18 @@ class VideoEditorService:
                     )
                     if M is not None and conf >= 0.15:
                         warped_ref = cv2.warpAffine(ref_f, M, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REFLECT)
-                        ref_m_u8 = (ref_m > 0).astype(np.uint8) * 255
+                        if is_doc_bright:
+                            ref_m_u8 = cv2.dilate(ref_m_dil, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))
+                        else:
+                            ref_m_u8 = (ref_m > 0).astype(np.uint8) * 255
                         warped_m = cv2.warpAffine(
                             ref_m_u8, M, (w, h),
                             flags=cv2.INTER_NEAREST, borderMode=cv2.BORDER_CONSTANT, borderValue=255
                         )
                         unocc = (remaining_mask > 0) & (warped_m == 0)
                         unocc_ratio = float(np.count_nonzero(unocc)) / max(1.0, float(np.count_nonzero(remaining_mask)))
-                        if unocc_ratio >= 0.05:
+                        req_unocc = 0.50 if is_doc_bright else 0.05
+                        if unocc_ratio >= req_unocc:
                             bg_valid = (orig_mask_dil == 0) & (warped_m == 0)
                             if np.count_nonzero(bg_valid) > 50:
                                 abs_diff_bg = cv2.absdiff(frame, warped_ref)[bg_valid]
@@ -3389,8 +3405,13 @@ class VideoEditorService:
                             t_roi = out_f[thy1:thy2, thx1:thx2]
                             t_m = remaining_mask[thy1:thy2, thx1:thx2]
                             if np.count_nonzero(t_m) > 0:
-                                t_m = VideoEditorService._fill_holes(t_m)
-                                dil_m = cv2.bitwise_and(t_m, cv2.bitwise_not(applied_kf_mask[thy1:thy2, thx1:thx2]))
+                                if is_doc_bright:
+                                    s_res_val = np.sqrt(frame_h**2 + frame_w**2) / np.sqrt(1024**2 + 576**2)
+                                    k_hdr_sz = max(3, int(round(5 * s_res_val)) | 1)
+                                    dil_m = cv2.dilate(t_m, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k_hdr_sz, k_hdr_sz)))
+                                    dil_m = cv2.bitwise_and(dil_m, cv2.bitwise_not(applied_kf_mask[thy1:thy2, thx1:thx2]))
+                                else:
+                                    dil_m = cv2.bitwise_and(t_m, cv2.bitwise_not(applied_kf_mask[thy1:thy2, thx1:thx2]))
 
                                 if np.count_nonzero(dil_m) > 0:
                                     t_roi_gray = cv2.cvtColor(t_roi, cv2.COLOR_BGR2GRAY) if t_roi.ndim == 3 else t_roi
@@ -3769,6 +3790,28 @@ class VideoEditorService:
                     f_aa[:, 0::3, :] += 3
                     f_aa[:, 1::3, :] -= 3
                     f_curr_out = np.clip(f_aa, 0, 255).astype(np.uint8)
+            if not has_valid_title_roi and m_curr_mask is not None and np.count_nonzero(m_curr_mask) > 0:
+                k11_s = cv2.getStructuringElement(cv2.MORPH_RECT, (11, 11))
+                k3_s = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+                d11_s = cv2.dilate(m_curr_mask, k11_s)
+                d3_s = cv2.dilate(m_curr_mask, k3_s)
+                b_ref_s = (d11_s > 0) & (d3_s == 0)
+                inner_m_u = (cv2.erode(m_curr_mask, k3_s) > 0)
+                if np.count_nonzero(inner_m_u) > 0 and np.count_nonzero(b_ref_s) > 0:
+                    gray_out = cv2.cvtColor(f_curr_out, cv2.COLOR_BGR2GRAY)
+                    lap_out = cv2.Laplacian(gray_out, cv2.CV_64F)
+                    var_inp_m = float(np.var(lap_out[m_curr_mask > 0]))
+                    var_ctx_m = float(np.var(lap_out[b_ref_s]))
+                    if var_ctx_m >= 50.0 and var_ctx_m < 1400.0 and (var_inp_m / max(var_ctx_m, 1e-6)) < 0.75:
+                        blur_m = cv2.GaussianBlur(f_curr_out, (0, 0), 1.0)
+                        hf_m = f_curr_out.astype(np.float32) - blur_m.astype(np.float32)
+                        cand_m = f_curr_out
+                        for g_try in (0.6, 1.2, 1.8):
+                            cand_m = np.clip(np.round(f_curr_out.astype(np.float32) + g_try * hf_m), 0, 255).astype(np.uint8)
+                            lap_c = cv2.Laplacian(cv2.cvtColor(cand_m, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
+                            if float(np.var(lap_c[m_curr_mask > 0])) >= 0.85 * var_ctx_m:
+                                break
+                        f_curr_out = np.where(inner_m_u[:, :, np.newaxis], cand_m, f_curr_out)
             if prev_yielded_frame is not None and m_curr_mask is not None and np.count_nonzero(m_curr_mask) > 0:
                 inner_m = (cv2.erode(m_curr_mask, np.ones((3, 3), np.uint8)) > 0)
                 if np.count_nonzero(inner_m) > 0:
@@ -3800,14 +3843,25 @@ class VideoEditorService:
                                     roi_curr_gray = cv2.cvtColor(f_curr_out[ys.min():ys.max()+1, xs.min():xs.max()+1], cv2.COLOR_BGR2GRAY)
                                     is_bright_title = (float(np.mean(roi_curr_gray)) >= 215.0) if roi_curr_gray.size > 0 else False
                                     if not is_bright_title:
-                                        k_p4 = cv2.getStructuringElement(cv2.MORPH_RECT, (13, 13))
-                                        dil_p4 = cv2.dilate(bbox_m, k_p4)
-                                        alpha_p4 = cv2.GaussianBlur(dil_p4.astype(np.float32) / 255.0, (5, 5), 1.0)[:, :, np.newaxis]
-                                        if e_inp > 1.02 * ref_c4:
-                                            b_w_analyt = 1.0 - float(np.sqrt(0.65 * ref_c4 / max(e_inp, 1e-6)))
-                                            b_w = min(0.72, max(0.48 if e_inp >= 20.0 else 0.38, b_w_analyt))
+                                        if w_fr > h_fr:
+                                            k_p4 = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 25))
+                                            dil_p4 = cv2.dilate(bbox_m, k_p4)
+                                            alpha_p4 = cv2.GaussianBlur(dil_p4.astype(np.float32) / 255.0, (5, 5), 1.0)[:, :, np.newaxis]
+                                            if e_inp >= 40.0 and e_inp > 1.15 * ref_c4:
+                                                b_w = 0.45
+                                            elif e_inp > 1.15 * ref_c4:
+                                                b_w = 0.38
+                                            else:
+                                                b_w = 0.30
                                         else:
-                                            b_w = 0.30
+                                            k_p4 = cv2.getStructuringElement(cv2.MORPH_RECT, (13, 13))
+                                            dil_p4 = cv2.dilate(bbox_m, k_p4)
+                                            alpha_p4 = cv2.GaussianBlur(dil_p4.astype(np.float32) / 255.0, (5, 5), 1.0)[:, :, np.newaxis]
+                                            if e_inp > 1.02 * ref_c4:
+                                                b_w_analyt = 1.0 - float(np.sqrt(0.65 * ref_c4 / max(e_inp, 1e-6)))
+                                                b_w = min(0.72, max(0.48 if e_inp >= 20.0 else 0.38, b_w_analyt))
+                                            else:
+                                                b_w = 0.30
                                         blended_f = np.clip(np.round((1.0 - b_w) * f_curr_out.astype(np.float32) + b_w * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)
                                         f_curr_out = np.clip(np.round((1.0 - alpha_p4) * f_curr_out.astype(np.float32) + alpha_p4 * blended_f.astype(np.float32)), 0, 255).astype(np.uint8)
                                     else:
@@ -3848,67 +3902,71 @@ class VideoEditorService:
                             e_ctx = float(np.mean(diff_sq[ctx_c4])) if np.count_nonzero(ctx_c4) > 0 else 16.0
                             ref_sub_c4 = max(e_ctx, 16.0)
                             if e_inp > 1.05 * ref_sub_c4:
-                                b_sub_w = min(0.68, max(0.32, 1.0 - float(np.sqrt(0.90 * ref_sub_c4 / max(e_inp, 1e-6)))))
+                                b_sub_w = min(0.75, max(0.35, 1.0 - float(np.sqrt(0.75 * ref_sub_c4 / max(e_inp, 1e-6)))))
                                 blended_f = np.clip(np.round((1.0 - b_sub_w) * f_curr_out.astype(np.float32) + b_sub_w * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)
                                 f_curr_out = np.where(sub_mask_bool[:, :, np.newaxis], blended_f, f_curr_out)
+                                k11_sub = cv2.getStructuringElement(cv2.MORPH_RECT, (11, 11))
+                                k3_sub = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+                                b_ref_sub = (cv2.dilate(m_curr_mask, k11_sub) > 0) & (cv2.dilate(m_curr_mask, k3_sub) == 0)
+                                lap_after = cv2.Laplacian(cv2.cvtColor(f_curr_out, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
+                                var_inp_sub = float(np.var(lap_after[sub_mask_bool]))
+                                var_ctx_sub = float(np.var(lap_after[b_ref_sub])) if np.count_nonzero(b_ref_sub) > 0 else 0.0
+                                if var_ctx_sub >= 50.0 and (var_inp_sub / max(var_ctx_sub, 1e-6)) < 0.72:
+                                    blur_sub = cv2.GaussianBlur(f_curr_out, (0, 0), 1.0)
+                                    hf_sub = f_curr_out.astype(np.float32) - blur_sub.astype(np.float32)
+                                    cand_sub = f_curr_out
+                                    for g_try in (0.35, 0.70, 1.05):
+                                        cand_sub = np.clip(np.round(f_curr_out.astype(np.float32) + g_try * hf_sub), 0, 255).astype(np.uint8)
+                                        lap_cs = cv2.Laplacian(cv2.cvtColor(cand_sub, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
+                                        if float(np.var(lap_cs[sub_mask_bool])) >= 0.80 * var_ctx_sub:
+                                            break
+                                    inner_sub_u = (cv2.erode(m_curr_mask, k3_sub) > 0)
+                                    f_curr_out = np.where(inner_sub_u[:, :, np.newaxis], cand_sub, f_curr_out)
 
 
             if title_unpad_box is not None:
                 ty1, ty2, tx1, tx2 = title_unpad_box
                 roi_hdr_gray = cv2.cvtColor(f_curr_out[ty1:ty2, tx1:tx2], cv2.COLOR_BGR2GRAY)
                 is_bright_hdr = (float(np.mean(roi_hdr_gray)) >= 215.0) if roi_hdr_gray.size > 0 else False
-                if is_bright_hdr:
-                    tight_hdr_box = np.zeros_like(f_curr_out[:, :, 0])
-                    tight_hdr_box[ty1:ty2, tx1:tx2] = 255
-                    k9_hdr = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
-                    inner_hdr = (cv2.erode(tight_hdr_box, k9_hdr) > 0)
-                    inner_hdr[ty2 - 3:, :] = False
-                    inner_hdr[:ty1 + 2, :] = False
-                    k11_hdr = cv2.getStructuringElement(cv2.MORPH_RECT, (11, 11))
-                    k3_hdr = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-                    b_ref_hdr = (cv2.dilate(tight_hdr_box, k11_hdr) > 0) & (cv2.dilate(tight_hdr_box, k3_hdr) == 0)
-                    lap_out = cv2.Laplacian(cv2.cvtColor(f_curr_out, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
-                    v_inp_h = float(np.var(lap_out[tight_hdr_box > 0])) if np.count_nonzero(tight_hdr_box) > 0 else 0.0
-                    v_ctx_h = float(np.var(lap_out[b_ref_hdr])) if np.count_nonzero(b_ref_hdr) > 0 else 0.0
-                    ratio_h = v_inp_h / (v_ctx_h + 1e-6)
-                    g_post = 0.0
-                    if v_ctx_h >= 1700.0 and v_inp_h < 1100.0 and ratio_h < 0.55:
-                        g_post = 1.40 if v_inp_h < 750.0 else 1.10
-                    elif 650.0 <= v_ctx_h < 1700.0 and v_inp_h < 650.0 and ratio_h < 0.72:
-                        g_post = 0.85
-                    elif ratio_h < 0.70 and v_inp_h < 1000.0 and v_ctx_h >= 650.0:
-                        g_post = 0.12
-                    elif v_ctx_h < 250.0:
-                        full_hdr_box = np.zeros_like(f_curr_out[:, :, 0])
-                        full_hdr_box[max(0, ty1 - 4):ty2, tx1:tx2] = 255
-                        b_ref_full = (cv2.dilate(full_hdr_box, k11_hdr) > 0) & (cv2.dilate(full_hdr_box, k3_hdr) == 0)
-                        v_inp_full = float(np.var(lap_out[full_hdr_box > 0])) if np.count_nonzero(full_hdr_box) > 0 else 0.0
-                        v_ctx_full = float(np.var(lap_out[b_ref_full])) if np.count_nonzero(b_ref_full) > 0 else 0.0
-                        ratio_full = v_inp_full / (v_ctx_full + 1e-6)
-                        if v_ctx_full >= 2000.0 and v_inp_full < 1300.0 and 0.20 <= ratio_full < 0.60:
-                            g_post = 1.30 if v_inp_full < 750.0 else 0.85
-                            inner_hdr = (cv2.erode(full_hdr_box, k9_hdr) > 0)
-                            inner_hdr[ty2 - 3:, :] = False
-                            inner_hdr[:ty1 + 4, :] = False
-                    if g_post > 0.0:
-                        blur_o = cv2.GaussianBlur(f_curr_out, (0, 0), 1.0)
-                        hf_o = f_curr_out.astype(np.float32) - blur_o.astype(np.float32)
-                        sharp_o = np.clip(np.round(f_curr_out.astype(np.float32) + g_post * hf_o), 0, 255).astype(np.uint8)
-                        f_curr_out = np.where(inner_hdr[:, :, np.newaxis], sharp_o, f_curr_out)
-            if m_curr_mask is not None and np.count_nonzero(m_curr_mask) > 0:
-                k11 = cv2.getStructuringElement(cv2.MORPH_RECT, (11, 11))
-                k3 = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-                dil_m_cur = cv2.dilate(m_curr_mask, k11)
-                b_ref_cur = (dil_m_cur > 0) & (cv2.dilate(m_curr_mask, k3) == 0)
-                lap_o = cv2.Laplacian(cv2.cvtColor(f_curr_out, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
-                v_inp_m = float(np.var(lap_o[m_curr_mask > 0]))
-                v_ctx_m = float(np.var(lap_o[b_ref_cur])) if np.count_nonzero(b_ref_cur) > 0 else 0.0
-                if v_ctx_m >= 50.0 and (v_inp_m / max(v_ctx_m, 1e-6)) < 0.65:
-                    blur_m = cv2.GaussianBlur(f_curr_out, (0, 0), 1.0)
-                    hf_m = f_curr_out.astype(np.float32) - blur_m.astype(np.float32)
-                    sharp_m = np.clip(np.round(f_curr_out.astype(np.float32) + 0.35 * hf_m), 0, 255).astype(np.uint8)
-                    inner_m = (cv2.erode(m_curr_mask, k3) > 0)
-                    f_curr_out = np.where(inner_m[:, :, np.newaxis], sharp_m, f_curr_out)
+                tight_hdr_box = np.zeros_like(f_curr_out[:, :, 0])
+                tight_hdr_box[ty1:ty2, tx1:tx2] = 255
+                k9_hdr = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
+                inner_hdr = (cv2.erode(tight_hdr_box, k9_hdr) > 0)
+                inner_hdr[ty2 - 3:, :] = False
+                inner_hdr[:ty1 + 2, :] = False
+                k11_hdr = cv2.getStructuringElement(cv2.MORPH_RECT, (11, 11))
+                k3_hdr = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+                b_ref_hdr = (cv2.dilate(tight_hdr_box, k11_hdr) > 0) & (cv2.dilate(tight_hdr_box, k3_hdr) == 0)
+                lap_out = cv2.Laplacian(cv2.cvtColor(f_curr_out, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
+                v_inp_h = float(np.var(lap_out[tight_hdr_box > 0])) if np.count_nonzero(tight_hdr_box) > 0 else 0.0
+                v_ctx_h = float(np.var(lap_out[b_ref_hdr])) if np.count_nonzero(b_ref_hdr) > 0 else 0.0
+                ratio_h = v_inp_h / (v_ctx_h + 1e-6)
+                g_post = 0.0
+                if is_bright_hdr and v_ctx_h >= 1700.0 and v_inp_h < 1100.0 and ratio_h < 0.55:
+                    g_post = 1.40 if v_inp_h < 750.0 else 1.10
+                elif (not is_bright_hdr) and 500.0 <= v_ctx_h < 1700.0 and v_inp_h < 650.0 and ratio_h < 0.72:
+                    g_post = 1.15 if ratio_h < 0.50 else 0.85
+                elif is_bright_hdr and 650.0 <= v_ctx_h < 1700.0 and v_inp_h < 650.0 and ratio_h < 0.72:
+                    g_post = 0.85
+                elif is_bright_hdr and ratio_h < 0.70 and v_inp_h < 1000.0 and v_ctx_h >= 650.0:
+                    g_post = 0.12
+                elif is_bright_hdr and v_ctx_h < 250.0:
+                    full_hdr_box = np.zeros_like(f_curr_out[:, :, 0])
+                    full_hdr_box[max(0, ty1 - 4):ty2, tx1:tx2] = 255
+                    b_ref_full = (cv2.dilate(full_hdr_box, k11_hdr) > 0) & (cv2.dilate(full_hdr_box, k3_hdr) == 0)
+                    v_inp_full = float(np.var(lap_out[full_hdr_box > 0])) if np.count_nonzero(full_hdr_box) > 0 else 0.0
+                    v_ctx_full = float(np.var(lap_out[b_ref_full])) if np.count_nonzero(b_ref_full) > 0 else 0.0
+                    ratio_full = v_inp_full / (v_ctx_full + 1e-6)
+                    if v_ctx_full >= 2000.0 and v_inp_full < 1300.0 and 0.20 <= ratio_full < 0.60:
+                        g_post = 1.30 if v_inp_full < 750.0 else 0.85
+                        inner_hdr = (cv2.erode(full_hdr_box, k9_hdr) > 0)
+                        inner_hdr[ty2 - 3:, :] = False
+                        inner_hdr[:ty1 + 4, :] = False
+                if g_post > 0.0:
+                    blur_o = cv2.GaussianBlur(f_curr_out, (0, 0), 1.0)
+                    hf_o = f_curr_out.astype(np.float32) - blur_o.astype(np.float32)
+                    sharp_o = np.clip(np.round(f_curr_out.astype(np.float32) + g_post * hf_o), 0, 255).astype(np.uint8)
+                    f_curr_out = np.where(inner_hdr[:, :, np.newaxis], sharp_o, f_curr_out)
 
             prev_yielded_frame = f_curr_out.copy()
             return f_curr_out

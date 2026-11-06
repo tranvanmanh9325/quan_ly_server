@@ -388,7 +388,7 @@ class TemporalTextDetector:
                         if oh < 8 or ow < 6:
                             continue
                         # Reject thin horizontal ruling lines and full-width brick mortar lines
-                        if bh <= 2 or (bh <= 3 and (bw / float(max(1, bh))) >= 8.0) or ((bw / float(max(1, bh))) >= 12.0 and bh <= 15):
+                        if bh <= 2 or (bh <= 3 and (bw / float(max(1, bh))) >= 8.0) or (bw >= 0.80 * proc_w and (bw / float(max(1, bh))) >= 15.0):
                             continue
                         if (ow * oh) > (0.30 * orig_w * orig_h):
                             continue

@@ -1396,7 +1396,7 @@ class VideoEditorService:
             is_doc_bright = (roi is not None and getattr(roi, "size", 0) > 0 and float(np.mean(cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY))) >= 195.0)
             hsv_roi_stroke = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV) if (roi is not None and getattr(roi, "ndim", 0) == 3) else None
             has_green_roi_stroke = (np.count_nonzero((hsv_roi_stroke[:, :, 0] >= 35) & (hsv_roi_stroke[:, :, 0] <= 85) & (hsv_roi_stroke[:, :, 1] >= 100)) > 200) if hsv_roi_stroke is not None else False
-            if not has_green_roi_stroke:
+            if is_doc_bright or ((max(roi.shape[:2]) >= 400 or w >= 600) and not has_green_roi_stroke):
                 safe_pad_x = max(2, int(round(4 * s_res)))
                 safe_pad_y = max(2, int(round(3 * s_res)))
             else:
@@ -3848,7 +3848,7 @@ class VideoEditorService:
                                             dil_p4 = cv2.dilate(bbox_m, k_p4)
                                             alpha_p4 = cv2.GaussianBlur(dil_p4.astype(np.float32) / 255.0, (5, 5), 1.0)[:, :, np.newaxis]
                                             if e_inp >= 18.0 and e_inp > 1.15 * ref_c4:
-                                                b_w = 0.45
+                                                b_w = 0.50
                                             elif e_inp > 1.15 * ref_c4:
                                                 b_w = 0.38
                                             else:
@@ -3914,7 +3914,7 @@ class VideoEditorService:
                                 lap_after = cv2.Laplacian(cv2.cvtColor(f_curr_out, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
                                 var_inp_sub = float(np.var(lap_after[sub_mask_bool]))
                                 var_ctx_sub = float(np.var(lap_after[b_ref_sub])) if np.count_nonzero(b_ref_sub) > 0 else 0.0
-                                if h_fr <= 1500 and var_ctx_sub >= 50.0 and (var_inp_sub / max(var_ctx_sub, 1e-6)) < 0.72:
+                                if w_fr > h_fr and h_fr <= 1500 and var_ctx_sub >= 50.0 and (var_inp_sub / max(var_ctx_sub, 1e-6)) < 0.72:
                                     blur_sub = cv2.GaussianBlur(f_curr_out, (0, 0), 1.0)
                                     hf_sub = f_curr_out.astype(np.float32) - blur_sub.astype(np.float32)
                                     cand_sub = f_curr_out

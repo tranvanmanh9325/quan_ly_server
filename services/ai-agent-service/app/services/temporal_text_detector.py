@@ -310,7 +310,8 @@ class TemporalTextDetector:
         raw_candidates_per_window: List[Dict[str, Any]] = []
         frame_idx = 0
         morph_k = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-        horiz_k = cv2.getStructuringElement(cv2.MORPH_RECT, (max(25, int(round(50 * scale))), 3))
+        hk_w = max(25, int(round(50 * scale))) if orig_w >= 1800 else max(9, int(round(18 * scale)))
+        horiz_k = cv2.getStructuringElement(cv2.MORPH_RECT, (hk_w, 3))
 
         # Stride between window evaluations to balance speed and temporal resolution
         eval_stride = max(1, W // 4)
@@ -390,7 +391,7 @@ class TemporalTextDetector:
                         if oh < 8 or ow < 6:
                             continue
                         # Reject thin horizontal ruling lines and full-width brick mortar lines
-                        if (bh <= 2 and (bw / float(max(1, bh))) >= 6.0) or (bh <= 3 and (bw / float(max(1, bh))) >= 8.0) or (bw >= 0.80 * proc_w and (bw / float(max(1, bh))) >= 15.0):
+                        if bh <= 2 or (bh <= 3 and (bw / float(max(1, bh))) >= 8.0) or (bw >= 0.80 * proc_w and (bw / float(max(1, bh))) >= 15.0):
                             continue
                         if (ow * oh) > (0.30 * orig_w * orig_h):
                             continue

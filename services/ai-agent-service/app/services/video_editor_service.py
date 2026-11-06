@@ -3582,9 +3582,12 @@ class VideoEditorService:
                                         blended_stroke = np.clip(np.round((1.0 - b_stroke) * f_curr_out.astype(np.float32) + b_stroke * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)
                                         f_curr_out = np.where(use_m[:, :, np.newaxis], blended_stroke, f_curr_out)
                                         diff_sq_mid = (f_curr_out.astype(np.float32) - w_prev.astype(np.float32)) ** 2
-                                        e_rem = float(np.mean(diff_sq_mid[bbox_m > 0]))
-                                        print(f"[P4_TEMPORAL] count={yielded_count} e_inp={e_inp:.1f} e_rem={e_rem:.1f} ref={ref_c4:.1f} ratio_rem={e_rem/ref_c4:.3f}", flush=True)
-                                        if e_rem > 1.15 * ref_c4:
+                                        try:
+                                            with open("/tmp/p4_diag.log", "a") as f_diag:
+                                                f_diag.write(f"count={yielded_count} e_inp={e_inp:.1f} e_rem={e_rem:.1f} ref={ref_c4:.1f} ratio_rem={e_rem/ref_c4:.3f}\n")
+                                        except Exception:
+                                            pass
+                                        if e_rem > 16.0 and e_rem > 1.15 * max(ref_c4, 16.0):
                                             k_p4 = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 25))
                                             dil_p4 = cv2.dilate(bbox_m, k_p4)
                                             b_w = 0.42 if e_rem > 1.25 * ref_c4 else 0.35

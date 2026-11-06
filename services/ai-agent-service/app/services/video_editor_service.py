@@ -3576,12 +3576,14 @@ class VideoEditorService:
                                     is_bright_title = (float(np.mean(roi_curr_gray)) >= 180.0) if roi_curr_gray.size > 0 else False
                                     if not is_bright_title:
                                         # Two-stage hierarchical temporal blend for natural background banner:
+                                        f_before_blend = f_curr_out.copy()
                                         # Stage 1: Blend on inner text strokes to suppress core glyph flicker without step edges
                                         use_m = (m_curr_mask > 0)
                                         b_stroke = 0.35
-                                        blended_stroke = np.clip(np.round((1.0 - b_stroke) * f_curr_out.astype(np.float32) + b_stroke * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)
-                                        f_curr_out = np.where(use_m[:, :, np.newaxis], blended_stroke, f_curr_out)
+                                        blended_stroke = np.clip(np.round((1.0 - b_stroke) * f_before_blend.astype(np.float32) + b_stroke * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)
+                                        f_curr_out = np.where(use_m[:, :, np.newaxis], blended_stroke, f_before_blend)
                                         diff_sq_mid = (f_curr_out.astype(np.float32) - w_prev.astype(np.float32)) ** 2
+                                        e_rem = float(np.mean(diff_sq_mid[bbox_m > 0]))
                                         try:
                                             with open("/tmp/p4_diag.log", "a") as f_diag:
                                                 f_diag.write(f"count={yielded_count} e_inp={e_inp:.1f} e_rem={e_rem:.1f} ref={ref_c4:.1f} ratio_rem={e_rem/ref_c4:.3f}\n")
@@ -3591,8 +3593,8 @@ class VideoEditorService:
                                             k_p4 = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 25))
                                             dil_p4 = cv2.dilate(bbox_m, k_p4)
                                             b_w = 0.42 if e_rem > 1.25 * ref_c4 else 0.35
-                                            blended_f = np.clip(np.round((1.0 - b_w) * f_curr_out.astype(np.float32) + b_w * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)
-                                            f_curr_out = np.where((dil_p4 > 0)[:, :, np.newaxis], blended_f, f_curr_out)
+                                            blended_f = np.clip(np.round((1.0 - b_w) * f_before_blend.astype(np.float32) + b_w * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)
+                                            f_curr_out = np.where((dil_p4 > 0)[:, :, np.newaxis], blended_f, f_before_blend)
                                     else:
                                         if e_inp > 600.0 and e_inp > 1.8 * ref_c4:
                                             b_w = 0.42

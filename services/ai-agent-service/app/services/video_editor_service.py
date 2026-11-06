@@ -3544,6 +3544,24 @@ class VideoEditorService:
         def _yield_frame_with_temporal_blend(f_curr_out: np.ndarray, m_curr_mask: Optional[np.ndarray]) -> np.ndarray:
             nonlocal prev_yielded_frame, yielded_count
             yielded_count += 1
+            h_fr, w_fr = f_curr_out.shape[:2]
+            if max(h_fr, w_fr) > 1500 and w_fr >= 6:
+                c0 = float(np.mean(f_curr_out[:, 0::3, :]))
+                c1 = float(np.mean(f_curr_out[:, 1::3, :]))
+                c2 = float(np.mean(f_curr_out[:, 2::3, :]))
+                f_aa = f_curr_out.astype(np.int16)
+                if c1 - 0.5 * (c0 + c2) > 6.0:
+                    f_aa[:, 0::3, :] += 3
+                    f_aa[:, 2::3, :] -= 3
+                    f_curr_out = np.clip(f_aa, 0, 255).astype(np.uint8)
+                elif c0 - 0.5 * (c1 + c2) > 6.0:
+                    f_aa[:, 1::3, :] += 3
+                    f_aa[:, 2::3, :] -= 3
+                    f_curr_out = np.clip(f_aa, 0, 255).astype(np.uint8)
+                elif c2 - 0.5 * (c0 + c1) > 6.0:
+                    f_aa[:, 0::3, :] += 3
+                    f_aa[:, 1::3, :] -= 3
+                    f_curr_out = np.clip(f_aa, 0, 255).astype(np.uint8)
             if prev_yielded_frame is not None and m_curr_mask is not None and np.count_nonzero(m_curr_mask) > 0:
                 inner_m = (cv2.erode(m_curr_mask, np.ones((3, 3), np.uint8)) > 0)
                 if np.count_nonzero(inner_m) > 0:
@@ -5024,24 +5042,6 @@ class VideoEditorService:
                         _cleanup_ffmpeg_proc()
                         raise RuntimeError("Video processing cancelled.")
                     try:
-                        h_fr, w_fr = fr.shape[:2]
-                        if max(h_fr, w_fr) > 1500 and w_fr >= 6:
-                            c0 = float(np.mean(fr[:, 0::3, :]))
-                            c1 = float(np.mean(fr[:, 1::3, :]))
-                            c2 = float(np.mean(fr[:, 2::3, :]))
-                            f_aa = fr.astype(np.int16)
-                            if c1 - 0.5 * (c0 + c2) > 6.0:
-                                f_aa[:, 0::3, :] += 3
-                                f_aa[:, 2::3, :] -= 3
-                                fr = np.clip(f_aa, 0, 255).astype(np.uint8)
-                            elif c0 - 0.5 * (c1 + c2) > 6.0:
-                                f_aa[:, 1::3, :] += 3
-                                f_aa[:, 2::3, :] -= 3
-                                fr = np.clip(f_aa, 0, 255).astype(np.uint8)
-                            elif c2 - 0.5 * (c0 + c1) > 6.0:
-                                f_aa[:, 0::3, :] += 3
-                                f_aa[:, 1::3, :] -= 3
-                                fr = np.clip(f_aa, 0, 255).astype(np.uint8)
                         proc.stdin.write(fr.tobytes())
                     except (BrokenPipeError, OSError) as write_err:
                         pipe_broken = True

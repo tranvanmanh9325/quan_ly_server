@@ -310,7 +310,7 @@ class TemporalTextDetector:
         raw_candidates_per_window: List[Dict[str, Any]] = []
         frame_idx = 0
         morph_k = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-        horiz_k = cv2.getStructuringElement(cv2.MORPH_RECT, (max(9, int(round(18 * scale))), 3))
+        horiz_k = cv2.getStructuringElement(cv2.MORPH_RECT, (max(25, int(round(50 * scale))), 3))
 
         # Stride between window evaluations to balance speed and temporal resolution
         eval_stride = max(1, W // 4)
@@ -328,8 +328,10 @@ class TemporalTextDetector:
             proc_gray = cv2.cvtColor(proc_frame, cv2.COLOR_BGR2GRAY)
             proc_bgr_f = proc_frame.astype(np.float32)
 
-            # Spatial morphological gradient
-            grad = cv2.morphologyEx(proc_gray, cv2.MORPH_GRADIENT, morph_k)
+            # Spatial morphological gradient (combining luminance and color saturation gradients)
+            chroma = np.max(proc_frame, axis=2) - np.min(proc_frame, axis=2)
+            grad_chroma = cv2.morphologyEx(chroma, cv2.MORPH_GRADIENT, morph_k)
+            grad = np.maximum(cv2.morphologyEx(proc_gray, cv2.MORPH_GRADIENT, morph_k), grad_chroma)
             edge_bin = (grad >= self.gradient_mag_thresh).astype(np.float32)
 
             # O(1) sliding window accumulation
@@ -388,7 +390,7 @@ class TemporalTextDetector:
                         if oh < 8 or ow < 6:
                             continue
                         # Reject thin horizontal ruling lines and full-width brick mortar lines
-                        if bh <= 2 or (bh <= 3 and (bw / float(max(1, bh))) >= 8.0) or (bw >= 0.80 * proc_w and (bw / float(max(1, bh))) >= 15.0):
+                        if (bh <= 2 and (bw / float(max(1, bh))) >= 6.0) or (bh <= 3 and (bw / float(max(1, bh))) >= 8.0) or (bw >= 0.80 * proc_w and (bw / float(max(1, bh))) >= 15.0):
                             continue
                         if (ow * oh) > (0.30 * orig_w * orig_h):
                             continue

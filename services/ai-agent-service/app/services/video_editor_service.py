@@ -3349,7 +3349,8 @@ class VideoEditorService:
                     )
                     if M is not None and conf >= 0.15:
                         warped_ref = cv2.warpAffine(ref_f, M, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REFLECT)
-                        if is_doc_bright or max(w, h) >= 1800:
+                        is_bottom_ticker_kf = bool(target_regions and any(int(r.get("y", 0)) >= h // 2 for r in target_regions))
+                        if is_doc_bright or (max(w, h) >= 1800 and is_bottom_ticker_kf):
                             ref_m_u8 = cv2.dilate(ref_m_dil, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))
                             req_unocc = 0.50
                         else:
@@ -3841,7 +3842,8 @@ class VideoEditorService:
                                     roi_curr_gray = cv2.cvtColor(f_curr_out[ys.min():ys.max()+1, xs.min():xs.max()+1], cv2.COLOR_BGR2GRAY)
                                     is_bright_title = (float(np.mean(roi_curr_gray)) >= (180.0 if h_fr <= 1500 else 215.0)) if roi_curr_gray.size > 0 else False
                                     if not is_bright_title:
-                                        if w_fr >= 1800:
+                                        is_bottom_ticker_blend = (w_fr >= 1800 and ys.min() >= h_fr // 2)
+                                        if is_bottom_ticker_blend:
                                             k_p4 = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 25))
                                             dil_p4 = cv2.dilate(bbox_m, k_p4)
                                             alpha_p4 = cv2.GaussianBlur(dil_p4.astype(np.float32) / 255.0, (5, 5), 1.0)[:, :, np.newaxis]
@@ -3943,12 +3945,12 @@ class VideoEditorService:
                 v_ctx_h = float(np.var(lap_out[b_ref_hdr])) if np.count_nonzero(b_ref_hdr) > 0 else 0.0
                 ratio_h = v_inp_h / (v_ctx_h + 1e-6)
                 g_post = 0.0
-                if is_bright_hdr and v_ctx_h >= 1700.0 and v_inp_h < 1500.0 and ratio_h < 0.65:
+                if is_bright_hdr and v_ctx_h >= 1700.0 and v_inp_h < 1100.0 and ratio_h < 0.55:
                     g_post = 1.40 if v_inp_h < 750.0 else 1.10
                 elif is_bright_hdr and 650.0 <= v_ctx_h < 1700.0 and v_inp_h < 650.0 and ratio_h < 0.72:
                     g_post = 0.85
                 elif is_bright_hdr and ratio_h < 0.70 and v_inp_h < 1000.0 and v_ctx_h >= 650.0:
-                    g_post = 0.12
+                    g_post = 0.30
                 elif is_bright_hdr and v_ctx_h < 250.0:
                     full_hdr_box = np.zeros_like(f_curr_out[:, :, 0])
                     full_hdr_box[max(0, ty1 - 4):ty2, tx1:tx2] = 255
@@ -4782,7 +4784,7 @@ class VideoEditorService:
         has_bottom_overlay = bool(target_regions and any(int(r.get("y", 0)) >= h // 2 for r in target_regions))
         if h > 1500:
             v_refine_opts = ["-preset", "fast", "-crf", "1", "-g", "1"]
-        elif has_bottom_overlay:
+        elif has_bottom_overlay and w < 1800:
             v_refine_opts = ["-preset", "fast", "-crf", "14", "-g", "30"]
         elif tot_frames <= 300:
             v_refine_opts = ["-preset", "fast", "-crf", "2", "-g", "1"]
@@ -5251,7 +5253,7 @@ class VideoEditorService:
             has_bottom_overlay = bool(target_regions and any(int(r.get("y", 0)) >= h // 2 for r in target_regions))
             if h > 1500:
                 v_opts = ["-preset", "fast", "-crf", "1", "-g", "1"]
-            elif has_bottom_overlay:
+            elif has_bottom_overlay and w < 1800:
                 v_opts = ["-preset", "fast", "-crf", "14", "-g", "30"]
             elif total_frames <= 300:
                 v_opts = ["-preset", "fast", "-crf", "2", "-g", "1"]

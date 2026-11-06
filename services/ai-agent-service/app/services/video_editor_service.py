@@ -3468,7 +3468,7 @@ class VideoEditorService:
                         break  # Tách biệt khỏi cụm tiêu đề chính
 
                 title_unpad_box = (
-                    min(int(r.get("y", 0)) for r in primary_cluster),
+                    min(int(r.get("y", 0)) for r in primary_cluster) + 4,
                     max(int(r.get("y", 0)) + int(r.get("h", 0)) for r in primary_cluster) - 3,
                     min(int(r.get("x", 0)) for r in primary_cluster) + 8,
                     max(int(r.get("x", 0)) + int(r.get("w", 0)) for r in primary_cluster) - 6
@@ -3657,8 +3657,8 @@ class VideoEditorService:
                     g_post = 1.40 if v_inp_h < 750.0 else 1.10
                 elif 650.0 <= v_ctx_h < 1700.0 and v_inp_h < 650.0 and ratio_h < 0.72:
                     g_post = 0.85
-                elif ratio_h < 0.72 and v_inp_h < 1450.0 and v_ctx_h >= 650.0:
-                    g_post = 0.35
+                elif ratio_h < 0.70 and v_inp_h < 1000.0 and v_ctx_h >= 650.0:
+                    g_post = 0.12
                 if g_post > 0.0:
                     blur_o = cv2.GaussianBlur(f_curr_out, (0, 0), 1.0)
                     hf_o = f_curr_out.astype(np.float32) - blur_o.astype(np.float32)

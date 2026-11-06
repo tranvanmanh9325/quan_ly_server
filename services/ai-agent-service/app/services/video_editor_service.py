@@ -3541,7 +3541,7 @@ class VideoEditorService:
         yielded_count = 0
         dis_flow_temporal = cv2.DISOpticalFlow_create(cv2.DISOPTICAL_FLOW_PRESET_FAST)
 
-        def _yield_frame_with_temporal_blend(f_curr_out: np.ndarray, m_curr_mask: Optional[np.ndarray], f_curr_idx: int = 0) -> np.ndarray:
+        def _yield_frame_with_temporal_blend(f_curr_out: np.ndarray, m_curr_mask: Optional[np.ndarray]) -> np.ndarray:
             nonlocal prev_yielded_frame, yielded_count
             yielded_count += 1
             if prev_yielded_frame is not None and m_curr_mask is not None and np.count_nonzero(m_curr_mask) > 0:
@@ -3594,7 +3594,7 @@ class VideoEditorService:
                                             inner_bbox_f55 = (cv2.erode(box_f55, cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))) > 0)
                                         else:
                                             inner_bbox_f55 = (cv2.erode(bbox_m, cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))) > 0)
-                                        f_curr_out = np.where(inner_bbox_f55[:, :, np.newaxis], np.clip(np.round(0.80 * f_curr_out.astype(np.float32) + 0.20 * w_prev.astype(np.float32)), 0, 255).astype(np.uint8), f_curr_out)
+                                        f_curr_out = np.where(inner_bbox_f55[:, :, np.newaxis], np.clip(np.round(0.72 * f_curr_out.astype(np.float32) + 0.28 * w_prev.astype(np.float32)), 0, 255).astype(np.uint8), f_curr_out)
                         else:
                             k25_c = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 25))
                             k9_c = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
@@ -3635,25 +3635,6 @@ class VideoEditorService:
                         f_curr_out = np.where(inner_m_u[:, :, np.newaxis], cand_m, f_curr_out)
 
             prev_yielded_frame = f_curr_out.copy()
-
-            if has_valid_title_roi and title_unpad_box is not None and f_curr_idx not in cleaned_keyframes:
-                ty1, ty2, tx1, tx2 = title_unpad_box
-                tight_hdr_box = np.zeros(f_curr_out.shape[:2], dtype=np.uint8)
-                tight_hdr_box[ty1:ty2, tx1:tx2] = 255
-                k5_hdr = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
-                inner_hdr = (cv2.erode(tight_hdr_box, k5_hdr) > 0)
-                k11_hdr = cv2.getStructuringElement(cv2.MORPH_RECT, (11, 11))
-                k3_hdr = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-                b_ref_hdr = (cv2.dilate(tight_hdr_box, k11_hdr) > 0) & (cv2.dilate(tight_hdr_box, k3_hdr) == 0)
-                lap_out = cv2.Laplacian(cv2.cvtColor(f_curr_out, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
-                v_inp_h = float(np.var(lap_out[tight_hdr_box > 0])) if np.count_nonzero(tight_hdr_box) > 0 else 0.0
-                v_ctx_h = float(np.var(lap_out[b_ref_hdr])) if np.count_nonzero(b_ref_hdr) > 0 else 0.0
-                if v_ctx_h >= 750.0 and v_inp_h < 1450.0 and (v_inp_h / (v_ctx_h + 1e-6)) < 0.70:
-                    blur_o = cv2.GaussianBlur(f_curr_out, (0, 0), 1.0)
-                    hf_o = f_curr_out.astype(np.float32) - blur_o.astype(np.float32)
-                    sharp_o = np.clip(np.round(f_curr_out.astype(np.float32) + 0.55 * hf_o), 0, 255).astype(np.uint8)
-                    f_curr_out = np.where(inner_hdr[:, :, np.newaxis], sharp_o, f_curr_out)
-
             return f_curr_out
 
         while cap.isOpened():
@@ -4089,6 +4070,23 @@ class VideoEditorService:
             out_frame = frame_compositor.composite(frame, out_frame, full_frame_mask)
             if used_align and is_bright_roi and blend_hdr is not None:
                 out_frame[hy1:hy2, hx1:hx2] = blend_hdr
+                if title_unpad_box is not None:
+                    ty1, ty2, tx1, tx2 = title_unpad_box
+                    tight_hdr_box = np.zeros_like(full_frame_mask)
+                    tight_hdr_box[ty1:ty2, tx1:tx2] = 255
+                    k5_hdr = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+                    inner_hdr = (cv2.erode(tight_hdr_box, k5_hdr) > 0)
+                    k11_hdr = cv2.getStructuringElement(cv2.MORPH_RECT, (11, 11))
+                    k3_hdr = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+                    b_ref_hdr = (cv2.dilate(tight_hdr_box, k11_hdr) > 0) & (cv2.dilate(tight_hdr_box, k3_hdr) == 0)
+                    lap_out = cv2.Laplacian(cv2.cvtColor(out_frame, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
+                    v_inp_h = float(np.var(lap_out[tight_hdr_box > 0])) if np.count_nonzero(tight_hdr_box) > 0 else 0.0
+                    v_ctx_h = float(np.var(lap_out[b_ref_hdr])) if np.count_nonzero(b_ref_hdr) > 0 else 0.0
+                    if v_ctx_h >= 900.0 and v_inp_h < 1450.0 and (v_inp_h / (v_ctx_h + 1e-6)) < 0.70:
+                        blur_o = cv2.GaussianBlur(out_frame, (0, 0), 1.0)
+                        hf_o = out_frame.astype(np.float32) - blur_o.astype(np.float32)
+                        sharp_o = np.clip(np.round(out_frame.astype(np.float32) + 0.65 * hf_o), 0, 255).astype(np.uint8)
+                        out_frame = np.where(inner_hdr[:, :, np.newaxis], sharp_o, out_frame)
 
             is_aligned_frame = (frame_idx in cleaned_keyframes) or used_align or used_sub_align
             # Thêm vào buffer 3-frame cho Temporal Bilateral Filter kèm frame gốc và cờ căn chỉnh
@@ -4105,7 +4103,7 @@ class VideoEditorService:
                             sigma_t=1.0, sigma_r=25.0, max_fb_error=3.0
                         )
                         out_f0 = frame_compositor.composite(f0_orig, out_f0, f0_mask)
-                    yield _yield_frame_with_temporal_blend(out_f0, f0_mask, f_curr_idx=f0_idx)
+                    yield _yield_frame_with_temporal_blend(out_f0, f0_mask)
                     has_yielded_f0 = True
 
                 f_prev = frame_buffer[0][1]
@@ -4114,13 +4112,12 @@ class VideoEditorService:
                 m_curr = frame_buffer[1][2]
                 orig_curr = frame_buffer[1][3]
                 curr_aligned = frame_buffer[1][4]
-                curr_idx = frame_buffer[1][0]
                 if curr_aligned:
                     out_filtered = f_curr
                 else:
                     out_filtered = self._temporal_bilateral_filter_3frame(f_prev, f_curr, f_next, m_curr, sigma_t=1.0, sigma_r=25.0, max_fb_error=3.0)
                     out_filtered = frame_compositor.composite(orig_curr, out_filtered, m_curr)
-                yield _yield_frame_with_temporal_blend(out_filtered, m_curr, f_curr_idx=curr_idx)
+                yield _yield_frame_with_temporal_blend(out_filtered, m_curr)
                 frame_buffer.pop(0)
 
             frame_idx += 1
@@ -4140,7 +4137,7 @@ class VideoEditorService:
         if not has_yielded_f0 and len(frame_buffer) > 0:
             f0_aligned = frame_buffer[0][4] if len(frame_buffer[0]) >= 5 else False
             f_out = frame_buffer[0][1] if f0_aligned else frame_compositor.composite(frame_buffer[0][3], frame_buffer[0][1], frame_buffer[0][2])
-            yield _yield_frame_with_temporal_blend(f_out, frame_buffer[0][2], f_curr_idx=frame_buffer[0][0])
+            yield _yield_frame_with_temporal_blend(f_out, frame_buffer[0][2])
             frame_buffer.pop(0)
 
         while frame_buffer:
@@ -4150,18 +4147,17 @@ class VideoEditorService:
                 m_curr = frame_buffer[1][2]
                 orig_curr = frame_buffer[1][3]
                 curr_aligned = frame_buffer[1][4]
-                curr_idx = frame_buffer[1][0]
                 if curr_aligned:
                     out_filtered = f_curr
                 else:
                     out_filtered = self._temporal_bilateral_filter_3frame(f_prev, f_curr, None, m_curr, sigma_t=1.0, sigma_r=25.0, max_fb_error=3.0)
                     out_filtered = frame_compositor.composite(orig_curr, out_filtered, m_curr)
-                yield _yield_frame_with_temporal_blend(out_filtered, m_curr, f_curr_idx=curr_idx)
+                yield _yield_frame_with_temporal_blend(out_filtered, m_curr)
                 frame_buffer.clear()
             else:
                 f_last_aligned = frame_buffer[0][4] if len(frame_buffer[0]) >= 5 else False
                 f_out = frame_buffer[0][1] if f_last_aligned else frame_compositor.composite(frame_buffer[0][3], frame_buffer[0][1], frame_buffer[0][2])
-                yield _yield_frame_with_temporal_blend(f_out, frame_buffer[0][2], f_curr_idx=frame_buffer[0][0])
+                yield _yield_frame_with_temporal_blend(f_out, frame_buffer[0][2])
                 frame_buffer.clear()
 
         cap.release()

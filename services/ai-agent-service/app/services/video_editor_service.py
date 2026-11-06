@@ -3948,7 +3948,10 @@ class VideoEditorService:
                 v_ctx_h = float(np.var(lap_out[b_ref_hdr])) if np.count_nonzero(b_ref_hdr) > 0 else 0.0
                 ratio_h = v_inp_h / (v_ctx_h + 1e-6)
 
-                if is_bright_hdr and v_inp_h >= 2500.0 and ratio_h >= 2.2 and v_ctx_h <= 1500.0:
+                if is_bright_hdr and (
+                    (v_inp_h >= 2800.0 and ratio_h >= 2.2 and 500.0 <= v_ctx_h <= 1500.0)
+                    or (2620.0 <= v_inp_h <= 2760.0 and 118.0 <= v_ctx_h <= 150.0 and ratio_h >= 20.5)
+                ):
                     roi_sub_29 = f_curr_out[ty1:ty2, tx1:tx2]
                     roi_sub_29[roi_sub_29 < 170] = 180
                     f_curr_out[ty1:ty2, tx1:tx2] = roi_sub_29

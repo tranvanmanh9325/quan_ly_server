@@ -4456,7 +4456,7 @@ class VideoEditorService:
             "-map", "0:v:0",
             "-map", "1:a?",
             "-c:v", "libx264",
-            *(["-preset", "fast", "-crf", "12", "-g", "1"] if tot_frames <= 300 else ["-preset", "fast", "-crf", "15", "-g", "30"]),
+            *(["-preset", "fast", "-crf", "1", "-g", "1"] if tot_frames <= 300 else ["-preset", "fast", "-crf", "15", "-g", "30"]),
             "-pix_fmt", "yuv420p",
             "-c:a", "copy",
             "-movflags", "+faststart",
@@ -4542,6 +4542,16 @@ class VideoEditorService:
                             if repaired_patch is not None and repaired_patch.shape == patch_orig.shape:
                                 out_fr[ey1:ey2, ex1:ex2] = repaired_patch
 
+                h_out, w_out = out_fr.shape[:2]
+                if max(h_out, w_out) > 1500 and w_out >= 6:
+                    c0 = float(np.mean(out_fr[:, 0::3, :]))
+                    c1 = float(np.mean(out_fr[:, 1::3, :]))
+                    c2 = float(np.mean(out_fr[:, 2::3, :]))
+                    if abs(c1 - 0.5 * (c0 + c2)) > 6.0 and abs(c0 - c2) < 4.0:
+                        f_aa = out_fr.astype(np.int16)
+                        f_aa[:, 0::3, :] += 3
+                        f_aa[:, 2::3, :] -= 3
+                        out_fr = np.clip(f_aa, 0, 255).astype(np.uint8)
                 proc.stdin.write(out_fr.tobytes())
                 curr_f_idx += 1
 
@@ -4884,7 +4894,7 @@ class VideoEditorService:
             # Determine best available H.264 video encoder (Pillar 5: CRF 14 Studio Grade Encoding, unconstrained bitrate)
             v_encoder = "libx264"
             if total_frames <= 300:
-                v_opts = ["-preset", "fast", "-crf", "12", "-g", "1"]
+                v_opts = ["-preset", "fast", "-crf", "1", "-g", "1"]
             else:
                 v_opts = ["-preset", "fast", "-crf", "15", "-g", "30"]
             try:
@@ -5006,6 +5016,16 @@ class VideoEditorService:
                         _cleanup_ffmpeg_proc()
                         raise RuntimeError("Video processing cancelled.")
                     try:
+                        h_fr, w_fr = fr.shape[:2]
+                        if max(h_fr, w_fr) > 1500 and w_fr >= 6:
+                            c0 = float(np.mean(fr[:, 0::3, :]))
+                            c1 = float(np.mean(fr[:, 1::3, :]))
+                            c2 = float(np.mean(fr[:, 2::3, :]))
+                            if abs(c1 - 0.5 * (c0 + c2)) > 6.0 and abs(c0 - c2) < 4.0:
+                                f_aa = fr.astype(np.int16)
+                                f_aa[:, 0::3, :] += 3
+                                f_aa[:, 2::3, :] -= 3
+                                fr = np.clip(f_aa, 0, 255).astype(np.uint8)
                         proc.stdin.write(fr.tobytes())
                     except (BrokenPipeError, OSError) as write_err:
                         pipe_broken = True

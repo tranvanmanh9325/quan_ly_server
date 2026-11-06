@@ -4611,7 +4611,7 @@ class VideoEditorService:
             "-map", "0:v:0",
             "-map", "1:a?",
             "-c:v", "libx264",
-            *(["-preset", "fast", "-crf", "1", "-g", "1"] if tot_frames <= 300 else ["-preset", "fast", "-crf", "15", "-g", "30"]),
+            *(["-preset", "fast", "-crf", "2", "-g", "1"] if tot_frames <= 300 else ["-preset", "fast", "-crf", "15", "-g", "30"]),
             "-pix_fmt", "yuv420p",
             "-c:a", "copy",
             "-movflags", "+faststart",
@@ -5058,7 +5058,7 @@ class VideoEditorService:
             # Determine best available H.264 video encoder (Pillar 5: CRF 14 Studio Grade Encoding, unconstrained bitrate)
             v_encoder = "libx264"
             if total_frames <= 300:
-                v_opts = ["-preset", "fast", "-crf", "1", "-g", "1"]
+                v_opts = ["-preset", "fast", "-crf", "2", "-g", "1"]
             else:
                 v_opts = ["-preset", "fast", "-crf", "15", "-g", "30"]
             try:

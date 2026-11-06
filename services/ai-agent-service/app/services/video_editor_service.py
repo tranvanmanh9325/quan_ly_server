@@ -3962,7 +3962,8 @@ class VideoEditorService:
                 elif is_bright_hdr and 650.0 <= v_ctx_h < 1700.0 and v_inp_h < 650.0 and ratio_h < 0.72:
                     g_post = 0.85
                 elif is_bright_hdr and ratio_h < 0.82 and v_inp_h < 1000.0 and v_ctx_h >= 600.0:
-                    g_post = 0.42
+                    g_post = 0.75
+                    inner_hdr = (cv2.erode(tight_hdr_box, k3_hdr) > 0)
                 elif is_bright_hdr and v_ctx_h < 250.0:
                     full_hdr_box = np.zeros_like(f_curr_out[:, :, 0])
                     full_hdr_box[max(0, ty1 - 4):ty2, tx1:tx2] = 255

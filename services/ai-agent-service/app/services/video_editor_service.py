@@ -3468,7 +3468,7 @@ class VideoEditorService:
                         break  # Tách biệt khỏi cụm tiêu đề chính
 
                 title_unpad_box = (
-                    min(int(r.get("y", 0)) for r in primary_cluster) + 4,
+                    min(int(r.get("y", 0)) for r in primary_cluster),
                     max(int(r.get("y", 0)) + int(r.get("h", 0)) for r in primary_cluster) - 3,
                     min(int(r.get("x", 0)) for r in primary_cluster) + 8,
                     max(int(r.get("x", 0)) + int(r.get("w", 0)) for r in primary_cluster) - 6
@@ -3591,12 +3591,12 @@ class VideoEditorService:
                                         box_f55[ty1:ty2, tx1:tx2] = 255
                                         e_inp_after = float(np.mean(diff_sq_after[box_f55 > 0]))
                                         if e_inp_after > 1.18 * max(e_ctx, 820.0) and e_ctx < 200.0:
-                                            inner_bbox_f55 = (cv2.erode(box_f55, cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))) > 0)
+                                            inner_bbox_f55 = (cv2.erode(box_f55, cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))) > 0)
                                             f_curr_out = np.where(inner_bbox_f55[:, :, np.newaxis], np.clip(np.round(0.72 * f_curr_out.astype(np.float32) + 0.28 * w_prev.astype(np.float32)), 0, 255).astype(np.uint8), f_curr_out)
                                     else:
                                         e_inp_after = float(np.mean(diff_sq_after[bbox_m > 0]))
                                         if e_inp_after > 1.18 * max(e_ctx, 820.0) and e_ctx < 200.0:
-                                            inner_bbox_f55 = (cv2.erode(bbox_m, cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))) > 0)
+                                            inner_bbox_f55 = (cv2.erode(bbox_m, cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))) > 0)
                                             f_curr_out = np.where(inner_bbox_f55[:, :, np.newaxis], np.clip(np.round(0.72 * f_curr_out.astype(np.float32) + 0.28 * w_prev.astype(np.float32)), 0, 255).astype(np.uint8), f_curr_out)
                         else:
                             k25_c = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 25))
@@ -3653,10 +3653,12 @@ class VideoEditorService:
                 v_ctx_h = float(np.var(lap_out[b_ref_hdr])) if np.count_nonzero(b_ref_hdr) > 0 else 0.0
                 ratio_h = v_inp_h / (v_ctx_h + 1e-6)
                 g_post = 0.0
-                if v_ctx_h >= 2400.0 and v_inp_h < 920.0 and ratio_h < 0.40:
-                    g_post = 1.80 if v_inp_h < 750.0 else 1.50
-                elif 650.0 <= v_ctx_h < 1350.0 and v_inp_h < 550.0 and ratio_h < 0.50:
-                    g_post = 0.95
+                if v_ctx_h >= 1700.0 and v_inp_h < 1100.0 and ratio_h < 0.55:
+                    g_post = 1.40 if v_inp_h < 750.0 else 1.10
+                elif 650.0 <= v_ctx_h < 1700.0 and v_inp_h < 650.0 and ratio_h < 0.72:
+                    g_post = 0.85
+                elif ratio_h < 0.72 and v_inp_h < 1450.0 and v_ctx_h >= 650.0:
+                    g_post = 0.35
                 if g_post > 0.0:
                     blur_o = cv2.GaussianBlur(f_curr_out, (0, 0), 1.0)
                     hf_o = f_curr_out.astype(np.float32) - blur_o.astype(np.float32)
@@ -3848,10 +3850,13 @@ class VideoEditorService:
                             ys_t, xs_t = np.where(t_mask > 0)
                             if len(ys_t) > 0:
                                 y_top_t, y_bot_t = int(ys_t.min()), int(ys_t.max())
-                                border_band = np.zeros_like(active_hdr_mask, dtype=bool)
-                                border_band[:y_top_t + 3, :] = True
-                                border_band[y_bot_t - 2:, :] = True
-                                active_hdr_mask[border_band & (chroma_curr < 25)] = 0
+                                border_band_ext = np.zeros_like(active_hdr_mask, dtype=bool)
+                                border_band_ext[:y_top_t + 2, :] = True
+                                border_band_ext[y_bot_t - 2:, :] = True
+                                active_hdr_mask[border_band_ext & (chroma_curr < 22)] = 0
+                                border_row3 = np.zeros_like(active_hdr_mask, dtype=bool)
+                                border_row3[y_top_t + 2:y_top_t + 3, :] = True
+                                active_hdr_mask[border_row3 & (chroma_curr < 15)] = 0
                             f_act = cv2.GaussianBlur(active_hdr_mask.astype(np.float32) / 255.0, (3, 3), 0.8)[:, :, np.newaxis]
 
                             # Pre-blend unsharp trực tiếp trên aligned_hdr để bù suy hao warpAffine

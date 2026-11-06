@@ -3653,11 +3653,11 @@ class VideoEditorService:
                 v_ctx_h = float(np.var(lap_out[b_ref_hdr])) if np.count_nonzero(b_ref_hdr) > 0 else 0.0
                 ratio_h = v_inp_h / (v_ctx_h + 1e-6)
                 g_post = 0.0
-                if v_ctx_h >= 1700.0 and v_inp_h < 1300.0 and 0.20 <= ratio_h < 0.60:
-                    g_post = 1.40 if v_inp_h < 750.0 else 0.85
+                if v_ctx_h >= 1700.0 and v_inp_h < 1100.0 and ratio_h < 0.55:
+                    g_post = 1.40 if v_inp_h < 750.0 else 1.10
                 elif 650.0 <= v_ctx_h < 1700.0 and v_inp_h < 650.0 and ratio_h < 0.72:
                     g_post = 0.85
-                elif 650.0 <= v_ctx_h < 1700.0 and ratio_h < 0.70 and v_inp_h < 1000.0:
+                elif ratio_h < 0.70 and v_inp_h < 1000.0 and v_ctx_h >= 650.0:
                     g_post = 0.12
                 elif v_ctx_h < 250.0:
                     full_hdr_box = np.zeros_like(f_curr_out[:, :, 0])
@@ -3884,10 +3884,7 @@ class VideoEditorService:
                             lap_b = cv2.Laplacian(cv2.cvtColor(blend_hdr, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
                             var_in_act = float(np.var(lap_b[active_hdr_mask > 0])) if np.count_nonzero(active_hdr_mask) > 0 else 0.0
                             if v_ctx >= 750.0 and var_in_act < 1750.0:
-                                if v_ctx >= 2000.0:
-                                    g_al = 3.60 if var_in_act < 1100.0 else 2.80
-                                else:
-                                    g_al = 2.85 if var_in_act < 900.0 else 2.10
+                                g_al = 2.85 if var_in_act < 900.0 else 2.10
                                 aligned_hdr = np.clip(np.round(orig_aligned_hdr.astype(np.float32) + g_al * hf_al), 0, 255).astype(np.uint8)
                                 blend_hdr = np.clip(
                                     np.round(f_act * aligned_hdr.astype(np.float32) + (1.0 - f_act) * curr_roi.astype(np.float32)),

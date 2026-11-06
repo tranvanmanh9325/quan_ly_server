@@ -3866,11 +3866,11 @@ class VideoEditorService:
                                         f_curr_out = np.clip(np.round((1.0 - alpha_p4) * f_curr_out.astype(np.float32) + alpha_p4 * blended_f.astype(np.float32)), 0, 255).astype(np.uint8)
                                     else:
                                         if e_inp > 600.0 and e_inp > 1.8 * ref_c4:
-                                            b_w = 0.42
+                                            b_w = min(0.68, max(0.48, 1.0 - float(np.sqrt(0.85 * ref_c4 / max(e_inp, 1e-6)))))
                                         elif e_inp > 1.8 * ref_c4:
-                                            b_w = 0.40
+                                            b_w = min(0.68, max(0.48, 1.0 - float(np.sqrt(0.85 * ref_c4 / max(e_inp, 1e-6)))))
                                         elif e_inp > 1.15 * ref_c4:
-                                            b_w = 0.28
+                                            b_w = 0.35
                                         else:
                                             b_w = 0.20
                                         use_m = (m_curr_mask > 0)
@@ -3935,7 +3935,7 @@ class VideoEditorService:
                 tight_hdr_box[ty1:ty2, tx1:tx2] = 255
                 k9_hdr = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
                 inner_hdr = (cv2.erode(tight_hdr_box, k9_hdr) > 0)
-                inner_hdr[ty2 - 3:, :] = False
+                inner_hdr[ty2 - 4:, :] = False
                 inner_hdr[:ty1 + 2, :] = False
                 k11_hdr = cv2.getStructuringElement(cv2.MORPH_RECT, (11, 11))
                 k3_hdr = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
@@ -3950,7 +3950,7 @@ class VideoEditorService:
                 elif is_bright_hdr and 650.0 <= v_ctx_h < 1700.0 and v_inp_h < 650.0 and ratio_h < 0.72:
                     g_post = 0.85
                 elif is_bright_hdr and ratio_h < 0.70 and v_inp_h < 1000.0 and v_ctx_h >= 650.0:
-                    g_post = 0.12
+                    g_post = 0.28
                 elif is_bright_hdr and v_ctx_h < 250.0:
                     full_hdr_box = np.zeros_like(f_curr_out[:, :, 0])
                     full_hdr_box[max(0, ty1 - 4):ty2, tx1:tx2] = 255

@@ -3580,7 +3580,7 @@ class VideoEditorService:
                                         alpha_p4 = cv2.GaussianBlur(dil_p4.astype(np.float32) / 255.0, (5, 5), 1.0)[:, :, np.newaxis]
                                         if e_inp > 1.02 * ref_c4:
                                             b_w_analyt = 1.0 - float(np.sqrt(0.65 * ref_c4 / max(e_inp, 1e-6)))
-                                            b_w = min(0.72, max(0.45 if e_inp >= 40.0 else 0.38, b_w_analyt))
+                                            b_w = min(0.72, max(0.48 if e_inp >= 20.0 else 0.38, b_w_analyt))
                                         else:
                                             b_w = 0.30
                                         blended_f = np.clip(np.round((1.0 - b_w) * f_curr_out.astype(np.float32) + b_w * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)
@@ -4456,7 +4456,7 @@ class VideoEditorService:
             "-map", "0:v:0",
             "-map", "1:a?",
             "-c:v", "libx264",
-            *(["-preset", "fast", "-crf", "10", "-g", "1"] if tot_frames <= 300 else ["-preset", "fast", "-crf", "15", "-g", "30"]),
+            *(["-preset", "fast", "-crf", "12", "-g", "1"] if tot_frames <= 300 else ["-preset", "fast", "-crf", "15", "-g", "30"]),
             "-pix_fmt", "yuv420p",
             "-c:a", "copy",
             "-movflags", "+faststart",
@@ -4884,7 +4884,7 @@ class VideoEditorService:
             # Determine best available H.264 video encoder (Pillar 5: CRF 14 Studio Grade Encoding, unconstrained bitrate)
             v_encoder = "libx264"
             if total_frames <= 300:
-                v_opts = ["-preset", "fast", "-crf", "10", "-g", "1"]
+                v_opts = ["-preset", "fast", "-crf", "12", "-g", "1"]
             else:
                 v_opts = ["-preset", "fast", "-crf", "15", "-g", "30"]
             try:

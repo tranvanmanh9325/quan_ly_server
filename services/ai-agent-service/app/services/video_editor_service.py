@@ -3614,17 +3614,17 @@ class VideoEditorService:
                                             inner_bbox_f55 = (cv2.erode(bbox_m, cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))) > 0)
                                             f_curr_out = np.where(inner_bbox_f55[:, :, np.newaxis], np.clip(np.round(0.72 * f_curr_out.astype(np.float32) + 0.28 * w_prev.astype(np.float32)), 0, 255).astype(np.uint8), f_curr_out)
                         else:
-                            k25_c = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 25))
-                            k9_c = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
-                            d25_c = cv2.dilate(m_curr_mask, k25_c)
-                            d9_c = cv2.dilate(m_curr_mask, k9_c)
-                            ctx_c4 = (d25_c > 0) & (d9_c == 0)
+                            k35_c = cv2.getStructuringElement(cv2.MORPH_RECT, (35, 35))
+                            k15_c = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 15))
+                            d35_c = cv2.dilate(m_curr_mask, k35_c)
+                            d15_c = cv2.dilate(m_curr_mask, k15_c)
+                            ctx_c4 = (d35_c > 0) & (d15_c == 0)
                             sub_mask_bool = (m_curr_mask > 0)
                             e_inp = float(np.mean(diff_sq[sub_mask_bool])) if np.count_nonzero(sub_mask_bool) > 0 else 0.0
                             e_ctx = float(np.mean(diff_sq[ctx_c4])) if np.count_nonzero(ctx_c4) > 0 else 16.0
                             ref_sub_c4 = max(e_ctx, 16.0)
                             if e_inp > 1.05 * ref_sub_c4:
-                                b_sub_w = 0.32 if e_inp > 1.20 * ref_sub_c4 else 0.20
+                                b_sub_w = min(0.68, max(0.32, 1.0 - float(np.sqrt(0.90 * ref_sub_c4 / max(e_inp, 1e-6)))))
                                 blended_f = np.clip(np.round((1.0 - b_sub_w) * f_curr_out.astype(np.float32) + b_sub_w * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)
                                 f_curr_out = np.where(sub_mask_bool[:, :, np.newaxis], blended_f, f_curr_out)
 
@@ -4458,7 +4458,9 @@ class VideoEditorService:
             "-map", "1:a?",
             "-c:v", "libx264",
             "-preset", "fast",
-            "-crf", "14",
+            "-crf", "10",
+            "-g", "15",
+            "-bf", "0",
             "-pix_fmt", "yuv420p",
             "-c:a", "copy",
             "-movflags", "+faststart",
@@ -4885,7 +4887,7 @@ class VideoEditorService:
 
             # Determine best available H.264 video encoder (Pillar 5: CRF 14 Studio Grade Encoding, unconstrained bitrate)
             v_encoder = "libx264"
-            v_opts = ["-preset", "fast", "-crf", "14", "-g", "30"]
+            v_opts = ["-preset", "fast", "-crf", "10", "-g", "15", "-bf", "0"]
             try:
                 p_enc = subprocess.run([ffmpeg_bin, "-encoders"], capture_output=True, text=True, timeout=5)
                 enc_out = p_enc.stdout or ""

@@ -3572,7 +3572,14 @@ class VideoEditorService:
                                 e_ctx = float(np.mean(diff_sq[ctx_c4])) if np.count_nonzero(ctx_c4) > 0 else 16.0
                                 ref_c4 = max(e_ctx, 16.0)
                                 if e_inp > 1.05 * ref_c4 or e_inp > 450.0:
-                                    use_m = (m_curr_mask > 0)
+                                    if has_valid_title_roi and title_unpad_box is not None:
+                                        ty1, ty2, tx1, tx2 = title_unpad_box
+                                        t_box_c4 = np.zeros_like(m_curr_mask)
+                                        t_box_c4[ty1:ty2, tx1:tx2] = 255
+                                        k9_c4 = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
+                                        use_m = (cv2.erode(t_box_c4, k9_c4) > 0)
+                                    else:
+                                        use_m = (m_curr_mask > 0)
                                     if e_inp > 600.0 and e_inp > 1.8 * ref_c4:
                                         b_w = 0.42
                                     elif e_inp > 1.8 * ref_c4:
@@ -4081,7 +4088,7 @@ class VideoEditorService:
             out_frame = frame_compositor.composite(frame, out_frame, full_frame_mask)
             if used_align and is_bright_roi and blend_hdr is not None:
                 out_frame[hy1:hy2, hx1:hx2] = blend_hdr
-                if title_unpad_box is not None:
+                if title_unpad_box is not None and frame_idx not in cleaned_keyframes:
                     ty1, ty2, tx1, tx2 = title_unpad_box
                     tight_hdr_box = np.zeros_like(full_frame_mask)
                     tight_hdr_box[ty1:ty2, tx1:tx2] = 255
@@ -4095,14 +4102,23 @@ class VideoEditorService:
                     v_ctx_h = float(np.var(lap_out[b_ref_hdr])) if np.count_nonzero(b_ref_hdr) > 0 else 0.0
                     ratio_h = v_inp_h / (v_ctx_h + 1e-6)
                     if v_inp_h < 1450.0 and ratio_h < 0.70 and v_ctx_h >= 650.0:
-                        g_use = min(1.35, max(0.60, 0.60 + 1.50 * (0.65 - ratio_h)))
-                        if 2000.0 <= v_ctx_h < 2400.0:
-                            g_use = min(g_use, 0.40)
+                        g_use = 0.0
+                        if v_ctx_h >= 2400.0:
+                            g_use = 1.15 if v_inp_h < 900.0 else 0.75
+                        elif 2000.0 <= v_ctx_h < 2400.0:
+                            g_use = 0.40
+                        elif 1000.0 <= v_ctx_h < 1450.0:
+                            g_use = 0.50
+                        elif 750.0 <= v_ctx_h < 900.0:
+                            g_use = 0.65
+                        elif 650.0 <= v_ctx_h < 750.0:
+                            g_use = 0.50
 
-                        blur_o = cv2.GaussianBlur(out_frame, (0, 0), 1.0)
-                        hf_o = out_frame.astype(np.float32) - blur_o.astype(np.float32)
-                        sharp_o = np.clip(np.round(out_frame.astype(np.float32) + g_use * hf_o), 0, 255).astype(np.uint8)
-                        out_frame = np.where(inner_hdr[:, :, np.newaxis], sharp_o, out_frame)
+                        if g_use > 0.0:
+                            blur_o = cv2.GaussianBlur(out_frame, (0, 0), 1.0)
+                            hf_o = out_frame.astype(np.float32) - blur_o.astype(np.float32)
+                            sharp_o = np.clip(np.round(out_frame.astype(np.float32) + g_use * hf_o), 0, 255).astype(np.uint8)
+                            out_frame = np.where(inner_hdr[:, :, np.newaxis], sharp_o, out_frame)
 
             is_aligned_frame = (frame_idx in cleaned_keyframes) or used_align or used_sub_align
             # Thêm vào buffer 3-frame cho Temporal Bilateral Filter kèm frame gốc và cờ căn chỉnh

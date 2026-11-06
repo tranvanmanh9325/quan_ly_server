@@ -411,13 +411,13 @@ class TemporalTextDetector:
 
             frame_idx += 1
 
-        # Fallback for target_scope == "all": also detect physical scene text candidates
+        # Trajectory tracking for target_scope == "all": detect physical scene text candidates
+        scene_cands: List[Dict[str, Any]] = []
         if target_scope == "all":
             scene_cands = self._detect_scene_text_candidates(cap, total_frames, orig_w, orig_h, fps)
-            raw_candidates_per_window.extend(scene_cands)
 
         # Merge window candidates into continuous timeline segments
-        if not raw_candidates_per_window:
+        if not raw_candidates_per_window and not scene_cands:
             cap.release()
             return []
 
@@ -515,6 +515,29 @@ class TemporalTextDetector:
                 "lines": [{"x": seg["x"], "y": seg["y"], "w": seg["w"], "h": seg["h"], "text": ""}],
             })
 
+        # Append moving physical scene candidates when in 'all' mode
+        if target_scope == "all" and scene_cands:
+            for sc in scene_cands:
+                final_results.append({
+                    "bbox": [sc["y"], sc["y"] + sc["h"], sc["x"], sc["x"] + sc["w"]],
+                    "x": sc["x"],
+                    "y": sc["y"],
+                    "w": sc["w"],
+                    "h": sc["h"],
+                    "start_sec": round(sc["frame_start"] / fps, 3),
+                    "end_sec": round(sc["frame_end"] / fps, 3),
+                    "frame_start": sc["frame_start"],
+                    "frame_end": sc["frame_end"],
+                    "motion_type": "scene",
+                    "vx": sc.get("vx", 0.0),
+                    "vy": sc.get("vy", 0.0),
+                    "ref_frame": sc.get("ref_frame", 0),
+                    "persistence": sc.get("persistence", 0.95),
+                    "is_static": False,
+                    "type": "subtitle",
+                    "lines": [{"x": sc["x"], "y": sc["y"], "w": sc["w"], "h": sc["h"], "text": ""}],
+                })
+
         cap.release()
         return final_results
 
@@ -527,16 +550,13 @@ class TemporalTextDetector:
         fps: float,
     ) -> List[Dict[str, Any]]:
         """
-        Extract scene text candidates across sampled frames when target_scope == 'all'.
-        Uses high-contrast stroke gradient clustering.
+        Extract moving physical scene text candidates across sampled frames when target_scope == 'all'.
+        Detects coherent horizontal character text lines and tracks motion velocity.
         """
         cands: List[Dict[str, Any]] = []
         sample_indices = [
-            int(f) for f in np.linspace(0, max(0, total_frames - 2), min(10, max(2, total_frames // 15)))
+            int(f) for f in np.linspace(0, max(0, total_frames - 2), min(8, max(2, total_frames // 20)))
         ]
-
-        morph_k = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-        horiz_k = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 5))
 
         for f_idx in sample_indices:
             cap.set(cv2.CAP_PROP_POS_FRAMES, f_idx)
@@ -544,38 +564,82 @@ class TemporalTextDetector:
             if not ret or frame is None:
                 continue
 
+            # Contrast-extreme stroke candidates: dark ink or high-contrast bright text
+            dark_px = (np.max(frame, axis=2) <= 75)
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            grad = cv2.morphologyEx(gray, cv2.MORPH_GRADIENT, morph_k)
-            _, thresh = cv2.threshold(grad, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+            bright_px = (gray >= 210)
+            text_candidates = dark_px | bright_px
 
-            closed = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, horiz_k)
-            cnts, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(text_candidates.astype(np.uint8))
+            char_boxes = []
+            for i in range(1, num_labels):
+                x, y, w, h, area = stats[i]
+                if 10 <= h <= 60 and 3 <= w <= 60 and area >= 15:
+                    char_boxes.append((x, y, w, h, centroids[i][0], centroids[i][1]))
 
-            for c in cnts:
-                bx, by, bw, bh = cv2.boundingRect(c)
-                if bh < 12 or bw < 20 or (bw * bh) > (0.30 * orig_w * orig_h):
-                    continue
-                # Reject horizontal brick mortar lines stretching across the frame
-                if bw >= 0.80 * orig_w and (bw / float(max(1, bh))) >= 15.0:
-                    continue
-                # Aspect ratio and stroke density
-                if (bw / float(bh)) < 0.6:
-                    continue
+            if len(char_boxes) < 4:
+                continue
 
-                sub_grad = grad[by : by + bh, bx : bx + bw]
-                if float(np.mean(sub_grad)) < 25.0:
-                    continue
+            # Group characters into collinear horizontal lines
+            lines: List[List[Any]] = []
+            char_boxes.sort(key=lambda b: (b[1], b[0]))
+            for b in char_boxes:
+                matched_line = None
+                for line in lines:
+                    mean_cy = float(np.mean([cb[5] for cb in line]))
+                    if abs(b[5] - mean_cy) <= 12.0:
+                        matched_line = line
+                        break
+                if matched_line is not None:
+                    matched_line.append(b)
+                else:
+                    lines.append([b])
+
+            valid_lines = [l for l in lines if len(l) >= 4]
+            if not valid_lines:
+                continue
+
+            # Read next frame to measure motion velocity via phase correlation
+            cap.set(cv2.CAP_PROP_POS_FRAMES, min(total_frames - 1, f_idx + 1))
+            ret_next, frame_next = cap.read()
+
+            for line in valid_lines:
+                xs = [b[0] for b in line]
+                ys = [b[1] for b in line]
+                x2s = [b[0] + b[2] for b in line]
+                y2s = [b[1] + b[3] for b in line]
+                lx, ly = min(xs), min(ys)
+                lw, lh = max(x2s) - min(xs), max(y2s) - min(ys)
+
+                vx, vy = 0.0, 0.0
+                if ret_next and frame_next is not None:
+                    pad = 12
+                    ly_pad, lx_pad = max(0, ly - pad), max(0, lx - pad)
+                    ly2_pad, lx2_pad = min(orig_h, ly + lh + pad), min(orig_w, lx + lw + pad)
+                    g0 = gray[ly:ly + lh, lx:lx + lw]
+                    g1 = cv2.cvtColor(frame_next[ly_pad:ly2_pad, lx_pad:lx2_pad], cv2.COLOR_BGR2GRAY)
+                    if g0.size > 0 and g1.size > 0 and g1.shape[0] >= lh and g1.shape[1] >= lw:
+                        s, resp = cv2.phaseCorrelate(np.float32(g0), np.float32(g1[ly - ly_pad:ly - ly_pad + lh, lx - lx_pad:lx - lx_pad + lw]))
+                        if resp > 0.50:
+                            vx, vy = float(s[0]), float(s[1])
 
                 cands.append({
-                    "x": max(0, bx - 4),
-                    "y": max(0, by - 4),
-                    "w": min(orig_w - bx, bw + 8),
-                    "h": min(orig_h - by, bh + 8),
-                    "frame_start": max(0, f_idx - 10),
-                    "frame_end": min(total_frames, f_idx + 15),
-                    "persistence": 0.50,
-                    "score": 0.60,
+                    "x": max(0, lx - 4),
+                    "y": max(0, ly - 4),
+                    "w": min(orig_w - lx, lw + 8),
+                    "h": min(orig_h - ly, lh + 8),
+                    "frame_start": 0,
+                    "frame_end": total_frames,
+                    "ref_frame": f_idx,
+                    "vx": vx,
+                    "vy": vy,
+                    "motion_type": "scene",
+                    "persistence": 0.95,
+                    "score": 0.90,
                 })
+            # Only need one good sample frame detection to anchor the trajectory
+            if cands:
+                break
 
         return cands
 

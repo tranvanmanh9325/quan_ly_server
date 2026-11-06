@@ -2511,28 +2511,48 @@ class VideoEditorService:
 
             # Pillar 1 (Scene Text Guard): In 'overlay' mode, protect scene text (e.g. laptop code text F1400-F1422).
             # When target_regions is provided, process subtitle if an overlay subtitle is active based on temporal constancy.
-            has_sub_in_scope = True
+            # Pillar 1 (Scene Text Guard): In 'overlay' mode, protect scene text (e.g. laptop code text F1400-F1422).
+            # When target_regions is provided, process subtitle if an active subtitle is present
+            has_sub_in_scope = False
             active_sub_bounding_boxes = []
-            if target_regions and target_scope in ("overlay", "overlay_only"):
-                active_subs = [
-                    r for r in target_regions
-                    if (r.get("type") == "subtitle" or not r.get("is_static", True))
-                    and max(0, r.get("frame_start", 0) - 2) <= frame_idx <= r.get("frame_end", 0) + 2
-                ]
+            active_subs = []
+            if target_regions:
+                if target_scope in ("overlay", "overlay_only"):
+                    active_subs = [
+                        r for r in target_regions
+                        if (r.get("type") == "subtitle" or not r.get("is_static", True))
+                        and r.get("motion_type") != "scene"
+                        and max(0, r.get("frame_start", 0) - 2) <= frame_idx <= r.get("frame_end", 0) + 2
+                    ]
+                else:
+                    active_subs = [
+                        r for r in target_regions
+                        if (r.get("type") == "subtitle" or not r.get("is_static", True) or r.get("motion_type") == "scene")
+                        and max(0, r.get("frame_start", 0) - 2) <= frame_idx <= r.get("frame_end", 0) + 2
+                    ]
                 has_sub_in_scope = (len(active_subs) > 0)
                 for s in active_subs:
-                    sx = max(0, int(s.get("x", 0)) - 35)
-                    sy = max(0, int(s.get("y", 0)) - 25)
-                    sw = int(s.get("w", 0)) + 70
-                    sh = int(s.get("h", 0)) + 50
+                    vx = float(s.get("vx", 0.0))
+                    vy = float(s.get("vy", 0.0))
+                    ref_f = int(s.get("ref_frame", s.get("frame_start", 0)))
+                    cur_sx = int(round(s.get("x", 0) + vx * (frame_idx - ref_f)))
+                    cur_sy = int(round(s.get("y", 0) + vy * (frame_idx - ref_f)))
+                    pad_sx = 16 if s.get("motion_type") == "scene" else 35
+                    pad_sy = 12 if s.get("motion_type") == "scene" else 25
+                    sx = max(0, cur_sx - pad_sx)
+                    sy = max(0, cur_sy - pad_sy)
+                    sw = int(s.get("w", 0)) + 2 * pad_sx
+                    sh = int(s.get("h", 0)) + 2 * pad_sy
                     active_sub_bounding_boxes.append((sx, sy, sw, sh))
+            else:
+                has_sub_in_scope = True
 
             if not has_sub_in_scope:
                 if full_mask is not None:
                     full_mask = np.where(full_mask > 0, 255, 0).astype(np.uint8)
                 return full_mask, None
 
-            # Candidate extraction focused around active subtitles if in overlay scope
+            # Candidate extraction focused around active subtitles if in scope
             if active_sub_bounding_boxes:
                 sy1 = max(0, min(b[1] for b in active_sub_bounding_boxes))
                 sy2 = min(h, max(b[1] + b[3] for b in active_sub_bounding_boxes))
@@ -2885,8 +2905,11 @@ class VideoEditorService:
                 subs_to_fallback = active_subs if ('active_subs' in locals() and active_subs) else []
                 if subs_to_fallback:
                     for s in subs_to_fallback:
-                        sx = max(0, int(s.get("x", 0)))
-                        sy = max(0, int(s.get("y", 0)))
+                        vx_s = float(s.get("vx", 0.0))
+                        vy_s = float(s.get("vy", 0.0))
+                        ref_fs = int(s.get("ref_frame", s.get("frame_start", 0)))
+                        sx = max(0, int(round(s.get("x", 0) + vx_s * (frame_idx - ref_fs))))
+                        sy = max(0, int(round(s.get("y", 0) + vy_s * (frame_idx - ref_fs))))
                         sw = max(1, int(s.get("w", 0)))
                         sh = max(1, int(s.get("h", 0)))
                         rel_y1 = max(0, sy - sy1)
@@ -2895,7 +2918,14 @@ class VideoEditorService:
                         rel_x2 = min(strip_w, sx + sw - sx1)
                         if rel_y2 > rel_y1 and rel_x2 > rel_x1:
                             roi = strip[rel_y1:rel_y2, rel_x1:rel_x2]
-                            t_mask = self._generate_text_stroke_mask(roi, region_meta=s)
+                            t_mask = None
+                            if s.get("motion_type") == "scene":
+                                dark_s = (np.max(roi, axis=2) <= 75)
+                                if np.count_nonzero(dark_s) > 10:
+                                    k5_s = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+                                    t_mask = cv2.dilate(dark_s.astype(np.uint8) * 255, k5_s)
+                            if t_mask is None:
+                                t_mask = self._generate_text_stroke_mask(roi, region_meta=s)
                             if t_mask is not None and np.count_nonzero(t_mask) > 0:
                                 k3 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
                                 t_mask_dil = cv2.dilate(t_mask, k3)
@@ -4111,12 +4141,15 @@ class VideoEditorService:
                             mask_sub = s_mask.copy()
                         mask_sub = np.where(mask_sub > 0, 255, 0).astype(np.uint8)
 
-                        # Duy trì tính liên tục của mask qua các frame kế tiếp trong cùng shot (Block-Continuity Temporal Envelope)
+                        is_scene_sub_moving = (target_scope in ("all", "all_text")) and (
+                            any(s.get("motion_type") == "scene" for s in target_regions) if target_regions else False
+                        )
                         full_sub_m = np.zeros((h, w), dtype=np.uint8)
                         full_sub_m[sy1:sy2, sx1:sx2] = mask_sub
                         curr_single_m = full_sub_m.copy()
                         if (
-                            last_sub_mask_data is not None
+                            not is_scene_sub_moving
+                            and last_sub_mask_data is not None
                             and last_sub_mask_data.get("shot_idx") == cur_shot_idx
                         ):
                             p_sy1 = last_sub_mask_data.get("sy1", 0)
@@ -4133,16 +4166,17 @@ class VideoEditorService:
                             "single_mask": curr_single_m,
                         }
 
-                        nz_y, nz_x = np.where(full_sub_m > 0)
-                        if len(nz_y) > 0 and len(nz_x) > 0:
-                            sy1 = max(0, int(np.min(nz_y)) - 4)
-                            sy2 = min(h, int(np.max(nz_y)) + 5)
-                            sx1 = max(0, int(np.min(nz_x)) - 10)
-                            sx2 = min(w, int(np.max(nz_x)) + 22)
-                            if sy2 > sy1 and sx2 > sx1:
-                                sub_roi = out_frame[sy1:sy2, sx1:sx2]
-                                sub_w, sub_h = sx2 - sx1, sy2 - sy1
-                                mask_sub = cv2.dilate(full_sub_m[sy1:sy2, sx1:sx2], k_sub_stream)
+                        if not is_scene_sub_moving:
+                            nz_y, nz_x = np.where(full_sub_m > 0)
+                            if len(nz_y) > 0 and len(nz_x) > 0:
+                                sy1 = max(0, int(np.min(nz_y)) - 4)
+                                sy2 = min(h, int(np.max(nz_y)) + 5)
+                                sx1 = max(0, int(np.min(nz_x)) - 10)
+                                sx2 = min(w, int(np.max(nz_x)) + 22)
+                                if sy2 > sy1 and sx2 > sx1:
+                                    sub_roi = out_frame[sy1:sy2, sx1:sx2]
+                                    sub_w, sub_h = sx2 - sx1, sy2 - sy1
+                                    mask_sub = cv2.dilate(full_sub_m[sy1:sy2, sx1:sx2], k_sub_stream)
                                 mask_sub = VideoEditorService._fill_holes(mask_sub)
                                 if np.count_nonzero(mask_sub) > 0.85 * mask_sub.size:
                                     mask_sub = full_sub_m[sy1:sy2, sx1:sx2].copy()
@@ -4258,6 +4292,27 @@ class VideoEditorService:
                                 "bbox": (sy1, sy2, sx1, sx2),
                                 "clean_roi": clean_sub_roi.copy(),
                             }
+
+                            # High-frequency grain synthesis for textured background scene text
+                            if is_scene_sub_moving or (target_scope in ("all", "all_text") and np.count_nonzero(mask_sub) > 0):
+                                sub_g = cv2.cvtColor(sub_roi, cv2.COLOR_BGR2GRAY) if sub_roi.ndim == 3 else sub_roi
+                                v_sub_ctx = float(np.var(cv2.Laplacian(sub_g, cv2.CV_64F)[mask_sub == 0])) if np.count_nonzero(mask_sub == 0) > 30 else 0.0
+                                if v_sub_ctx >= 200.0:
+                                    try:
+                                        hf_sub = sub_roi.astype(np.float32) - cv2.GaussianBlur(sub_roi, (5, 5), 1.2).astype(np.float32)
+                                        valid_bg_s = (cv2.dilate(mask_sub, np.ones((5, 5), np.uint8)) == 0)
+                                        if np.count_nonzero(valid_bg_s) > 30:
+                                            bg_vals_s = hf_sub[valid_bg_s]
+                                            hf_clean_s = hf_sub.copy()
+                                            n_inv_s = int(np.count_nonzero(~valid_bg_s))
+                                            if n_inv_s > 0:
+                                                hf_clean_s[~valid_bg_s] = bg_vals_s[np.arange(n_inv_s) % len(bg_vals_s)]
+                                            hf_sh_s = np.roll(hf_clean_s, shift=(7, 13), axis=(0, 1))
+                                            inner_sub_m = cv2.erode(mask_sub, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)))
+                                            alpha_sub = cv2.GaussianBlur(inner_sub_m.astype(np.float32) / 255.0, (5, 5), 1.2)[:, :, np.newaxis]
+                                            clean_sub_roi = np.clip(clean_sub_roi.astype(np.float32) + 0.58 * hf_sh_s * alpha_sub, 0, 255).astype(np.uint8)
+                                    except Exception:
+                                        pass
 
                             out_frame[sy1:sy2, sx1:sx2] = np.where((mask_sub > 0)[:, :, np.newaxis], clean_sub_roi, sub_roi)
 

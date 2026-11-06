@@ -808,6 +808,7 @@ class VideoEditorService:
                         self._current_inpaint_cancel_event = None
 
             delivery_info = self._publish_or_direct(output_file, title="Video đã xóa text")
+            final_out_path = str(delivery_info.get("file_path") or output_file)
             region_summaries = ", ".join(f"({r['x']},{r['y']},{r['w']}x{r['h']})" for r in target_regions[:3])
             success = True
             is_fb = getattr(context, "is_fallback", False) if 'context' in locals() else False
@@ -828,7 +829,7 @@ class VideoEditorService:
                 "target_scope": clean_target_scope,
                 "region": primary_region,
                 "regions": target_regions,
-                "output_path": str(output_file),
+                "output_path": final_out_path,
                 "branch_counters": final_branch,
                 "critique": final_critique,
                 **delivery_info,
@@ -4858,7 +4859,7 @@ class VideoEditorService:
         cap.release()
         cap = cv2.VideoCapture(str(input_file))
 
-        kf_max_step = 5 if total_frames <= 120 else 15
+        kf_max_step = 5 if (total_frames <= 120 and len(shot_cuts) > 0) else 15
         keyframe_indices = self._select_keyframes_for_shots_sync(shot_cuts, total_frames, max_step=kf_max_step)
         report(15, f"Đã phát hiện {len(shot_cuts)+1} phân cảnh, trích xuất {len(keyframe_indices)} keyframes...")
 

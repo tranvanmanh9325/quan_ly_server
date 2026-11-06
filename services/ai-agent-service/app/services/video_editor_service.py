@@ -3574,16 +3574,21 @@ class VideoEditorService:
                                 if e_inp > 1.05 * ref_c4:
                                     roi_curr_gray = cv2.cvtColor(f_curr_out[ys.min():ys.max()+1, xs.min():xs.max()+1], cv2.COLOR_BGR2GRAY)
                                     is_bright_title = (float(np.mean(roi_curr_gray)) >= 180.0) if roi_curr_gray.size > 0 else False
-                                    use_m = (m_curr_mask > 0) if is_bright_title else (bbox_m > 0)
                                     if not is_bright_title:
-                                        b_w = 0.32 if e_inp > 1.20 * ref_c4 else 0.20
+                                        k_p4 = cv2.getStructuringElement(cv2.MORPH_RECT, (21, 13))
+                                        use_m = (cv2.dilate(bbox_m, k_p4) > 0)
+                                        b_w = 0.42 if e_inp > 1.15 * ref_c4 else 0.35
                                     elif e_inp > 600.0 and e_inp > 1.8 * ref_c4:
+                                        use_m = (m_curr_mask > 0)
                                         b_w = 0.42
                                     elif e_inp > 1.8 * ref_c4:
+                                        use_m = (m_curr_mask > 0)
                                         b_w = 0.40
                                     elif e_inp > 1.15 * ref_c4:
+                                        use_m = (m_curr_mask > 0)
                                         b_w = 0.28
                                     else:
+                                        use_m = (m_curr_mask > 0)
                                         b_w = 0.20
                                     blended_f = np.clip(np.round((1.0 - b_w) * f_curr_out.astype(np.float32) + b_w * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)
                                     f_curr_out = np.where(use_m[:, :, np.newaxis], blended_f, f_curr_out)
@@ -3618,7 +3623,7 @@ class VideoEditorService:
                                 f_curr_out = np.where(sub_mask_bool[:, :, np.newaxis], blended_f, f_curr_out)
 
 
-            if title_unpad_box is not None:
+            if title_unpad_box is not None and is_bright_roi:
                 ty1, ty2, tx1, tx2 = title_unpad_box
                 tight_hdr_box = np.zeros_like(f_curr_out[:, :, 0])
                 tight_hdr_box[ty1:ty2, tx1:tx2] = 255

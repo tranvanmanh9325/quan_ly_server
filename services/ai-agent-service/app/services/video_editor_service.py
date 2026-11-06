@@ -3606,11 +3606,10 @@ class VideoEditorService:
                             ctx_c4 = (d25_c > 0) & (d9_c == 0)
                             e_inp = float(np.mean(diff_sq[inner_m])) if np.count_nonzero(inner_m) > 0 else 0.0
                             e_ctx = float(np.mean(diff_sq[ctx_c4])) if np.count_nonzero(ctx_c4) > 0 else 16.0
-                            if (e_inp > 1.15 * max(e_ctx, 16.0) and yielded_count <= 2):
-                                blended_f = np.clip(np.round(0.88 * f_curr_out.astype(np.float32) + 0.12 * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)
-                                f_curr_out = np.where(inner_m[:, :, np.newaxis], blended_f, f_curr_out)
-                            elif e_inp > 1.30 * max(e_ctx, 35.0):
-                                blended_f = np.clip(np.round(0.88 * f_curr_out.astype(np.float32) + 0.12 * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)
+                            ref_sub_c4 = max(e_ctx, 16.0)
+                            if e_inp > 1.08 * ref_sub_c4:
+                                b_sub_w = 0.20 if e_inp > 1.25 * ref_sub_c4 else 0.12
+                                blended_f = np.clip(np.round((1.0 - b_sub_w) * f_curr_out.astype(np.float32) + b_sub_w * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)
                                 f_curr_out = np.where(inner_m[:, :, np.newaxis], blended_f, f_curr_out)
 
 

@@ -1726,7 +1726,13 @@ class VideoEditorService:
         if is_high_texture_mesh:
             # On high-texture mesh: avoid unconstrained gradient expansion
             # Controlled 100% solid glyph filling preserves lattice outside text
-            stroke_mask = clean_core
+            if has_vivid_pixels:
+                k3 = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+                prox_vivid = cv2.dilate(clean_core, k3)
+                dark_border = (v_chan <= 75) & (prox_vivid > 0)
+                stroke_mask = cv2.bitwise_or(clean_core, dark_border.astype(np.uint8) * 255)
+            else:
+                stroke_mask = clean_core
         else:
             dist = cv2.distanceTransform(clean_core, cv2.DIST_L2, 5)
             core_pts = dist[clean_core > 0]
@@ -2402,7 +2408,7 @@ class VideoEditorService:
                         "type": "title", "is_static": True,
                         "frame_start": min(r.get("frame_start", 0) for r in curr_line_tr),
                         "frame_end": max(r.get("frame_end", 0) for r in curr_line_tr),
-                        "lines": [ln for r in curr_line_tr for ln in (r.get("lines") or [])] or None,
+                        "lines": None if len(curr_line_tr) > 1 else ([ln for r in curr_line_tr for ln in (r.get("lines") or [])] or None),
                     })
                     curr_line_tr = [tr]
                 merged_title_regions.append({
@@ -2413,7 +2419,7 @@ class VideoEditorService:
                     "type": "title", "is_static": True,
                     "frame_start": min(r.get("frame_start", 0) for r in curr_line_tr),
                     "frame_end": max(r.get("frame_end", 0) for r in curr_line_tr),
-                    "lines": [ln for r in curr_line_tr for ln in (r.get("lines") or [])] or None,
+                    "lines": None if len(curr_line_tr) > 1 else ([ln for r in curr_line_tr for ln in (r.get("lines") or [])] or None),
                 })
             for tr in merged_title_regions:
                 tx = max(0, int(tr.get("x", 0)))

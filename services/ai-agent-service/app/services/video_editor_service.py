@@ -3575,10 +3575,10 @@ class VideoEditorService:
                                     roi_curr_gray = cv2.cvtColor(f_curr_out[ys.min():ys.max()+1, xs.min():xs.max()+1], cv2.COLOR_BGR2GRAY)
                                     is_bright_title = (float(np.mean(roi_curr_gray)) >= 180.0) if roi_curr_gray.size > 0 else False
                                     if not is_bright_title:
-                                        k_p4 = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 25))
+                                        k_p4 = cv2.getStructuringElement(cv2.MORPH_RECT, (27, 27))
                                         dil_p4 = cv2.dilate(bbox_m, k_p4)
                                         alpha_p4 = cv2.GaussianBlur(dil_p4.astype(np.float32) / 255.0, (5, 5), 1.0)[:, :, np.newaxis]
-                                        b_w = 0.45 if e_inp > 1.15 * ref_c4 else 0.35
+                                        b_w = 0.42 if e_inp > 1.15 * ref_c4 else 0.35
                                         blended_f = np.clip(np.round((1.0 - b_w) * f_curr_out.astype(np.float32) + b_w * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)
                                         f_curr_out = np.clip(np.round((1.0 - alpha_p4) * f_curr_out.astype(np.float32) + alpha_p4 * blended_f.astype(np.float32)), 0, 255).astype(np.uint8)
                                     else:

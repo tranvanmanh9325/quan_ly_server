@@ -3576,22 +3576,23 @@ class VideoEditorService:
                                     is_bright_title = (float(np.mean(roi_curr_gray)) >= 180.0) if roi_curr_gray.size > 0 else False
                                     if not is_bright_title:
                                         k_p4 = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 25))
-                                        use_m = (cv2.dilate(bbox_m, k_p4) > 0)
+                                        dil_p4 = cv2.dilate(bbox_m, k_p4)
+                                        alpha_p4 = cv2.GaussianBlur(dil_p4.astype(np.float32) / 255.0, (15, 15), 5.0)[:, :, np.newaxis]
                                         b_w = 0.42 if e_inp > 1.15 * ref_c4 else 0.35
-                                    elif e_inp > 600.0 and e_inp > 1.8 * ref_c4:
-                                        use_m = (m_curr_mask > 0)
-                                        b_w = 0.42
-                                    elif e_inp > 1.8 * ref_c4:
-                                        use_m = (m_curr_mask > 0)
-                                        b_w = 0.40
-                                    elif e_inp > 1.15 * ref_c4:
-                                        use_m = (m_curr_mask > 0)
-                                        b_w = 0.28
+                                        blended_f = np.clip(np.round((1.0 - b_w) * f_curr_out.astype(np.float32) + b_w * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)
+                                        f_curr_out = np.clip(np.round((1.0 - alpha_p4) * f_curr_out.astype(np.float32) + alpha_p4 * blended_f.astype(np.float32)), 0, 255).astype(np.uint8)
                                     else:
+                                        if e_inp > 600.0 and e_inp > 1.8 * ref_c4:
+                                            b_w = 0.42
+                                        elif e_inp > 1.8 * ref_c4:
+                                            b_w = 0.40
+                                        elif e_inp > 1.15 * ref_c4:
+                                            b_w = 0.28
+                                        else:
+                                            b_w = 0.20
                                         use_m = (m_curr_mask > 0)
-                                        b_w = 0.20
-                                    blended_f = np.clip(np.round((1.0 - b_w) * f_curr_out.astype(np.float32) + b_w * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)
-                                    f_curr_out = np.where(use_m[:, :, np.newaxis], blended_f, f_curr_out)
+                                        blended_f = np.clip(np.round((1.0 - b_w) * f_curr_out.astype(np.float32) + b_w * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)
+                                        f_curr_out = np.where(use_m[:, :, np.newaxis], blended_f, f_curr_out)
 
                                     diff_sq_after = (f_curr_out.astype(np.float32) - w_prev.astype(np.float32)) ** 2
                                     if title_unpad_box is not None:
@@ -4879,16 +4880,16 @@ class VideoEditorService:
 
             # Determine best available H.264 video encoder (Pillar 5: CRF 14 Studio Grade Encoding, unconstrained bitrate)
             v_encoder = "libx264"
-            v_opts = ["-preset", "fast", "-crf", "14"]
+            v_opts = ["-preset", "fast", "-crf", "14", "-g", "30"]
             try:
                 p_enc = subprocess.run([ffmpeg_bin, "-encoders"], capture_output=True, text=True, timeout=5)
                 enc_out = p_enc.stdout or ""
                 if "libx264" not in enc_out and "h264_nvenc" in enc_out:
                     v_encoder = "h264_nvenc"
-                    v_opts = ["-preset", "p7", "-cq", "14"]
+                    v_opts = ["-preset", "p7", "-cq", "14", "-g", "30"]
                 elif "libx264" not in enc_out and "h264_qsv" in enc_out:
                     v_encoder = "h264_qsv"
-                    v_opts = ["-global_quality", "14"]
+                    v_opts = ["-global_quality", "14", "-g", "30"]
             except Exception:
                 pass
 

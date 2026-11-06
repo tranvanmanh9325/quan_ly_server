@@ -1305,8 +1305,8 @@ class VideoCritiqueEngine:
                         mask_roi = mask.copy()
 
                     words_count_roi, max_conf_roi, words_str_roi = self.compute_residual_ocr(clean_roi)
-                    # Finding D Remediation: Also inspect full frame to catch residual text bypassed by inpainter
-                    if np.any(m_idx) and (clean_roi.shape[0] < fr_clean.shape[0] or clean_roi.shape[1] < fr_clean.shape[1]):
+                    # Finding D Remediation: Only inspect full frame in 'all' mode to avoid counting preserved scene text in 'overlay' mode
+                    if target_scope in ("all", "all_text") and np.any(m_idx) and (clean_roi.shape[0] < fr_clean.shape[0] or clean_roi.shape[1] < fr_clean.shape[1]):
                         words_count_full, max_conf_full, words_str_full = self.compute_residual_ocr(fr_clean)
                     else:
                         words_count_full, max_conf_full, words_str_full = 0, 0.0, ""
@@ -1316,7 +1316,7 @@ class VideoCritiqueEngine:
                         max_conf = max(max_conf_roi, max_conf_full)
                         all_words = set((words_str_roi + " " + words_str_full).strip().split())
                         words_str = " ".join(sorted(w for w in all_words if w))
-                        if words_count_full > words_count_roi:
+                        if words_count_full > words_count_roi and target_scope in ("all", "all_text"):
                             roi_rect = (0, 0, fr_clean.shape[1], fr_clean.shape[0])
                             clean_roi = fr_clean.copy()
                             orig_roi = fr_orig.copy()

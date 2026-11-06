@@ -2735,18 +2735,30 @@ class VideoEditorService:
                                 xmax = max(g[1] + g[3] for g in cur_cl)
                                 ymin = min(g[2] for g in cur_cl)
                                 ymax = max(g[2] + g[4] for g in cur_cl)
-                                detected_line_boxes.append((xmin, ymin, xmax - xmin, ymax - ymin))
-                                for c, cx, cy, cw, ch in cur_cl:
-                                    cv2.drawContours(sub_mask_strip, [c], -1, 255, -1)
+                                is_in_active = (not active_sub_bounding_boxes) or any(
+                                    max(0, min(xmax, bx - sx1 + bw) - max(xmin, bx - sx1)) > 0 and
+                                    max(0, min(ymax, by - sy1 + bh) - max(ymin, by - sy1)) > 0
+                                    for bx, by, bw, bh in active_sub_bounding_boxes
+                                )
+                                if is_in_active:
+                                    detected_line_boxes.append((xmin, ymin, xmax - xmin, ymax - ymin))
+                                    for c, cx, cy, cw, ch in cur_cl:
+                                        cv2.drawContours(sub_mask_strip, [c], -1, 255, -1)
                             cur_cl = [cur_g]
                     if len(cur_cl) >= 1:
                         xmin = min(g[1] for g in cur_cl)
                         xmax = max(g[1] + g[3] for g in cur_cl)
                         ymin = min(g[2] for g in cur_cl)
                         ymax = max(g[2] + g[4] for g in cur_cl)
-                        detected_line_boxes.append((xmin, ymin, xmax - xmin, ymax - ymin))
-                        for c, cx, cy, cw, ch in cur_cl:
-                            cv2.drawContours(sub_mask_strip, [c], -1, 255, -1)
+                        is_in_active = (not active_sub_bounding_boxes) or any(
+                            max(0, min(xmax, bx - sx1 + bw) - max(xmin, bx - sx1)) > 0 and
+                            max(0, min(ymax, by - sy1 + bh) - max(ymin, by - sy1)) > 0
+                            for bx, by, bw, bh in active_sub_bounding_boxes
+                        )
+                        if is_in_active:
+                            detected_line_boxes.append((xmin, ymin, xmax - xmin, ymax - ymin))
+                            for c, cx, cy, cw, ch in cur_cl:
+                                cv2.drawContours(sub_mask_strip, [c], -1, 255, -1)
 
             # Dark text detection on bright surfaces
             dark_cands = (gray <= 110).astype(np.uint8) * 255
@@ -2814,18 +2826,30 @@ class VideoEditorService:
                                 xmax = max(g[1] + g[3] for g in cur_cl)
                                 ymin = min(g[2] for g in cur_cl)
                                 ymax = max(g[2] + g[4] for g in cur_cl)
-                                detected_line_boxes.append((xmin, ymin, xmax - xmin, ymax - ymin))
-                                for c, cx, cy, cw, ch in cur_cl:
-                                    cv2.drawContours(sub_mask_strip, [c], -1, 255, -1)
+                                is_in_active = (not active_sub_bounding_boxes) or any(
+                                    max(0, min(xmax, bx - sx1 + bw) - max(xmin, bx - sx1)) > 0 and
+                                    max(0, min(ymax, by - sy1 + bh) - max(ymin, by - sy1)) > 0
+                                    for bx, by, bw, bh in active_sub_bounding_boxes
+                                )
+                                if is_in_active:
+                                    detected_line_boxes.append((xmin, ymin, xmax - xmin, ymax - ymin))
+                                    for c, cx, cy, cw, ch in cur_cl:
+                                        cv2.drawContours(sub_mask_strip, [c], -1, 255, -1)
                             cur_cl = [cur_g]
                     if len(cur_cl) >= 1:
                         xmin = min(g[1] for g in cur_cl)
                         xmax = max(g[1] + g[3] for g in cur_cl)
                         ymin = min(g[2] for g in cur_cl)
                         ymax = max(g[2] + g[4] for g in cur_cl)
-                        detected_line_boxes.append((xmin, ymin, xmax - xmin, ymax - ymin))
-                        for c, cx, cy, cw, ch in cur_cl:
-                            cv2.drawContours(sub_mask_strip, [c], -1, 255, -1)
+                        is_in_active = (not active_sub_bounding_boxes) or any(
+                            max(0, min(xmax, bx - sx1 + bw) - max(xmin, bx - sx1)) > 0 and
+                            max(0, min(ymax, by - sy1 + bh) - max(ymin, by - sy1)) > 0
+                            for bx, by, bw, bh in active_sub_bounding_boxes
+                        )
+                        if is_in_active:
+                            detected_line_boxes.append((xmin, ymin, xmax - xmin, ymax - ymin))
+                            for c, cx, cy, cw, ch in cur_cl:
+                                cv2.drawContours(sub_mask_strip, [c], -1, 255, -1)
 
             # Subtitle line geometry filtering
             min_line_w = max(10, int(round(12 * scale_geom)))
@@ -3503,6 +3527,25 @@ class VideoEditorService:
                                 clean_s = self._inpaint_roi_fallback_chain(sub_roi, dil_sub_m, timeout_sec=5.0, use_hosted=use_hosted, context=context)
 
                             if clean_s is not None and clean_s.shape == sub_roi.shape:
+                                if target_scope in ("all", "all_text") and np.count_nonzero(dil_sub_m) > 0:
+                                    sub_g_kf = cv2.cvtColor(sub_roi, cv2.COLOR_BGR2GRAY) if sub_roi.ndim == 3 else sub_roi
+                                    v_sub_ctx_kf = float(np.var(cv2.Laplacian(sub_g_kf, cv2.CV_64F)[dil_sub_m == 0])) if np.count_nonzero(dil_sub_m == 0) > 30 else 0.0
+                                    if v_sub_ctx_kf >= 200.0:
+                                        try:
+                                            hf_sub_kf = sub_roi.astype(np.float32) - cv2.GaussianBlur(sub_roi, (5, 5), 1.2).astype(np.float32)
+                                            valid_bg_kf = (cv2.dilate(dil_sub_m, np.ones((5, 5), np.uint8)) == 0)
+                                            if np.count_nonzero(valid_bg_kf) > 30:
+                                                bg_vals_kf = hf_sub_kf[valid_bg_kf]
+                                                hf_clean_kf = hf_sub_kf.copy()
+                                                n_inv_kf = int(np.count_nonzero(~valid_bg_kf))
+                                                if n_inv_kf > 0:
+                                                    hf_clean_kf[~valid_bg_kf] = bg_vals_kf[np.arange(n_inv_kf) % len(bg_vals_kf)]
+                                                hf_sh_kf = np.roll(hf_clean_kf, shift=(7, 13), axis=(0, 1))
+                                                inner_sub_kf = cv2.erode(dil_sub_m, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)))
+                                                alpha_sub_kf = cv2.GaussianBlur(inner_sub_kf.astype(np.float32) / 255.0, (5, 5), 1.2)[:, :, np.newaxis]
+                                                clean_s = np.clip(clean_s.astype(np.float32) + 0.58 * hf_sh_kf * alpha_sub_kf, 0, 255).astype(np.uint8)
+                                        except Exception:
+                                            pass
                                 out_f[sy1:sy2, sx1:sx2] = np.where((dil_sub_m > 0)[:, :, np.newaxis], clean_s, sub_roi)
                                 applied_kf_mask[sy1:sy2, sx1:sx2] = np.maximum(applied_kf_mask[sy1:sy2, sx1:sx2], dil_sub_m)
                                 remaining_mask[sy1:sy2, sx1:sx2] = 0
@@ -3836,8 +3879,17 @@ class VideoEditorService:
                         if has_valid_title_roi:
                             ys, xs = np.where(m_curr_mask > 0)
                             if len(ys) > 0:
-                                bbox_m = np.zeros_like(m_curr_mask)
-                                bbox_m[ys.min():ys.max()+1, xs.min():xs.max()+1] = 255
+                                is_single_band = (ys.max() - ys.min() <= 160)
+                                if is_single_band:
+                                    bbox_m = np.zeros_like(m_curr_mask)
+                                    bbox_m[ys.min():ys.max()+1, xs.min():xs.max()+1] = 255
+                                    roi_curr_gray = cv2.cvtColor(f_curr_out[ys.min():ys.max()+1, xs.min():xs.max()+1], cv2.COLOR_BGR2GRAY)
+                                    is_bright_title = (float(np.mean(roi_curr_gray)) >= (180.0 if h_fr <= 1500 else 215.0)) if roi_curr_gray.size > 0 else False
+                                else:
+                                    k_cmp = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 15))
+                                    bbox_m = cv2.dilate(m_curr_mask, k_cmp)
+                                    gray_tmp = cv2.cvtColor(f_curr_out, cv2.COLOR_BGR2GRAY)
+                                    is_bright_title = (float(np.mean(gray_tmp[m_curr_mask > 0])) >= (180.0 if h_fr <= 1500 else 215.0)) if np.count_nonzero(m_curr_mask) > 0 else False
                                 k35_c = cv2.getStructuringElement(cv2.MORPH_RECT, (35, 35))
                                 k15_c = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 15))
                                 d35_c = cv2.dilate(bbox_m, k35_c)
@@ -3847,8 +3899,6 @@ class VideoEditorService:
                                 e_ctx = float(np.mean(diff_sq[ctx_c4])) if np.count_nonzero(ctx_c4) > 0 else 16.0
                                 ref_c4 = max(e_ctx, 16.0)
                                 if e_inp > 1.05 * ref_c4:
-                                    roi_curr_gray = cv2.cvtColor(f_curr_out[ys.min():ys.max()+1, xs.min():xs.max()+1], cv2.COLOR_BGR2GRAY)
-                                    is_bright_title = (float(np.mean(roi_curr_gray)) >= (180.0 if h_fr <= 1500 else 215.0)) if roi_curr_gray.size > 0 else False
                                     if not is_bright_title:
                                         is_bottom_ticker_blend = (w_fr >= 1800 and ys.min() >= h_fr // 2)
                                         if is_bottom_ticker_blend:
@@ -3917,14 +3967,14 @@ class VideoEditorService:
                                 lap_after = cv2.Laplacian(cv2.cvtColor(f_curr_out, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
                                 var_inp_sub = float(np.var(lap_after[sub_mask_bool]))
                                 var_ctx_sub = float(np.var(lap_after[b_ref_sub])) if np.count_nonzero(b_ref_sub) > 0 else 0.0
-                                if w_fr > h_fr and h_fr <= 1500 and var_ctx_sub >= 50.0 and (var_inp_sub / max(var_ctx_sub, 1e-6)) < 0.72:
+                                if w_fr > h_fr and h_fr <= 1500 and var_ctx_sub >= 50.0 and (var_inp_sub / max(var_ctx_sub, 1e-6)) < 0.85:
                                     blur_sub = cv2.GaussianBlur(f_curr_out, (0, 0), 1.0)
                                     hf_sub = f_curr_out.astype(np.float32) - blur_sub.astype(np.float32)
                                     cand_sub = f_curr_out
-                                    for g_try in (0.35, 0.70, 1.05):
+                                    for g_try in (0.20, 0.35, 0.55, 0.80, 1.05):
                                         cand_sub = np.clip(np.round(f_curr_out.astype(np.float32) + g_try * hf_sub), 0, 255).astype(np.uint8)
                                         lap_cs = cv2.Laplacian(cv2.cvtColor(cand_sub, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
-                                        if float(np.var(lap_cs[sub_mask_bool])) >= 0.80 * var_ctx_sub:
+                                        if float(np.var(lap_cs[sub_mask_bool])) >= 0.88 * var_ctx_sub:
                                             break
                                     inner_sub_u = (cv2.erode(m_curr_mask, k3_sub) > 0)
                                     f_curr_out = np.where(inner_sub_u[:, :, np.newaxis], cand_sub, f_curr_out)
@@ -3961,8 +4011,8 @@ class VideoEditorService:
                     g_post = 1.40 if v_inp_h < 750.0 else 1.10
                 elif is_bright_hdr and 650.0 <= v_ctx_h < 1700.0 and v_inp_h < 650.0 and ratio_h < 0.72:
                     g_post = 0.85
-                elif is_bright_hdr and ratio_h < 0.88 and v_inp_h < 1000.0 and v_ctx_h >= 600.0:
-                    g_post = 0.28
+                elif is_bright_hdr and ratio_h < 0.88 and v_inp_h < 1000.0 and v_ctx_h >= 100.0:
+                    g_post = float(np.clip(np.sqrt(1.05 * v_ctx_h / max(v_inp_h, 1e-6)) - 1.0, 0.15, 0.85))
                 elif is_bright_hdr and v_ctx_h < 250.0:
                     full_hdr_box = np.zeros_like(f_curr_out[:, :, 0])
                     full_hdr_box[max(0, ty1 - 4):ty2, tx1:tx2] = 255
@@ -3987,12 +4037,17 @@ class VideoEditorService:
                 lap_o = cv2.Laplacian(cv2.cvtColor(f_curr_out, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
                 v_inp_m = float(np.var(lap_o[m_curr_mask > 0]))
                 v_ctx_m = float(np.var(lap_o[b_ref_cur])) if np.count_nonzero(b_ref_cur) > 0 else 0.0
-                if 50.0 <= v_ctx_m < 1400.0 and (v_inp_m / max(v_ctx_m, 1e-6)) < 0.65:
+                if 50.0 <= v_ctx_m < 1400.0 and (v_inp_m / max(v_ctx_m, 1e-6)) < 0.85:
                     blur_m = cv2.GaussianBlur(f_curr_out, (0, 0), 1.0)
                     hf_m = f_curr_out.astype(np.float32) - blur_m.astype(np.float32)
-                    sharp_m = np.clip(np.round(f_curr_out.astype(np.float32) + 0.35 * hf_m), 0, 255).astype(np.uint8)
+                    cand_m = f_curr_out
+                    for g_m in (0.20, 0.35, 0.55):
+                        cand_m = np.clip(np.round(f_curr_out.astype(np.float32) + g_m * hf_m), 0, 255).astype(np.uint8)
+                        lap_cm = cv2.Laplacian(cv2.cvtColor(cand_m, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
+                        if float(np.var(lap_cm[m_curr_mask > 0])) >= 0.88 * v_ctx_m:
+                            break
                     inner_m = (cv2.erode(m_curr_mask, k3) > 0)
-                    f_curr_out = np.where(inner_m[:, :, np.newaxis], sharp_m, f_curr_out)
+                    f_curr_out = np.where(inner_m[:, :, np.newaxis], cand_m, f_curr_out)
 
             prev_yielded_frame = f_curr_out.copy()
             return f_curr_out
@@ -4200,8 +4255,9 @@ class VideoEditorService:
 
                             lap_b = cv2.Laplacian(cv2.cvtColor(blend_hdr, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
                             var_in_act = float(np.var(lap_b[active_hdr_mask > 0])) if np.count_nonzero(active_hdr_mask) > 0 else 0.0
-                            if v_ctx >= 750.0 and var_in_act < 1750.0:
-                                g_al = 2.85 if var_in_act < 900.0 else 2.10
+                            if v_ctx >= 750.0 and var_in_act < 0.80 * v_ctx and var_in_act < 1750.0:
+                                target_var = 1.05 * v_ctx
+                                g_al = float(np.clip(np.sqrt(target_var / max(var_in_act, 1e-6)) - 1.0, 0.20, 2.10))
                                 aligned_hdr = np.clip(np.round(orig_aligned_hdr.astype(np.float32) + g_al * hf_al), 0, 255).astype(np.uint8)
                                 blend_hdr = np.clip(
                                     np.round(f_act * aligned_hdr.astype(np.float32) + (1.0 - f_act) * curr_roi.astype(np.float32)),
@@ -4432,7 +4488,7 @@ class VideoEditorService:
                             }
 
                             # High-frequency grain synthesis for textured background scene text
-                            if is_scene_sub_moving or (target_scope in ("all", "all_text") and np.count_nonzero(mask_sub) > 0):
+                            if not used_sub_align and (is_scene_sub_moving or (target_scope in ("all", "all_text") and np.count_nonzero(mask_sub) > 0)):
                                 sub_g = cv2.cvtColor(sub_roi, cv2.COLOR_BGR2GRAY) if sub_roi.ndim == 3 else sub_roi
                                 v_sub_ctx = float(np.var(cv2.Laplacian(sub_g, cv2.CV_64F)[mask_sub == 0])) if np.count_nonzero(mask_sub == 0) > 30 else 0.0
                                 if v_sub_ctx >= 200.0:
@@ -4794,7 +4850,7 @@ class VideoEditorService:
         has_bottom_overlay = bool(target_regions and any(int(r.get("y", 0)) >= h // 2 for r in target_regions))
         if h > 1500:
             v_refine_opts = ["-preset", "fast", "-crf", "1", "-g", "1"]
-        elif (has_bottom_overlay and w < 1800) or (w < h and h <= 1500):
+        elif has_bottom_overlay and w < 1800:
             v_refine_opts = ["-preset", "fast", "-crf", "14", "-g", "30"]
         elif tot_frames <= 300:
             v_refine_opts = ["-preset", "fast", "-crf", "2", "-g", "1"]
@@ -5263,7 +5319,7 @@ class VideoEditorService:
             has_bottom_overlay = bool(target_regions and any(int(r.get("y", 0)) >= h // 2 for r in target_regions))
             if h > 1500:
                 v_opts = ["-preset", "fast", "-crf", "1", "-g", "1"]
-            elif (has_bottom_overlay and w < 1800) or (w < h and h <= 1500):
+            elif has_bottom_overlay and w < 1800:
                 v_opts = ["-preset", "fast", "-crf", "14", "-g", "30"]
             elif total_frames <= 300:
                 v_opts = ["-preset", "fast", "-crf", "2", "-g", "1"]

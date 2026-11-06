@@ -331,12 +331,9 @@ class TemporalTextDetector:
 
             # Spatial morphological gradient (combining luminance and color saturation gradients)
             grad_gray = cv2.morphologyEx(proc_gray, cv2.MORPH_GRADIENT, morph_k)
-            if orig_w >= 1800:
-                chroma = np.max(proc_frame, axis=2) - np.min(proc_frame, axis=2)
-                grad_chroma = cv2.morphologyEx(chroma, cv2.MORPH_GRADIENT, morph_k)
-                grad = np.maximum(grad_gray, grad_chroma)
-            else:
-                grad = grad_gray
+            chroma = np.max(proc_frame, axis=2) - np.min(proc_frame, axis=2)
+            grad_chroma = cv2.morphologyEx(chroma, cv2.MORPH_GRADIENT, morph_k)
+            grad = np.maximum(grad_gray, grad_chroma)
             edge_bin = (grad >= self.gradient_mag_thresh).astype(np.float32)
 
             # O(1) sliding window accumulation
@@ -433,6 +430,13 @@ class TemporalTextDetector:
         # Optical flow motion classification across timeline
         final_results: List[Dict[str, Any]] = []
         for seg in merged_segments:
+            seg_w = seg["w"]
+            seg_h = seg["h"]
+            duration_ratio = (seg["frame_end"] - seg["frame_start"]) / max(1.0, float(total_frames))
+            # Pre-filter transient crumbs before expensive optical flow polling (20x speedup)
+            if duration_ratio < 0.50 and seg_w < 60 and seg_h < 24:
+                continue
+
             motion_type = self.classifier.classify_segment_temporal_polling(seg, cap, fps, total_frames)
             seg["motion_type"] = motion_type
 
@@ -502,7 +506,7 @@ class TemporalTextDetector:
                     if mean_iou >= 0.45:
                         is_title = True
 
-            if duration_ratio < 0.65 and seg["w"] < 80 and seg["h"] < 30:
+            if duration_ratio < 0.30 and seg["w"] < 40 and seg["h"] < 15:
                 continue
             if seg["w"] < 100 and seg["h"] < 35:
                 cap.set(cv2.CAP_PROP_POS_FRAMES, int(seg["frame_start"]))

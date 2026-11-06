@@ -3666,10 +3666,10 @@ class VideoEditorService:
                 primary_cluster = max(clusters, key=lambda cl: sum(int(r.get("w", 0)) * int(r.get("h", 0)) for r in cl))
 
                 title_unpad_box = (
-                    min(int(r.get("y", 0)) for r in primary_cluster) + 4,
-                    max(int(r.get("y", 0)) + int(r.get("h", 0)) for r in primary_cluster) - 3,
-                    min(int(r.get("x", 0)) for r in primary_cluster) + 8,
-                    max(int(r.get("x", 0)) + int(r.get("w", 0)) for r in primary_cluster) - 6
+                    min(int(r.get("y", 0)) for r in primary_cluster),
+                    max(int(r.get("y", 0)) + int(r.get("h", 0)) for r in primary_cluster),
+                    min(int(r.get("x", 0)) for r in primary_cluster),
+                    max(int(r.get("x", 0)) + int(r.get("w", 0)) for r in primary_cluster)
                 )
 
                 pad_x = max(16, int(0.02 * w))
@@ -3720,9 +3720,7 @@ class VideoEditorService:
                 f_hdr = np.maximum(f_hdr, (t_mask > 0).astype(np.float32)[:, :, np.newaxis])
             elif is_bright_roi:
                 m_blend = t_mask.copy()
-                f_hdr = cv2.GaussianBlur(m_blend.astype(np.float32) / 255.0, (5, 5), 1.2)[:, :, np.newaxis]
-                inner_core_t = (cv2.erode(t_mask, np.ones((5, 5), np.uint8)) > 0).astype(np.float32)[:, :, np.newaxis]
-                f_hdr = np.maximum(f_hdr, inner_core_t)
+                f_hdr = np.maximum(f_hdr, (t_mask > 0).astype(np.float32)[:, :, np.newaxis])
             else:
                 k3_hdr_sz = 3
                 m_blend = cv2.dilate(t_mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k3_hdr_sz, k3_hdr_sz)))

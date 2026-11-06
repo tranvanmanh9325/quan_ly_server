@@ -1386,8 +1386,8 @@ class VideoEditorService:
                         rx = min_lx
 
             s_res = np.sqrt(h**2 + w**2) / 1175.49
-            safe_pad_x = max(2, int(round(4 * s_res)))
-            safe_pad_y = max(2, int(round(3 * s_res)))
+            safe_pad_x = max(6, int(round(6 * s_res)))
+            safe_pad_y = max(6, int(round(6 * s_res)))
 
             for line_entry in target_lines:
                 if isinstance(line_entry, dict):
@@ -1500,7 +1500,14 @@ class VideoEditorService:
         sat_limit = max(80, int(bg_sat * 0.75))
         bright_thresh = max(200, min(230, int(bg_lum + 40))) if is_high_texture_mesh else max(145, int(bg_lum + 25))
         bright_pixels = ((v_chan >= bright_thresh) & (s_chan <= sat_limit)).astype(np.uint8) * 255
-        vivid_colored = ((s_chan >= 60) & (v_chan >= 100)).astype(np.uint8) * 255
+        if bg_sat >= 45.0:
+            bg_hue = float(np.median(h_chan[border_mask])) if border_pixels.size > 0 else float(np.median(h_chan))
+            color_dist_bg = np.sqrt(np.sum((roi.astype(np.float32) - bg_bgr.astype(np.float32)) ** 2, axis=2))
+            hue_diff = np.minimum(np.abs(h_chan.astype(np.int16) - int(bg_hue)), 180 - np.abs(h_chan.astype(np.int16) - int(bg_hue)))
+            is_diff_color = (color_dist_bg >= 45.0) & ((hue_diff >= 18) | (s_chan >= min(245, int(bg_sat + 45))))
+            vivid_colored = (((s_chan >= 60) & (v_chan >= 100)) & is_diff_color).astype(np.uint8) * 255
+        else:
+            vivid_colored = ((s_chan >= 60) & (v_chan >= 100)).astype(np.uint8) * 255
 
         has_dark_stroke = np.count_nonzero(dark_pixels) > 15
         has_bright_pixels = np.count_nonzero(bright_pixels) > 15
@@ -1642,7 +1649,7 @@ class VideoEditorService:
         min_char_h = 2
         min_char_w = 2
         min_area = 2
-        max_char_h = max(4, int(h * 0.98))
+        max_char_h = max(4, h)
 
         if is_high_texture_mesh:
             primary_mask = np.zeros_like(text_core)
@@ -2378,30 +2385,38 @@ class VideoEditorService:
                 ty = max(0, int(tr.get("y", 0)))
                 tw = max(1, int(tr.get("w", 0)))
                 th = max(1, int(tr.get("h", 0)))
-                tx2 = min(w, tx + tw)
-                ty2 = min(h, ty + th)
-                if ty2 > ty and tx2 > tx:
+                pad_t = 6
+                tx_pad = max(0, tx - pad_t)
+                ty_pad = max(0, ty - pad_t)
+                tx2_pad = min(w, tx + tw + pad_t)
+                ty2_pad = min(h, ty + th + pad_t)
+                if ty2_pad > ty_pad and tx2_pad > tx_pad:
                     if frame_img is not None:
-                        t_roi = frame_img[ty:ty2, tx:tx2]
-                        t_mask = self._generate_text_stroke_mask(t_roi, lines=tr.get("lines"), region_meta=tr)
-                        if t_mask is not None and t_mask.shape == (ty2 - ty, tx2 - tx) and np.count_nonzero(t_mask) > 10:
+                        t_roi = frame_img[ty_pad:ty2_pad, tx_pad:tx2_pad]
+                        tr_padded = dict(tr)
+                        tr_padded["x"] = tx_pad
+                        tr_padded["y"] = ty_pad
+                        tr_padded["w"] = tx2_pad - tx_pad
+                        tr_padded["h"] = ty2_pad - ty_pad
+                        t_mask = self._generate_text_stroke_mask(t_roi, lines=tr.get("lines"), region_meta=tr_padded)
+                        if t_mask is not None and t_mask.shape == (ty2_pad - ty_pad, tx2_pad - tx_pad) and np.count_nonzero(t_mask) > 10:
                             k3_title = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
                             t_mask_dil = cv2.dilate(t_mask, k3_title)
-                            full_mask[ty:ty2, tx:tx2] = np.maximum(full_mask[ty:ty2, tx:tx2], t_mask_dil)
+                            full_mask[ty_pad:ty2_pad, tx_pad:tx2_pad] = np.maximum(full_mask[ty_pad:ty2_pad, tx_pad:tx2_pad], t_mask_dil)
                         else:
                             gray_t = cv2.cvtColor(t_roi, cv2.COLOR_BGR2GRAY)
                             grad_t = cv2.morphologyEx(gray_t, cv2.MORPH_GRADIENT, np.ones((3, 3), np.uint8))
-                            bg_y1 = max(0, ty - 20)
-                            bg_y2 = min(h, ty2 + 20)
-                            bg_patch = cv2.cvtColor(frame_img[bg_y1:bg_y2, tx:tx2], cv2.COLOR_BGR2GRAY)
+                            bg_y1 = max(0, ty_pad - 20)
+                            bg_y2 = min(h, ty2_pad + 20)
+                            bg_patch = cv2.cvtColor(frame_img[bg_y1:bg_y2, tx_pad:tx2_pad], cv2.COLOR_BGR2GRAY)
                             grad_bg = cv2.morphologyEx(bg_patch, cv2.MORPH_GRADIENT, np.ones((3, 3), np.uint8))
                             if float(np.mean(grad_t)) >= 1.35 * max(1.0, float(np.mean(grad_bg))):
                                 _, b_t = cv2.threshold(grad_t, 15, 255, cv2.THRESH_BINARY)
                                 k3_t = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
                                 t_mask_dil = VideoEditorService._fill_holes(cv2.dilate(b_t, k3_t))
-                                full_mask[ty:ty2, tx:tx2] = np.maximum(full_mask[ty:ty2, tx:tx2], t_mask_dil)
+                                full_mask[ty_pad:ty2_pad, tx_pad:tx2_pad] = np.maximum(full_mask[ty_pad:ty2_pad, tx_pad:tx2_pad], t_mask_dil)
                     else:
-                        full_mask[ty:ty2, tx:tx2] = 255
+                        full_mask[ty_pad:ty2_pad, tx_pad:tx2_pad] = 255
 
         # 2. Dynamic Subtitle Stroke Mask
         sub_info = None
@@ -3161,7 +3176,7 @@ class VideoEditorService:
                         )
                         unocc = (remaining_mask > 0) & (warped_m == 0)
                         unocc_ratio = float(np.count_nonzero(unocc)) / max(1.0, float(np.count_nonzero(remaining_mask)))
-                        if unocc_ratio >= 0.50:
+                        if unocc_ratio >= 0.25:
                             bg_valid = (orig_mask_dil == 0) & (warped_m == 0)
                             if np.count_nonzero(bg_valid) > 50:
                                 abs_diff_bg = cv2.absdiff(frame, warped_ref)[bg_valid]

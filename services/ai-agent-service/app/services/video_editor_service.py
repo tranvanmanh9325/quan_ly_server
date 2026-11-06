@@ -4106,7 +4106,7 @@ class VideoEditorService:
             out_frame = frame_compositor.composite(frame, out_frame, full_frame_mask)
             if used_align and is_bright_roi and blend_hdr is not None:
                 out_frame[hy1:hy2, hx1:hx2] = blend_hdr
-                if title_unpad_box is not None and frame_idx not in cleaned_keyframes:
+                if title_unpad_box is not None:
                     ty1, ty2, tx1, tx2 = title_unpad_box
                     tight_hdr_box = np.zeros_like(full_frame_mask)
                     tight_hdr_box[ty1:ty2, tx1:tx2] = 255
@@ -4118,6 +4118,7 @@ class VideoEditorService:
                     lap_out = cv2.Laplacian(cv2.cvtColor(out_frame, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
                     v_inp_h = float(np.var(lap_out[tight_hdr_box > 0])) if np.count_nonzero(tight_hdr_box) > 0 else 0.0
                     v_ctx_h = float(np.var(lap_out[b_ref_hdr])) if np.count_nonzero(b_ref_hdr) > 0 else 0.0
+                    ratio_h = v_inp_h / (v_ctx_h + 1e-6)
                     if v_ctx_h >= 2000.0 and v_inp_h < 1800.0 and ratio_h < 0.70:
                         blur_o = cv2.GaussianBlur(out_frame, (0, 0), 1.0)
                         hf_o = out_frame.astype(np.float32) - blur_o.astype(np.float32)

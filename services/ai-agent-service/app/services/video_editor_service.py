@@ -3572,8 +3572,12 @@ class VideoEditorService:
                                 e_ctx = float(np.mean(diff_sq[ctx_c4])) if np.count_nonzero(ctx_c4) > 0 else 16.0
                                 ref_c4 = max(e_ctx, 16.0)
                                 if e_inp > 1.05 * ref_c4:
-                                    use_m = (m_curr_mask > 0)
-                                    if e_inp > 600.0 and e_inp > 1.8 * ref_c4:
+                                    roi_curr_gray = cv2.cvtColor(f_curr_out[ys.min():ys.max()+1, xs.min():xs.max()+1], cv2.COLOR_BGR2GRAY)
+                                    is_bright_title = (float(np.mean(roi_curr_gray)) >= 180.0) if roi_curr_gray.size > 0 else False
+                                    use_m = (m_curr_mask > 0) if is_bright_title else (bbox_m > 0)
+                                    if not is_bright_title:
+                                        b_w = 0.32 if e_inp > 1.20 * ref_c4 else 0.20
+                                    elif e_inp > 600.0 and e_inp > 1.8 * ref_c4:
                                         b_w = 0.42
                                     elif e_inp > 1.8 * ref_c4:
                                         b_w = 0.40

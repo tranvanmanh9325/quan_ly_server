@@ -1396,7 +1396,7 @@ class VideoEditorService:
             is_doc_bright = (roi is not None and getattr(roi, "size", 0) > 0 and float(np.mean(cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY))) >= 195.0)
             hsv_roi_stroke = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV) if (roi is not None and getattr(roi, "ndim", 0) == 3) else None
             has_green_roi_stroke = (np.count_nonzero((hsv_roi_stroke[:, :, 0] >= 35) & (hsv_roi_stroke[:, :, 0] <= 85) & (hsv_roi_stroke[:, :, 1] >= 100)) > 200) if hsv_roi_stroke is not None else False
-            if is_doc_bright or ((max(roi.shape[:2]) >= 400 or w >= 600) and not has_green_roi_stroke):
+            if not has_green_roi_stroke:
                 safe_pad_x = max(2, int(round(4 * s_res)))
                 safe_pad_y = max(2, int(round(3 * s_res)))
             else:
@@ -3841,11 +3841,11 @@ class VideoEditorService:
                                     roi_curr_gray = cv2.cvtColor(f_curr_out[ys.min():ys.max()+1, xs.min():xs.max()+1], cv2.COLOR_BGR2GRAY)
                                     is_bright_title = (float(np.mean(roi_curr_gray)) >= (180.0 if h_fr <= 1500 else 215.0)) if roi_curr_gray.size > 0 else False
                                     if not is_bright_title:
-                                        if w_fr > h_fr:
+                                        if w_fr >= 1800:
                                             k_p4 = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 25))
                                             dil_p4 = cv2.dilate(bbox_m, k_p4)
                                             alpha_p4 = cv2.GaussianBlur(dil_p4.astype(np.float32) / 255.0, (5, 5), 1.0)[:, :, np.newaxis]
-                                            if e_inp >= 40.0 and e_inp > 1.15 * ref_c4:
+                                            if e_inp >= 18.0 and e_inp > 1.15 * ref_c4:
                                                 b_w = 0.45
                                             elif e_inp > 1.15 * ref_c4:
                                                 b_w = 0.38
@@ -3864,9 +3864,9 @@ class VideoEditorService:
                                         f_curr_out = np.clip(np.round((1.0 - alpha_p4) * f_curr_out.astype(np.float32) + alpha_p4 * blended_f.astype(np.float32)), 0, 255).astype(np.uint8)
                                     else:
                                         if e_inp > 600.0 and e_inp > 1.8 * ref_c4:
-                                            b_w = 0.42
+                                            b_w = 0.46
                                         elif e_inp > 1.8 * ref_c4:
-                                            b_w = 0.40
+                                            b_w = 0.44
                                         elif e_inp > 1.15 * ref_c4:
                                             b_w = 0.28
                                         else:
@@ -3933,7 +3933,7 @@ class VideoEditorService:
                 tight_hdr_box[ty1:ty2, tx1:tx2] = 255
                 k9_hdr = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
                 inner_hdr = (cv2.erode(tight_hdr_box, k9_hdr) > 0)
-                inner_hdr[ty2 - 3:, :] = False
+                inner_hdr[ty2 - 4:, :] = False
                 inner_hdr[:ty1 + 2, :] = False
                 k11_hdr = cv2.getStructuringElement(cv2.MORPH_RECT, (11, 11))
                 k3_hdr = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
@@ -3943,7 +3943,7 @@ class VideoEditorService:
                 v_ctx_h = float(np.var(lap_out[b_ref_hdr])) if np.count_nonzero(b_ref_hdr) > 0 else 0.0
                 ratio_h = v_inp_h / (v_ctx_h + 1e-6)
                 g_post = 0.0
-                if is_bright_hdr and v_ctx_h >= 1700.0 and v_inp_h < 1100.0 and ratio_h < 0.55:
+                if is_bright_hdr and v_ctx_h >= 1700.0 and v_inp_h < 1500.0 and ratio_h < 0.65:
                     g_post = 1.40 if v_inp_h < 750.0 else 1.10
                 elif is_bright_hdr and 650.0 <= v_ctx_h < 1700.0 and v_inp_h < 650.0 and ratio_h < 0.72:
                     g_post = 0.85

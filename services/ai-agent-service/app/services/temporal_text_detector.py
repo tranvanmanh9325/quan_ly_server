@@ -495,8 +495,17 @@ class TemporalTextDetector:
                     if mean_iou >= 0.45:
                         is_title = True
 
-            if seg["w"] < 100 and seg["h"] < 35:
+            if duration_ratio < 0.65 and seg["w"] < 80 and seg["h"] < 30:
                 continue
+            if seg["w"] < 100 and seg["h"] < 35:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, int(seg["frame_start"]))
+                ret_chk, fr_chk = cap.read()
+                if ret_chk and fr_chk is not None:
+                    roi_chk = fr_chk[y1:y2, x1:x2]
+                    if roi_chk.size > 0 and float(np.mean(cv2.cvtColor(roi_chk, cv2.COLOR_BGR2GRAY))) >= 195.0:
+                        chroma_chk = np.max(roi_chk, axis=2).astype(np.int16) - np.min(roi_chk, axis=2).astype(np.int16)
+                        if np.count_nonzero(chroma_chk >= 50) < 10:
+                            continue
 
             final_results.append({
                 "bbox": [int(y1), int(y2), int(x1), int(x2)],

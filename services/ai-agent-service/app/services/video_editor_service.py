@@ -3879,7 +3879,7 @@ class VideoEditorService:
 
                                     diff_sq_after = (f_curr_out.astype(np.float32) - w_prev.astype(np.float32)) ** 2
                                     e_inp_after = float(np.mean(diff_sq_after[bbox_m > 0])) if np.count_nonzero(bbox_m) > 0 else 0.0
-                                    if e_inp_after > 1.15 * ref_c4 and e_inp_after >= 140.0:
+                                    if e_inp_after > 1.18 * max(e_ctx, 250.0) and e_ctx < 200.0:
                                         f_curr_out = np.where(bbox_m[:, :, np.newaxis] > 0, np.clip(np.round(0.80 * f_curr_out.astype(np.float32) + 0.20 * w_prev.astype(np.float32)), 0, 255).astype(np.uint8), f_curr_out)
                         else:
                             k35_c = cv2.getStructuringElement(cv2.MORPH_RECT, (35, 35))
@@ -3941,7 +3941,7 @@ class VideoEditorService:
                     f_curr_out[ty1:ty2, tx1:tx2] = roi_sub_29
 
                 g_post = 0.0
-                if is_bright_hdr and v_ctx_h >= 1700.0 and v_inp_h < 1100.0 and ratio_h < 0.55:
+                if is_bright_hdr and v_ctx_h >= 1700.0 and v_inp_h < 1350.0 and ratio_h < 0.55:
                     g_post = 1.40 if v_inp_h < 750.0 else 1.10
                 elif is_bright_hdr and 650.0 <= v_ctx_h < 1700.0 and v_inp_h < 650.0 and ratio_h < 0.72:
                     g_post = 0.85
@@ -3955,9 +3955,8 @@ class VideoEditorService:
                     v_ctx_full = float(np.var(lap_out[b_ref_full])) if np.count_nonzero(b_ref_full) > 0 else 0.0
                     ratio_full = v_inp_full / (v_ctx_full + 1e-6)
                     if v_ctx_full >= 2000.0 and v_inp_full < 1600.0 and 0.20 <= ratio_full < 0.72:
-                        g_post = 1.30 if v_inp_full < 750.0 else 0.65
+                        g_post = 1.30 if v_inp_full < 750.0 else 0.50
                         inner_hdr = (cv2.erode(full_hdr_box, k3_hdr) > 0)
-                        inner_hdr[ty2 - 3:, :] = False
                 if g_post > 0.0:
                     blur_o = cv2.GaussianBlur(f_curr_out, (0, 0), 1.0)
                     hf_o = f_curr_out.astype(np.float32) - blur_o.astype(np.float32)

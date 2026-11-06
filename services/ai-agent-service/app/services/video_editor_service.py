@@ -3948,6 +3948,12 @@ class VideoEditorService:
                 v_ctx_h = float(np.var(lap_out[b_ref_hdr])) if np.count_nonzero(b_ref_hdr) > 0 else 0.0
                 ratio_h = v_inp_h / (v_ctx_h + 1e-6)
 
+                try:
+                    with open('/tmp/p3_inmem.log', 'a') as f_log:
+                        f_log.write(f"Frame {yielded_count - 1}: bright={is_bright_hdr}, v_inp={v_inp_h:.2f}, v_ctx={v_ctx_h:.2f}, ratio={ratio_h:.3f}\n")
+                except Exception:
+                    pass
+
                 if is_bright_hdr and (
                     (v_inp_h >= 2800.0 and ratio_h >= 2.2 and 500.0 <= v_ctx_h <= 1500.0)
                     or (2600.0 <= v_inp_h <= 2780.0 and 115.0 <= v_ctx_h <= 160.0 and ratio_h >= 16.0)
@@ -3962,8 +3968,7 @@ class VideoEditorService:
                 elif is_bright_hdr and 650.0 <= v_ctx_h < 1700.0 and v_inp_h < 650.0 and ratio_h < 0.72:
                     g_post = 0.85
                 elif is_bright_hdr and ratio_h < 0.82 and v_inp_h < 1000.0 and v_ctx_h >= 600.0:
-                    g_post = 0.75
-                    inner_hdr = (cv2.erode(tight_hdr_box, k3_hdr) > 0)
+                    g_post = 0.42
                 elif is_bright_hdr and v_ctx_h < 250.0:
                     full_hdr_box = np.zeros_like(f_curr_out[:, :, 0])
                     full_hdr_box[max(0, ty1 - 4):ty2, tx1:tx2] = 255

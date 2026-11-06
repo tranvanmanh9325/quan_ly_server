@@ -2381,7 +2381,41 @@ class VideoEditorService:
                     if (r.get("type") == "title" and r.get("is_static", True))
                     and max(0, r.get("frame_start", 0) - 1) <= frame_idx <= r.get("frame_end", 0) + 1
                 ]
-            for tr in title_regions:
+            # Gộp các vùng tiêu đề liền kề trên cùng dòng ngang để không bỏ sót khoảng cách/ký tự gạch nối
+            merged_title_regions = []
+            if title_regions:
+                sorted_by_yx = sorted(title_regions, key=lambda r: (int(r.get("y", 0)), int(r.get("x", 0))))
+                curr_line_tr = [sorted_by_yx[0]]
+                for tr in sorted_by_yx[1:]:
+                    prev = curr_line_tr[-1]
+                    y_overlap = max(0, min(int(prev.get("y", 0)) + int(prev.get("h", 0)), int(tr.get("y", 0)) + int(tr.get("h", 0))) - max(int(prev.get("y", 0)), int(tr.get("y", 0))))
+                    if y_overlap >= 0.5 * min(int(prev.get("h", 0)), int(tr.get("h", 0))) or abs(int(prev.get("y", 0)) - int(tr.get("y", 0))) <= 15:
+                        dist_x = int(tr.get("x", 0)) - (int(prev.get("x", 0)) + int(prev.get("w", 0)))
+                        if dist_x <= max(80, int(2.5 * max(int(prev.get("h", 0)), int(tr.get("h", 0))))):
+                            curr_line_tr.append(tr)
+                            continue
+                    merged_title_regions.append({
+                        "x": min(int(r.get("x", 0)) for r in curr_line_tr),
+                        "y": min(int(r.get("y", 0)) for r in curr_line_tr),
+                        "w": max(int(r.get("x", 0)) + int(r.get("w", 0)) for r in curr_line_tr) - min(int(r.get("x", 0)) for r in curr_line_tr),
+                        "h": max(int(r.get("y", 0)) + int(r.get("h", 0)) for r in curr_line_tr) - min(int(r.get("y", 0)) for r in curr_line_tr),
+                        "type": "title", "is_static": True,
+                        "frame_start": min(r.get("frame_start", 0) for r in curr_line_tr),
+                        "frame_end": max(r.get("frame_end", 0) for r in curr_line_tr),
+                        "lines": [ln for r in curr_line_tr for ln in (r.get("lines") or [])] or None,
+                    })
+                    curr_line_tr = [tr]
+                merged_title_regions.append({
+                    "x": min(int(r.get("x", 0)) for r in curr_line_tr),
+                    "y": min(int(r.get("y", 0)) for r in curr_line_tr),
+                    "w": max(int(r.get("x", 0)) + int(r.get("w", 0)) for r in curr_line_tr) - min(int(r.get("x", 0)) for r in curr_line_tr),
+                    "h": max(int(r.get("y", 0)) + int(r.get("h", 0)) for r in curr_line_tr) - min(int(r.get("y", 0)) for r in curr_line_tr),
+                    "type": "title", "is_static": True,
+                    "frame_start": min(r.get("frame_start", 0) for r in curr_line_tr),
+                    "frame_end": max(r.get("frame_end", 0) for r in curr_line_tr),
+                    "lines": [ln for r in curr_line_tr for ln in (r.get("lines") or [])] or None,
+                })
+            for tr in merged_title_regions:
                 tx = max(0, int(tr.get("x", 0)))
                 ty = max(0, int(tr.get("y", 0)))
                 tw = max(1, int(tr.get("w", 0)))
@@ -3473,15 +3507,23 @@ class VideoEditorService:
             if title_regions:
                 # Phân cụm động các dòng tiêu đề liên tục theo khoảng cách dọc để cô lập khối tiêu đề chính
                 sorted_titles = sorted(title_regions, key=lambda r: int(r.get("y", 0)))
-                primary_cluster = [sorted_titles[0]]
-                for tr in sorted_titles[1:]:
-                    prev = primary_cluster[-1]
-                    gap = int(tr.get("y", 0)) - (int(prev.get("y", 0)) + int(prev.get("h", 0)))
-                    max_gap = max(24, int(1.5 * max(int(prev.get("h", 0)), int(tr.get("h", 0)))))
-                    if gap <= max_gap:
-                        primary_cluster.append(tr)
-                    else:
-                        break  # Tách biệt khỏi cụm tiêu đề chính
+                clusters: List[List[Dict[str, Any]]] = []
+                for tr in sorted_titles:
+                    assigned = False
+                    for cl in clusters:
+                        min_gap = min(
+                            max(0, max(int(b.get("y", 0)), int(tr.get("y", 0))) - min(int(b.get("y", 0)) + int(b.get("h", 0)), int(tr.get("y", 0)) + int(tr.get("h", 0))))
+                            for b in cl
+                        )
+                        max_allowed_gap = max(24, int(1.5 * max(max(int(b.get("h", 0)) for b in cl), int(tr.get("h", 0)))))
+                        if min_gap <= max_allowed_gap:
+                            cl.append(tr)
+                            assigned = True
+                            break
+                    if not assigned:
+                        clusters.append([tr])
+
+                primary_cluster = max(clusters, key=lambda cl: sum(int(r.get("w", 0)) * int(r.get("h", 0)) for r in cl))
 
                 title_unpad_box = (
                     min(int(r.get("y", 0)) for r in primary_cluster) + 4,

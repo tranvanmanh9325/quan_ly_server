@@ -4635,7 +4635,7 @@ class VideoEditorService:
                     best_critique_res = critique_res
                 else:
                     if (
-                        phi <= best_phi
+                        phi < best_phi
                         and words_cnt <= best_words
                         and (tex_ratio >= 0.68 or tex_ratio >= best_tex - 0.05)
                         and seam_ratio <= max(1.25, best_seam + 0.10)

@@ -3468,10 +3468,10 @@ class VideoEditorService:
                         break  # Tách biệt khỏi cụm tiêu đề chính
 
                 title_unpad_box = (
-                    min(int(r.get("y", 0)) for r in primary_cluster),
-                    max(int(r.get("y", 0)) + int(r.get("h", 0)) for r in primary_cluster),
-                    min(int(r.get("x", 0)) for r in primary_cluster),
-                    max(int(r.get("x", 0)) + int(r.get("w", 0)) for r in primary_cluster)
+                    min(int(r.get("y", 0)) for r in primary_cluster) + 4,
+                    max(int(r.get("y", 0)) + int(r.get("h", 0)) for r in primary_cluster) - 3,
+                    min(int(r.get("x", 0)) for r in primary_cluster) + 8,
+                    max(int(r.get("x", 0)) + int(r.get("w", 0)) for r in primary_cluster) - 6
                 )
 
                 pad_x = max(16, int(0.02 * w))
@@ -3643,8 +3643,8 @@ class VideoEditorService:
                 tight_hdr_box[ty1:ty2, tx1:tx2] = 255
                 k9_hdr = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
                 inner_hdr = (cv2.erode(tight_hdr_box, k9_hdr) > 0)
-                inner_hdr[808:, :] = False
-                inner_hdr[:778, :] = False
+                inner_hdr[ty2 - 3:, :] = False
+                inner_hdr[:ty1 + 2, :] = False
                 k11_hdr = cv2.getStructuringElement(cv2.MORPH_RECT, (11, 11))
                 k3_hdr = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
                 b_ref_hdr = (cv2.dilate(tight_hdr_box, k11_hdr) > 0) & (cv2.dilate(tight_hdr_box, k3_hdr) == 0)
@@ -3848,8 +3848,10 @@ class VideoEditorService:
                             ys_t, xs_t = np.where(t_mask > 0)
                             if len(ys_t) > 0:
                                 y_top_t, y_bot_t = int(ys_t.min()), int(ys_t.max())
-                                active_hdr_mask[:y_top_t + 3, :] = 0
-                                active_hdr_mask[y_bot_t - 2:, :] = 0
+                                border_band = np.zeros_like(active_hdr_mask, dtype=bool)
+                                border_band[:y_top_t + 3, :] = True
+                                border_band[y_bot_t - 2:, :] = True
+                                active_hdr_mask[border_band & (chroma_curr < 25)] = 0
                             f_act = cv2.GaussianBlur(active_hdr_mask.astype(np.float32) / 255.0, (3, 3), 0.8)[:, :, np.newaxis]
 
                             # Pre-blend unsharp trực tiếp trên aligned_hdr để bù suy hao warpAffine

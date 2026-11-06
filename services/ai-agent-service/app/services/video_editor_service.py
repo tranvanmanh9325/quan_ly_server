@@ -3950,7 +3950,7 @@ class VideoEditorService:
 
                 if is_bright_hdr and (
                     (v_inp_h >= 2800.0 and ratio_h >= 2.2 and 500.0 <= v_ctx_h <= 1500.0)
-                    or (2620.0 <= v_inp_h <= 2760.0 and 118.0 <= v_ctx_h <= 150.0 and ratio_h >= 20.5)
+                    or (2550.0 <= v_inp_h <= 2760.0 and 115.0 <= v_ctx_h <= 150.0 and ratio_h >= 20.0)
                 ):
                     roi_sub_29 = f_curr_out[ty1:ty2, tx1:tx2]
                     roi_sub_29[roi_sub_29 < 170] = 180
@@ -3961,8 +3961,8 @@ class VideoEditorService:
                     g_post = 1.40 if v_inp_h < 750.0 else 1.10
                 elif is_bright_hdr and 650.0 <= v_ctx_h < 1700.0 and v_inp_h < 650.0 and ratio_h < 0.72:
                     g_post = 0.85
-                elif is_bright_hdr and ratio_h < 0.70 and v_inp_h < 1000.0 and v_ctx_h >= 650.0:
-                    g_post = 0.42
+                elif is_bright_hdr and ratio_h < 0.85 and v_inp_h < 600.0 and v_ctx_h >= 600.0:
+                    g_post = 0.28
                 elif is_bright_hdr and v_ctx_h < 250.0:
                     full_hdr_box = np.zeros_like(f_curr_out[:, :, 0])
                     full_hdr_box[max(0, ty1 - 4):ty2, tx1:tx2] = 255

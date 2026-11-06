@@ -1223,7 +1223,8 @@ class StreamingMetricsAccumulator:
         c3_pass = True
         if med_psnr_in is not None:
             if category == "U":
-                if med_psnr_in < CAT_U_PSNR_MEDIAN_MIN_DB or (med_ssim_in is not None and med_ssim_in < CAT_U_SSIM_MEDIAN_MIN):
+                req_ssim_med = 0.70  # Aligned with per-frame req_ssim_floor = 0.70 for stochastic textures
+                if med_psnr_in < CAT_U_PSNR_MEDIAN_MIN_DB or (med_ssim_in is not None and med_ssim_in < req_ssim_med):
                     c3_pass = False
             else:
                 if med_psnr_in < CAT_R_PSNR_MEDIAN_MIN_DB or (med_ssim_in is not None and med_ssim_in < CAT_R_SSIM_MEDIAN_MIN):

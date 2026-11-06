@@ -3839,7 +3839,7 @@ class VideoEditorService:
                                 ref_c4 = max(e_ctx, 16.0)
                                 if e_inp > 1.05 * ref_c4:
                                     roi_curr_gray = cv2.cvtColor(f_curr_out[ys.min():ys.max()+1, xs.min():xs.max()+1], cv2.COLOR_BGR2GRAY)
-                                    is_bright_title = (float(np.mean(roi_curr_gray)) >= (180.0 if h_fr <= 1500 else 215.0)) if roi_curr_gray.size > 0 else False
+                                    is_bright_title = ((h_fr <= 1500 and w_fr < h_fr) or (float(np.mean(roi_curr_gray)) >= (160.0 if h_fr <= 1500 else 215.0))) if roi_curr_gray.size > 0 else False
                                     if not is_bright_title:
                                         if w_fr > h_fr:
                                             k_p4 = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 25))
@@ -3868,9 +3868,9 @@ class VideoEditorService:
                                         elif e_inp > 1.8 * ref_c4:
                                             b_w = 0.40
                                         elif e_inp > 1.15 * ref_c4:
-                                            b_w = 0.28
+                                            b_w = 0.38
                                         else:
-                                            b_w = 0.20
+                                            b_w = 0.30
                                         use_m = (m_curr_mask > 0)
                                         blended_f = np.clip(np.round((1.0 - b_w) * f_curr_out.astype(np.float32) + b_w * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)
                                         f_curr_out = np.where(use_m[:, :, np.newaxis], blended_f, f_curr_out)
@@ -4779,6 +4779,15 @@ class VideoEditorService:
         bottom_margin = int(strategy.get("bottom_margin_px", 6))
 
         ffmpeg_bin = self._find_ffmpeg_binary()
+        has_bottom_overlay = bool(target_regions and any(int(r.get("y", 0)) >= h // 2 for r in target_regions))
+        if h > 1500:
+            v_refine_opts = ["-preset", "fast", "-crf", "1", "-g", "1"]
+        elif has_bottom_overlay:
+            v_refine_opts = ["-preset", "fast", "-crf", "14", "-g", "30"]
+        elif tot_frames <= 300:
+            v_refine_opts = ["-preset", "fast", "-crf", "2", "-g", "1"]
+        else:
+            v_refine_opts = ["-preset", "fast", "-crf", "15", "-g", "30"]
         raw_cmd = [
             ffmpeg_bin, "-y",
             "-loglevel", "error", "-nostats",
@@ -4792,7 +4801,7 @@ class VideoEditorService:
             "-map", "0:v:0",
             "-map", "1:a?",
             "-c:v", "libx264",
-            *(["-preset", "fast", "-crf", "1", "-g", "1"] if (h > 1500) else (["-preset", "fast", "-crf", "14", "-g", "30"] if (w > h and (target_regions is not None and any(int(r.get("y", 0)) >= h // 2 for r in target_regions))) else (["-preset", "fast", "-crf", "2", "-g", "1"] if tot_frames <= 300 else ["-preset", "fast", "-crf", "15", "-g", "30"]))),
+            *v_refine_opts,
             "-pix_fmt", "yuv420p",
             "-c:a", "copy",
             "-movflags", "+faststart",
@@ -5239,16 +5248,11 @@ class VideoEditorService:
 
             # Determine best available H.264 video encoder (Pillar 5: CRF 14 Studio Grade Encoding, unconstrained bitrate)
             v_encoder = "libx264"
+            has_bottom_overlay = bool(target_regions and any(int(r.get("y", 0)) >= h // 2 for r in target_regions))
             if h > 1500:
                 v_opts = ["-preset", "fast", "-crf", "1", "-g", "1"]
-            elif w > h:
-                has_bottom_ticker = has_valid_title_roi and (hy1 >= h // 2)
-                if has_bottom_ticker:
-                    v_opts = ["-preset", "fast", "-crf", "14", "-g", "30"]
-                elif total_frames <= 300:
-                    v_opts = ["-preset", "fast", "-crf", "2", "-g", "1"]
-                else:
-                    v_opts = ["-preset", "fast", "-crf", "14", "-g", "30"]
+            elif has_bottom_overlay:
+                v_opts = ["-preset", "fast", "-crf", "14", "-g", "30"]
             elif total_frames <= 300:
                 v_opts = ["-preset", "fast", "-crf", "2", "-g", "1"]
             else:

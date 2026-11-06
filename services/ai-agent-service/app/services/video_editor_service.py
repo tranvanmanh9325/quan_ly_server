@@ -3613,29 +3613,6 @@ class VideoEditorService:
                                 blended_f = np.clip(np.round(0.88 * f_curr_out.astype(np.float32) + 0.12 * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)
                                 f_curr_out = np.where(inner_m[:, :, np.newaxis], blended_f, f_curr_out)
 
-            if not has_valid_title_roi and m_curr_mask is not None and np.count_nonzero(m_curr_mask) > 0:
-                inner_m_u = (cv2.erode(m_curr_mask, np.ones((5, 5), np.uint8)) > 0)
-                k3_s = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-                k15_s = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 15))
-                d3_s = cv2.dilate(m_curr_mask, k3_s)
-                d15_s = cv2.dilate(m_curr_mask, k15_s)
-                b_ref_s = (d15_s > 0) & (d3_s == 0)
-
-                if np.count_nonzero(inner_m_u) > 0 and np.count_nonzero(b_ref_s) > 0:
-                    gray_out = cv2.cvtColor(f_curr_out, cv2.COLOR_BGR2GRAY)
-                    lap_out = cv2.Laplacian(gray_out, cv2.CV_64F)
-                    var_inp_m = float(np.var(lap_out[m_curr_mask > 0]))
-                    var_ctx_m = float(np.var(lap_out[b_ref_s]))
-                    if var_ctx_m >= 15.0 and var_inp_m < 0.75 * var_ctx_m:
-                        blur_m = cv2.GaussianBlur(f_curr_out, (0, 0), 0.9)
-                        hf_m = f_curr_out.astype(np.float32) - blur_m.astype(np.float32)
-                        cand_m = f_curr_out
-                        for g_try in (0.6, 1.2, 1.8):
-                            cand_m = np.clip(np.round(f_curr_out.astype(np.float32) + g_try * hf_m), 0, 255).astype(np.uint8)
-                            lap_c = cv2.Laplacian(cv2.cvtColor(cand_m, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
-                            if float(np.var(lap_c[m_curr_mask > 0])) >= 0.85 * min(var_ctx_m, 2600.0):
-                                break
-                        f_curr_out = np.where(inner_m_u[:, :, np.newaxis], cand_m, f_curr_out)
 
             if title_unpad_box is not None:
                 ty1, ty2, tx1, tx2 = title_unpad_box

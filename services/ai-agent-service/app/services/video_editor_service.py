@@ -1394,7 +1394,9 @@ class VideoEditorService:
 
             s_res = np.sqrt(h**2 + w**2) / 1175.49
             is_doc_bright = (roi is not None and getattr(roi, "size", 0) > 0 and float(np.mean(cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY))) >= 195.0)
-            if is_doc_bright:
+            hsv_roi_stroke = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV) if (roi is not None and getattr(roi, "ndim", 0) == 3) else None
+            has_green_roi_stroke = (np.count_nonzero((hsv_roi_stroke[:, :, 0] >= 35) & (hsv_roi_stroke[:, :, 0] <= 85) & (hsv_roi_stroke[:, :, 1] >= 100)) > 200) if hsv_roi_stroke is not None else False
+            if is_doc_bright or ((max(roi.shape[:2]) >= 400 or w >= 600) and not has_green_roi_stroke):
                 safe_pad_x = max(2, int(round(4 * s_res)))
                 safe_pad_y = max(2, int(round(3 * s_res)))
             else:
@@ -1510,7 +1512,7 @@ class VideoEditorService:
             shadow_thresh = max(75, int(bg_lum - 25)) if bg_lum >= 75 else 75
         dark_pixels = (v_chan <= shadow_thresh).astype(np.uint8) * 255
         sat_limit = max(80, int(bg_sat * 0.75))
-        bright_thresh = max(200, min(230, int(bg_lum + 40))) if (is_high_texture_mesh and has_vivid_pixels) else max(145, int(bg_lum + 25))
+        bright_thresh = max(200, min(230, int(bg_lum + 40))) if is_high_texture_mesh else max(145, int(bg_lum + 25))
         bright_pixels = ((v_chan >= bright_thresh) & (s_chan <= sat_limit)).astype(np.uint8) * 255
         if bg_sat >= 45.0:
             bg_hue = float(np.median(h_chan[border_mask])) if border_pixels.size > 0 else float(np.median(h_chan))
@@ -1661,7 +1663,7 @@ class VideoEditorService:
         min_char_h = 2
         min_char_w = 2
         min_area = 2
-        max_char_h = max(4, int(h * 0.98)) if is_doc_bright else max(4, h)
+        max_char_h = max(4, h) if (is_high_texture_mesh and has_vivid_pixels) else max(4, int(h * 0.98))
 
         if is_high_texture_mesh:
             primary_mask = np.zeros_like(text_core)
@@ -1734,12 +1736,15 @@ class VideoEditorService:
         clean_core = VideoEditorService._fill_holes(clean_core)
 
         # 4. Character-Level Tight Stroke Dilation (Resolution-scaled)
-        if is_high_texture_mesh and has_vivid_pixels:
-            # On high-texture mesh with vivid text: avoid unconstrained gradient expansion
-            k3 = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-            prox_vivid = cv2.dilate(clean_core, k3)
-            dark_border = (v_chan <= 75) & (prox_vivid > 0)
-            stroke_mask = cv2.bitwise_or(clean_core, dark_border.astype(np.uint8) * 255)
+        if is_high_texture_mesh:
+            # On high-texture mesh: avoid unconstrained gradient expansion
+            if has_vivid_pixels:
+                k3 = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+                prox_vivid = cv2.dilate(clean_core, k3)
+                dark_border = (v_chan <= 75) & (prox_vivid > 0)
+                stroke_mask = cv2.bitwise_or(clean_core, dark_border.astype(np.uint8) * 255)
+            else:
+                stroke_mask = clean_core
         else:
             dist = cv2.distanceTransform(clean_core, cv2.DIST_L2, 5)
             core_pts = dist[clean_core > 0]
@@ -3840,11 +3845,9 @@ class VideoEditorService:
                                             k_p4 = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 25))
                                             dil_p4 = cv2.dilate(bbox_m, k_p4)
                                             alpha_p4 = cv2.GaussianBlur(dil_p4.astype(np.float32) / 255.0, (5, 5), 1.0)[:, :, np.newaxis]
-                                            if e_inp >= 35.0 and e_inp > 1.15 * ref_c4:
+                                            if e_inp >= 40.0 and e_inp > 1.15 * ref_c4:
                                                 b_w = 0.45
-                                            elif e_inp > 1.10 * ref_c4:
-                                                b_w = 0.42
-                                            elif e_inp > 1.05 * ref_c4:
+                                            elif e_inp > 1.15 * ref_c4:
                                                 b_w = 0.38
                                             else:
                                                 b_w = 0.30
@@ -3930,7 +3933,7 @@ class VideoEditorService:
                 tight_hdr_box[ty1:ty2, tx1:tx2] = 255
                 k9_hdr = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
                 inner_hdr = (cv2.erode(tight_hdr_box, k9_hdr) > 0)
-                inner_hdr[ty2 - 4:, :] = False
+                inner_hdr[ty2 - 3:, :] = False
                 inner_hdr[:ty1 + 2, :] = False
                 k11_hdr = cv2.getStructuringElement(cv2.MORPH_RECT, (11, 11))
                 k3_hdr = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))

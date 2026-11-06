@@ -3579,6 +3579,8 @@ class VideoEditorService:
                                         b_w = 0.35
                                     elif e_inp > 1.15 * ref_c4:
                                         b_w = 0.28
+                                    elif e_inp > 450.0:
+                                        b_w = 0.28
                                     else:
                                         b_w = 0.20
                                     blended_f = np.clip(np.round((1.0 - b_w) * f_curr_out.astype(np.float32) + b_w * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)
@@ -3817,8 +3819,12 @@ class VideoEditorService:
                             e5_t = cv2.erode(t_mask, cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5)))
                             raw_dil = cv2.dilate(raw_text_hit.astype(np.uint8) * 255, np.ones((3, 3), np.uint8))
                             active_hdr_mask = raw_dil if np.count_nonzero(e5_t) == 0 else cv2.bitwise_and(raw_dil, e5_t)
-                            active_hdr_mask[:3, :] = 0
-                            active_hdr_mask[-3:, :] = 0
+                            ys_t, xs_t = np.where(t_mask > 0)
+                            if len(ys_t) > 0:
+                                y_top_t = int(ys_t.min())
+                                y_bot_t = int(ys_t.max())
+                                active_hdr_mask[:y_top_t + 3, :] = 0
+                                active_hdr_mask[y_bot_t - 2:, :] = 0
                             f_act = cv2.GaussianBlur(active_hdr_mask.astype(np.float32) / 255.0, (3, 3), 0.8)[:, :, np.newaxis]
 
                             # Pre-blend unsharp trực tiếp trên aligned_hdr để bù suy hao warpAffine
@@ -4088,22 +4094,15 @@ class VideoEditorService:
                     v_inp_h = float(np.var(lap_out[tight_hdr_box > 0])) if np.count_nonzero(tight_hdr_box) > 0 else 0.0
                     v_ctx_h = float(np.var(lap_out[b_ref_hdr])) if np.count_nonzero(b_ref_hdr) > 0 else 0.0
                     ratio_h = v_inp_h / (v_ctx_h + 1e-6)
-                    if v_inp_h < 1450.0 and ratio_h < 0.70:
-                        g_use = 0.0
-                        if v_ctx_h >= 2400.0:
-                            g_use = 1.15 if v_inp_h < 900.0 else 0.95
-                        elif 2000.0 <= v_ctx_h < 2400.0:
-                            g_use = 0.40
-                        elif 750.0 <= v_ctx_h < 900.0:
-                            g_use = 0.55
-                        elif 650.0 <= v_ctx_h < 750.0:
-                            g_use = 0.45
+                    if v_inp_h < 1450.0 and ratio_h < 0.70 and v_ctx_h >= 650.0:
+                        g_use = min(1.35, max(0.60, 0.60 + 1.50 * (0.65 - ratio_h)))
+                        if 2000.0 <= v_ctx_h < 2400.0:
+                            g_use = min(g_use, 0.40)
 
-                        if g_use > 0.0:
-                            blur_o = cv2.GaussianBlur(out_frame, (0, 0), 1.0)
-                            hf_o = out_frame.astype(np.float32) - blur_o.astype(np.float32)
-                            sharp_o = np.clip(np.round(out_frame.astype(np.float32) + g_use * hf_o), 0, 255).astype(np.uint8)
-                            out_frame = np.where(inner_hdr[:, :, np.newaxis], sharp_o, out_frame)
+                        blur_o = cv2.GaussianBlur(out_frame, (0, 0), 1.0)
+                        hf_o = out_frame.astype(np.float32) - blur_o.astype(np.float32)
+                        sharp_o = np.clip(np.round(out_frame.astype(np.float32) + g_use * hf_o), 0, 255).astype(np.uint8)
+                        out_frame = np.where(inner_hdr[:, :, np.newaxis], sharp_o, out_frame)
 
             is_aligned_frame = (frame_idx in cleaned_keyframes) or used_align or used_sub_align
             # Thêm vào buffer 3-frame cho Temporal Bilateral Filter kèm frame gốc và cờ căn chỉnh

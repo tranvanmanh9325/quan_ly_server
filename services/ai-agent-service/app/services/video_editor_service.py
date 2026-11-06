@@ -2541,12 +2541,16 @@ class VideoEditorService:
                     ref_f = int(s.get("ref_frame", s.get("frame_start", 0)))
                     cur_sx = int(round(s.get("x", 0) + vx * (frame_idx - ref_f)))
                     cur_sy = int(round(s.get("y", 0) + vy * (frame_idx - ref_f)))
+                    cur_sx2 = int(round(s.get("x", 0) + vx * (frame_idx - ref_f) + s.get("w", 0)))
+                    cur_sy2 = int(round(s.get("y", 0) + vy * (frame_idx - ref_f) + s.get("h", 0)))
                     pad_sx = 16 if s.get("motion_type") == "scene" else 35
                     pad_sy = 12 if s.get("motion_type") == "scene" else 25
                     sx = max(0, cur_sx - pad_sx)
                     sy = max(0, cur_sy - pad_sy)
-                    sw = int(s.get("w", 0)) + 2 * pad_sx
-                    sh = int(s.get("h", 0)) + 2 * pad_sy
+                    sx2_pad = min(w, cur_sx2 + pad_sx)
+                    sy2_pad = min(h, cur_sy2 + pad_sy)
+                    sw = max(1, sx2_pad - sx)
+                    sh = max(1, sy2_pad - sy)
                     active_sub_bounding_boxes.append((sx, sy, sw, sh))
             else:
                 has_sub_in_scope = True
@@ -2578,6 +2582,52 @@ class VideoEditorService:
 
             sub_mask_strip = np.zeros((strip_h, strip_w), dtype=np.uint8)
             boxes_all = []
+
+            # If all active subtitles are physical scene text, extract strokes directly from the moving scene text bounding box
+            has_overlay_subs = any(s.get("motion_type") != "scene" for s in active_subs) if active_subs else True
+            if not has_overlay_subs:
+                for s in active_subs:
+                    vx_s = float(s.get("vx", 0.0))
+                    vy_s = float(s.get("vy", 0.0))
+                    ref_fs = int(s.get("ref_frame", s.get("frame_start", 0)))
+                    cur_x1 = float(s.get("x", 0)) + vx_s * (frame_idx - ref_fs)
+                    cur_x2 = cur_x1 + float(s.get("w", 0))
+                    cur_y1 = float(s.get("y", 0)) + vy_s * (frame_idx - ref_fs)
+                    cur_y2 = cur_y1 + float(s.get("h", 0))
+                    sx = max(0, int(round(cur_x1)))
+                    sy = max(0, int(round(cur_y1)))
+                    sx2_b = min(w, int(round(cur_x2)))
+                    sy2_b = min(h, int(round(cur_y2)))
+                    rel_y1 = max(0, sy - sy1)
+                    rel_y2 = min(strip_h, sy2_b - sy1)
+                    rel_x1 = max(0, sx - sx1)
+                    rel_x2 = min(strip_w, sx2_b - sx1)
+                    if rel_y2 > rel_y1 and rel_x2 > rel_x1:
+                        roi = strip[rel_y1:rel_y2, rel_x1:rel_x2]
+                        dark_s = (np.max(roi, axis=2) <= 75)
+                        if np.count_nonzero(dark_s) > 10:
+                            k5_s = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+                            t_mask = cv2.dilate(dark_s.astype(np.uint8) * 255, k5_s)
+                            k3 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+                            t_mask_dil = cv2.dilate(t_mask, k3)
+                            sub_mask_strip[rel_y1:rel_y2, rel_x1:rel_x2] = np.maximum(
+                                sub_mask_strip[rel_y1:rel_y2, rel_x1:rel_x2], t_mask_dil
+                            )
+                        boxes_all.append((rel_x1, rel_y1, rel_x2 - rel_x1, rel_y2 - rel_y1))
+                if np.count_nonzero(sub_mask_strip) > 0 and boxes_all:
+                    full_mask[sy1:sy2, sx1:sx2] = np.maximum(full_mask[sy1:sy2, sx1:sx2], sub_mask_strip)
+                    sub_info = {
+                        "name": "dynamic_stroke_sub",
+                        "y1": max(0, sy1 + min(b[1] for b in boxes_all)),
+                        "y2": min(h, sy1 + max(b[1] + b[3] for b in boxes_all)),
+                        "x1": max(0, sx1 + min(b[0] for b in boxes_all)),
+                        "x2": min(w, sx1 + max(b[0] + b[2] for b in boxes_all)),
+                    }
+                else:
+                    sub_info = None
+                if full_mask is not None:
+                    full_mask = np.where(full_mask > 0, 255, 0).astype(np.uint8)
+                return full_mask, sub_info
 
             # Dynamic Table Structure Extraction
             is_white_doc = (float(np.mean(gray)) >= 145.0 and float(np.mean(hsv[:, :, 1])) <= 65.0)

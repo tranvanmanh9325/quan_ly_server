@@ -495,7 +495,7 @@ class TemporalTextDetector:
                     if mean_iou >= 0.45:
                         is_title = True
 
-            if duration_ratio < 0.65 and seg["w"] < 80 and seg["h"] < 30:
+            if seg["w"] < 100 and seg["h"] < 35:
                 continue
 
             final_results.append({

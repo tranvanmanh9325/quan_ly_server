@@ -3704,12 +3704,20 @@ class VideoEditorService:
 
                 primary_cluster = max(clusters, key=lambda cl: sum(int(r.get("w", 0)) * int(r.get("h", 0)) for r in cl))
 
-                title_unpad_box = (
-                    min(int(r.get("y", 0)) for r in primary_cluster) + 4,
-                    max(int(r.get("y", 0)) + int(r.get("h", 0)) for r in primary_cluster) - 3,
-                    min(int(r.get("x", 0)) for r in primary_cluster) + 8,
-                    max(int(r.get("x", 0)) + int(r.get("w", 0)) for r in primary_cluster) - 6
-                )
+                if w < h:
+                    title_unpad_box = (
+                        min(int(r.get("y", 0)) for r in primary_cluster) + 4,
+                        max(int(r.get("y", 0)) + int(r.get("h", 0)) for r in primary_cluster) - 4,
+                        min(int(r.get("x", 0)) for r in primary_cluster) + 4,
+                        max(int(r.get("x", 0)) + int(r.get("w", 0)) for r in primary_cluster) - 4
+                    )
+                else:
+                    title_unpad_box = (
+                        min(int(r.get("y", 0)) for r in primary_cluster) + 4,
+                        max(int(r.get("y", 0)) + int(r.get("h", 0)) for r in primary_cluster) - 3,
+                        min(int(r.get("x", 0)) for r in primary_cluster) + 8,
+                        max(int(r.get("x", 0)) + int(r.get("w", 0)) for r in primary_cluster) - 6
+                    )
 
                 pad_x = max(16, int(0.02 * w))
                 pad_y = max(16, int(0.02 * h))
@@ -3879,7 +3887,7 @@ class VideoEditorService:
 
                                     diff_sq_after = (f_curr_out.astype(np.float32) - w_prev.astype(np.float32)) ** 2
                                     e_inp_after = float(np.mean(diff_sq_after[bbox_m > 0])) if np.count_nonzero(bbox_m) > 0 else 0.0
-                                    if e_inp_after > 1.18 * max(e_ctx, 250.0) and e_ctx < 200.0:
+                                    if e_inp_after > 1.15 * ref_c4 and e_ctx < 200.0 and e_inp_after >= 140.0:
                                         f_curr_out = np.where(bbox_m[:, :, np.newaxis] > 0, np.clip(np.round(0.80 * f_curr_out.astype(np.float32) + 0.20 * w_prev.astype(np.float32)), 0, 255).astype(np.uint8), f_curr_out)
                         else:
                             k35_c = cv2.getStructuringElement(cv2.MORPH_RECT, (35, 35))
@@ -3935,13 +3943,13 @@ class VideoEditorService:
                 v_ctx_h = float(np.var(lap_out[b_ref_hdr])) if np.count_nonzero(b_ref_hdr) > 0 else 0.0
                 ratio_h = v_inp_h / (v_ctx_h + 1e-6)
 
-                if is_bright_hdr and v_inp_h > 2800.0 and ratio_h > 2.8:
+                if is_bright_hdr and v_inp_h > 2400.0 and (ratio_h > 2.8 or np.count_nonzero(f_curr_out[ty1:ty2, tx1:tx2] < 100) >= 80):
                     roi_sub_29 = f_curr_out[ty1:ty2, tx1:tx2]
                     roi_sub_29[roi_sub_29 < 170] = 180
                     f_curr_out[ty1:ty2, tx1:tx2] = roi_sub_29
 
                 g_post = 0.0
-                if is_bright_hdr and v_ctx_h >= 1700.0 and v_inp_h < 1350.0 and ratio_h < 0.55:
+                if is_bright_hdr and v_ctx_h >= 1700.0 and v_inp_h < 1100.0 and ratio_h < 0.55:
                     g_post = 1.40 if v_inp_h < 750.0 else 1.10
                 elif is_bright_hdr and 650.0 <= v_ctx_h < 1700.0 and v_inp_h < 650.0 and ratio_h < 0.72:
                     g_post = 0.85

@@ -3640,11 +3640,11 @@ class VideoEditorService:
             if title_unpad_box is not None:
                 ty1, ty2, tx1, tx2 = title_unpad_box
                 tight_hdr_box = np.zeros_like(f_curr_out[:, :, 0])
-                tight_hdr_box[max(0, ty1 - 4):ty2, tx1:tx2] = 255
+                tight_hdr_box[ty1:ty2, tx1:tx2] = 255
                 k9_hdr = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
                 inner_hdr = (cv2.erode(tight_hdr_box, k9_hdr) > 0)
                 inner_hdr[ty2 - 3:, :] = False
-                inner_hdr[:ty1 + 4, :] = False
+                inner_hdr[:ty1 + 2, :] = False
                 k11_hdr = cv2.getStructuringElement(cv2.MORPH_RECT, (11, 11))
                 k3_hdr = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
                 b_ref_hdr = (cv2.dilate(tight_hdr_box, k11_hdr) > 0) & (cv2.dilate(tight_hdr_box, k3_hdr) == 0)
@@ -3654,11 +3654,23 @@ class VideoEditorService:
                 ratio_h = v_inp_h / (v_ctx_h + 1e-6)
                 g_post = 0.0
                 if v_ctx_h >= 1700.0 and v_inp_h < 1300.0 and 0.20 <= ratio_h < 0.60:
-                    g_post = 1.30 if v_inp_h < 750.0 else 0.85
+                    g_post = 1.40 if v_inp_h < 750.0 else 0.85
                 elif 650.0 <= v_ctx_h < 1700.0 and v_inp_h < 650.0 and ratio_h < 0.72:
-                    g_post = 0.95
+                    g_post = 0.85
                 elif 650.0 <= v_ctx_h < 1700.0 and ratio_h < 0.70 and v_inp_h < 1000.0:
                     g_post = 0.12
+                elif v_ctx_h < 250.0:
+                    full_hdr_box = np.zeros_like(f_curr_out[:, :, 0])
+                    full_hdr_box[max(0, ty1 - 4):ty2, tx1:tx2] = 255
+                    b_ref_full = (cv2.dilate(full_hdr_box, k11_hdr) > 0) & (cv2.dilate(full_hdr_box, k3_hdr) == 0)
+                    v_inp_full = float(np.var(lap_out[full_hdr_box > 0])) if np.count_nonzero(full_hdr_box) > 0 else 0.0
+                    v_ctx_full = float(np.var(lap_out[b_ref_full])) if np.count_nonzero(b_ref_full) > 0 else 0.0
+                    ratio_full = v_inp_full / (v_ctx_full + 1e-6)
+                    if v_ctx_full >= 2000.0 and v_inp_full < 1300.0 and 0.20 <= ratio_full < 0.60:
+                        g_post = 1.30 if v_inp_full < 750.0 else 0.85
+                        inner_hdr = (cv2.erode(full_hdr_box, k9_hdr) > 0)
+                        inner_hdr[ty2 - 3:, :] = False
+                        inner_hdr[:ty1 + 4, :] = False
                 if g_post > 0.0:
                     blur_o = cv2.GaussianBlur(f_curr_out, (0, 0), 1.0)
                     hf_o = f_curr_out.astype(np.float32) - blur_o.astype(np.float32)

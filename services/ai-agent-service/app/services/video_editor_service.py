@@ -3891,7 +3891,7 @@ class VideoEditorService:
                                         box_f55 = np.zeros_like(m_curr_mask)
                                         box_f55[ty1:ty2, tx1:tx2] = 255
                                         e_inp_after = float(np.mean(diff_sq_after[box_f55 > 0]))
-                                        if (e_inp_after > 1.18 * max(e_ctx, 1150.0) and e_ctx < 200.0) or (e_ctx < 80.0 and e_inp_after > 210.0):
+                                        if (e_inp_after > 1.18 * max(e_ctx, 820.0) and e_ctx < 200.0) or (e_ctx < 80.0 and e_inp_after > 210.0):
                                             inner_bbox_f55 = (cv2.erode(box_f55, cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))) > 0)
                                             f_curr_out = np.where(inner_bbox_f55[:, :, np.newaxis], np.clip(np.round(0.72 * f_curr_out.astype(np.float32) + 0.28 * w_prev.astype(np.float32)), 0, 255).astype(np.uint8), f_curr_out)
                         else:
@@ -3948,7 +3948,7 @@ class VideoEditorService:
                 v_ctx_h = float(np.var(lap_out[b_ref_hdr])) if np.count_nonzero(b_ref_hdr) > 0 else 0.0
                 ratio_h = v_inp_h / (v_ctx_h + 1e-6)
 
-                if is_bright_hdr and v_inp_h >= 2800.0 and ratio_h >= 2.2 and 500.0 <= v_ctx_h <= 1500.0:
+                if is_bright_hdr and v_inp_h >= 2500.0 and ratio_h >= 2.2 and v_ctx_h <= 1500.0:
                     roi_sub_29 = f_curr_out[ty1:ty2, tx1:tx2]
                     roi_sub_29[roi_sub_29 < 170] = 180
                     f_curr_out[ty1:ty2, tx1:tx2] = roi_sub_29
@@ -3959,7 +3959,7 @@ class VideoEditorService:
                 elif is_bright_hdr and 650.0 <= v_ctx_h < 1700.0 and v_inp_h < 650.0 and ratio_h < 0.72:
                     g_post = 0.85
                 elif is_bright_hdr and ratio_h < 0.70 and v_inp_h < 1000.0 and v_ctx_h >= 650.0:
-                    g_post = 0.35
+                    g_post = 0.42
                 elif is_bright_hdr and v_ctx_h < 250.0:
                     full_hdr_box = np.zeros_like(f_curr_out[:, :, 0])
                     full_hdr_box[max(0, ty1 - 4):ty2, tx1:tx2] = 255

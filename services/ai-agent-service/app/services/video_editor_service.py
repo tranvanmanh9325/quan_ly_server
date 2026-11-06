@@ -2167,7 +2167,7 @@ class VideoEditorService:
                     diff = float(np.mean(cv2.absdiff(prev_gray, gray)))
                     bhat = float(cv2.compareHist(prev_hist, hist, cv2.HISTCMP_BHATTACHARYYA))
                     # Shot cut thật: Chuyển dịch phân bố màu rõ rệt kết hợp thay đổi độ chói lớn hoặc diff cực lớn (>= 60)
-                    if (bhat > 0.40 and diff > 32.0) or (diff >= 60.0):
+                    if (bhat > 0.40 and diff > 15.0) or (diff >= 60.0):
                         if not cuts or (f_idx - cuts[-1] >= min_shot_gap):
                             # Kiểm tra loại trừ camera trôi tịnh tiến đều
                             s, resp = cv2.phaseCorrelate(np.float32(prev_gray), np.float32(gray))
@@ -3176,7 +3176,7 @@ class VideoEditorService:
                         )
                         unocc = (remaining_mask > 0) & (warped_m == 0)
                         unocc_ratio = float(np.count_nonzero(unocc)) / max(1.0, float(np.count_nonzero(remaining_mask)))
-                        if unocc_ratio >= 0.25:
+                        if unocc_ratio >= 0.05:
                             bg_valid = (orig_mask_dil == 0) & (warped_m == 0)
                             if np.count_nonzero(bg_valid) > 50:
                                 abs_diff_bg = cv2.absdiff(frame, warped_ref)[bg_valid]

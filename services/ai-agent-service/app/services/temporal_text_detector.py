@@ -330,9 +330,13 @@ class TemporalTextDetector:
             proc_bgr_f = proc_frame.astype(np.float32)
 
             # Spatial morphological gradient (combining luminance and color saturation gradients)
-            chroma = np.max(proc_frame, axis=2) - np.min(proc_frame, axis=2)
-            grad_chroma = cv2.morphologyEx(chroma, cv2.MORPH_GRADIENT, morph_k)
-            grad = np.maximum(cv2.morphologyEx(proc_gray, cv2.MORPH_GRADIENT, morph_k), grad_chroma)
+            grad_gray = cv2.morphologyEx(proc_gray, cv2.MORPH_GRADIENT, morph_k)
+            if orig_w >= 1800:
+                chroma = np.max(proc_frame, axis=2) - np.min(proc_frame, axis=2)
+                grad_chroma = cv2.morphologyEx(chroma, cv2.MORPH_GRADIENT, morph_k)
+                grad = np.maximum(grad_gray, grad_chroma)
+            else:
+                grad = grad_gray
             edge_bin = (grad >= self.gradient_mag_thresh).astype(np.float32)
 
             # O(1) sliding window accumulation

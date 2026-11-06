@@ -3160,7 +3160,7 @@ class VideoEditorService:
                             t_m = VideoEditorService._fill_holes(t_m)
                             S_res = np.sqrt(h ** 2 + w ** 2) / np.sqrt(1024 ** 2 + 576 ** 2)
                             is_bright_t = (float(np.median(frame[thy1:thy2, thx1:thx2])) >= 215.0) if frame is not None else False
-                            k_hdr_sz = 3 if is_bright_t else max(3, int(round(5 * S_res)) | 1)
+                            k_hdr_sz = 3
                             dil_t = cv2.dilate(t_m, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k_hdr_sz, k_hdr_sz)))
                             dil_t = VideoEditorService._fill_holes(dil_t)
                             processed[thy1:thy2, thx1:thx2] = np.maximum(processed[thy1:thy2, thx1:thx2], dil_t)
@@ -3274,11 +3274,7 @@ class VideoEditorService:
                             t_m = remaining_mask[thy1:thy2, thx1:thx2]
                             if np.count_nonzero(t_m) > 0:
                                 t_m = VideoEditorService._fill_holes(t_m)
-                                S_res = np.sqrt(frame_h ** 2 + frame_w ** 2) / np.sqrt(1024 ** 2 + 576 ** 2)
-                                k_hdr_sz = max(3, int(round(5 * S_res)) | 1)
-                                dil_m = cv2.dilate(t_m, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k_hdr_sz, k_hdr_sz)))
-                                dil_m = VideoEditorService._fill_holes(dil_m)
-                                dil_m = cv2.bitwise_and(dil_m, cv2.bitwise_not(applied_kf_mask[thy1:thy2, thx1:thx2]))
+                                dil_m = cv2.bitwise_and(t_m, cv2.bitwise_not(applied_kf_mask[thy1:thy2, thx1:thx2]))
 
                                 if np.count_nonzero(dil_m) > 0:
                                     from app.services.classical_fallback_manager import get_classical_fallback_manager
@@ -3582,8 +3578,9 @@ class VideoEditorService:
                 inner_core_t = (cv2.erode(t_mask, np.ones((5, 5), np.uint8)) > 0).astype(np.float32)[:, :, np.newaxis]
                 f_hdr = np.maximum(f_hdr, inner_core_t)
             else:
-                m_blend = cv2.dilate(t_mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k_hdr_sz, k_hdr_sz)))
-                f_hdr = cv2.GaussianBlur(m_blend.astype(np.float32) / 255.0, (9, 9), 2.5)[:, :, np.newaxis]
+                k3_hdr_sz = 3
+                m_blend = cv2.dilate(t_mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k3_hdr_sz, k3_hdr_sz)))
+                f_hdr = cv2.GaussianBlur(m_blend.astype(np.float32) / 255.0, (5, 5), 1.2)[:, :, np.newaxis]
                 f_hdr = np.maximum(f_hdr, (t_mask > 0).astype(np.float32)[:, :, np.newaxis])
             bg_m = (m_blend == 0)
             return (t_mask, m_blend, bg_m, f_hdr)

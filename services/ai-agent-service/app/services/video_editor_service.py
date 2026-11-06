@@ -3720,6 +3720,7 @@ class VideoEditorService:
                 f_hdr = np.maximum(f_hdr, (t_mask > 0).astype(np.float32)[:, :, np.newaxis])
             elif is_bright_roi:
                 m_blend = t_mask.copy()
+                f_hdr = cv2.GaussianBlur(m_blend.astype(np.float32) / 255.0, (5, 5), 1.2)[:, :, np.newaxis]
                 f_hdr = np.maximum(f_hdr, (t_mask > 0).astype(np.float32)[:, :, np.newaxis])
             else:
                 k3_hdr_sz = 3

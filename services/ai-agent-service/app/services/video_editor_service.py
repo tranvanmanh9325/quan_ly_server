@@ -1394,7 +1394,7 @@ class VideoEditorService:
 
             s_res = np.sqrt(h**2 + w**2) / 1175.49
             is_doc_bright = (roi is not None and getattr(roi, "size", 0) > 0 and float(np.mean(cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY))) >= 195.0)
-            if is_doc_bright or max(roi.shape[:2]) >= 400 or w >= 600:
+            if is_doc_bright:
                 safe_pad_x = max(2, int(round(4 * s_res)))
                 safe_pad_y = max(2, int(round(3 * s_res)))
             else:
@@ -2432,7 +2432,8 @@ class VideoEditorService:
                     and max(0, r.get("frame_start", 0) - 1) <= frame_idx <= r.get("frame_end", 0) + 1
                 ]
             is_doc_bright = (frame_img is not None and getattr(frame_img, "size", 0) > 0 and float(np.mean(cv2.cvtColor(frame_img, cv2.COLOR_BGR2GRAY))) >= 195.0) if frame_img is not None else False
-            if is_doc_bright or max(w, h) >= 1800:
+            is_unmerged_title = is_doc_bright or (max(w, h) >= 1800 and (len(title_regions) > 0 and all(int(r.get("y", 0)) >= h // 2 for r in title_regions)))
+            if is_unmerged_title:
                 merged_title_regions = title_regions
             else:
                 # Gộp các vùng tiêu đề liền kề trên cùng dòng ngang để không bỏ sót khoảng cách/ký tự gạch nối
@@ -2474,7 +2475,7 @@ class VideoEditorService:
                 ty = max(0, int(tr.get("y", 0)))
                 tw = max(1, int(tr.get("w", 0)))
                 th = max(1, int(tr.get("h", 0)))
-                pad_t = 0 if (is_doc_bright or max(w, h) >= 1800) else 6
+                pad_t = 0 if is_unmerged_title else 6
                 tx_pad = max(0, tx - pad_t)
                 ty_pad = max(0, ty - pad_t)
                 tx2_pad = min(w, tx + tw + pad_t)
@@ -3745,7 +3746,7 @@ class VideoEditorService:
             t_mask = m_f[hy1:hy2, hx1:hx2] if m_f is not None else np.zeros((roi_h, roi_w), dtype=np.uint8)
             t_mask = VideoEditorService._fill_holes(t_mask)
             roi_ref = ref_frame[hy1:hy2, hx1:hx2] if ref_frame is not None else None
-            is_bright_roi = (float(np.mean(cv2.cvtColor(roi_ref, cv2.COLOR_BGR2GRAY))) >= (160.0 if w > h else 215.0)) if (roi_ref is not None and roi_ref.size > 0) else False
+            is_bright_roi = (float(np.mean(cv2.cvtColor(roi_ref, cv2.COLOR_BGR2GRAY))) >= (160.0 if h <= 1500 else 215.0)) if (roi_ref is not None and roi_ref.size > 0) else False
             roi_ref_g = cv2.cvtColor(roi_ref, cv2.COLOR_BGR2GRAY) if (roi_ref is not None and roi_ref.ndim == 3) else roi_ref
             lap_var_hdr = float(np.var(cv2.Laplacian(roi_ref_g, cv2.CV_64F)[t_mask == 0])) if (roi_ref_g is not None and np.count_nonzero(t_mask == 0) > 20) else 0.0
             hsv_hdr = cv2.cvtColor(roi_ref, cv2.COLOR_BGR2HSV) if (roi_ref is not None and roi_ref.ndim == 3) else None
@@ -3837,15 +3838,17 @@ class VideoEditorService:
                                 ref_c4 = max(e_ctx, 16.0)
                                 if e_inp > 1.05 * ref_c4:
                                     roi_curr_gray = cv2.cvtColor(f_curr_out[ys.min():ys.max()+1, xs.min():xs.max()+1], cv2.COLOR_BGR2GRAY)
-                                    is_bright_title = (float(np.mean(roi_curr_gray)) >= 215.0) if roi_curr_gray.size > 0 else False
+                                    is_bright_title = (float(np.mean(roi_curr_gray)) >= (160.0 if h_fr <= 1500 else 215.0)) if roi_curr_gray.size > 0 else False
                                     if not is_bright_title:
                                         if w_fr > h_fr:
                                             k_p4 = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 25))
                                             dil_p4 = cv2.dilate(bbox_m, k_p4)
                                             alpha_p4 = cv2.GaussianBlur(dil_p4.astype(np.float32) / 255.0, (5, 5), 1.0)[:, :, np.newaxis]
-                                            if e_inp >= 40.0 and e_inp > 1.15 * ref_c4:
+                                            if e_inp >= 35.0 and e_inp > 1.15 * ref_c4:
                                                 b_w = 0.45
-                                            elif e_inp > 1.15 * ref_c4:
+                                            elif e_inp > 1.10 * ref_c4:
+                                                b_w = 0.42
+                                            elif e_inp > 1.05 * ref_c4:
                                                 b_w = 0.38
                                             else:
                                                 b_w = 0.30
@@ -3926,12 +3929,12 @@ class VideoEditorService:
             if title_unpad_box is not None:
                 ty1, ty2, tx1, tx2 = title_unpad_box
                 roi_hdr_gray = cv2.cvtColor(f_curr_out[ty1:ty2, tx1:tx2], cv2.COLOR_BGR2GRAY)
-                is_bright_hdr = (float(np.mean(roi_hdr_gray)) >= (160.0 if w_fr > h_fr else 215.0)) if roi_hdr_gray.size > 0 else False
+                is_bright_hdr = (float(np.mean(roi_hdr_gray)) >= (160.0 if h_fr <= 1500 else 215.0)) if roi_hdr_gray.size > 0 else False
                 tight_hdr_box = np.zeros_like(f_curr_out[:, :, 0])
                 tight_hdr_box[ty1:ty2, tx1:tx2] = 255
                 k9_hdr = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
                 inner_hdr = (cv2.erode(tight_hdr_box, k9_hdr) > 0)
-                inner_hdr[ty2 - 3:, :] = False
+                inner_hdr[ty2 - 4:, :] = False
                 inner_hdr[:ty1 + 2, :] = False
                 k11_hdr = cv2.getStructuringElement(cv2.MORPH_RECT, (11, 11))
                 k3_hdr = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
@@ -4790,7 +4793,7 @@ class VideoEditorService:
             "-map", "0:v:0",
             "-map", "1:a?",
             "-c:v", "libx264",
-            *(["-preset", "fast", "-crf", "1", "-g", "1"] if (h > 1500) else (["-preset", "fast", "-crf", "14", "-g", "30"] if (w > h) else (["-preset", "fast", "-crf", "2", "-g", "1"] if tot_frames <= 300 else ["-preset", "fast", "-crf", "15", "-g", "30"]))),
+            *(["-preset", "fast", "-crf", "1", "-g", "1"] if (h > 1500) else (["-preset", "fast", "-crf", "14", "-g", "30"] if (w > h and (target_regions is not None and any(int(r.get("y", 0)) >= h // 2 for r in target_regions))) else (["-preset", "fast", "-crf", "2", "-g", "1"] if tot_frames <= 300 else ["-preset", "fast", "-crf", "15", "-g", "30"]))),
             "-pix_fmt", "yuv420p",
             "-c:a", "copy",
             "-movflags", "+faststart",
@@ -5240,7 +5243,13 @@ class VideoEditorService:
             if h > 1500:
                 v_opts = ["-preset", "fast", "-crf", "1", "-g", "1"]
             elif w > h:
-                v_opts = ["-preset", "fast", "-crf", "14", "-g", "30"]
+                has_bottom_ticker = has_valid_title_roi and (hy1 >= h // 2)
+                if has_bottom_ticker:
+                    v_opts = ["-preset", "fast", "-crf", "14", "-g", "30"]
+                elif total_frames <= 300:
+                    v_opts = ["-preset", "fast", "-crf", "2", "-g", "1"]
+                else:
+                    v_opts = ["-preset", "fast", "-crf", "14", "-g", "30"]
             elif total_frames <= 300:
                 v_opts = ["-preset", "fast", "-crf", "2", "-g", "1"]
             else:

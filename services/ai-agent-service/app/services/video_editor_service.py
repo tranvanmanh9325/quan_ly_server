@@ -2300,6 +2300,20 @@ class VideoEditorService:
 
         # --- Cấp 2 (Tier C2 Classical): ClassicalFallbackManager Guided Filter Structure-Texture Decomposition ---
         try:
+            roi_g = cv2.cvtColor(roi_img, cv2.COLOR_BGR2GRAY) if roi_img.ndim == 3 else roi_img
+            unmasked_px = (roi_mask == 0)
+            if np.count_nonzero(unmasked_px) > 20:
+                lap_val = float(np.var(cv2.Laplacian(roi_g, cv2.CV_64F)[unmasked_px]))
+                if lap_val >= 800.0:
+                    res_telea = cv2.inpaint(roi_img, roi_mask, 3, cv2.INPAINT_TELEA)
+                    if res_telea is not None and res_telea.shape == roi_img.shape:
+                        if cache_key and cache_store is not None:
+                            cache_store[cache_key] = res_telea.copy()
+                        return res_telea
+        except Exception as exc:
+            logger.debug("[VideoEditorService] High-texture Telea check error: %s", exc)
+
+        try:
             from app.services.classical_fallback_manager import get_classical_fallback_manager
             classical_mgr = get_classical_fallback_manager()
             res_c2 = classical_mgr.reconstruct_roi_guided_filter(roi_img, roi_mask)
@@ -2441,8 +2455,10 @@ class VideoEditorService:
                         tr_padded["h"] = ty2_pad - ty_pad
                         t_mask = self._generate_text_stroke_mask(t_roi, lines=tr.get("lines"), region_meta=tr_padded)
                         if t_mask is not None and t_mask.shape == (ty2_pad - ty_pad, tx2_pad - tx_pad) and np.count_nonzero(t_mask) > 10:
-                            k3_title = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-                            t_mask_dil = cv2.dilate(t_mask, k3_title)
+                            t_gray = cv2.cvtColor(t_roi, cv2.COLOR_BGR2GRAY) if t_roi.ndim == 3 else t_roi
+                            lap_var_t = float(np.var(cv2.Laplacian(t_gray, cv2.CV_64F)[t_mask == 0])) if np.count_nonzero(t_mask == 0) > 20 else 0.0
+                            is_mesh_bg = (lap_var_t >= 800.0)
+                            t_mask_dil = t_mask if is_mesh_bg else cv2.dilate(t_mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)))
                             full_mask[ty_pad:ty2_pad, tx_pad:tx2_pad] = np.maximum(full_mask[ty_pad:ty2_pad, tx_pad:tx2_pad], t_mask_dil)
                         else:
                             gray_t = cv2.cvtColor(t_roi, cv2.COLOR_BGR2GRAY)
@@ -3158,10 +3174,10 @@ class VideoEditorService:
                         t_m = raw_m[thy1:thy2, thx1:thx2]
                         if np.count_nonzero(t_m) > 0:
                             t_m = VideoEditorService._fill_holes(t_m)
-                            S_res = np.sqrt(h ** 2 + w ** 2) / np.sqrt(1024 ** 2 + 576 ** 2)
-                            is_bright_t = (float(np.median(frame[thy1:thy2, thx1:thx2])) >= 215.0) if frame is not None else False
-                            k_hdr_sz = 3
-                            dil_t = cv2.dilate(t_m, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k_hdr_sz, k_hdr_sz)))
+                            t_gray_kf = cv2.cvtColor(frame[thy1:thy2, thx1:thx2], cv2.COLOR_BGR2GRAY) if frame is not None else None
+                            lap_var_kf = float(np.var(cv2.Laplacian(t_gray_kf, cv2.CV_64F)[t_m == 0])) if (t_gray_kf is not None and np.count_nonzero(t_m == 0) > 20) else 0.0
+                            is_mesh_kf = (lap_var_kf >= 800.0)
+                            dil_t = t_m if is_mesh_kf else cv2.dilate(t_m, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)))
                             dil_t = VideoEditorService._fill_holes(dil_t)
                             processed[thy1:thy2, thx1:thx2] = np.maximum(processed[thy1:thy2, thx1:thx2], dil_t)
 
@@ -3277,17 +3293,23 @@ class VideoEditorService:
                                 dil_m = cv2.bitwise_and(t_m, cv2.bitwise_not(applied_kf_mask[thy1:thy2, thx1:thx2]))
 
                                 if np.count_nonzero(dil_m) > 0:
-                                    from app.services.classical_fallback_manager import get_classical_fallback_manager
-                                    classical_mgr = get_classical_fallback_manager()
-                                    clean_t = classical_mgr.reconstruct_roi_guided_filter(
-                                        t_roi,
-                                        dil_m,
-                                        full_frame=out_f,
-                                        roi_bbox=(thy1, thy2, thx1, thx2),
-                                        full_mask=remaining_mask,
-                                    )
-                                    if clean_t is None or clean_t.shape != t_roi.shape:
-                                        clean_t = self._inpaint_roi_fallback_chain(t_roi, dil_m, timeout_sec=5.0, use_hosted=use_hosted, context=context)
+                                    t_roi_gray = cv2.cvtColor(t_roi, cv2.COLOR_BGR2GRAY) if t_roi.ndim == 3 else t_roi
+                                    lap_roi = cv2.Laplacian(t_roi_gray, cv2.CV_64F)
+                                    is_textured_bg = (float(np.var(lap_roi[dil_m == 0])) >= 800.0) if np.count_nonzero(dil_m == 0) > 20 else False
+                                    if is_textured_bg:
+                                        clean_t = cv2.inpaint(t_roi, dil_m, 3, cv2.INPAINT_TELEA)
+                                    else:
+                                        from app.services.classical_fallback_manager import get_classical_fallback_manager
+                                        classical_mgr = get_classical_fallback_manager()
+                                        clean_t = classical_mgr.reconstruct_roi_guided_filter(
+                                            t_roi,
+                                            dil_m,
+                                            full_frame=out_f,
+                                            roi_bbox=(thy1, thy2, thx1, thx2),
+                                            full_mask=remaining_mask,
+                                        )
+                                        if clean_t is None or clean_t.shape != t_roi.shape:
+                                            clean_t = self._inpaint_roi_fallback_chain(t_roi, dil_m, timeout_sec=5.0, use_hosted=use_hosted, context=context)
 
                                     if clean_t is not None and clean_t.shape == t_roi.shape:
                                         t_mask_3d = (dil_m > 0)[:, :, np.newaxis]
@@ -3572,7 +3594,11 @@ class VideoEditorService:
             t_mask = VideoEditorService._fill_holes(t_mask)
             roi_ref = ref_frame[hy1:hy2, hx1:hx2] if ref_frame is not None else None
             is_bright_roi = (float(np.mean(cv2.cvtColor(roi_ref, cv2.COLOR_BGR2GRAY))) >= 215.0) if (roi_ref is not None and roi_ref.size > 0) else False
-            if is_bright_roi:
+            roi_ref_g = cv2.cvtColor(roi_ref, cv2.COLOR_BGR2GRAY) if (roi_ref is not None and roi_ref.ndim == 3) else roi_ref
+            lap_var_hdr = float(np.var(cv2.Laplacian(roi_ref_g, cv2.CV_64F)[t_mask == 0])) if (roi_ref_g is not None and np.count_nonzero(t_mask == 0) > 20) else 0.0
+            is_textured_bg = (lap_var_hdr >= 800.0)
+
+            if is_bright_roi or is_textured_bg:
                 m_blend = t_mask.copy()
                 f_hdr = cv2.GaussianBlur(m_blend.astype(np.float32) / 255.0, (5, 5), 1.2)[:, :, np.newaxis]
                 inner_core_t = (cv2.erode(t_mask, np.ones((5, 5), np.uint8)) > 0).astype(np.float32)[:, :, np.newaxis]

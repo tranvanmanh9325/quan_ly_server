@@ -4879,16 +4879,16 @@ class VideoEditorService:
 
             # Determine best available H.264 video encoder (Pillar 5: CRF 14 Studio Grade Encoding, unconstrained bitrate)
             v_encoder = "libx264"
-            v_opts = ["-preset", "fast", "-crf", "14", "-g", "30"]
+            v_opts = ["-preset", "fast", "-crf", "14"]
             try:
                 p_enc = subprocess.run([ffmpeg_bin, "-encoders"], capture_output=True, text=True, timeout=5)
                 enc_out = p_enc.stdout or ""
                 if "libx264" not in enc_out and "h264_nvenc" in enc_out:
                     v_encoder = "h264_nvenc"
-                    v_opts = ["-preset", "p7", "-cq", "14", "-g", "30"]
+                    v_opts = ["-preset", "p7", "-cq", "14"]
                 elif "libx264" not in enc_out and "h264_qsv" in enc_out:
                     v_encoder = "h264_qsv"
-                    v_opts = ["-global_quality", "14", "-g", "30"]
+                    v_opts = ["-global_quality", "14"]
             except Exception:
                 pass
 

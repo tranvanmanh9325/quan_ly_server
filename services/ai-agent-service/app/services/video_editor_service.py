@@ -3839,7 +3839,7 @@ class VideoEditorService:
                                 ref_c4 = max(e_ctx, 16.0)
                                 if e_inp > 1.05 * ref_c4:
                                     roi_curr_gray = cv2.cvtColor(f_curr_out[ys.min():ys.max()+1, xs.min():xs.max()+1], cv2.COLOR_BGR2GRAY)
-                                    is_bright_title = ((h_fr <= 1500 and w_fr < h_fr) or (float(np.mean(roi_curr_gray)) >= (160.0 if h_fr <= 1500 else 215.0))) if roi_curr_gray.size > 0 else False
+                                    is_bright_title = (float(np.mean(roi_curr_gray)) >= (180.0 if h_fr <= 1500 else 215.0)) if roi_curr_gray.size > 0 else False
                                     if not is_bright_title:
                                         if w_fr > h_fr:
                                             k_p4 = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 25))
@@ -3868,9 +3868,9 @@ class VideoEditorService:
                                         elif e_inp > 1.8 * ref_c4:
                                             b_w = 0.40
                                         elif e_inp > 1.15 * ref_c4:
-                                            b_w = 0.38
+                                            b_w = 0.28
                                         else:
-                                            b_w = 0.30
+                                            b_w = 0.20
                                         use_m = (m_curr_mask > 0)
                                         blended_f = np.clip(np.round((1.0 - b_w) * f_curr_out.astype(np.float32) + b_w * w_prev.astype(np.float32)), 0, 255).astype(np.uint8)
                                         f_curr_out = np.where(use_m[:, :, np.newaxis], blended_f, f_curr_out)

@@ -3103,7 +3103,7 @@ class VideoEditorService:
                         if np.count_nonzero(t_m) > 0:
                             t_m = VideoEditorService._fill_holes(t_m)
                             S_res = np.sqrt(h ** 2 + w ** 2) / np.sqrt(1024 ** 2 + 576 ** 2)
-                            is_bright_t = (float(np.median(frame[thy1:thy2, thx1:thx2])) >= 160.0) if frame is not None else False
+                            is_bright_t = (float(np.median(frame[thy1:thy2, thx1:thx2])) >= 215.0) if frame is not None else False
                             k_hdr_sz = 3 if is_bright_t else max(3, int(round(5 * S_res)) | 1)
                             dil_t = cv2.dilate(t_m, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k_hdr_sz, k_hdr_sz)))
                             dil_t = VideoEditorService._fill_holes(dil_t)
@@ -3511,7 +3511,7 @@ class VideoEditorService:
             t_mask = m_f[hy1:hy2, hx1:hx2] if m_f is not None else np.zeros((roi_h, roi_w), dtype=np.uint8)
             t_mask = VideoEditorService._fill_holes(t_mask)
             roi_ref = ref_frame[hy1:hy2, hx1:hx2] if ref_frame is not None else None
-            is_bright_roi = (float(np.mean(cv2.cvtColor(roi_ref, cv2.COLOR_BGR2GRAY))) >= 160.0) if (roi_ref is not None and roi_ref.size > 0) else False
+            is_bright_roi = (float(np.mean(cv2.cvtColor(roi_ref, cv2.COLOR_BGR2GRAY))) >= 215.0) if (roi_ref is not None and roi_ref.size > 0) else False
             if is_bright_roi:
                 m_blend = t_mask.copy()
                 f_hdr = cv2.GaussianBlur(m_blend.astype(np.float32) / 255.0, (5, 5), 1.2)[:, :, np.newaxis]
@@ -3573,7 +3573,7 @@ class VideoEditorService:
                                 ref_c4 = max(e_ctx, 16.0)
                                 if e_inp > 1.05 * ref_c4:
                                     roi_curr_gray = cv2.cvtColor(f_curr_out[ys.min():ys.max()+1, xs.min():xs.max()+1], cv2.COLOR_BGR2GRAY)
-                                    is_bright_title = (float(np.mean(roi_curr_gray)) >= 180.0) if roi_curr_gray.size > 0 else False
+                                    is_bright_title = (float(np.mean(roi_curr_gray)) >= 215.0) if roi_curr_gray.size > 0 else False
                                     if not is_bright_title:
                                         k_p4 = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 25))
                                         dil_p4 = cv2.dilate(bbox_m, k_p4)
@@ -3632,7 +3632,7 @@ class VideoEditorService:
             if title_unpad_box is not None:
                 ty1, ty2, tx1, tx2 = title_unpad_box
                 roi_hdr_gray = cv2.cvtColor(f_curr_out[ty1:ty2, tx1:tx2], cv2.COLOR_BGR2GRAY)
-                is_bright_hdr = (float(np.mean(roi_hdr_gray)) >= 160.0) if roi_hdr_gray.size > 0 else False
+                is_bright_hdr = (float(np.mean(roi_hdr_gray)) >= 215.0) if roi_hdr_gray.size > 0 else False
                 if is_bright_hdr:
                     tight_hdr_box = np.zeros_like(f_curr_out[:, :, 0])
                     tight_hdr_box[ty1:ty2, tx1:tx2] = 255
@@ -3838,7 +3838,7 @@ class VideoEditorService:
                             dc_shift = np.clip(dc_shift, -5.0, 5.0)
                             aligned_hdr = np.clip(aligned_hdr.astype(np.float32) + dc_shift, 0, 255).astype(np.uint8)
 
-                        is_bright_roi = (float(np.mean(curr_gray_roi)) >= 160.0)
+                        is_bright_roi = (float(np.mean(curr_gray_roi)) >= 215.0)
                         if is_bright_roi:
                             t_mask = tight_mask_header
                             chroma_curr = np.max(curr_roi, axis=2).astype(np.int16) - np.min(curr_roi, axis=2).astype(np.int16)

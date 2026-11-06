@@ -3571,7 +3571,7 @@ class VideoEditorService:
                                 e_inp = float(np.mean(diff_sq[bbox_m > 0]))
                                 e_ctx = float(np.mean(diff_sq[ctx_c4])) if np.count_nonzero(ctx_c4) > 0 else 16.0
                                 ref_c4 = max(e_ctx, 16.0)
-                                if e_inp > 1.05 * ref_c4:
+                                if e_inp > 1.05 * ref_c4 or e_inp > 450.0:
                                     use_m = (m_curr_mask > 0)
                                     if e_inp > 600.0 and e_inp > 1.8 * ref_c4:
                                         b_w = 0.42
@@ -3817,6 +3817,8 @@ class VideoEditorService:
                             e5_t = cv2.erode(t_mask, cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5)))
                             raw_dil = cv2.dilate(raw_text_hit.astype(np.uint8) * 255, np.ones((3, 3), np.uint8))
                             active_hdr_mask = raw_dil if np.count_nonzero(e5_t) == 0 else cv2.bitwise_and(raw_dil, e5_t)
+                            active_hdr_mask[:3, :] = 0
+                            active_hdr_mask[-3:, :] = 0
                             f_act = cv2.GaussianBlur(active_hdr_mask.astype(np.float32) / 255.0, (3, 3), 0.8)[:, :, np.newaxis]
 
                             # Pre-blend unsharp trực tiếp trên aligned_hdr để bù suy hao warpAffine
@@ -4089,10 +4091,12 @@ class VideoEditorService:
                     if v_inp_h < 1450.0 and ratio_h < 0.70:
                         g_use = 0.0
                         if v_ctx_h >= 2400.0:
-                            g_use = 0.70
+                            g_use = 1.15 if v_inp_h < 900.0 else 0.95
                         elif 2000.0 <= v_ctx_h < 2400.0:
                             g_use = 0.40
                         elif 750.0 <= v_ctx_h < 900.0:
+                            g_use = 0.55
+                        elif 650.0 <= v_ctx_h < 750.0:
                             g_use = 0.45
 
                         if g_use > 0.0:
